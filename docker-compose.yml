@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexflow-postgres
+    volumes:
+      - nexflow_pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: nexflow
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5440:5432"
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: nexflow-backend
+    ports:
+      - "8110:8090"
+    env_file: .env
+    environment:
+      # Override DATABASE_URL to use internal Docker service name
+      DATABASE_URL: "postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/nexflow?sslmode=disable"
+      GIN_MODE: release
+      ENV: production
+    volumes:
+      # pg_dump backups land here (cron 00:00, kept 30 days)
+      - ./backups:/app/backups
+      # Bill source artifacts (PDFs/HTML/etc.) for audit/legal trail
+      - ./artifacts:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_PHASE: ${VITE_PHASE:-99}
+        VITE_ENABLE_SALES_ORDERS: ${VITE_ENABLE_SALES_ORDERS:-true}
+        VITE_ENABLE_SHOPEE_EXCEL: ${VITE_ENABLE_SHOPEE_EXCEL:-true}
+        VITE_ENABLE_LAZADA_EXCEL: ${VITE_ENABLE_LAZADA_EXCEL:-true}
+        VITE_ENABLE_TIKTOK_EXCEL: ${VITE_ENABLE_TIKTOK_EXCEL:-true}
+        VITE_ENABLE_CHAT: ${VITE_ENABLE_CHAT:-true}
+    container_name: nexflow-frontend
+    ports:
+      - "3030:80"
+    depends_on:
+      - backend
+    mem_limit: 256m
+    restart: unless-stopped
+
+volumes:
+  nexflow_pgdata:

@@ -1,0 +1,98 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── shadcn/ui HSL tokens — light mode ─────────────────────────────────────── */
+@layer base {
+  :root {
+    --background: 210 24% 98%;
+    --foreground: 222 42% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 190 78% 28%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 28% 94%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 28% 94%;
+    --muted-foreground: 215 15% 43%;
+    --accent: 190 35% 92%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 160 84% 32%;
+    --success-foreground: 0 0% 100%;
+    --warning: 32 94% 44%;
+    --warning-foreground: 0 0% 100%;
+    --info: 200 98% 39%;
+    --info-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 190 78% 28%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 224 71% 4%;
+    --foreground: 210 20% 98%;
+    --card: 224 71% 6%;
+    --card-foreground: 210 20% 98%;
+    --popover: 224 71% 6%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 234 89% 74%;
+    --primary-foreground: 224 71% 4%;
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 215 28% 17%;
+    --muted-foreground: 217 11% 65%;
+    --accent: 215 28% 17%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 210 20% 98%;
+    --success: 160 60% 45%;
+    --success-foreground: 224 71% 4%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 224 71% 4%;
+    --info: 199 89% 60%;
+    --info-foreground: 224 71% 4%;
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 234 89% 74%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  html, body {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', 'Noto Sans Thai', system-ui, sans-serif;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', SFMono-Regular, Consolas, monospace;
+  }
+}
+
+/* Custom scrollbar — minimal, matches the muted/border tokens */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Sonner toast — make it match our card tokens */
+[data-sonner-toaster] {
+  --normal-bg: hsl(var(--card));
+  --normal-text: hsl(var(--card-foreground));
+  --normal-border: hsl(var(--border));
+}

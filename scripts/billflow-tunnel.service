@@ -1,0 +1,17 @@
+[Unit]
+Description=BillFlow Cloudflare Quick Tunnel
+After=network.target billflow-backend.service
+
+[Service]
+Type=simple
+User=bosscatdog
+WorkingDirectory=/home/bosscatdog/billflow
+ExecStart=/home/bosscatdog/billflow/scripts/tunnel.sh
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=billflow-tunnel
+
+[Install]
+WantedBy=multi-user.target

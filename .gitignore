@@ -1,0 +1,53 @@
+# Environment
+.env
+.env.local
+.env.*.local
+.env.bak*
+*.bak*
+
+# Go
+backend/vendor/
+backend/tmp/
+*.exe
+*.test
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Backups
+backups/*.sql
+
+# Docker
+*.pid
+
+# IDE
+.DS_Store
+.vscode/settings.json
+*.swp
+backend/server
+
+# Claude Code per-project state (agents, plans, settings)
+.claude/
+
+# Ad-hoc local scripts / scratch notes
+delete_bills.md
+delete_bill.md
+deploy.sh
+script_billflow.md
+docker-compose.yml.main-overwrite-*
+*.pdf
+ใบสั่งซื้อ*.pdf
+*.xlsx
+
+# Local import samples / QA artifacts
+Order.all.*.xlsx
+lazada.xlsx
+tiktok_csv.csv
+tiktok_excel.xlsx
+shopee-go-live-screenshots/
+
+# macOS metadata
+._*
+.DS_Store

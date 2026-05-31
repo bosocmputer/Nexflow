@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">BillFlow</title>
+  <desc id="desc">Document flow mark for BillFlow</desc>
+  <rect width="64" height="64" rx="16" fill="#0F7584"/>
+  <path d="M22 13.5h15.4L48 24.1V49a5.5 5.5 0 0 1-5.5 5.5h-21A5.5 5.5 0 0 1 16 49V19a5.5 5.5 0 0 1 6-5.5Z" fill="#FFFFFF"/>
+  <path d="M37 14v8.2c0 1.6 1.3 2.8 2.8 2.8H48" fill="#DDF7F5"/>
+  <path d="M37 14v8.2c0 1.6 1.3 2.8 2.8 2.8H48" fill="none" stroke="#0F7584" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M23 30h14M23 37h18M23 44h10" fill="none" stroke="#92A2AD" stroke-width="3" stroke-linecap="round"/>
+  <path d="M34.5 45.2c6.7-.2 11.9-2.5 15.8-7" fill="none" stroke="#13B8A6" stroke-width="4" stroke-linecap="round"/>
+  <path d="m44.5 37.2 5.9 1-1 5.9" fill="none" stroke="#13B8A6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
