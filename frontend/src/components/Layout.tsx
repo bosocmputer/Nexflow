@@ -85,7 +85,7 @@ export default function Layout() {
                 <Outlet />
               </main>
             ) : (
-              <main className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top_left,hsl(var(--accent)/0.45),transparent_32rem)]">
+              <main className="flex-1 overflow-y-auto bg-background">
                 <div className={isBillDetail ? 'w-full p-4 lg:p-5' : 'mx-auto w-full max-w-[1480px] p-5 lg:p-6'}>
                   <Outlet />
                 </div>

@@ -1,4 +1,4 @@
--- 001_init.sql — BillFlow initial schema
+-- 001_init.sql — Nexflow initial schema
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 

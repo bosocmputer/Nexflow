@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import client from '@/api/client'
 import { Button } from '@/components/ui/button'
+import { ActionSafetyPanel } from '@/components/common/ActionSafetyPanel'
 import {
   Dialog,
   DialogContent,
@@ -91,7 +92,7 @@ function bulkJobTitle(job: BulkSendJob | null, active: boolean) {
   if (active) return 'กำลังส่ง SML แบบหลายรายการ'
   if (job.status === 'completed') return 'ส่ง SML แบบหลายรายการเสร็จแล้ว'
   if (job.status === 'completed_with_errors') return 'ส่งเสร็จแล้ว แต่มีรายการไม่สำเร็จ'
-  return 'Bulk send หยุดด้วยข้อผิดพลาด'
+  return 'ส่ง SML แบบกลุ่มหยุดด้วยข้อผิดพลาด'
 }
 
 function bulkJobDescription(job: BulkSendJob | null, active: boolean) {
@@ -143,17 +144,17 @@ function vatTypeLabel(value: string) {
 }
 
 const PURCHASE_INQUIRY_TYPE_OPTIONS = [
-  { value: '0', label: '0 — ซื้อสินค้าเงินเชื่อ' },
-  { value: '1', label: '1 — ซื้อสินค้าเงินสด' },
-  { value: '2', label: '2 — ซื้อสินค้าเงินเชื่อ (สินค้าบริการ)' },
-  { value: '3', label: '3 — ซื้อสินค้าเงินสด (สินค้าบริการ)' },
+  { value: '0', label: '0: ซื้อสินค้าเงินเชื่อ' },
+  { value: '1', label: '1: ซื้อสินค้าเงินสด' },
+  { value: '2', label: '2: ซื้อสินค้าเงินเชื่อ (สินค้าบริการ)' },
+  { value: '3', label: '3: ซื้อสินค้าเงินสด (สินค้าบริการ)' },
 ]
 
 const SALE_INQUIRY_TYPE_OPTIONS = [
-  { value: '0', label: '0 — ขายเงินเชื่อ' },
-  { value: '1', label: '1 — ขายเงินสด' },
-  { value: '2', label: '2 — ขายเงินเชื่อ (สินค้าบริการ)' },
-  { value: '3', label: '3 — ขายเงินสด (สินค้าบริการ)' },
+  { value: '0', label: '0: ขายเงินเชื่อ' },
+  { value: '1', label: '1: ขายเงินสด' },
+  { value: '2', label: '2: ขายเงินเชื่อ (สินค้าบริการ)' },
+  { value: '3', label: '3: ขายเงินสด (สินค้าบริการ)' },
 ]
 
 function billDetailPath(bill: Bill) {
@@ -171,6 +172,18 @@ function bulkJobStorageKey(filters: Props['filters']) {
     filters.document_route || '',
     filters.shopee_shop_id || '',
   ].join(':')
+}
+
+function bulkFilterSummary(filters: Props['filters']) {
+  const parts = [
+    filters.source ? `source=${filters.source}` : '',
+    filters.document_route ? `route=${filters.document_route}` : '',
+    filters.shopee_shop_id ? `shop=${filters.shopee_shop_id}` : '',
+    filters.shopee_status ? `order status=${filters.shopee_status}` : '',
+    filters.email_account_id ? `inbox=${filters.email_account_id}` : '',
+    filters.search ? `ค้นหา "${filters.search}"` : '',
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : 'ทุกเอกสารสถานะพร้อมส่งในเมนูนี้'
 }
 
 function jobToCandidates(job: BulkSendJob): Candidate[] {
@@ -346,6 +359,26 @@ export function BulkSendDialog({
     isPurchaseOrder && inquiryTypeStr === '' ? 'ประเภทรายการซื้อ (inquiry_type)' : '',
     docTime.trim() === '' ? 'เวลาเอกสาร (doc_time)' : '',
   ].filter(Boolean)
+  const skippedIssueSummary = useMemo(() => {
+    const issues = candidates
+      .filter((row) => !row.ready)
+      .flatMap((row) => row.issues)
+      .filter(Boolean)
+    const unique = Array.from(new Set(issues))
+    return unique.length > 0 ? unique.slice(0, 3).join(' · ') : 'ไม่มีรายการถูกข้ามจากการตรวจ readiness'
+  }, [candidates])
+  const sendDisabledReason =
+    !smlReady
+      ? smlBlockedMessage(smlReadiness)
+      : readyCount <= 0
+        ? 'ยังไม่มีเอกสารสถานะพร้อมส่งที่ผ่านการตรวจ readiness'
+        : missingFields.length > 0
+          ? `ต้องกรอกเพิ่มก่อนส่ง: ${missingFields.join(', ')}`
+          : controlsLocked
+            ? 'มีงานส่ง SML ที่กำลังทำงานอยู่'
+            : job
+              ? 'มีผลการส่งล่าสุดอยู่ กดโหลดรายการใหม่ก่อนเริ่มรอบใหม่'
+              : ''
   const failedRows = displayRows.filter((row) => row.result === 'failed')
   const sentRows = displayRows.filter((row) => row.result === 'sent')
   const completedRows = displayRows.filter((row) => row.result)
@@ -622,7 +655,7 @@ export function BulkSendDialog({
   const copyFailureSummary = async () => {
     if (failedRows.length === 0) return
     const text = [
-      `Bulk Send SML failed: ${title}`,
+      `ส่ง SML แบบกลุ่มไม่สำเร็จ: ${title}`,
       `ปลายทาง: ${destination.label} (${destination.code})`,
       `ส่งสำเร็จ: ${sentCount}, ไม่สำเร็จ: ${failedCount}, ข้าม: ${resultSkippedCount}`,
       '',
@@ -644,7 +677,7 @@ export function BulkSendDialog({
   const copySentDocNos = async () => {
     if (sentRows.length === 0) return
     const text = [
-      `Bulk Send SML doc_no: ${title}`,
+      `เลขเอกสารจากการส่ง SML แบบกลุ่ม: ${title}`,
       `ปลายทาง: ${destination.label} (${destination.code})`,
       `ส่งสำเร็จ: ${sentRows.length}`,
       '',
@@ -854,7 +887,7 @@ export function BulkSendDialog({
                           <>
                         <Button type="button" size="sm" className="h-8 gap-1.5" onClick={handleRetryFailed} disabled={controlsLocked || !smlReady}>
                           <RotateCcw className="h-3.5 w-3.5" />
-                          Retry failed
+                          ส่งซ้ำรายการไม่สำเร็จ
                         </Button>
                         <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5" onClick={copyFailureSummary}>
                           <Clipboard className="h-3.5 w-3.5" />
@@ -960,12 +993,49 @@ export function BulkSendDialog({
               ระบบจะส่งเฉพาะเอกสารสถานะพร้อมส่ง และใช้ค่าชุดนี้ร่วมกันทุกเอกสารในรอบนี้
             </div>
           </div>
+          <ActionSafetyPanel
+            title="ตรวจผลกระทบก่อนเริ่ม Bulk Send"
+            description="เมื่อส่งเข้า SML สำเร็จแล้ว Nexflow ไม่สามารถ rollback เอกสารใน SML ให้เองได้ หากต้องแก้หรือยกเลิกต้องทำตามขั้นตอนใน SML"
+            tone="warning"
+            items={[
+              {
+                label: 'จำนวนที่จะส่ง',
+                value: `${readyCount.toLocaleString('th-TH')} ใบ`,
+                detail: skippedCount > 0 ? `ข้าม ${skippedCount.toLocaleString('th-TH')} ใบ` : 'ไม่มีรายการถูกข้าม',
+              },
+              {
+                label: 'ปลายทาง',
+                value: `${destination.label} · ${destination.code}`,
+                detail: filters.document_route || 'ใช้ route จากรายการปัจจุบัน',
+              },
+              {
+                label: 'เลขเอกสาร',
+                value: docNoRange || 'รอออกเลขตอนส่ง',
+                detail: 'Retry รายการเดิมจะอ้างอิงเลขที่ระบบบันทึกไว้ตาม behavior ปัจจุบัน',
+              },
+              {
+                label: 'ขอบเขตที่เลือก',
+                value: bulkFilterSummary(filters),
+                detail: 'ส่งเฉพาะ pending ที่โหลดมาในชุดนี้ ไม่รวม sent/needs_review',
+              },
+              {
+                label: 'รายการที่ถูกข้าม',
+                value: skippedCount.toLocaleString('th-TH'),
+                detail: skippedIssueSummary,
+              },
+              {
+                label: 'หลังเริ่มงาน',
+                value: 'ปิด dialog ได้',
+                detail: 'งานยังทำต่อและกลับมาดูผลที่ประวัติ Bulk Jobs ได้',
+              },
+            ]}
+          />
           {!smlReady && (
             <div className="rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-2 text-xs">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium text-foreground">ยังเริ่มส่ง SML แบบกลุ่มไม่ได้ — ฐานข้อมูลร้านยังไม่พร้อม</div>
+                  <div className="font-medium text-foreground">ยังเริ่มส่ง SML แบบกลุ่มไม่ได้: ฐานข้อมูลร้านยังไม่พร้อม</div>
                   <div className="mt-0.5 text-muted-foreground">
                     {smlReadinessLoading ? 'กำลังตรวจสถานะ SML ของร้านนี้' : smlBlockedMessage(smlReadiness)}
                     {' '}เปิดเครื่อง SML/Postgres ของร้านนี้ แล้วกดตรวจอีกครั้งบนแถบแจ้งเตือนด้านบน
@@ -1090,9 +1160,9 @@ export function BulkSendDialog({
                   <SelectValue placeholder="เลือกประเภทภาษี" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">0 — แยกนอก</SelectItem>
-                  <SelectItem value="1">1 — รวมใน</SelectItem>
-                  <SelectItem value="2">2 — ศูนย์%</SelectItem>
+                  <SelectItem value="0">0: แยกนอก</SelectItem>
+                  <SelectItem value="1">1: รวมใน</SelectItem>
+                  <SelectItem value="2">2: ศูนย์%</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1315,7 +1385,7 @@ export function BulkSendDialog({
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" className="h-8 gap-1.5" onClick={handleRetryFailed} disabled={controlsLocked || !smlReady}>
                       <RotateCcw className="h-3.5 w-3.5" />
-                      Retry failed
+                      ส่งซ้ำรายการไม่สำเร็จ
                     </Button>
                     <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5" onClick={copyFailureSummary}>
                       <Clipboard className="h-3.5 w-3.5" />
@@ -1412,10 +1482,10 @@ export function BulkSendDialog({
                   onClick={handleSend}
                   disabled={!canSend}
                   className="gap-2"
-                  title={!smlReady ? smlBlockedMessage(smlReadiness) : undefined}
+                  title={sendDisabledReason || undefined}
                 >
                   <Send className="h-4 w-4" />
-                  ส่ง SML รายการพร้อมส่งจริง {readyCount} รายการ
+                  ส่งเข้า SML {readyCount.toLocaleString('th-TH')} ใบ
                 </Button>
               </div>
             </>
@@ -1466,7 +1536,7 @@ function SummaryItem({
 }) {
   return (
     <div className="min-w-0 rounded-md border border-border/70 bg-background px-2.5 py-2">
-      <div className="text-[10px] font-medium uppercase text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-medium text-muted-foreground">{label}</div>
       <div className={[
         'mt-0.5 truncate font-medium',
         mono ? 'font-mono' : '',

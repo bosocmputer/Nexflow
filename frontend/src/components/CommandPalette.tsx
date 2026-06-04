@@ -55,7 +55,7 @@ export function CommandPalette({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const isAdmin = user?.role === 'admin'
-  const navItems = visibleNavItems().filter((item) => item.to !== '/settings/users' || isAdmin)
+  const navItems = visibleNavItems(user?.role)
 
   useEffect(() => {
     if (!open) return

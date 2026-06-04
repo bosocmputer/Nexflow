@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	"nexflow/internal/services/artifact"
+	"nexflow/internal/services/events"
 	"nexflow/internal/services/itemcode"
 	lineservice "nexflow/internal/services/line"
 	"nexflow/internal/services/mapper"
@@ -24,24 +26,26 @@ import (
 )
 
 type BillHandler struct {
-	billRepo        *repository.BillRepo
-	mapperSvc       *mapper.Service
-	invoiceClient   *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
-	saleOrderClient *sml.SaleOrderClient     // SML 248 saleorder REST (default)
-	poClient        *sml.PurchaseOrderClient // SML 248 purchaseorder REST
-	docNoClient     *sml.DocNoClient         // SML authoritative doc_no running
-	cfg             *config.Config
-	lineSvc         *lineservice.Service
-	auditRepo       *repository.AuditLogRepo
-	catalogRepo     *repository.SMLCatalogRepo     // for unit_code defaults on item edit
-	channelDefaults *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
-	docCounters     *repository.DocCounterRepo     // atomic doc_no generator
-	bulkJobRepo     *repository.SMLBulkJobRepo     // async SML bulk send jobs
-	artifactSvc     *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
-	warehouseCache  *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
-	smlReadiness    *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
-	appSettingsRepo *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
-	log             *zap.Logger
+	billRepo           *repository.BillRepo
+	mapperSvc          *mapper.Service
+	invoiceClient      *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
+	saleOrderClient    *sml.SaleOrderClient     // SML 248 saleorder REST (default)
+	poClient           *sml.PurchaseOrderClient // SML 248 purchaseorder REST
+	docNoClient        *sml.DocNoClient         // SML authoritative doc_no running
+	cfg                *config.Config
+	lineSvc            *lineservice.Service
+	auditRepo          *repository.AuditLogRepo
+	catalogRepo        *repository.SMLCatalogRepo     // for unit_code defaults on item edit
+	channelDefaults    *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
+	docCounters        *repository.DocCounterRepo     // atomic doc_no generator
+	bulkJobRepo        *repository.SMLBulkJobRepo     // async SML bulk send jobs
+	artifactSvc        *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
+	warehouseCache     *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
+	smlReadiness       *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
+	appSettingsRepo    *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
+	shopeeRealtimeRepo *repository.ShopeeRealtimeRepo
+	eventBroker        *events.Broker
+	log                *zap.Logger
 }
 
 func NewBillHandler(
@@ -84,6 +88,14 @@ func NewBillHandler(
 		appSettingsRepo: appSettingsRepo,
 		log:             log,
 	}
+}
+
+func (h *BillHandler) SetShopeeRealtimeSync(repo *repository.ShopeeRealtimeRepo, broker *events.Broker) {
+	if h == nil {
+		return
+	}
+	h.shopeeRealtimeRepo = repo
+	h.eventBroker = broker
 }
 
 // ─── Stock recalculation ──────────────────────────────────────────────────────
@@ -669,7 +681,7 @@ func (h *BillHandler) Get(c *gin.Context) {
 	// today. Mirror the channel lookup that retry would do — same key
 	// (channel, bill_type) — but never fail the GET if the row is missing
 	// (e.g. legacy bills from before channel_defaults existed).
-	channel := mapSourceToChannel(bill.Source)
+	channel := channelDefaultKeyForBill(bill)
 	preview := gin.H{
 		"channel":   channel,
 		"bill_type": bill.BillType,
@@ -677,7 +689,7 @@ func (h *BillHandler) Get(c *gin.Context) {
 	if h.channelDefaults != nil {
 		def, _ := h.channelDefaults.Get(channel, bill.BillType)
 		if def != nil {
-			route, urlOverride := resolveEndpoint(def, bill.Source, bill.BillType)
+			route, urlOverride := resolveEndpoint(def, channel, bill.BillType)
 			preview["route"] = route
 			if urlOverride != "" {
 				preview["endpoint"] = urlOverride
@@ -723,6 +735,10 @@ type archiveBillRequest struct {
 	Reason string `json:"reason"`
 }
 
+type recreateShopeeRealtimeDocumentRequest struct {
+	Confirm string `json:"confirm"`
+}
+
 func (h *BillHandler) Archive(c *gin.Context) {
 	id := c.Param("id")
 	var req archiveBillRequest
@@ -750,6 +766,110 @@ func (h *BillHandler) Archive(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *BillHandler) RecreateShopeeRealtimeDocumentRoute(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing bill id"})
+		return
+	}
+	var req recreateShopeeRealtimeDocumentRequest
+	_ = c.ShouldBindJSON(&req)
+	if strings.TrimSpace(req.Confirm) != "RECREATE_DOCUMENT_WITH_CURRENT_ROUTE" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณายืนยันการสร้างเอกสารใหม่ตามเส้นทางปัจจุบัน"})
+		return
+	}
+	if h.shopeeRealtimeRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Shopee Realtime ยังไม่พร้อมใช้งาน"})
+		return
+	}
+	bill, err := h.billRepo.FindByID(id)
+	if err != nil {
+		h.log.Error("Find bill for Shopee Realtime recreate", zap.String("bill", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load bill failed"})
+		return
+	}
+	if bill == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบเอกสาร"})
+		return
+	}
+	if !isShopeeRealtimeBill(bill) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ใช้ได้เฉพาะเอกสารที่สร้างจาก Shopee Realtime"})
+		return
+	}
+	if bill.ArchivedAt != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "เอกสารนี้ถูกเก็บไว้แล้ว"})
+		return
+	}
+	if bill.Status == "sent" || (bill.SMLDocNo != nil && strings.TrimSpace(*bill.SMLDocNo) != "") {
+		c.JSON(http.StatusConflict, gin.H{"error": "เอกสารนี้ส่งเข้า SML แล้วหรือมีเลขเอกสาร SML แล้ว ไม่สามารถสร้างใหม่จากเส้นทางอื่นได้"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	reason := "shopee realtime recreate with current route"
+	refs, err := h.shopeeRealtimeRepo.ArchiveBillAndUnlinkSnapshotForRecreate(ctx, id, c.GetString("user_id"), reason)
+	if err != nil {
+		h.log.Error("Shopee Realtime recreate route reset failed", zap.String("bill", id), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "เตรียมสร้างเอกสารใหม่ไม่สำเร็จ"})
+		return
+	}
+	if len(refs) == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "ไม่พบ order Shopee Realtime ที่ยังผูกกับเอกสารนี้ หรือเอกสารถูกส่ง SML ไปแล้ว"})
+		return
+	}
+
+	orders := make([]gin.H, 0, len(refs))
+	redirectURL := "/shopee-operations"
+	for i, ref := range refs {
+		orders = append(orders, gin.H{
+			"shop_id":  ref.ShopID,
+			"order_sn": ref.OrderSN,
+		})
+		if i == 0 && strings.TrimSpace(ref.OrderSN) != "" {
+			redirectURL = "/shopee-operations?order=" + url.QueryEscape(ref.OrderSN)
+		}
+		if h.eventBroker != nil {
+			h.eventBroker.Publish(events.Event{
+				Type: events.TypeShopeeRealtimeChanged,
+				Payload: map[string]any{
+					"shop_id":  ref.ShopID,
+					"order_sn": ref.OrderSN,
+					"reason":   "recreate_document_route",
+				},
+			})
+		}
+	}
+
+	if h.auditRepo != nil {
+		billID := id
+		var userID *string
+		if uid := c.GetString("user_id"); uid != "" {
+			userID = &uid
+		}
+		_ = h.auditRepo.Log(models.AuditEntry{
+			Action:   "shopee_realtime_document_route_reset",
+			TargetID: &billID,
+			UserID:   userID,
+			Source:   "shopee_realtime",
+			Level:    "info",
+			Detail: map[string]interface{}{
+				"reason":        reason,
+				"orders":        orders,
+				"archived_bill": id,
+			},
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":               true,
+		"archived_bill_id": id,
+		"orders":           orders,
+		"redirect_url":     redirectURL,
+		"message":          "ปลดเอกสารเดิมแล้ว กลับไป Shopee Realtime เพื่อสร้างเอกสารใหม่ตามเส้นทางปัจจุบัน",
+	})
 }
 
 func (h *BillHandler) Restore(c *gin.Context) {
@@ -812,6 +932,29 @@ func mapSourceToChannel(source string) string {
 		return "email"
 	}
 	return "line"
+}
+
+func channelDefaultKeyForBill(bill *models.Bill) string {
+	if isShopeeRealtimeBill(bill) {
+		return "shopee_realtime"
+	}
+	if bill == nil {
+		return ""
+	}
+	return mapSourceToChannel(bill.Source)
+}
+
+func isShopeeRealtimeBill(bill *models.Bill) bool {
+	if bill == nil || bill.Source != "shopee" || len(bill.RawData) == 0 {
+		return false
+	}
+	var raw struct {
+		Flow string `json:"flow"`
+	}
+	if err := json.Unmarshal(bill.RawData, &raw); err != nil {
+		return false
+	}
+	return strings.TrimSpace(raw.Flow) == "shopee_realtime"
 }
 
 // GET /api/bills/:id/timeline
@@ -1011,10 +1154,11 @@ func (h *BillHandler) RegenerateDocNo(c *gin.Context) {
 		return
 	}
 	var def *models.ChannelDefault
+	channel := channelDefaultKeyForBill(bill)
 	if h.channelDefaults != nil {
-		def, _ = h.channelDefaults.Get(bill.Source, bill.BillType)
+		def, _ = h.channelDefaults.Get(channel, bill.BillType)
 	}
-	kind, _ := resolveEndpoint(def, bill.Source, bill.BillType)
+	kind, _ := resolveEndpoint(def, channel, bill.BillType)
 	docNo, err := h.allocateFreshDocNo(bill, def, fallbackDocPrefix(kind), kind)
 	if err != nil {
 		h.auditDocNoRegenerateFailed(c, bill, kind, err)
@@ -1059,10 +1203,11 @@ func (h *BillHandler) LatestDocNo(c *gin.Context) {
 		return
 	}
 	var def *models.ChannelDefault
+	channel := channelDefaultKeyForBill(bill)
 	if h.channelDefaults != nil {
-		def, _ = h.channelDefaults.Get(bill.Source, bill.BillType)
+		def, _ = h.channelDefaults.Get(channel, bill.BillType)
 	}
-	kind, _ := resolveEndpoint(def, bill.Source, bill.BillType)
+	kind, _ := resolveEndpoint(def, channel, bill.BillType)
 	docNo, err := h.previewFreshDocNo(bill, def, fallbackDocPrefix(kind), kind)
 	if err != nil {
 		h.auditDocNoPreviewFailed(c, bill, kind, err)
@@ -1162,10 +1307,13 @@ func (h *BillHandler) EnsureShopeeShippingLine(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "inserted": item != nil, "item": item})
 }
 
-func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts retrySendOptions) retrySendResult {
+func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts retrySendOptions) (result retrySendResult) {
 	if bill == nil {
 		return retrySendResult{HTTPStatus: http.StatusNotFound, Error: "bill not found"}
 	}
+	defer func() {
+		h.syncShopeeRealtimeFromSendResult(bill, result)
+	}()
 	if opts.Via == "" {
 		opts.Via = "retry"
 	}
@@ -1256,8 +1404,9 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 		}
 	}
 
-	def, _ := h.channelDefaults.Get(bill.Source, bill.BillType)
-	kind, urlOverride := resolveEndpoint(def, bill.Source, bill.BillType)
+	channel := channelDefaultKeyForBill(bill)
+	def, _ := h.channelDefaults.Get(channel, bill.BillType)
+	kind, urlOverride := resolveEndpoint(def, channel, bill.BillType)
 	switch kind {
 	case "purchaseorder":
 		result := h.sendPurchaseOrderToSML(bill, req, urlOverride, opts)
@@ -1274,6 +1423,63 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 		result.Warnings = warnings
 		h.logHiddenItemCodeWarnings(bill, warnings, opts, "sml_send")
 		return result
+	}
+}
+
+func (h *BillHandler) syncShopeeRealtimeFromSendResult(bill *models.Bill, result retrySendResult) {
+	if h == nil || h.shopeeRealtimeRepo == nil || bill == nil || !isShopeeRealtimeBill(bill) {
+		return
+	}
+	status := ""
+	docNo := ""
+	errMsg := ""
+	switch result.HTTPStatus {
+	case http.StatusOK:
+		status = "sent"
+		docNo = strings.TrimSpace(result.DocNo)
+	case http.StatusAccepted:
+		status = "needs_review"
+		errMsg = strings.TrimSpace(result.Message)
+	default:
+		if result.HTTPStatus >= 400 || result.HTTPStatus == 0 {
+			status = "failed"
+			errMsg = strings.TrimSpace(result.Error)
+			if errMsg == "" {
+				errMsg = strings.TrimSpace(result.Message)
+			}
+		}
+	}
+	if status == "" {
+		return
+	}
+	if bill.Status == "sent" && status != "sent" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	refs, err := h.shopeeRealtimeRepo.UpdateSnapshotForBillSendResult(ctx, bill.ID, status, docNo, errMsg)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("sync shopee realtime send result failed",
+				zap.String("bill_id", bill.ID),
+				zap.String("status", status),
+				zap.Error(err),
+			)
+		}
+		return
+	}
+	if h.eventBroker == nil {
+		return
+	}
+	for _, ref := range refs {
+		h.eventBroker.Publish(events.Event{
+			Type: events.TypeShopeeRealtimeChanged,
+			Payload: map[string]any{
+				"shop_id":  ref.ShopID,
+				"order_sn": ref.OrderSN,
+				"reason":   "manual_sml_send",
+			},
+		})
 	}
 }
 
@@ -1406,7 +1612,7 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 		})
 	}
 
-	def, err := h.lookupChannelDefault(bill.Source, "sale")
+	def, err := h.lookupChannelDefault(channelDefaultKeyForBill(bill), "sale")
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error(), Route: route}
 	}
@@ -1496,7 +1702,7 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 		})
 	}
 
-	def, err := h.lookupChannelDefault(bill.Source, "sale")
+	def, err := h.lookupChannelDefault(channelDefaultKeyForBill(bill), "sale")
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error(), Route: route}
 	}
@@ -2290,7 +2496,7 @@ func (h *BillHandler) retrySaleOrder(c *gin.Context, bill *models.Bill, req Retr
 		})
 	}
 
-	def, err := h.lookupChannelDefault(bill.Source, "sale")
+	def, err := h.lookupChannelDefault(channelDefaultKeyForBill(bill), "sale")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -2376,7 +2582,7 @@ func (h *BillHandler) retrySaleInvoice(c *gin.Context, bill *models.Bill, req Re
 		})
 	}
 
-	def, err := h.lookupChannelDefault(bill.Source, "sale")
+	def, err := h.lookupChannelDefault(channelDefaultKeyForBill(bill), "sale")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

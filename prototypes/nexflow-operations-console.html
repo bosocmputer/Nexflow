@@ -1,0 +1,1687 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nexflow Operations Console Prototype</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #111817;
+        --graphite: #222827;
+        --graphite-2: #303735;
+        --paper: #f5f6ee;
+        --surface: #fffef8;
+        --surface-2: #ecefe4;
+        --line: #d8ddcf;
+        --muted: #667064;
+        --soft: #f0f3e8;
+        --lime: #b9ff36;
+        --lime-2: #83d600;
+        --cobalt: #335cff;
+        --cobalt-soft: #e7ebff;
+        --amber: #d88c19;
+        --amber-soft: #fff3da;
+        --red: #bf3f36;
+        --red-soft: #ffe8e5;
+        --violet: #6c4fd6;
+        --shadow: 0 18px 48px rgba(17, 24, 23, 0.09);
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-height: 100%;
+      }
+
+      body {
+        min-height: 100%;
+        margin: 0;
+        color: var(--ink);
+        background:
+          linear-gradient(rgba(17, 24, 23, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(17, 24, 23, 0.035) 1px, transparent 1px),
+          var(--paper);
+        background-size: 34px 34px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", sans-serif;
+        line-height: 1.45;
+        letter-spacing: 0;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+        cursor: pointer;
+      }
+
+      .app {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 72px minmax(0, 1fr);
+      }
+
+      .rail {
+        position: sticky;
+        top: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 10px;
+        background: var(--ink);
+        color: #f6f8ef;
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        z-index: 2;
+      }
+
+      .brand-mark {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius);
+        background: var(--lime);
+        color: var(--ink);
+        font-weight: 900;
+        letter-spacing: 0;
+        box-shadow: inset 0 -2px 0 rgba(17, 24, 23, 0.16);
+      }
+
+      .rail-separator {
+        width: 100%;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.14);
+        margin: 4px 0;
+      }
+
+      .rail-button {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius);
+        color: #dce5d5;
+        background: transparent;
+        border: 1px solid transparent;
+        font-size: 12px;
+        font-weight: 800;
+        transition: transform 160ms ease, background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+      }
+
+      .rail-button:hover,
+      .rail-button:focus-visible {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.08);
+        outline: none;
+        transform: translateY(-1px);
+      }
+
+      .rail-button.active {
+        color: var(--ink);
+        background: var(--lime);
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+
+      .rail-bottom {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .main {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        min-width: 0;
+        min-height: 66px;
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) auto;
+        gap: 16px;
+        align-items: center;
+        padding: 12px 22px;
+        background: rgba(245, 246, 238, 0.88);
+        backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .command {
+        min-width: 0;
+        max-width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: 0 8px 26px rgba(17, 24, 23, 0.05);
+      }
+
+      .command-kicker {
+        flex: 0 0 auto;
+        color: var(--lime-2);
+        font-weight: 900;
+      }
+
+      .command input {
+        min-width: 0;
+        flex: 1;
+        border: 0;
+        outline: none;
+        color: var(--ink);
+        background: transparent;
+        text-overflow: ellipsis;
+      }
+
+      .status-strip {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 30px;
+        padding: 5px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--graphite);
+        font-size: 12px;
+        font-weight: 760;
+        white-space: nowrap;
+      }
+
+      .chip.lime {
+        border-color: rgba(131, 214, 0, 0.45);
+        background: rgba(185, 255, 54, 0.23);
+      }
+
+      .chip.blue {
+        border-color: rgba(51, 92, 255, 0.24);
+        background: var(--cobalt-soft);
+        color: #203caa;
+      }
+
+      .chip.warn {
+        border-color: rgba(216, 140, 25, 0.36);
+        background: var(--amber-soft);
+        color: #7a4a05;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        display: inline-block;
+        border-radius: 999px;
+        background: var(--lime-2);
+        box-shadow: 0 0 0 4px rgba(131, 214, 0, 0.14);
+      }
+
+      .dot.blue {
+        background: var(--cobalt);
+        box-shadow: 0 0 0 4px rgba(51, 92, 255, 0.12);
+      }
+
+      .content {
+        min-width: 0;
+        padding: 22px;
+      }
+
+      .view {
+        display: none;
+      }
+
+      .view.active {
+        display: block;
+        animation: view-in 220ms ease both;
+        will-change: transform, opacity;
+      }
+
+      @keyframes view-in {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .access-layout {
+        min-width: 0;
+        min-height: calc(100vh - 110px);
+        display: grid;
+        grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
+        align-items: stretch;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+
+      .access-manifest {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 28px;
+        padding: 34px;
+        background: var(--ink);
+        color: #f6f8ef;
+      }
+
+      .wordmark {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .wordmark .brand-mark {
+        width: 50px;
+        height: 50px;
+      }
+
+      .wordmark-text {
+        display: grid;
+        gap: 1px;
+      }
+
+      .wordmark-text strong {
+        font-size: 21px;
+        letter-spacing: 0;
+      }
+
+      .wordmark-text span,
+      .small-label,
+      .metric-label,
+      .lane-label,
+      .table-label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 760;
+      }
+
+      .access-manifest .wordmark-text span,
+      .access-manifest .small-label {
+        color: #bfcbb9;
+      }
+
+      .manifest-title {
+        max-width: 480px;
+        margin: 0;
+        font-size: 44px;
+        line-height: 1.04;
+        letter-spacing: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .manifest-title mark {
+        color: var(--lime);
+        background: transparent;
+      }
+
+      .manifest-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .manifest-cell {
+        min-height: 92px;
+        padding: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.045);
+      }
+
+      .manifest-cell strong {
+        display: block;
+        margin-top: 8px;
+        font-size: 22px;
+      }
+
+      .access-panel {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 22px;
+        padding: 34px;
+        background:
+          linear-gradient(135deg, rgba(185, 255, 54, 0.16), transparent 34%),
+          var(--surface);
+      }
+
+      .panel-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+        overflow-wrap: anywhere;
+      }
+
+      h1 {
+        margin-bottom: 7px;
+        font-size: 28px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin-bottom: 4px;
+        font-size: 19px;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin-bottom: 6px;
+        font-size: 14px;
+        line-height: 1.3;
+        letter-spacing: 0;
+      }
+
+      p {
+        color: var(--muted);
+      }
+
+      .form-stack {
+        display: grid;
+        align-content: center;
+        gap: 14px;
+        max-width: 520px;
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .field label {
+        color: var(--graphite);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .field input,
+      .field select {
+        width: 100%;
+        min-height: 46px;
+        padding: 0 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #ffffff;
+        color: var(--ink);
+        outline: none;
+      }
+
+      .field input:focus,
+      .field select:focus {
+        border-color: var(--cobalt);
+        box-shadow: 0 0 0 4px rgba(51, 92, 255, 0.1);
+      }
+
+      .action-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .button {
+        min-height: 42px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 14px;
+        border-radius: var(--radius);
+        background: var(--ink);
+        color: #ffffff;
+        font-weight: 820;
+        transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+      }
+
+      .button:hover,
+      .button:focus-visible {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 22px rgba(17, 24, 23, 0.14);
+        outline: none;
+      }
+
+      .button.lime {
+        color: var(--ink);
+        background: var(--lime);
+      }
+
+      .button.ghost {
+        color: var(--graphite);
+        background: var(--surface);
+        border: 1px solid var(--line);
+      }
+
+      .button.danger {
+        color: var(--red);
+        background: var(--red-soft);
+        border: 1px solid rgba(191, 63, 54, 0.25);
+      }
+
+      .button[disabled] {
+        cursor: not-allowed;
+        opacity: 0.52;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .console-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .page-title {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 16px;
+      }
+
+      .title-copy {
+        min-width: 0;
+      }
+
+      .title-copy h1 {
+        margin-bottom: 5px;
+      }
+
+      .title-copy p {
+        margin-bottom: 0;
+      }
+
+      .metric-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .metric {
+        min-height: 92px;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 7px;
+        font-size: 27px;
+        line-height: 1;
+      }
+
+      .metric span:last-child {
+        display: block;
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .lane-board {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(180px, 1fr));
+        gap: 10px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+
+      .lane {
+        min-width: 180px;
+        min-height: 520px;
+        display: grid;
+        align-content: start;
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 254, 248, 0.76);
+      }
+
+      .lane-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .count-pill {
+        min-width: 28px;
+        height: 24px;
+        display: inline-grid;
+        place-items: center;
+        border-radius: 999px;
+        background: var(--soft);
+        color: var(--graphite);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .work-card {
+        display: grid;
+        gap: 8px;
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: 0 8px 18px rgba(17, 24, 23, 0.045);
+        transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+        will-change: transform;
+      }
+
+      .work-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(51, 92, 255, 0.36);
+        box-shadow: 0 14px 28px rgba(17, 24, 23, 0.075);
+      }
+
+      .work-card.active {
+        border-color: rgba(131, 214, 0, 0.62);
+        box-shadow: inset 3px 0 0 var(--lime-2), 0 12px 28px rgba(17, 24, 23, 0.07);
+      }
+
+      .work-top {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 5px;
+      }
+
+      .work-top > div {
+        min-width: 0;
+      }
+
+      .work-id {
+        font-weight: 900;
+        font-size: 14px;
+        line-height: 1.24;
+        overflow-wrap: anywhere;
+      }
+
+      .work-source {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .money {
+        font-variant-numeric: tabular-nums;
+        font-weight: 900;
+        white-space: nowrap;
+      }
+
+      .route-line {
+        display: block;
+        color: var(--graphite);
+        font-size: 12px;
+        font-weight: 780;
+        overflow-wrap: anywhere;
+      }
+
+      .mini-progress {
+        height: 6px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        overflow: hidden;
+      }
+
+      .mini-progress span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--lime-2), var(--cobalt));
+      }
+
+      .side-panel {
+        position: sticky;
+        top: 88px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .inspector,
+      .flat-panel,
+      .table-panel {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: 0 12px 32px rgba(17, 24, 23, 0.06);
+      }
+
+      .inspector {
+        overflow: hidden;
+      }
+
+      .inspector-head {
+        padding: 14px;
+        background: var(--ink);
+        color: #ffffff;
+      }
+
+      .inspector-head p {
+        margin: 0;
+        color: #cbd7c5;
+      }
+
+      .inspector-body {
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+      }
+
+      .route-step {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr);
+        gap: 9px;
+        align-items: start;
+      }
+
+      .step-index {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border-radius: 999px;
+        background: var(--lime);
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .route-step strong {
+        display: block;
+        font-size: 13px;
+      }
+
+      .route-step span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 9px;
+        padding: 0;
+        margin: 0;
+        list-style: none;
+      }
+
+      .timeline li {
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr);
+        gap: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .timeline strong {
+        color: var(--ink);
+      }
+
+      .flat-panel {
+        padding: 14px;
+      }
+
+      .split-grid {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 16px;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .segmented {
+        display: inline-flex;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--soft);
+      }
+
+      .segment {
+        min-height: 32px;
+        padding: 0 11px;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .segment.active {
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: 0 4px 12px rgba(17, 24, 23, 0.08);
+      }
+
+      .preview-list {
+        display: grid;
+        gap: 9px;
+      }
+
+      .preview-row {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .source-badge {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius);
+        background: var(--amber-soft);
+        color: #7a4a05;
+        font-weight: 900;
+      }
+
+      .source-badge.blue {
+        background: var(--cobalt-soft);
+        color: #203caa;
+      }
+
+      .source-badge.lime {
+        background: rgba(185, 255, 54, 0.36);
+        color: var(--ink);
+      }
+
+      .preview-row strong {
+        display: block;
+      }
+
+      .preview-row span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .table-panel {
+        overflow: hidden;
+      }
+
+      .table-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 13px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+
+      th,
+      td {
+        padding: 12px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        background: var(--soft);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      tbody tr:hover {
+        background: rgba(185, 255, 54, 0.09);
+      }
+
+      .doc-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 16px;
+      }
+
+      .doc-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: start;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        margin-bottom: 16px;
+      }
+
+      .doc-number {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .doc-number strong {
+        font-size: 24px;
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .detail-cell {
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--soft);
+      }
+
+      .detail-cell strong {
+        display: block;
+        margin-top: 3px;
+      }
+
+      .code-block {
+        margin: 0;
+        max-height: 250px;
+        overflow: auto;
+        padding: 12px;
+        border-radius: var(--radius);
+        background: #171d1c;
+        color: #d8fbc0;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .setup-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .setup-tile {
+        min-height: 170px;
+        display: grid;
+        align-content: space-between;
+        gap: 16px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .setup-icon {
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius);
+        background: var(--ink);
+        color: var(--lime);
+        font-weight: 900;
+      }
+
+      .prototype-note {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      @media (max-width: 1160px) {
+        .console-grid,
+        .doc-layout,
+        .split-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .side-panel {
+          position: static;
+        }
+
+        .setup-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 820px) {
+        body {
+          overflow-x: hidden;
+        }
+
+        .app {
+          width: 100vw;
+          max-width: 100vw;
+          overflow: hidden;
+          grid-template-columns: 1fr;
+          grid-template-rows: auto minmax(0, 1fr);
+        }
+
+        .main {
+          max-width: 100vw;
+          overflow: hidden;
+        }
+
+        .rail {
+          position: sticky;
+          top: 0;
+          min-height: 0;
+          height: 62px;
+          flex-direction: row;
+          padding: 10px 7px;
+          overflow-x: auto;
+        }
+
+        .brand-mark,
+        .rail-button {
+          width: 40px;
+          height: 40px;
+        }
+
+        .rail-separator {
+          width: 1px;
+          height: 34px;
+          margin: 0 2px;
+        }
+
+        .rail-bottom {
+          margin-top: 0;
+          margin-left: auto;
+          flex-direction: row;
+        }
+
+        .topbar {
+          position: static;
+          grid-template-columns: 1fr;
+          gap: 10px;
+          padding: 10px;
+          overflow: hidden;
+          max-width: 100%;
+        }
+
+        .status-strip {
+          justify-content: flex-start;
+          flex-wrap: nowrap;
+          max-width: 100%;
+          overflow-x: auto;
+          padding-bottom: 2px;
+        }
+
+        .content {
+          padding: 12px;
+          max-width: 100%;
+          overflow: hidden;
+        }
+
+        .access-layout {
+          grid-template-columns: 1fr;
+          width: 100%;
+          max-width: 100%;
+          overflow: hidden;
+        }
+
+        .access-manifest,
+        .access-panel {
+          padding: 22px;
+        }
+
+        .manifest-title {
+          max-width: 100%;
+          font-size: 23px;
+          line-height: 1.08;
+          word-break: break-word;
+        }
+
+        .manifest-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .metric-strip,
+        .detail-grid,
+        .setup-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .page-title,
+        .panel-heading,
+        .doc-header {
+          grid-template-columns: 1fr;
+          flex-direction: column;
+        }
+
+        th,
+        td {
+          padding: 10px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail" aria-label="Nexflow prototype navigation">
+        <div class="brand-mark">N</div>
+        <div class="rail-separator"></div>
+        <button class="rail-button active" type="button" data-view-target="access" aria-label="Access">AC</button>
+        <button class="rail-button" type="button" data-view-target="console" aria-label="Console">OC</button>
+        <button class="rail-button" type="button" data-view-target="shopee" aria-label="Shopee Intake">SP</button>
+        <button class="rail-button" type="button" data-view-target="detail" aria-label="Bill Detail">BD</button>
+        <div class="rail-bottom">
+          <button class="rail-button" type="button" data-view-target="setup" aria-label="Setup">ST</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <label class="command">
+            <span class="command-kicker">NX</span>
+            <input value="Shopee live -> ขายสินค้าและบริการ -> SML SI" aria-label="Command" />
+          </label>
+          <div class="status-strip">
+            <span class="chip lime"><span class="dot"></span> Backend healthy</span>
+            <span class="chip blue"><span class="dot blue"></span> Henna.milkford live</span>
+            <span class="chip">84 sent bills</span>
+            <span class="chip warn">0 IMAP</span>
+          </div>
+        </header>
+
+        <div class="content">
+          <section class="view active" data-view="access">
+            <div class="access-layout">
+              <div class="access-manifest">
+                <div class="wordmark">
+                  <div class="brand-mark">N</div>
+                  <div class="wordmark-text">
+                    <strong>Nexflow</strong>
+                    <span>Operations Console</span>
+                  </div>
+                </div>
+
+                <div>
+                  <p class="small-label">CUSTOMER DEMO INSTANCE</p>
+                  <h1 class="manifest-title">Marketplace orders become <mark>SI documents</mark> without changing the working flow.</h1>
+                </div>
+
+                <div class="manifest-grid">
+                  <div class="manifest-cell">
+                    <span class="small-label">ROUTE</span>
+                    <strong>saleinvoice</strong>
+                  </div>
+                  <div class="manifest-cell">
+                    <span class="small-label">DOC FORMAT</span>
+                    <strong>SI</strong>
+                  </div>
+                  <div class="manifest-cell">
+                    <span class="small-label">ACTIVE SHOP</span>
+                    <strong>1 live</strong>
+                  </div>
+                  <div class="manifest-cell">
+                    <span class="small-label">CURRENT STATUS</span>
+                    <strong>sent</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="access-panel">
+                <div class="panel-heading">
+                  <div>
+                    <h1>เข้าสู่ Nexflow</h1>
+                    <p>คอนโซลสำหรับตรวจคิว Marketplace, ตรวจเส้นทาง SML และดูเอกสารที่ส่งแล้ว</p>
+                  </div>
+                  <span class="chip lime">Ready</span>
+                </div>
+
+                <form class="form-stack">
+                  <div class="field">
+                    <label for="email">Email</label>
+                    <input id="email" value="admin@nexflow.local" autocomplete="username" />
+                  </div>
+                  <div class="field">
+                    <label for="password">Password</label>
+                    <input id="password" type="password" value="demo-password" autocomplete="current-password" />
+                  </div>
+                  <div class="field">
+                    <label for="workspace">Workspace</label>
+                    <select id="workspace">
+                      <option>Nexflow production demo - animal-galvanize-tameness</option>
+                    </select>
+                  </div>
+                  <div class="action-row">
+                    <button class="button lime" type="button" data-view-target="console">Open console</button>
+                    <button class="button ghost" type="button" data-view-target="setup">Setup readiness</button>
+                  </div>
+                </form>
+
+                <p class="prototype-note">Prototype only. No API call, import confirm, delete, archive, or SML send is executed from this file.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="view" data-view="console">
+            <div class="page-title">
+              <div class="title-copy">
+                <h1>Operations Console</h1>
+                <p>หน้าหลักแบบ work queue สำหรับ demo เส้นทาง Shopee/Lazada/TikTok ไปยังขายสินค้าและบริการ</p>
+              </div>
+              <div class="action-row">
+                <button class="button ghost" type="button" data-view-target="shopee">Preview import</button>
+                <button class="button lime" type="button" data-view-target="detail">Open sent bill</button>
+              </div>
+            </div>
+
+            <div class="metric-strip">
+              <div class="metric">
+                <span class="metric-label">PRODUCTION BILLS</span>
+                <strong>84</strong>
+                <span>All currently sent</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">SHOPEE SI</span>
+                <strong>46</strong>
+                <span>saleinvoice route</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">LAZADA SI</span>
+                <strong>14</strong>
+                <span>same SI endpoint</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">TIKTOK SI</span>
+                <strong>24</strong>
+                <span>same SI endpoint</span>
+              </div>
+            </div>
+
+            <div class="console-grid">
+              <section class="lane-board" aria-label="Work queue">
+                <div class="lane">
+                  <div class="lane-header">
+                    <span class="lane-label">INTAKE</span>
+                    <span class="count-pill">0</span>
+                  </div>
+                  <article class="work-card">
+                    <div class="work-top">
+                      <div>
+                        <div class="work-id">Shopee preview</div>
+                        <div class="work-source">No pending confirm</div>
+                      </div>
+                      <span class="chip">Idle</span>
+                    </div>
+                    <div class="route-line">live shop -> preview first</div>
+                    <div class="mini-progress"><span style="width: 100%"></span></div>
+                  </article>
+                </div>
+
+                <div class="lane">
+                  <div class="lane-header">
+                    <span class="lane-label">NEEDS MAPPING</span>
+                    <span class="count-pill">0</span>
+                  </div>
+                  <article class="work-card">
+                    <div class="work-top">
+                      <div>
+                        <div class="work-id">F1 Mapping</div>
+                        <div class="work-source">Auto-learn available</div>
+                      </div>
+                      <span class="chip lime">Clear</span>
+                    </div>
+                    <div class="route-line">item_code + unit_code checked</div>
+                    <div class="mini-progress"><span style="width: 100%"></span></div>
+                  </article>
+                </div>
+
+                <div class="lane">
+                  <div class="lane-header">
+                    <span class="lane-label">READY FOR SML</span>
+                    <span class="count-pill">0</span>
+                  </div>
+                  <article class="work-card">
+                    <div class="work-top">
+                      <div>
+                        <div class="work-id">Bulk send queue</div>
+                        <div class="work-source">No waiting jobs</div>
+                      </div>
+                      <span class="chip">Safe</span>
+                    </div>
+                    <div class="route-line">Retry button remains permission-gated</div>
+                    <div class="mini-progress"><span style="width: 100%"></span></div>
+                  </article>
+                </div>
+
+                <div class="lane">
+                  <div class="lane-header">
+                    <span class="lane-label">SENT</span>
+                    <span class="count-pill">84</span>
+                  </div>
+                  <article class="work-card active">
+                    <div class="work-top">
+                      <div>
+                        <div class="work-id">BF-INV26050083</div>
+                        <div class="work-source">Shopee - SI</div>
+                      </div>
+                      <span class="money">฿790.00</span>
+                    </div>
+                    <div class="route-line">saleinvoice -> /api/v1/ic/sale-invoices</div>
+                    <div class="mini-progress"><span style="width: 100%"></span></div>
+                  </article>
+                  <article class="work-card">
+                    <div class="work-top">
+                      <div>
+                        <div class="work-id">BF-INV26050082</div>
+                        <div class="work-source">Lazada - SI</div>
+                      </div>
+                      <span class="money">฿1,240.00</span>
+                    </div>
+                    <div class="route-line">doc_format_code SI</div>
+                    <div class="mini-progress"><span style="width: 100%"></span></div>
+                  </article>
+                  <article class="work-card">
+                    <div class="work-top">
+                      <div>
+                        <div class="work-id">BF-INV26050081</div>
+                        <div class="work-source">TikTok - SI</div>
+                      </div>
+                      <span class="money">฿459.00</span>
+                    </div>
+                    <div class="route-line">SML response recorded</div>
+                    <div class="mini-progress"><span style="width: 100%"></span></div>
+                  </article>
+                </div>
+              </section>
+
+              <aside class="side-panel">
+                <section class="inspector">
+                  <div class="inspector-head">
+                    <h2>Route Inspector</h2>
+                    <p>Marketplace sale path for this demo</p>
+                  </div>
+                  <div class="inspector-body">
+                    <div class="route-step">
+                      <span class="step-index">1</span>
+                      <div>
+                        <strong>Shopee Open API</strong>
+                        <span>Henna.milkford, live, shop_id 264993963</span>
+                      </div>
+                    </div>
+                    <div class="route-step">
+                      <span class="step-index">2</span>
+                      <div>
+                        <strong>Preview-first import</strong>
+                        <span>Confirm writes local bills only after review</span>
+                      </div>
+                    </div>
+                    <div class="route-step">
+                      <span class="step-index">3</span>
+                      <div>
+                        <strong>ขายสินค้าและบริการ</strong>
+                        <span>channel_defaults endpoint saleinvoice, format SI</span>
+                      </div>
+                    </div>
+                    <div class="route-step">
+                      <span class="step-index">4</span>
+                      <div>
+                        <strong>SML REST v4</strong>
+                        <span>/api/v1/ic/sale-invoices, ASCII JSON body</span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="flat-panel">
+                  <h2>Recent audit trail</h2>
+                  <ul class="timeline">
+                    <li><span>10:42</span><strong>preview opened</strong></li>
+                    <li><span>10:45</span><strong>route preview checked</strong></li>
+                    <li><span>10:47</span><strong>SML response stored</strong></li>
+                  </ul>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view" data-view="shopee">
+            <div class="page-title">
+              <div class="title-copy">
+                <h1>Shopee Intake</h1>
+                <p>ตัวอย่างหน้าพรีวิวก่อนยืนยัน import โดยเน้นสถานะ connection, duplicate, mapping และ SI route</p>
+              </div>
+              <span class="chip blue">Live shop connected</span>
+            </div>
+
+            <div class="split-grid">
+              <section class="flat-panel">
+                <div class="toolbar">
+                  <div>
+                    <h2>Preview window</h2>
+                    <p class="prototype-note">Order date basis, preview only</p>
+                  </div>
+                  <div class="segmented" aria-label="Date basis">
+                    <button class="segment active" type="button">Paid</button>
+                    <button class="segment" type="button">Shipped</button>
+                    <button class="segment" type="button">Created</button>
+                  </div>
+                </div>
+
+                <div class="preview-list">
+                  <div class="preview-row">
+                    <div class="source-badge">SP</div>
+                    <div>
+                      <strong>250531AZK72 - ready</strong>
+                      <span>2 items mapped, customer AR00004, SI endpoint selected</span>
+                    </div>
+                    <span class="money">฿790.00</span>
+                  </div>
+                  <div class="preview-row">
+                    <div class="source-badge blue">SP</div>
+                    <div>
+                      <strong>250531BRX19 - duplicate</strong>
+                      <span>Existing bill found, confirm will skip this order</span>
+                    </div>
+                    <span class="chip warn">Skip</span>
+                  </div>
+                  <div class="preview-row">
+                    <div class="source-badge lime">SP</div>
+                    <div>
+                      <strong>250531CGM44 - ready</strong>
+                      <span>Shipping item fallback and unit code available</span>
+                    </div>
+                    <span class="money">฿459.00</span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="table-panel">
+                <div class="table-header">
+                  <div>
+                    <h2>Import summary</h2>
+                    <span class="table-label">NO WRITE UNTIL CONFIRM</span>
+                  </div>
+                  <button class="button lime" type="button" disabled>Confirm import</button>
+                </div>
+                <table>
+                  <tbody>
+                    <tr>
+                      <th>Shop</th>
+                      <td>Henna.milkford</td>
+                    </tr>
+                    <tr>
+                      <th>Connected</th>
+                      <td>Live Shopee Open API</td>
+                    </tr>
+                    <tr>
+                      <th>Ready</th>
+                      <td>2 orders</td>
+                    </tr>
+                    <tr>
+                      <th>Duplicates</th>
+                      <td>1 order</td>
+                    </tr>
+                    <tr>
+                      <th>Route</th>
+                      <td>saleinvoice / SI / ขายสินค้าและบริการ</td>
+                    </tr>
+                    <tr>
+                      <th>SML Target</th>
+                      <td>SML #1 REST :8086</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </section>
+            </div>
+          </section>
+
+          <section class="view" data-view="detail">
+            <div class="doc-layout">
+              <div>
+                <section class="doc-header">
+                  <div>
+                    <div class="doc-number">
+                      <strong>BF-INV26050083</strong>
+                      <span class="chip lime">sent</span>
+                      <span class="chip">Shopee</span>
+                    </div>
+                    <div class="detail-grid">
+                      <div class="detail-cell">
+                        <span class="metric-label">DOCUMENT ROUTE</span>
+                        <strong>saleinvoice</strong>
+                      </div>
+                      <div class="detail-cell">
+                        <span class="metric-label">DOC FORMAT</span>
+                        <strong>SI</strong>
+                      </div>
+                      <div class="detail-cell">
+                        <span class="metric-label">CUSTOMER</span>
+                        <strong>AR00004</strong>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="action-row">
+                    <button class="button ghost" type="button">Route preview</button>
+                    <button class="button lime" type="button" disabled>Send to SML</button>
+                    <button class="button danger" type="button">Archive</button>
+                  </div>
+                </section>
+
+                <section class="table-panel">
+                  <div class="table-header">
+                    <div>
+                      <h2>Items</h2>
+                      <span class="table-label">Editable behavior remains unchanged in real app</span>
+                    </div>
+                    <span class="money">Total ฿790.00</span>
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Code</th>
+                        <th>Qty</th>
+                        <th>Unit</th>
+                        <th>Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>ครีมบำรุงผิว 50ml</td>
+                        <td>SKU-HN-050</td>
+                        <td>1</td>
+                        <td>ชิ้น</td>
+                        <td>฿590.00</td>
+                      </tr>
+                      <tr>
+                        <td>ค่าขนส่ง Shopee</td>
+                        <td>SHIPPING</td>
+                        <td>1</td>
+                        <td>ครั้ง</td>
+                        <td>฿200.00</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </section>
+              </div>
+
+              <aside class="side-panel">
+                <section class="inspector">
+                  <div class="inspector-head">
+                    <h2>SML Send Path</h2>
+                    <p>Route preview remains visible before retry</p>
+                  </div>
+                  <div class="inspector-body">
+                    <div class="route-step">
+                      <span class="step-index">SI</span>
+                      <div>
+                        <strong>/api/v1/ic/sale-invoices</strong>
+                        <span>doc_format_code=SI, wh=WH-01, shelf=SH-01</span>
+                      </div>
+                    </div>
+                    <pre class="code-block">{
+  "doc_no": "BF-INV26050083",
+  "cust_code": "AR00004",
+  "doc_format_code": "SI",
+  "items": [
+    { "item_code": "SKU-HN-050", "qty": 1 },
+    { "item_code": "SHIPPING", "qty": 1 }
+  ]
+}</pre>
+                  </div>
+                </section>
+
+                <section class="flat-panel">
+                  <h2>Timeline</h2>
+                  <ul class="timeline">
+                    <li><span>10:21</span><strong>created from Shopee preview</strong></li>
+                    <li><span>10:23</span><strong>mapped to SI route</strong></li>
+                    <li><span>10:24</span><strong>sent to SML</strong></li>
+                    <li><span>10:24</span><strong>SML response stored</strong></li>
+                  </ul>
+                </section>
+              </aside>
+            </div>
+          </section>
+
+          <section class="view" data-view="setup">
+            <div class="page-title">
+              <div class="title-copy">
+                <h1>Setup Readiness</h1>
+                <p>ยังเห็นสถานะ setup ชัดเจน แม้ first screen จะเป็น dashboard/console</p>
+              </div>
+              <span class="chip warn">0 IMAP accounts</span>
+            </div>
+
+            <div class="setup-grid">
+              <article class="setup-tile">
+                <div>
+                  <div class="setup-icon">SP</div>
+                  <h2>Shopee Open API</h2>
+                  <p>1 active live shop connection. OAuth callback uses fixed ngrok domain.</p>
+                </div>
+                <button class="button ghost" type="button">Manage shops</button>
+              </article>
+              <article class="setup-tile">
+                <div>
+                  <div class="setup-icon">SI</div>
+                  <h2>Channel Defaults</h2>
+                  <p>Marketplace sale documents route to saleinvoice with doc_format_code SI.</p>
+                </div>
+                <button class="button ghost" type="button">Review routes</button>
+              </article>
+              <article class="setup-tile">
+                <div>
+                  <div class="setup-icon">IM</div>
+                  <h2>Email Intake</h2>
+                  <p>No active IMAP accounts. Gmail setup still available with App Password.</p>
+                </div>
+                <button class="button ghost" type="button">Add inbox</button>
+              </article>
+              <article class="setup-tile">
+                <div>
+                  <div class="setup-icon">SM</div>
+                  <h2>SML Parties</h2>
+                  <p>Customer/supplier cache can be refreshed. Quick-create stays out.</p>
+                </div>
+                <button class="button ghost" type="button">Refresh parties</button>
+              </article>
+              <article class="setup-tile">
+                <div>
+                  <div class="setup-icon">LG</div>
+                  <h2>Logs</h2>
+                  <p>Audit and SML response history remain primary support evidence.</p>
+                </div>
+                <button class="button ghost" type="button">Open logs</button>
+              </article>
+              <article class="setup-tile">
+                <div>
+                  <div class="setup-icon">IN</div>
+                  <h2>Instance Settings</h2>
+                  <p>Runtime config stays in app_settings while locked fields stay in env.</p>
+                </div>
+                <button class="button ghost" type="button">Open settings</button>
+              </article>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      const buttons = Array.from(document.querySelectorAll("[data-view-target]"));
+      const views = Array.from(document.querySelectorAll("[data-view]"));
+
+      function activateView(name) {
+        views.forEach((view) => {
+          view.classList.toggle("active", view.dataset.view === name);
+        });
+        buttons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.viewTarget === name);
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => activateView(button.dataset.viewTarget));
+      });
+    </script>
+  </body>
+</html>

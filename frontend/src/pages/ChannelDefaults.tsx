@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  CheckCircle2,
   ChevronDown,
+  CircleAlert,
   Info,
   Pencil,
 } from 'lucide-react'
@@ -19,7 +21,7 @@ import {
 import { DataTable } from '@/components/common/DataTable'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
-import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
+import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
@@ -51,6 +53,9 @@ const PHASE_PLUS_CHANNEL_SLOTS: Array<{
   ...(ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee' as ChannelKey, bill_type: 'sale' as const }]
     : []),
+  ...(ENABLE_SHOPEE_REALTIME_OPS && ENABLE_SALES_ORDERS
+    ? [{ channel: 'shopee_realtime' as ChannelKey, bill_type: 'sale' as const }]
+    : []),
   ...(ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'lazada' as ChannelKey, bill_type: 'sale' as const }]
     : []),
@@ -76,6 +81,9 @@ function displayChannelLabel(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type
 function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'endpoint' | 'doc_format_code'>) {
   if (row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt') {
     return { label: 'รับชำระหนี้', to: '/shopee-settlements' }
+  }
+  if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
+    return { label: 'Shopee Realtime', to: '/shopee-operations' }
   }
   if (ENABLE_SALES_ORDERS && (row.channel === 'shopee' || row.channel === 'lazada' || row.channel === 'tiktok') && row.bill_type === 'sale') {
     const route = `${row.endpoint ?? ''} ${row.doc_format_code ?? ''}`.toLowerCase()
@@ -132,20 +140,16 @@ function EndpointCell({ row }: { row: ChannelDefaultRow }) {
 }
 
 function HelpBanner() {
-  const [open, setOpen] = useState(true)
-  const phase1 = PHASE < 2
-  const enabledSourceLabels = [
-    ENABLE_CHAT ? 'LINE' : '',
-    'Shopee',
-    ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS ? 'Lazada' : '',
-    ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS ? 'TikTok' : '',
-  ].filter(Boolean).join(' / ')
+  const [open, setOpen] = useState(false)
   return (
-    <Card className="border-info/30 bg-info/5">
+    <Card className="border-border/70 bg-muted/20 shadow-none">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-foreground hover:bg-info/10">
-          <Info className="h-4 w-4 text-info" />
-          <span>{phase1 ? 'ตั้งค่าเส้นทางเอกสาร SML สำหรับ Phase 1' : 'หน้านี้ใช้ทำอะไร — อ่านก่อนตั้งค่า'}</span>
+        <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-medium text-foreground hover:bg-muted/45">
+          <Info className="h-4 w-4 text-accent-strong" />
+          <span>รายละเอียดสำหรับแอดมิน</span>
+          <span className="hidden text-xs font-normal text-muted-foreground sm:inline">
+            endpoint, doc format และเลขเอกสาร SML
+          </span>
           <ChevronDown
             className={cn(
               'ml-auto h-4 w-4 text-muted-foreground transition-transform',
@@ -154,58 +158,16 @@ function HelpBanner() {
           />
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <CardContent className="space-y-3 border-t border-info/20 px-4 pt-3 text-sm">
-            {phase1 ? (
-              <p className="text-muted-foreground">
-                ใน Phase 1 หน้านี้เปิดเฉพาะเส้นทางที่พร้อมใช้งานก่อน ได้แก่{' '}
-                <b>Email Shopee → บิลซื้อ</b>{ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? <> และ <b>Shopee → บิลขาย</b></> : null}{ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS ? <> และ <b>Lazada Excel → บิลขาย</b></> : null}{ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS ? <> และ <b>TikTok Excel → บิลขาย</b></> : null}.
-                ใช้กำหนดปลายทางที่จะส่งเอกสารเข้า SML ได้แก่ เมนู SML รหัสประเภทเอกสาร
-                และรูปแบบเลขเอกสาร. ส่วนคู่ค้า คลัง พื้นที่เก็บ และภาษี จะเลือกในขั้นตอนส่งบิล.
-              </p>
-            ) : (
-              <p className="text-muted-foreground">
-                บิลทุกใบที่ระบบรับเข้ามา ({enabledSourceLabels}) สุดท้ายต้องส่งเข้า{' '}
-                <b>SML ERP</b> เพื่อบันทึก. หน้านี้กำหนดว่า <b>"แต่ละช่องทาง"</b> จะ:
-              </p>
-            )}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-md border border-border bg-card p-3">
-                <div className="mb-1 text-sm font-semibold">1. ส่งเข้าเมนูไหนใน SML</div>
-                <p className="text-xs text-muted-foreground">
-                  {phase1
-                    ? ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
-                      ? <>Phase 1 เปิดปลายทาง {'ซื้อ -> ใบสั่งซื้อ'}, {'ขาย -> ใบสั่งขาย'} และ {'ขาย -> ขายสินค้าและบริการ'} เพื่อให้เอกสารถูกบันทึกในเมนูที่สัมพันธ์กับประเภทบิล</>
-                      : <>Phase 1 เปิดปลายทาง {'ซื้อ -> ใบสั่งซื้อ'} สำหรับบิลซื้อจากอีเมลก่อน</>
-                    : <>เลือกปลายทางของบิล เช่น {'ซื้อ -> ใบสั่งซื้อ'} หรือ {'ขาย -> ขายสินค้าและบริการ'} เพื่อให้เอกสารถูกบันทึกในเมนูที่ถูกต้อง</>}
-                </p>
-              </div>
-              <div className="rounded-md border border-border bg-card p-3">
-                <div className="mb-1 text-sm font-semibold">2. รหัสประเภทเอกสาร</div>
-                <p className="text-xs text-muted-foreground">
-                รหัสที่ SML ใช้แยกชนิดเอกสาร เช่น <code>PO</code> สำหรับใบสั่งซื้อ หรือ <code>SR</code> สำหรับใบสั่งขาย.
-                  ตั้งให้ตรงกับระบบ SML
-                </p>
-              </div>
-              <div className="rounded-md border border-border bg-card p-3">
-                <div className="mb-1 text-sm font-semibold">3. เลขเอกสาร</div>
-                <p className="text-xs text-muted-foreground">
-                  {phase1
-                    ? 'ตั้ง prefix และรูปแบบเลขรัน doc_no ของช่องทางนี้ ค่าประจำบิลอื่นจะอยู่ใน dialog ก่อนส่ง SML'
-                    : 'ตั้ง prefix และรูปแบบเลขรัน doc_no ของช่องทางนี้ ค่าประจำบิลอื่นจะเลือกตอนส่ง SML'}
-                </p>
-              </div>
+          <CardContent className="grid gap-2 border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground md:grid-cols-3">
+            <div>
+              <span className="font-medium text-foreground">ปลายทาง SML:</span> เลือกเมนูที่เอกสารจะถูกส่งเข้า เช่น ขายสินค้าและบริการ หรือใบสั่งซื้อ
             </div>
-            {phase1 ? (
-              <p className="rounded-md bg-info/10 px-3 py-2 text-xs text-info">
-                หน้าเส้นทางเอกสาร SML เก็บเฉพาะปลายทาง SML, doc_format_code และ doc_no.
-                ตอนส่งบิลจริงระบบจะใช้ค่าที่สัมพันธ์กับประเภทบิล และเปิด dialog ให้กรอกค่าที่ต้องเลือกเฉพาะบิลนั้น.
-              </p>
-            ) : (
-              <p className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
-                <b>ถ้าตั้งปลายทางหรือเลขเอกสารไม่ครบ:</b> ระบบจะยังไม่รู้ว่าจะส่งเอกสารเข้าเมนู SML ไหน
-                หรือควรออกเลขเอกสารรูปแบบใด. ค่าประจำบิลจะเลือกใน dialog ตอนส่ง SML.
-              </p>
-            )}
+            <div>
+              <span className="font-medium text-foreground">รหัสเอกสาร:</span> ใช้ doc_format_code จาก SML และใช้เลขรันแบบที่ SML แสดงเอกสารได้จริง
+            </div>
+            <div>
+              <span className="font-medium text-foreground">ค่าเริ่มต้น:</span> ลูกค้า คลัง VAT และบัญชีรับเงินจะถูกเติมใน dialog ก่อนส่งจริง
+            </div>
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
@@ -289,6 +251,14 @@ export default function ChannelDefaults() {
     return !r.endpoint || !r.doc_format_code || !r.doc_prefix || !r.doc_running_format
   }
 
+  const unsetRoutes = tableRows.filter(isRouteUnset)
+  const saleInvoiceRoute = tableRows.find((r) => (
+    r.bill_type === 'sale' &&
+    (r.channel === 'shopee' || r.channel === 'shopee_realtime' || r.channel === 'lazada' || r.channel === 'tiktok') &&
+    `${r.endpoint ?? ''} ${r.doc_format_code ?? ''}`.toLowerCase().includes('saleinvoice')
+  ))
+  const settlementRoute = tableRows.find((r) => r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt')
+
   const configSummary = (r: ChannelDefaultRow) => {
     if (r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt') {
       return (
@@ -316,13 +286,71 @@ export default function ChannelDefaults() {
         description={
           PHASE < 2
             ? ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
-              ? 'เลือกปลายทาง SML, doc_format_code และรูปแบบเลขเอกสารสำหรับบิลซื้อ Shopee และบิลขาย Marketplace Excel'
-              : 'เลือกปลายทาง SML, doc_format_code และรูปแบบเลขเอกสารสำหรับบิลซื้อ Shopee'
-            : 'กำหนดว่าแต่ละช่องทางจะส่งบิลเข้าเมนูไหนใน SML พร้อมรหัสเอกสารและรูปแบบเลขเอกสาร'
+              ? 'ตรวจความพร้อมเส้นทางขายหลักและบิลซื้อก่อนส่งเอกสารเข้า SML'
+              : 'ตรวจความพร้อมเส้นทางบิลซื้อ Shopee ก่อนส่งเข้า SML'
+            : 'ตรวจว่าแต่ละช่องทางพร้อมส่งเข้าเมนู SML ที่ถูกต้องหรือยัง'
         }
       />
 
       <HelpBanner />
+
+      <Card className="border-border/70 bg-card shadow-none">
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+            {unsetRoutes.length > 0 ? (
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+            )}
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground">
+                  {unsetRoutes.length > 0 ? 'ยังมีเส้นทางที่ต้องตั้งค่าก่อนใช้งานจริง' : 'เส้นทางเอกสารพร้อมใช้งาน'}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  งานขายหลักควรชี้ไปขายสินค้าและบริการ / SI ก่อนเริ่ม import หรือส่งเข้า SML
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge variant="outline" className="bg-background text-xs">
+                พร้อม {tableRows.length - unsetRoutes.length}/{tableRows.length}
+              </Badge>
+              {unsetRoutes.slice(0, 3).map((route) => (
+                <Badge key={`${route.channel}/${route.bill_type}`} variant="secondary" className="text-xs">
+                  ต้องตั้งค่า: {displayChannelLabel(route)}
+                </Badge>
+              ))}
+            </div>
+          </div>
+          <div className="grid gap-2 text-xs md:grid-cols-2">
+            <div className={cn(
+              'rounded-md border px-3 py-2',
+              saleInvoiceRoute ? 'border-success/25 bg-success/[0.04]' : 'border-warning/30 bg-warning/[0.06]',
+            )}>
+              <div className="font-medium text-foreground">เส้นทางขายหลัก</div>
+              <div className="mt-0.5 text-muted-foreground">
+                Marketplace / Shopee → ขายสินค้าและบริการ
+                <span className="ml-1 font-mono text-foreground">
+                  {saleInvoiceRoute?.doc_format_code || 'SI'}
+                </span>
+              </div>
+            </div>
+            <div className={cn(
+              'rounded-md border px-3 py-2',
+              settlementRoute && !isRouteUnset(settlementRoute) ? 'border-success/25 bg-success/[0.04]' : 'border-warning/30 bg-warning/[0.06]',
+            )}>
+              <div className="font-medium text-foreground">รับชำระ Shopee</div>
+              <div className="mt-0.5 text-muted-foreground">
+                ลูกหนี้ → รับชำระหนี้
+                <span className="ml-1 font-mono text-foreground">
+                  {settlementRoute?.doc_format_code || 'RC'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <DataTable<ChannelDefaultRow>
         data={tableRows}
@@ -331,67 +359,81 @@ export default function ChannelDefaults() {
         columns={[
           {
             key: 'channel',
-            header: 'ช่องทาง',
-            cell: (r) => (
-              <span className="font-medium">
-                {displayChannelLabel(r)}
-              </span>
-            ),
-          },
-          {
-            key: 'bill_type',
-            header: 'ประเภท',
-            cell: (r) => (
-              <Badge
-                variant="secondary"
-                className={cn(
-                  'h-5 px-1.5 text-[10px] font-medium',
-                  r.bill_type === 'purchase'
-                    ? 'bg-warning/15 text-warning hover:bg-warning/20'
-                    : r.bill_type === 'ar_receipt'
-                      ? 'bg-success/15 text-success hover:bg-success/20'
-                    : 'bg-info/15 text-info hover:bg-info/20',
-                )}
-              >
-                {r.bill_type === 'purchase' ? 'บิลซื้อ' : r.bill_type === 'ar_receipt' ? 'ลูกหนี้' : 'บิลขาย'}
-              </Badge>
-            ),
+            header: 'เส้นทาง',
+            cell: (r) => {
+              const menu = workMenuFor(r)
+              return (
+                <div className="min-w-[190px] space-y-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium text-foreground">
+                      {displayChannelLabel(r)}
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      className={cn(
+                        'h-5 px-1.5 text-[10px] font-medium',
+                        r.bill_type === 'purchase'
+                          ? 'bg-warning/15 text-warning hover:bg-warning/20'
+                          : r.bill_type === 'ar_receipt'
+                            ? 'bg-success/15 text-success hover:bg-success/20'
+                            : 'bg-info/15 text-info hover:bg-info/20',
+                      )}
+                    >
+                      {r.bill_type === 'purchase' ? 'บิลซื้อ' : r.bill_type === 'ar_receipt' ? 'รับชำระ' : 'บิลขาย'}
+                    </Badge>
+                  </div>
+                  {menu ? (
+                    <Link to={menu.to} className="text-xs font-medium text-link hover:underline">
+                      เปิดคิวงาน: {menu.label}
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">ไม่มีคิวงานประจำ</span>
+                  )}
+                </div>
+              )
+            },
           },
           {
             key: 'endpoint',
-            header: 'ส่งเข้า SML',
-            cell: (r) => <EndpointCell row={r} />,
+            header: 'ปลายทาง SML',
+            cell: (r) => (
+              <div className="min-w-[240px] space-y-2">
+                <EndpointCell row={r} />
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-muted-foreground">รหัสเอกสาร</span>
+                  {r.doc_format_code ? (
+                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono font-medium text-foreground">
+                      {r.doc_format_code}
+                    </span>
+                  ) : (
+                    <span className="text-warning">ยังไม่ตั้ง</span>
+                  )}
+                </div>
+              </div>
+            ),
           },
           {
-            key: 'work_menu',
-            header: 'เมนูงาน',
+            key: 'readiness',
+            header: 'ความพร้อม',
             cell: (r) => {
-              const menu = workMenuFor(r)
-              if (!menu) return <span className="text-xs text-muted-foreground">—</span>
+              const unset = isRouteUnset(r)
               return (
-                <Link to={menu.to} className="text-xs font-medium text-primary hover:underline">
-                  {menu.label}
-                </Link>
+                <div className="min-w-[190px] space-y-1">
+                  <Badge
+                    variant={unset ? 'secondary' : 'outline'}
+                    className={cn(
+                      'h-6 px-2 text-xs',
+                      unset
+                        ? 'bg-warning/15 text-warning hover:bg-warning/20'
+                        : 'border-success/30 bg-success/[0.04] text-success',
+                    )}
+                  >
+                    {unset ? 'ต้องตั้งค่าก่อนใช้จริง' : 'พร้อมใช้'}
+                  </Badge>
+                  <div>{configSummary(r)}</div>
+                </div>
               )
             },
-          },
-          {
-            key: 'doc_format',
-            header: 'รหัสเอกสาร',
-            cell: (r) => {
-              return r.doc_format_code ? (
-                <span className="font-mono text-xs font-medium text-foreground">
-                  {r.doc_format_code}
-                </span>
-              ) : (
-                <span className="text-xs text-warning">ยังไม่ตั้ง</span>
-              )
-            },
-          },
-          {
-            key: 'config_summary',
-            header: 'ค่าใช้งาน',
-            cell: (r) => configSummary(r),
           },
           {
             key: 'updated',

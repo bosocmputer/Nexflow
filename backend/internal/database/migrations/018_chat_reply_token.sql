@@ -2,7 +2,7 @@
 --
 -- LINE replyToken from inbound webhook events is single-use and free (Reply
 -- API doesn't count against the 200/month Free OA quota). Admin replies in
--- BillFlow today always go through Push API → quota burns fast.
+-- Nexflow today always go through Push API → quota burns fast.
 --
 -- This migration stores the latest replyToken per conversation so admin
 -- replies can try Reply first, fallback to Push if expired/consumed.

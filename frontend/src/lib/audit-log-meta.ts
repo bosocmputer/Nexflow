@@ -89,8 +89,9 @@ export const ACTION_META: Record<string, ActionMeta> = {
   user_created: { label: 'เพิ่มผู้ใช้ระบบ', emoji: '➕', tone: 'primary' },
   user_updated: { label: 'แก้ไขผู้ใช้ระบบ', emoji: '✏️', tone: 'info' },
   user_deleted: { label: 'ลบผู้ใช้ระบบ', emoji: '🗑️', tone: 'danger' },
-  // Setup / demo maintenance
-  demo_test_data_reset: { label: 'ล้างข้อมูลทดสอบ', emoji: '🧹', tone: 'warning' },
+  // Setup / maintenance
+  maintenance_data_reset: { label: 'รีเซ็ตข้อมูลชั่วคราว', emoji: '🧹', tone: 'warning' },
+  demo_test_data_reset: { label: 'รีเซ็ตข้อมูลชั่วคราว', emoji: '🧹', tone: 'warning' },
   // Channel defaults
   channel_default_updated: { label: 'แก้ไขเส้นทาง SML', emoji: '⚙️', tone: 'info' },
   channel_default_deleted: { label: 'ลบเส้นทาง SML', emoji: '🗑️', tone: 'muted' },
@@ -104,6 +105,13 @@ export const ACTION_META: Record<string, ActionMeta> = {
   line_oa_created: { label: 'เพิ่ม LINE OA', emoji: '➕', tone: 'primary' },
   line_oa_updated: { label: 'แก้ไข LINE OA', emoji: '✏️', tone: 'info' },
   line_oa_deleted: { label: 'ลบ LINE OA', emoji: '🗑️', tone: 'danger' },
+  line_notification_sender_created: { label: 'เพิ่ม LINE แจ้งเตือน', emoji: '➕', tone: 'primary' },
+  line_notification_sender_updated: { label: 'แก้ไข LINE แจ้งเตือน', emoji: '✏️', tone: 'info' },
+  line_notification_sender_tested: { label: 'ทดสอบ LINE แจ้งเตือน', emoji: '📡', tone: 'info' },
+  line_notification_recipient_created: { label: 'เพิ่มผู้รับ LINE แจ้งเตือน', emoji: '➕', tone: 'primary' },
+  line_notification_recipient_updated: { label: 'แก้ไขผู้รับ LINE แจ้งเตือน', emoji: '✏️', tone: 'info' },
+  line_notification_recipient_deleted: { label: 'ลบผู้รับ LINE แจ้งเตือน', emoji: '🗑️', tone: 'danger' },
+  line_notification_recipient_tested: { label: 'ส่ง LINE ทดสอบ', emoji: '📤', tone: 'info' },
   // Chat CRM lite (Phase 4.7-4.9)
   chat_phone_saved: { label: 'บันทึกเบอร์ลูกค้า', emoji: '📞', tone: 'info' },
   chat_note_created: { label: 'เพิ่ม note ภายใน', emoji: '📝', tone: 'info' },
@@ -149,13 +157,13 @@ export const SOURCE_TONE: Record<string, string> = {
   shopee_shipped: 'bg-warning/10 text-warning',
   lazada: 'bg-info/10 text-info',
   tiktok: 'bg-muted text-foreground',
-  sml: 'bg-primary/10 text-primary',
+  sml: 'bg-primary/10 text-accent-strong',
   system: 'bg-muted text-muted-foreground',
   setup: 'bg-warning/10 text-warning',
   channel_defaults: 'bg-muted text-muted-foreground',
   catalog: 'bg-muted text-muted-foreground',
   settings: 'bg-muted text-muted-foreground',
-  ui: 'bg-primary/10 text-primary',
+  ui: 'bg-primary/10 text-accent-strong',
   shopee_api: 'bg-warning/10 text-warning',
   shopee_settlement: 'bg-success/10 text-success',
 }
@@ -376,6 +384,7 @@ export function summarize(log: AuditLog): string {
       ].filter(Boolean).join(' · ')
     case 'shopee_duplicate_merged':
       return [d.order_id ?? d.shopee_order_id, d.bill_id ? `รวมเข้าบิล ${String(d.bill_id).slice(0, 8)}…` : ''].filter(Boolean).join(' · ')
+    case 'maintenance_data_reset':
     case 'demo_test_data_reset': {
       const docs = d.before_documents ?? {}
       const imports = d.before_imports ?? {}
@@ -392,7 +401,7 @@ export function summarize(log: AuditLog): string {
         d.reset_email_dedup ? 'ล้างประวัติอีเมลและรีเซ็ตตำแหน่งอ่านล่าสุด' : '',
       ].filter(Boolean)
       return [
-        `ล้างบิลทดสอบ ${totalDocs.toLocaleString()} ใบ`,
+        `รีเซ็ตเอกสาร ${totalDocs.toLocaleString()} ใบ`,
         `ล้างประวัติการทำงานเดิม ${logs.toLocaleString()} รายการ`,
         preserved.length ? `เก็บไว้: ${preserved.join(', ')}` : '',
         resetParts.length ? resetParts.join(', ') : 'ไม่รีเซ็ตเลขรัน/ประวัติอีเมล',

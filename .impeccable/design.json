@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-01T00:40:10Z",
+  "title": "Design System: Nexflow",
+  "extensions": {
+    "colorMeta": {
+      "primary-lime": {
+        "role": "primary",
+        "displayName": "Lime Action",
+        "canonical": "hsl(86 100% 53%)",
+        "hex": "#97ff0f",
+        "usage": "Primary action, selected chip, active route, and progress emphasis only."
+      },
+      "graphite-ink": {
+        "role": "neutral",
+        "displayName": "Graphite Ink",
+        "canonical": "hsl(170 17% 8%)",
+        "hex": "#111817",
+        "usage": "Primary text and sidebar base."
+      },
+      "cobalt-link": {
+        "role": "secondary",
+        "displayName": "Cobalt Link",
+        "canonical": "hsl(228 67% 34%)",
+        "hex": "#1d3491",
+        "usage": "Readable text links and actions on light backgrounds."
+      },
+      "operations-background": {
+        "role": "neutral",
+        "displayName": "Operations Background",
+        "canonical": "hsl(72 24% 95%)",
+        "hex": "#f4f5ef",
+        "usage": "Main app background."
+      },
+      "card-surface": {
+        "role": "neutral",
+        "displayName": "Card Surface",
+        "canonical": "hsl(48 100% 99%)",
+        "hex": "#fffefa",
+        "usage": "Tables, compact headers, dialogs, and form panels."
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Product Title",
+        "purpose": "Compact operations headers and page titles."
+      },
+      "body": {
+        "displayName": "Operations Body",
+        "purpose": "Normal UI copy, descriptions, and row metadata."
+      },
+      "label": {
+        "displayName": "Compact Label",
+        "purpose": "Filters, badges, status chips, metadata, and helper text."
+      },
+      "mono": {
+        "displayName": "Document Mono",
+        "purpose": "Document numbers, codes, and identifiers."
+      }
+    },
+    "elevation": {
+      "philosophy": "Tonal layering and borders first; shadows only for overlays or state.",
+      "tokens": {
+        "surface-rest": "none",
+        "popover-lift": "shadow-md",
+        "surface-subtle": "shadow-sm only when a compact container needs separation"
+      }
+    },
+    "motion": {
+      "duration": "150-250ms",
+      "properties": "transform, opacity, color, border-color, background-color",
+      "reducedMotion": "Respect prefers-reduced-motion globally."
+    },
+    "layout": {
+      "maxContentWidth": "1480px for standard app pages",
+      "pagePadding": "20px desktop, 16px detail-heavy routes",
+      "containerRadiusMax": "8px for operational cards"
+    },
+    "rules": [
+      "Lime is rare and never used for small body text on light backgrounds.",
+      "Daily pages show operational work first, not technical internals.",
+      "Related queues share filter bar, date range, pagination, and dialog primitives.",
+      "Dangerous actions explain impact and rollback before final confirmation.",
+      "Do not add decorative gradients, glass effects, oversized hero sections, or nested cards."
+    ]
+  }
+}

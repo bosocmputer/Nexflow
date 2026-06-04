@@ -1,6 +1,17 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BookOpen, Check, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -8,6 +19,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -43,12 +61,30 @@ interface ReviewHotspot {
   firstRoute: string
 }
 
+const DEFAULT_PER_PAGE = 20
+const PAGE_SIZE_OPTIONS = [20, 50, 100] as const
 const emptyDraft: MappingDraft = { raw_name: '', item_code: '', unit_code: '' }
 
+function readURLPage(params: URLSearchParams): number {
+  const n = Number(params.get('page'))
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
+
+function readURLPerPage(params: URLSearchParams): typeof PAGE_SIZE_OPTIONS[number] {
+  const n = Number(params.get('per_page'))
+  return PAGE_SIZE_OPTIONS.includes(n as typeof PAGE_SIZE_OPTIONS[number])
+    ? n as typeof PAGE_SIZE_OPTIONS[number]
+    : DEFAULT_PER_PAGE
+}
+
 export default function Mappings() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [mappings, setMappings] = useState<Mapping[]>([])
   const [stats, setStats] = useState<MappingStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(() => readURLPage(searchParams))
+  const [perPage, setPerPage] = useState<typeof PAGE_SIZE_OPTIONS[number]>(() => readURLPerPage(searchParams))
+  const [pageJumpInput, setPageJumpInput] = useState(() => String(readURLPage(searchParams)))
   const [editId, setEditId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState<MappingDraft>(emptyDraft)
   const [newMapping, setNewMapping] = useState<MappingDraft>(emptyDraft)
@@ -57,6 +93,7 @@ export default function Mappings() {
   const [showAddMapModal, setShowAddMapModal] = useState(false)
   const [reviewHotspots, setReviewHotspots] = useState<ReviewHotspot[]>([])
   const [hotspotLoading, setHotspotLoading] = useState(false)
+  const [query, setQuery] = useState(() => searchParams.get('search') ?? '')
 
   const detailPathFor = (billId: string, route: string) => {
     if (route === 'saleinvoice') return `/sale-invoices/${billId}`
@@ -179,64 +216,173 @@ export default function Mappings() {
     }
   }
 
+  const filteredMappings = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return mappings
+    return mappings.filter((m) =>
+      `${m.raw_name} ${m.item_code} ${m.unit_code} ${m.source}`.toLowerCase().includes(q),
+    )
+  }, [mappings, query])
+
+  const learnedCount = mappings.filter((m) => m.source === 'ai_learned').length
+  const manualCount = mappings.length - learnedCount
+  const totalFiltered = filteredMappings.length
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / perPage))
+  const pageStart = totalFiltered === 0 ? 0 : (page - 1) * perPage + 1
+  const pageEnd = totalFiltered === 0 ? 0 : Math.min(page * perPage, totalFiltered)
+  const pagedMappings = filteredMappings.slice((page - 1) * perPage, page * perPage)
+  const hasPreviousPage = page > 1
+  const hasNextPage = page < totalPages
+
+  const handleSearchChange = (value: string) => {
+    setQuery(value)
+    setPage(1)
+  }
+
+  const handlePerPageChange = (value: string) => {
+    const next = Number(value)
+    if (!PAGE_SIZE_OPTIONS.includes(next as typeof PAGE_SIZE_OPTIONS[number])) return
+    setPerPage(next as typeof PAGE_SIZE_OPTIONS[number])
+    setPage(1)
+  }
+
+  const handleJumpToPage = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const next = Number(pageJumpInput)
+    if (!Number.isInteger(next) || next < 1) {
+      setPageJumpInput(String(page))
+      toast.error('เลขหน้าต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป')
+      return
+    }
+    setPage(Math.min(next, totalPages))
+  }
+
+  useEffect(() => {
+    if (!loading && page > totalPages) setPage(totalPages)
+  }, [loading, page, totalPages])
+
+  useEffect(() => {
+    setPageJumpInput(String(page))
+  }, [page])
+
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams)
+    next.set('page', String(page))
+    next.set('per_page', String(perPage))
+    if (query.trim()) next.set('search', query)
+    else next.delete('search')
+    const nextString = next.toString()
+    if (nextString !== searchParams.toString()) {
+      setSearchParams(next, { replace: true })
+    }
+  }, [page, perPage, query, searchParams, setSearchParams])
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title={PAGE_TITLE.mappings}
         description="ความจำกลางสำหรับจับคู่ชื่อสินค้าจากทุกช่องทางกับรหัสสินค้าใน SML"
       />
 
-      {/* Mappings vs Catalog — admin context. Without this admins assume
-          they're the same thing (both relate "name → SML code") when
-          they actually serve different stages of the matching pipeline. */}
-      <div className="rounded-lg border border-info/30 bg-info/[0.04] p-3.5 text-sm">
-        <div className="flex items-start gap-2.5">
-          <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-info" strokeWidth={2.25} />
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <p className="font-medium text-foreground">
-              ตารางนี้คืออะไร?
-            </p>
-            <p className="text-[13px] leading-relaxed text-muted-foreground">
-              เก็บคู่ <span className="font-medium text-foreground">"ชื่อสินค้าจากเอกสารนำเข้า → รหัสสินค้าใน SML"</span>{' '}
-              ที่ผู้ใช้เคยยืนยันแล้ว ใช้ร่วมกันทั้งฝั่งซื้อและฝั่งขาย เพื่อให้เอกสารรอบถัดไปจับคู่สินค้าได้แม่นขึ้น
-              และเรียนรู้ทุกครั้งที่แก้สินค้าใน{' '}
-              <Link to="/bills" className="font-medium text-primary hover:underline">ใบสั่งซื้อ</Link>
-              {' '}หรือ{' '}
-              <Link to="/sales-orders" className="font-medium text-primary hover:underline">ใบสั่งขาย</Link>
-            </p>
-            <p className="text-[12px] text-muted-foreground">
-              ต่างจาก{' '}
-              <Link to="/settings/catalog" className="font-medium text-primary hover:underline">
-                สินค้าใน SML
-              </Link>{' '}
-              ที่เป็นรายการสินค้าหลักทั้งหมดจาก SML — ตารางนี้คือความจำจากการตรวจเอกสาร ส่วนสินค้าใน SML คือฐานข้อมูลสินค้าอ้างอิง
+      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">จับคู่สินค้า</Badge>
+              <Badge variant="outline">ใช้กับบิลถัดไป</Badge>
+            </div>
+            <h2 className="mt-2 text-base font-semibold text-foreground">
+              ชื่อสินค้าจากเอกสาร → รหัสสินค้าใน SML
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+              ใช้ลดงานตรวจซ้ำจาก Shopee, Lazada, TikTok และอีเมล บิลเดิมไม่ถูกเปลี่ยนจากหน้านี้
             </p>
           </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-xs sm:min-w-[360px]">
+            <div className="rounded-md bg-muted/45 px-3 py-2">
+              <div className="font-semibold tabular-nums text-foreground">{mappings.length}</div>
+              <div className="mt-0.5 text-muted-foreground">ทั้งหมด</div>
+            </div>
+            <div className="rounded-md bg-success/10 px-3 py-2">
+              <div className="font-semibold tabular-nums text-success">{learnedCount}</div>
+              <div className="mt-0.5 text-muted-foreground">ระบบเรียนรู้</div>
+            </div>
+            <div className="rounded-md bg-muted/45 px-3 py-2">
+              <div className="font-semibold tabular-nums text-foreground">{manualCount}</div>
+              <div className="mt-0.5 text-muted-foreground">เพิ่มเอง</div>
+            </div>
+          </div>
         </div>
+
+        <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(260px,420px)_minmax(0,1fr)_auto] lg:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              placeholder="ค้นหาชื่อสินค้า / รหัส SML / หน่วย"
+              className="h-8 pl-8 text-sm"
+            />
+          </div>
+          <div className="text-xs text-muted-foreground">
+            พบ {totalFiltered.toLocaleString('th-TH')} จาก {mappings.length.toLocaleString('th-TH')} คู่จับคู่
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAddMapModal(true)}
+            className="w-full lg:w-auto"
+          >
+            <Search className="h-4 w-4" />
+            เลือกสินค้าใน SML
+          </Button>
+        </div>
+
+        <details className="mt-3 rounded-md border border-info/25 bg-info/[0.04] px-3 py-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium text-foreground">
+            รายละเอียดสำหรับแอดมิน
+          </summary>
+          <div className="mt-2 space-y-1.5 leading-relaxed">
+            <p>
+              Mapping คือความจำจากการตรวจเอกสาร ส่วน{' '}
+              <Link to="/settings/catalog" className="font-medium text-link hover:underline">
+                สินค้าใน SML
+              </Link>{' '}
+              คือฐานสินค้าหลักจาก SML
+            </p>
+            <p>
+              ระบบเรียนรู้เมื่อแก้สินค้าใน{' '}
+              <Link to="/bills" className="font-medium text-link hover:underline">ใบสั่งซื้อ</Link>
+              {' '}หรือ{' '}
+              <Link to="/sale-invoices" className="font-medium text-link hover:underline">ขายสินค้าและบริการ</Link>
+            </p>
+          </div>
+        </details>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         {/* Table */}
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
-                <TableHead className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <TableHead className="text-xs font-semibold text-muted-foreground">
                   ชื่อดิบ
                 </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <TableHead className="text-xs font-semibold text-muted-foreground">
                   รหัสสินค้า
                 </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <TableHead className="text-xs font-semibold text-muted-foreground">
                   หน่วย
                 </TableHead>
-                <TableHead className="text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <TableHead className="text-center text-xs font-semibold text-muted-foreground">
                   แหล่ง
                 </TableHead>
-                <TableHead className="text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <TableHead className="text-center text-xs font-semibold text-muted-foreground">
                   ใช้
                 </TableHead>
-                <TableHead className="w-[120px] text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <TableHead className="w-[120px] text-center text-xs font-semibold text-muted-foreground">
                   จัดการ
                 </TableHead>
               </TableRow>
@@ -250,24 +396,34 @@ export default function Mappings() {
                     </TableCell>
                   </TableRow>
                 ))
-              ) : mappings.length === 0 ? (
+              ) : filteredMappings.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="py-12">
                     <EmptyState
-                      title="ยังไม่มี mapping"
-                      description="ระบบจะเรียนรู้อัตโนมัติเมื่อ admin ยืนยันบิลที่รอตรวจสอบ — หรือเพิ่ม mapping เองจากฟอร์มด้านขวา"
+                      title={mappings.length === 0 ? 'ยังไม่มี mapping' : 'ไม่พบคู่จับคู่ที่ค้นหา'}
+                      description={
+                        mappings.length === 0
+                          ? 'ระบบจะเรียนรู้อัตโนมัติเมื่อ admin ยืนยันบิลที่รอตรวจสอบ หรือเพิ่ม mapping เองจากฟอร์มด้านขวา'
+                          : 'ลองค้นหาด้วยชื่อสินค้า รหัส SML หรือหน่วยอื่น'
+                      }
                       action={
-                        <Button asChild variant="outline" size="sm">
-                          <Link to="/bills?status=needs_review">
-                            ไปยืนยันบิลที่รอตรวจสอบ
-                          </Link>
-                        </Button>
+                        mappings.length === 0 ? (
+                          <Button asChild variant="outline" size="sm">
+                            <Link to="/bills?status=needs_review">
+                              ไปยืนยันบิลที่รอตรวจสอบ
+                            </Link>
+                          </Button>
+                        ) : (
+                          <Button variant="outline" size="sm" onClick={() => setQuery('')}>
+                            ล้างคำค้นหา
+                          </Button>
+                        )
                       }
                     />
                   </TableCell>
                 </TableRow>
               ) : (
-                mappings.map((m) => {
+                pagedMappings.map((m) => {
                   const isEditing = editId === m.id
                   return (
                     <TableRow key={m.id} className="h-12">
@@ -381,6 +537,78 @@ export default function Mappings() {
               )}
             </TableBody>
           </Table>
+          <div className="flex flex-col gap-2 border-t border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
+            <span>
+              {totalFiltered > 0
+                ? `แสดง ${pageStart.toLocaleString('th-TH')}-${pageEnd.toLocaleString('th-TH')} จาก ${totalFiltered.toLocaleString('th-TH')} รายการ`
+                : 'แสดง 0 รายการ'}
+            </span>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              <label className="inline-flex items-center gap-1.5">
+                <span>ต่อหน้า</span>
+                <Select
+                  value={String(perPage)}
+                  onValueChange={handlePerPageChange}
+                >
+                  <SelectTrigger className="h-8 w-[82px] text-xs" aria-label="จำนวนรายการต่อหน้า">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZE_OPTIONS.map((size) => (
+                      <SelectItem key={size} value={String(size)}>
+                        {size}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasPreviousPage}
+                onClick={() => setPage(1)}
+              >
+                หน้าแรก
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasPreviousPage}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                ก่อนหน้า
+              </Button>
+              <span className="min-w-[92px] text-center tabular-nums">
+                หน้า {page.toLocaleString('th-TH')} / {totalPages.toLocaleString('th-TH')}
+              </span>
+              <form className="inline-flex items-center gap-1.5" onSubmit={handleJumpToPage} noValidate>
+                <span>ไปหน้า</span>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={totalPages}
+                  value={pageJumpInput}
+                  onChange={(e) => setPageJumpInput(e.target.value)}
+                  className="h-8 w-20 px-2 text-center text-xs tabular-nums"
+                  aria-label="ไปหน้าที่"
+                />
+                <Button type="submit" variant="outline" size="sm" disabled={totalPages <= 1}>
+                  ไป
+                </Button>
+              </form>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!hasNextPage}
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              >
+                ถัดไป
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Sidebar */}
@@ -504,7 +732,7 @@ export default function Mappings() {
         open={deleteId !== null}
         onOpenChange={(o) => !o && setDeleteId(null)}
         title="ลบคู่จับคู่นี้?"
-        description="หลังลบแล้วระบบจะไม่ใช้คู่นี้อีก แต่จะเรียนรู้ใหม่ได้เมื่อคุณแก้สินค้าในบิลครั้งถัดไป"
+        description="ผลกระทบ: บิลเดิมไม่เปลี่ยน แต่บิลใหม่ที่เจอชื่อสินค้านี้อาจกลับไปต้องตรวจสินค้าอีกครั้ง หากลบผิดให้เพิ่มคู่จับคู่ใหม่หรือยืนยันจากบิลครั้งถัดไป"
         variant="destructive"
         confirmLabel="ลบ"
         onConfirm={handleDelete}

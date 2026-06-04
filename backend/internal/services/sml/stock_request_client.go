@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 const stockRequestPath = "/SMLJavaWebService/rest/v1/processstockrequest"
 const stockChunkSize = 100
+const stockErrorBodyLimit = 2048
 
 // StockRequestClient calls the SML processstockrequest endpoint to trigger
 // cost recalculation after a document is posted. This endpoint lives directly
@@ -82,9 +84,16 @@ func (c *StockRequestClient) ProcessStockRequest(ctx context.Context, rawCodes [
 			errs = append(errs, fmt.Sprintf("chunk %d/%d http: %v", chunkNum, total, err))
 			continue
 		}
-		resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			errs = append(errs, fmt.Sprintf("chunk %d/%d HTTP %d", chunkNum, total, resp.StatusCode))
+			errBody := readStockErrorBody(resp.Body)
+			if errBody != "" {
+				errs = append(errs, fmt.Sprintf("chunk %d/%d HTTP %d: %s", chunkNum, total, resp.StatusCode, errBody))
+			} else {
+				errs = append(errs, fmt.Sprintf("chunk %d/%d HTTP %d", chunkNum, total, resp.StatusCode))
+			}
+		}
+		if err := resp.Body.Close(); err != nil && c.logger != nil {
+			c.logger.Warn("stock request response close failed", zap.Error(err))
 		}
 	}
 
@@ -92,6 +101,25 @@ func (c *StockRequestClient) ProcessStockRequest(ctx context.Context, rawCodes [
 		return fmt.Errorf("%d/%d chunks failed: %s", len(errs), total, strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+func readStockErrorBody(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, stockErrorBodyLimit+1))
+	if err != nil {
+		return fmt.Sprintf("read response body: %v", err)
+	}
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return ""
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > stockErrorBodyLimit {
+		text = text[:stockErrorBodyLimit] + "...(truncated)"
+	}
+	return text
 }
 
 // dedupeTrimCodes trims whitespace, removes empty strings, and deduplicates

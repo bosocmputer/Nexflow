@@ -6,13 +6,18 @@ import {
   Bot,
   CheckCircle2,
   Database,
+  FileClock,
   Mail,
   MessageSquare,
+  PackageCheck,
+  ReceiptText,
   Sparkles,
   Settings2,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react'
 
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
@@ -36,6 +41,28 @@ type SystemStatus = {
   imap_enabled?: number
   imap_failing?: number
   sml_readiness?: SMLReadiness
+}
+
+type SetupStepLite = {
+  key: string
+  ready: boolean
+  status: string
+}
+
+type SetupStatusLite = {
+  ready: boolean
+  ready_count: number
+  total_count: number
+  blocking_ready_count: number
+  blocking_total_count: number
+  steps: SetupStepLite[]
+  documents: {
+    pending: number
+    needs_review: number
+    failed: number
+    sent: number
+    saleinvoice: number
+  }
 }
 
 // SubsystemRow is a single subsystem on the system-health card. Each row is
@@ -108,8 +135,51 @@ function SubsystemRow({ icon: Icon, label, status, tone, detail, to }: Subsystem
   return to ? <Link to={to}>{inner}</Link> : inner
 }
 
+function ReadinessTile({
+  icon: Icon,
+  label,
+  status,
+  detail,
+  tone,
+  to,
+}: SubsystemRowProps) {
+  const toneClass =
+    tone === 'ok'
+      ? 'border-success/25 bg-success/[0.04]'
+      : tone === 'warn'
+        ? 'border-warning/30 bg-warning/[0.06]'
+        : tone === 'danger'
+          ? 'border-destructive/25 bg-destructive/[0.05]'
+          : 'border-border bg-card'
+
+  const iconClass =
+    tone === 'ok'
+      ? 'text-success'
+      : tone === 'warn'
+        ? 'text-warning'
+        : tone === 'danger'
+          ? 'text-destructive'
+          : 'text-muted-foreground'
+
+  const content = (
+    <div className={cn('h-full rounded-md border p-3 transition-colors', toneClass, to && 'hover:bg-accent/35')}>
+      <div className="flex items-start gap-2.5">
+        <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', iconClass)} />
+        <div className="min-w-0">
+          <div className="text-xs text-muted-foreground">{label}</div>
+          <div className="mt-0.5 truncate text-sm font-semibold text-foreground">{status}</div>
+          {detail && <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{detail}</div>}
+        </div>
+      </div>
+    </div>
+  )
+
+  return to ? <Link to={to}>{content}</Link> : content
+}
+
 export default function Settings() {
   const [status, setStatus] = useState<SystemStatus | null>(null)
+  const [setupStatus, setSetupStatus] = useState<SetupStatusLite | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -118,6 +188,10 @@ export default function Settings() {
       .then((r) => setStatus(r.data))
       .catch(() => setStatus(null))
       .finally(() => setLoading(false))
+    client
+      .get<SetupStatusLite>('/api/setup/status')
+      .then((r) => setSetupStatus(r.data))
+      .catch(() => setSetupStatus(null))
   }, [])
 
   // Derive each subsystem's tone from its live state. Falls back to 'unknown'
@@ -187,12 +261,88 @@ export default function Settings() {
     }
   })()
 
+  const setupStep = (key: string) => setupStatus?.steps?.find((step) => step.key === key)
+  const channelsStep = setupStep('channels')
+  const catalogStep = setupStep('catalog')
+  const docs = setupStatus?.documents
+  const pendingFailures = docs?.failed ?? 0
+  const pendingWork = (docs?.pending ?? 0) + (docs?.needs_review ?? 0)
+  const readinessCount = setupStatus
+    ? `${setupStatus.blocking_ready_count}/${setupStatus.blocking_total_count}`
+    : 'กำลังโหลด'
+
   return (
     <div className="space-y-5">
       <PageHeader
         title={PAGE_TITLE.settings}
         description="สถานะการเชื่อมต่อระบบภายนอก · กดที่แต่ละแถวเพื่อจัดการ"
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link to="/setup">
+              <ShieldCheck className="h-4 w-4" />
+              ตรวจความพร้อมทั้งหมด
+            </Link>
+          </Button>
+        }
       />
+
+      <Card className="border-primary/20 bg-primary/[0.03]">
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-foreground">Production readiness</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                สรุปจุดที่ต้องพร้อมก่อนรับงานจริง: SML, เส้นทางเอกสาร, สินค้า, Shopee/SI และงานค้างที่ต้องแก้
+              </p>
+            </div>
+            <span className="rounded-md border border-border/70 bg-background px-2 py-1 text-xs font-medium text-foreground">
+              ขั้นตอนสำคัญ {readinessCount}
+            </span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            <ReadinessTile
+              icon={Database}
+              label="SML ERP"
+              status={sml.status}
+              tone={sml.tone}
+              detail={sml.detail}
+              to="/settings/instance"
+            />
+            <ReadinessTile
+              icon={FileClock}
+              label="เส้นทางเอกสาร"
+              status={channelsStep?.ready ? 'พร้อมใช้งาน' : 'ต้องตั้งค่า'}
+              tone={channelsStep?.ready ? 'ok' : 'danger'}
+              detail={channelsStep?.status || 'Shopee/Marketplace ต้องชี้ไปขายสินค้าและบริการ'}
+              to="/settings/channels"
+            />
+            <ReadinessTile
+              icon={PackageCheck}
+              label="สินค้าใน SML"
+              status={catalogStep?.ready ? 'พร้อมจับคู่' : 'ควรซิงก์สินค้า'}
+              tone={catalogStep?.ready ? 'ok' : 'warn'}
+              detail={catalogStep?.status || 'ใช้ลดงานเลือกสินค้าและป้องกันส่งรหัสผิด'}
+              to="/settings/catalog"
+            />
+            <ReadinessTile
+              icon={ReceiptText}
+              label="Shopee / SI"
+              status={(docs?.saleinvoice ?? 0) > 0 ? `${docs?.saleinvoice.toLocaleString('th-TH')} เอกสาร` : 'ยังไม่มีเอกสาร'}
+              tone={(docs?.saleinvoice ?? 0) > 0 ? 'ok' : 'warn'}
+              detail={`ส่งแล้ว ${(docs?.sent ?? 0).toLocaleString('th-TH')} · ค้าง ${pendingWork.toLocaleString('th-TH')}`}
+              to="/sale-invoices"
+            />
+            <ReadinessTile
+              icon={ShieldCheck}
+              label="งานที่ต้องระวัง"
+              status={pendingFailures > 0 ? `${pendingFailures.toLocaleString('th-TH')} ส่งไม่สำเร็จ` : 'ไม่มี failure ค้าง'}
+              tone={pendingFailures > 0 ? 'danger' : pendingWork > 0 ? 'warn' : 'ok'}
+              detail={pendingWork > 0 ? `มีงานรอตรวจ/พร้อมส่ง ${pendingWork.toLocaleString('th-TH')} รายการ` : 'คิวรายวันไม่มีรายการเสี่ยง'}
+              to={pendingFailures > 0 ? '/logs?level=error' : '/dashboard'}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">
@@ -268,7 +418,7 @@ export default function Settings() {
         <Card>
           <CardContent className="flex items-center justify-between p-4">
             <div className="flex items-center gap-2.5">
-              <Sparkles className="h-4 w-4 text-primary" strokeWidth={2.25} />
+              <Sparkles className="h-4 w-4 text-accent-strong" strokeWidth={2.25} />
               <div>
                 <p className="text-sm font-medium">เกณฑ์ส่งอัตโนมัติ</p>
                 <p className="text-[11px] text-muted-foreground">
@@ -276,7 +426,7 @@ export default function Settings() {
                 </p>
               </div>
             </div>
-            <span className="font-mono text-xl font-semibold tabular-nums text-primary">
+            <span className="font-mono text-xl font-semibold tabular-nums text-accent-strong">
               {(status.auto_confirm_threshold * 100).toFixed(0)}%
             </span>
           </CardContent>

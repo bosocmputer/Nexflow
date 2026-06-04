@@ -1,7 +1,7 @@
 -- 014_line_oa_accounts.sql — multi-LINE OA support
 --
--- Goal: 1 BillFlow ↔ N LINE OAs (e.g. a chain with 5 stores; one inbox in
--- BillFlow consolidates conversations from all of them).
+-- Goal: 1 Nexflow ↔ N LINE OAs (e.g. a chain with 5 stores; one inbox in
+-- Nexflow consolidates conversations from all of them).
 --
 -- Schema changes:
 --   1. New table line_oa_accounts: per-OA credentials + name + greeting.

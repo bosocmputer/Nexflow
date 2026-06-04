@@ -180,7 +180,7 @@ function SummaryCard({
   const tone: Record<typeof variant, string> = {
     success: 'border-success/30 bg-success/5 text-success',
     danger: 'border-destructive/30 bg-destructive/5 text-destructive',
-    primary: 'border-primary/30 bg-primary/5 text-primary',
+    primary: 'border-primary/30 bg-primary/5 text-accent-strong',
     muted: 'border-border bg-muted/30 text-foreground',
   }
   return (
@@ -367,7 +367,7 @@ export default function LazadaImport() {
         <AlertTitle>ช่องทางรับข้อมูลสำหรับ{destination.shortName}</AlertTitle>
         <AlertDescription>
           หน้านี้ทำหน้าที่นำเข้าไฟล์เท่านั้น ระบบจะสร้างรายการไปที่เมนู{' '}
-          <Link to={destination.listPath} className="font-medium text-primary hover:underline">
+          <Link to={destination.listPath} className="font-medium text-link hover:underline">
             {destination.listName}
           </Link>{' '}
           เพื่อให้ตรวจสินค้า หน่วย จำนวน ราคา และส่งเข้า SML ปลายทาง{' '}
@@ -402,7 +402,7 @@ export default function LazadaImport() {
                 </div>
                 <div className="flex flex-wrap items-center gap-1 sm:justify-end">
                   <Badge variant={run.status === 'confirmed' ? 'default' : 'secondary'}>
-                    {run.status === 'confirmed' ? 'สร้างแล้ว' : 'Preview'}
+                    {run.status === 'confirmed' ? 'สร้างแล้ว' : 'ตรวจรายการ'}
                   </Badge>
                   <Badge variant="outline">ใหม่ {run.new_orders}</Badge>
                   <Badge variant="outline">ซ้ำ {run.duplicate_orders}</Badge>
@@ -591,7 +591,7 @@ export default function LazadaImport() {
                         <TableCell>
                           <button
                             type="button"
-                            className="inline-flex items-center gap-1 font-mono text-xs font-medium text-foreground hover:text-primary"
+                            className="inline-flex items-center gap-1 font-mono text-xs font-medium text-foreground hover:text-link"
                             onClick={() => toggleExpand(order.order_id)}
                           >
                             {expanded ? (
@@ -648,15 +648,15 @@ export default function LazadaImport() {
                       {expanded && (
                         <TableRow>
                           <TableCell colSpan={9} className="bg-muted/20 p-0">
-                            <div className="overflow-hidden border-l-2 border-primary/40">
+                            <div className="overflow-hidden border border-border bg-background">
                               <Table>
                                 <TableHeader>
                                   <TableRow className="bg-muted/30">
-                                    <TableHead className="text-[10px] uppercase">SKU</TableHead>
-                                    <TableHead className="text-[10px] uppercase">ชื่อสินค้า</TableHead>
-                                    <TableHead className="text-[10px] uppercase">ตัวเลือก</TableHead>
-                                    <TableHead className="text-right text-[10px] uppercase">ราคา</TableHead>
-                                    <TableHead className="text-right text-[10px] uppercase">จำนวน</TableHead>
+                                    <TableHead className="text-[11px]">SKU</TableHead>
+                                    <TableHead className="text-[11px]">ชื่อสินค้า</TableHead>
+                                    <TableHead className="text-[11px]">ตัวเลือก</TableHead>
+                                    <TableHead className="text-right text-[11px]">ราคา</TableHead>
+                                    <TableHead className="text-right text-[11px]">จำนวน</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -730,7 +730,7 @@ export default function LazadaImport() {
             </div>
             <div className="grid gap-3 p-5 sm:grid-cols-3">
               <div className="rounded-md border border-border p-3">
-                <Database className="h-4 w-4 text-primary" />
+                <Database className="h-4 w-4 text-accent-strong" />
                 <p className="mt-2 text-xs font-medium">Order ที่เลือก</p>
                 <p className="mt-1 text-2xl font-semibold tabular-nums">
                   {selectedIDs.size}

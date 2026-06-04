@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, RefreshCw, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ActionSafetyPanel } from "@/components/common/ActionSafetyPanel";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -83,17 +84,17 @@ function routeDestination(route?: string, isSale = false) {
 }
 
 const PURCHASE_INQUIRY_TYPE_OPTIONS = [
-  { value: "0", label: "0 — ซื้อสินค้าเงินเชื่อ" },
-  { value: "1", label: "1 — ซื้อสินค้าเงินสด" },
-  { value: "2", label: "2 — ซื้อสินค้าเงินเชื่อ (สินค้าบริการ)" },
-  { value: "3", label: "3 — ซื้อสินค้าเงินสด (สินค้าบริการ)" },
+  { value: "0", label: "0: ซื้อสินค้าเงินเชื่อ" },
+  { value: "1", label: "1: ซื้อสินค้าเงินสด" },
+  { value: "2", label: "2: ซื้อสินค้าเงินเชื่อ (สินค้าบริการ)" },
+  { value: "3", label: "3: ซื้อสินค้าเงินสด (สินค้าบริการ)" },
 ];
 
 const SALE_INQUIRY_TYPE_OPTIONS = [
-  { value: "0", label: "0 — ขายเงินเชื่อ" },
-  { value: "1", label: "1 — ขายเงินสด" },
-  { value: "2", label: "2 — ขายเงินเชื่อ (สินค้าบริการ)" },
-  { value: "3", label: "3 — ขายเงินสด (สินค้าบริการ)" },
+  { value: "0", label: "0: ขายเงินเชื่อ" },
+  { value: "1", label: "1: ขายเงินสด" },
+  { value: "2", label: "2: ขายเงินเชื่อ (สินค้าบริการ)" },
+  { value: "3", label: "3: ขายเงินสด (สินค้าบริการ)" },
 ];
 
 function rawString(
@@ -248,6 +249,25 @@ export function SendPurchaseDialog({
       whCode,
     ],
   );
+  const billTotal = useMemo(
+    () =>
+      (bill.items ?? []).reduce(
+        (sum, item) =>
+          sum +
+          Math.max(
+            (item.qty ?? 0) * (item.price ?? 0) -
+              (item.discount_amount ?? 0),
+            0,
+          ),
+        0,
+      ),
+    [bill.items],
+  );
+  const sendDisabledReason = !smlReady
+    ? smlBlockedMessage(smlReadiness)
+    : missingFields.length > 0
+      ? `ต้องกรอกเพิ่มก่อนส่ง: ${missingFields.join(", ")}`
+      : "";
   const hiddenCodeItems = useMemo(
     () =>
       (bill.items ?? []).filter(
@@ -429,13 +449,43 @@ export function SendPurchaseDialog({
             </div>
           </div>
 
+          <ActionSafetyPanel
+            title={`ตรวจผลกระทบก่อนส่ง ${documentName} เข้า SML`}
+            description="เมื่อส่งเข้า SML สำเร็จแล้ว Nexflow ไม่สามารถ rollback เอกสารใน SML ให้เองได้ หากต้องแก้หรือยกเลิกต้องดำเนินการใน SML ตามขั้นตอนของร้าน"
+            tone="warning"
+            items={[
+              {
+                label: "เอกสาร",
+                value: bill.sml_doc_no || bill.preview?.doc_no || bill.id.slice(0, 8),
+                detail: orderID ? `Order ${orderID}` : "ใช้บิลใบนี้เท่านั้น",
+              },
+              {
+                label: "ปลายทาง",
+                value: `${destination.label} · ${bill.preview?.doc_format_code || destination.code}`,
+                detail: bill.preview?.endpoint || "ใช้ route จาก backend preview ปัจจุบัน",
+              },
+              {
+                label: "จำนวนรายการ",
+                value: `${(bill.items ?? []).length.toLocaleString("th-TH")} รายการ`,
+                detail: `ยอดรวมประมาณ ${formatBaht(billTotal) || "—"}`,
+              },
+              {
+                label: "เลขเอกสาร",
+                value: docNo || "ให้ระบบออกเลขตอนส่ง",
+                detail: bill.sml_doc_no
+                  ? "Retry จะใช้เลขเดิมที่บันทึกไว้"
+                  : "ถ้า SML แจ้งเลขซ้ำ ให้ดึงเลขล่าสุดแล้วส่งใหม่",
+              },
+            ]}
+          />
+
           {!smlReady && (
             <div className="rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-2 text-xs">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
                 <div className="min-w-0 flex-1">
                   <div className="font-medium text-foreground">
-                    ยังส่ง SML ไม่ได้ — ฐานข้อมูลร้านยังไม่พร้อม
+                    ยังส่ง SML ไม่ได้: ฐานข้อมูลร้านยังไม่พร้อม
                   </div>
                   <div className="mt-0.5 text-muted-foreground">
                     {smlReadinessLoading
@@ -632,9 +682,9 @@ export function SendPurchaseDialog({
                   <SelectValue placeholder="เลือกประเภทภาษี" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">0 — แยกนอก</SelectItem>
-                  <SelectItem value="1">1 — รวมใน</SelectItem>
-                  <SelectItem value="2">2 — ศูนย์%</SelectItem>
+                  <SelectItem value="0">0: แยกนอก</SelectItem>
+                  <SelectItem value="1">1: รวมใน</SelectItem>
+                  <SelectItem value="2">2: ศูนย์%</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -697,7 +747,7 @@ export function SendPurchaseDialog({
             {smlTotalPreview && (
               <div className="rounded-md border border-border bg-background px-3 py-2 text-xs sm:col-span-2">
                 <div className="font-medium text-foreground">
-                  Preview ยอดที่จะเข้า SML
+                  ตรวจยอดที่จะเข้า SML
                 </div>
                 <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
                   <div className="flex items-center justify-between gap-3">
@@ -866,10 +916,10 @@ export function SendPurchaseDialog({
             onClick={handleConfirm}
             disabled={!canConfirm}
             className="gap-2"
-            title={!smlReady ? smlBlockedMessage(smlReadiness) : undefined}
+            title={sendDisabledReason || undefined}
           >
             <Send className="h-4 w-4" />
-            ส่งไปยัง SML
+            ส่งเข้า SML 1 ใบ
           </Button>
         </DialogFooter>
       </DialogContent>

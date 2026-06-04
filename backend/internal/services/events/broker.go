@@ -35,13 +35,26 @@ const (
 	// UnreadChanged — total unread count across all conversations changed
 	// (used by the sidebar badge). Payload: { total: int }.
 	TypeUnreadChanged = "unread_changed"
+
+	// NotificationCreated — a user-facing in-app notification was inserted.
+	// Payload includes notification + unread_count.
+	TypeNotificationCreated = "notification_created"
+
+	// NotificationUnreadChanged — current user's notification unread count
+	// changed. Payload: { total: int }.
+	TypeNotificationUnreadChanged = "notification_unread_changed"
+
+	// ShopeeRealtimeChanged — Shopee realtime snapshots changed and clients
+	// should refresh local dashboard/query state.
+	TypeShopeeRealtimeChanged = "shopee_realtime_changed"
 )
 
 // Event is what the broker fans out. Keep Payload as a generic map so
 // handlers can attach whatever they need without forcing a typed schema.
 type Event struct {
-	Type    string         `json:"-"`       // never appears in JSON; goes in SSE event: line
-	Payload map[string]any `json:"payload"` // arbitrary; serialized as the SSE data: line
+	Type         string         `json:"-"` // never appears in JSON; goes in SSE event: line
+	TargetUserID string         `json:"-"` // optional; when set, SSE only delivers to that user
+	Payload      map[string]any `json:"payload"`
 }
 
 // subscriber holds one admin's connection — a buffered channel so a slow
@@ -49,8 +62,8 @@ type Event struct {
 // can find this exact subscriber even when the same admin opens multiple
 // tabs (each gets its own subscriber).
 type subscriber struct {
-	id  uint64
-	ch  chan Event
+	id uint64
+	ch chan Event
 }
 
 // Broker is a tiny fan-out hub. Safe for concurrent Subscribe/Unsubscribe/
@@ -62,9 +75,9 @@ type subscriber struct {
 // per-admin events (e.g. "this assignment is yours") we'll add a target
 // field to Event and filter in the SSE handler.
 type Broker struct {
-	mu      sync.RWMutex
-	subs    map[uint64]*subscriber
-	nextID  atomic.Uint64
+	mu     sync.RWMutex
+	subs   map[uint64]*subscriber
+	nextID atomic.Uint64
 }
 
 func NewBroker() *Broker {

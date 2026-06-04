@@ -3,7 +3,7 @@
 -- Background: SML's saleorder UI silently fails to display docs whose doc_no
 -- matches the YYYYMMDD-hex pattern (e.g. "BF-SO-20260428-aabb1122"). Letting
 -- admins set their own prefix + running format avoids the trap and aligns
--- BillFlow's doc_no with whatever convention each customer's SML expects.
+-- Nexflow's doc_no with whatever convention each customer's SML expects.
 --
 -- doc_running_format tokens:
 --   YYYY  → 4-digit year     (e.g. 2026)

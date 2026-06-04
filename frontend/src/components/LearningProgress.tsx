@@ -44,7 +44,7 @@ export default function LearningProgress({ stats }: { stats: MappingStats }) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <Brain className="h-4 w-4 text-primary" />
+          <Brain className="h-4 w-4 text-accent-strong" />
           ความจำการจับคู่สินค้า
         </CardTitle>
       </CardHeader>

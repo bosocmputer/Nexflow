@@ -4,6 +4,9 @@ export const ENABLE_SALES_ORDERS =
 export const ENABLE_SHOPEE_EXCEL =
   import.meta.env.VITE_ENABLE_SHOPEE_EXCEL !== 'false'
 
+export const ENABLE_SHOPEE_REALTIME_OPS =
+  import.meta.env.VITE_ENABLE_SHOPEE_REALTIME_OPS === 'true'
+
 export const ENABLE_LAZADA_EXCEL =
   import.meta.env.VITE_ENABLE_LAZADA_EXCEL !== 'false'
 

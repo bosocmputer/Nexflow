@@ -9,12 +9,12 @@
 
 พนักงานนำ Excel export จาก Shopee Seller Center มา upload ที่ `/import/shopee`
 หรือดึง order ผ่าน Shopee Open API หลังเชื่อม OAuth สำเร็จ
-ระบบ parse orders → ตรวจ duplicate → แสดง preview → พนักงาน confirm → สร้าง bills ใน BillFlow แล้วให้ admin ตรวจ/Retry ส่งเข้า SML 248
+ระบบ parse orders → ตรวจ duplicate → แสดง preview → พนักงาน confirm → สร้าง bills ใน Nexflow แล้วให้ admin ตรวจ/Retry ส่งเข้า SML 248
 default sale route ปัจจุบันคือ `saleorder`; `saleinvoice` ใช้ได้เมื่อ admin ตั้ง `channel_defaults.endpoint` ให้ชี้ `/SMLJavaRESTService/saleinvoice/v4`
 
 Shopee Open API live cutover checklist อยู่ที่ [`docs/shopee-open-api-live-cutover.md`](shopee-open-api-live-cutover.md)
 
-หน้า `/import/shopee` จะแสดง Open API readiness checklist และรายชื่อร้านที่เชื่อมไว้ ถ้ามีหลายร้านต้องเลือกร้านก่อนดึง API/นำเข้า Excel เพื่อให้ BillFlow บันทึก `shopee_shop_id` และกัน duplicate แยกตามร้าน. API preview ให้เลือกฐานวันที่ `create_time` หรือ `update_time` เท่านั้น, default สถานะเป็นกลุ่มพร้อมออกบิล (`SHIPPED`, `TO_CONFIRM_RECEIVE`, `COMPLETED`), และ Excel fallback ยังทำงานต่อได้เสมอเมื่อ API มีปัญหา.
+หน้า `/import/shopee` จะแสดง Open API readiness checklist และรายชื่อร้านที่เชื่อมไว้ ถ้ามีหลายร้านต้องเลือกร้านก่อนดึง API/นำเข้า Excel เพื่อให้ Nexflow บันทึก `shopee_shop_id` และกัน duplicate แยกตามร้าน. API preview ให้เลือกฐานวันที่ `create_time` หรือ `update_time` เท่านั้น, default สถานะเป็นกลุ่มพร้อมออกบิล (`SHIPPED`, `TO_CONFIRM_RECEIVE`, `COMPLETED`), และ Excel fallback ยังทำงานต่อได้เสมอเมื่อ API มีปัญหา.
 
 ---
 
@@ -88,7 +88,7 @@ Shopee Open API live cutover checklist อยู่ที่ [`docs/shopee-open-
 | `page_size` | default 50 และไม่เกิน 50 ตาม detail batch limit |
 
 เมื่อ Shopee ตอบ `more=true` หรือผลรวมหลาย status เกิน 50 รายการ UI จะเตือนและ block confirm เพื่อกัน import ตกหล่น ให้ลดช่วงวันที่หรือเลือกสถานะแยกก่อนนำเข้า.
-หมายเหตุ live API: Shopee `get_order_list` ไม่รับ `TO_CONFIRM_RECEIVE` เป็น filter โดยตรง แม้ order detail มีสถานะนี้จริง ดังนั้น BillFlow จะ fetch รายการกว้างแล้วกรองสถานะจาก order detail สำหรับกลุ่มพร้อมออกบิลและสถานะนี้.
+หมายเหตุ live API: Shopee `get_order_list` ไม่รับ `TO_CONFIRM_RECEIVE` เป็น filter โดยตรง แม้ order detail มีสถานะนี้จริง ดังนั้น Nexflow จะ fetch รายการกว้างแล้วกรองสถานะจาก order detail สำหรับกลุ่มพร้อมออกบิลและสถานะนี้.
 
 API preview mapping เพิ่มเติม:
 

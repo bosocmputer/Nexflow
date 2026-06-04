@@ -1,5 +1,5 @@
 -- 033_shopee_order_events.sql
--- Store Shopee order status emails as a separate timeline from BillFlow/SML
+-- Store Shopee order status emails as a separate timeline from Nexflow/SML
 -- bill.status. These events are informational for staff and do not affect
 -- SML send eligibility.
 

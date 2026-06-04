@@ -252,11 +252,6 @@ func (h *ShopeeImportHandler) CreateAPIAuthURL(c *gin.Context) {
 		respondShopeeAPIError(c, http.StatusBadRequest, fmt.Errorf("not configured"), "Shopee Open API ยังไม่ได้ตั้งค่า partner_id/key บน server")
 		return
 	}
-	userID := c.GetString("user_id")
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing user"})
-		return
-	}
 	state, err := randomState()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้าง OAuth state ไม่ได้"})
@@ -265,6 +260,23 @@ func (h *ShopeeImportHandler) CreateAPIAuthURL(c *gin.Context) {
 	redirectURL := h.shopeeAPIRedirectURL()
 	if redirectURL == "" {
 		respondShopeeAPIError(c, http.StatusBadRequest, fmt.Errorf("redirect URL is required"), "PUBLIC_BASE_URL หรือ SHOPEE_OPEN_API_REDIRECT_URL ยังไม่พร้อม")
+		return
+	}
+	userID, userStatus, err := h.resolveShopeeOAuthUserID(c.Request.Context(), c)
+	if err != nil {
+		h.logger.Warn("shopee_api: resolve oauth user failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจสอบผู้ใช้ไม่สำเร็จ"})
+		return
+	}
+	if userStatus != "" {
+		statusCode := http.StatusUnauthorized
+		if userStatus == "forbidden" {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{
+			"error":      shopeeOAuthUserStatusMessage(userStatus),
+			"error_code": userStatus,
+		})
 		return
 	}
 	if err := h.expirePendingShopeeOAuthStates(c.Request.Context(), userID, status.Environment, redirectURL); err != nil {
@@ -291,6 +303,71 @@ func (h *ShopeeImportHandler) CreateAPIAuthURL(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"auth_url": authURL, "redirect_url": redirectURL})
+}
+
+func (h *ShopeeImportHandler) resolveShopeeOAuthUserID(ctx context.Context, c *gin.Context) (string, string, error) {
+	tokenUserID := strings.TrimSpace(c.GetString("user_id"))
+	if tokenUserID == "" {
+		return "", "missing_user", nil
+	}
+
+	id, role, err := h.findUserIdentity(ctx, "id::text = $1", tokenUserID)
+	if err == nil {
+		if role != "admin" {
+			return "", "forbidden", nil
+		}
+		return id, "", nil
+	}
+	if err != sql.ErrNoRows {
+		return "", "", err
+	}
+
+	tokenEmail := strings.TrimSpace(c.GetString("user_email"))
+	if tokenEmail == "" {
+		return "", "session_expired", nil
+	}
+	id, role, err = h.findUserIdentity(ctx, "lower(email) = lower($1)", tokenEmail)
+	if err == sql.ErrNoRows {
+		return "", "session_expired", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if role != "admin" {
+		return "", "forbidden", nil
+	}
+	h.logger.Warn(
+		"shopee_api: jwt user_id missing from users table; resolved by email",
+		zap.String("token_user_id", tokenUserID),
+		zap.String("email", tokenEmail),
+		zap.String("resolved_user_id", id),
+	)
+	return id, "", nil
+}
+
+func (h *ShopeeImportHandler) findUserIdentity(ctx context.Context, whereClause, arg string) (string, string, error) {
+	var id, role string
+	err := h.db.QueryRowContext(ctx,
+		`SELECT id::text, role FROM users WHERE `+whereClause,
+		arg,
+	).Scan(&id, &role)
+	if err != nil {
+		return "", "", err
+	}
+	return id, role, nil
+}
+
+func shopeeOAuthUserStatusMessage(status string) string {
+	switch status {
+	case "missing_user":
+		return "Session ไม่พบผู้ใช้ กรุณา login ใหม่"
+	case "session_expired":
+		return "Session ผู้ใช้หมดอายุหรือไม่ตรงกับข้อมูลปัจจุบัน กรุณา logout แล้ว login ใหม่"
+	case "forbidden":
+		return "ผู้ใช้ปัจจุบันไม่มีสิทธิ์เชื่อมต่อร้าน Shopee"
+	default:
+		return "ตรวจสอบผู้ใช้ไม่สำเร็จ"
+	}
 }
 
 // APICallback exchanges Shopee's one-time auth code for access/refresh tokens.
@@ -1528,21 +1605,29 @@ func defaultShopeeAPIEnv(v string) string {
 }
 
 func (h *ShopeeImportHandler) renderShopeeCallback(c *gin.Context, status int, title, message string) {
-	backURL := "/import/shopee"
-	if base := strings.TrimRight(strings.TrimSpace(h.cfg.PublicBaseURL), "/"); base != "" {
-		backURL = base + "/import/shopee"
-	}
 	statusLabel := "ยังไม่สำเร็จ"
 	statusDetail := "ร้าน Shopee ยังไม่ได้ถูกเชื่อมต่อกับ Nexflow"
-	tone := "#dc2626"
-	bg := "#fef2f2"
-	border := "#fecaca"
+	statusHint := "ปิดหน้าต่างนี้แล้วกลับไปที่ Nexflow ที่เปิดอยู่ หากยังไม่สำเร็จให้ลองเชื่อมต่อใหม่"
+	closeHint := "ปิดหน้าต่างนี้ แล้วกลับไปตรวจสถานะบนหน้า Shopee ใน Nexflow"
+	tone := "#b42318"
+	statusBg := "#fef3f2"
+	border := "#fecdca"
+	iconBg := "#fee4e2"
+	iconText := "#b42318"
+	iconSymbol := "!"
+	autoClose := false
 	if status >= 200 && status < 300 {
 		statusLabel = "สำเร็จ"
 		statusDetail = "เชื่อมร้าน Shopee กับ Nexflow เรียบร้อยแล้ว"
-		tone = "#047857"
-		bg = "#ecfdf5"
-		border = "#a7f3d0"
+		statusHint = "ระบบกำลังปิดหน้าต่างเชื่อมต่อให้อัตโนมัติ หน้า Shopee ใน Nexflow จะ refresh สถานะร้านเอง"
+		closeHint = "กำลังปิด popup อัตโนมัติ ถ้า browser ไม่อนุญาตให้กดปิดหน้าต่างนี้"
+		tone = "#256f2d"
+		statusBg = "#eefae8"
+		border = "#b9e8ad"
+		iconBg = "#dff7d4"
+		iconText = "#256f2d"
+		iconSymbol = "✓"
+		autoClose = true
 	}
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(status, `<!doctype html>
@@ -1551,35 +1636,280 @@ func (h *ShopeeImportHandler) renderShopeeCallback(c *gin.Context, status int, t
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Nexflow Shopee</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --graphite-950: #121816;
+      --graphite-900: #17201d;
+      --graphite-700: #34413c;
+      --graphite-500: #66736e;
+      --graphite-200: #d9dfdc;
+      --graphite-100: #eef2ef;
+      --graphite-50: #f7f9f6;
+      --lime: #a8ff1a;
+      --lime-dark: #477218;
+      --cobalt: #1f4ea8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--graphite-950);
+      background:
+        linear-gradient(135deg, rgba(168,255,26,.16), transparent 28rem),
+        linear-gradient(180deg, #ffffff 0%%, var(--graphite-50) 100%%);
+      line-height: 1.5;
+    }
+    main {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .shell {
+      width: min(720px, 100%%);
+      border: 1px solid var(--graphite-200);
+      border-radius: 8px;
+      background: rgba(255,255,255,.96);
+      box-shadow: 0 24px 70px rgba(18,24,22,.14);
+      overflow: hidden;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--graphite-200);
+      background: var(--graphite-950);
+      color: #fff;
+      padding: 16px 20px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .mark {
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: var(--lime);
+      color: var(--graphite-950);
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+    .brand-title {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 750;
+      line-height: 1.1;
+    }
+    .brand-sub {
+      margin: 2px 0 0;
+      color: rgba(255,255,255,.68);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .chip {
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: rgba(255,255,255,.78);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .content {
+      padding: 26px;
+    }
+    .status {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .status-icon {
+      display: inline-grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      flex: 0 0 auto;
+      border-radius: 8px;
+      background: %s;
+      color: %s;
+      font-weight: 900;
+      font-size: 22px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border: 1px solid %s;
+      border-radius: 999px;
+      background: %s;
+      color: %s;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    h1 {
+      margin: 10px 0 0;
+      font-size: clamp(24px, 4vw, 34px);
+      line-height: 1.16;
+      letter-spacing: 0;
+    }
+    .message {
+      margin: 12px 0 0;
+      color: var(--graphite-700);
+      font-size: 16px;
+    }
+    .hint {
+      margin: 6px 0 0;
+      color: var(--graphite-500);
+      font-size: 14px;
+    }
+    .next {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 24px 0 0;
+    }
+    .step {
+      border: 1px solid var(--graphite-200);
+      border-radius: 8px;
+      background: var(--graphite-50);
+      padding: 12px;
+    }
+    .step strong {
+      display: block;
+      font-size: 13px;
+    }
+    .step span {
+      display: block;
+      margin-top: 2px;
+      color: var(--graphite-500);
+      font-size: 12px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+    button {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 750;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .primary {
+      border: 1px solid var(--lime);
+      background: var(--lime);
+      color: var(--graphite-950);
+    }
+    .secondary {
+      border: 1px solid var(--graphite-200);
+      background: #fff;
+      color: var(--graphite-900);
+    }
+    .footer {
+      border-top: 1px solid var(--graphite-200);
+      background: var(--graphite-50);
+      padding: 12px 20px;
+      color: var(--graphite-500);
+      font-size: 12px;
+    }
+    .close-note {
+      margin: 10px 0 0;
+      color: var(--graphite-500);
+      font-size: 12px;
+    }
+    .close-fallback {
+      display: none;
+      margin-top: 10px;
+      color: var(--graphite-500);
+      font-size: 12px;
+    }
+    .close-fallback.is-visible {
+      display: block;
+    }
+    @media (max-width: 560px) {
+      main { padding: 14px; }
+      .top { align-items: flex-start; flex-direction: column; padding: 14px; }
+      .content { padding: 18px; }
+      .status { flex-direction: column; }
+      .actions > * { width: 100%%; }
+    }
+  </style>
 </head>
-<body style="margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;color:#0f172a;line-height:1.5">
-  <main style="min-height:100vh;display:grid;place-items:center;padding:24px">
-    <section style="width:min(560px,100%%);border:1px solid %s;border-radius:14px;background:#fff;box-shadow:0 18px 48px rgba(15,23,42,.12);overflow:hidden">
-      <div style="background:%s;border-bottom:1px solid %s;padding:18px 22px">
-        <p style="margin:0 0 6px;color:%s;font-weight:700;font-size:13px">สถานะ: %s</p>
-        <h1 style="margin:0;font-size:24px;line-height:1.25">%s</h1>
-      </div>
-      <div style="padding:22px">
-        <p style="margin:0 0 10px;font-size:16px">%s</p>
-        <p style="margin:0 0 18px;color:#64748b">%s</p>
-        <div style="display:flex;flex-wrap:wrap;gap:10px">
-          <a href="%s" style="display:inline-flex;align-items:center;justify-content:center;border-radius:10px;background:#0f7584;color:#fff;text-decoration:none;padding:10px 14px;font-weight:700">กลับไปหน้า Shopee ใน Nexflow</a>
-          <button onclick="window.close()" style="border:1px solid #cbd5e1;border-radius:10px;background:#fff;color:#0f172a;padding:10px 14px;font-weight:700;cursor:pointer">ปิดหน้าต่างนี้</button>
+<body>
+  <main>
+    <section class="shell" aria-labelledby="callback-title">
+      <div class="top">
+        <div class="brand">
+          <div class="mark">N</div>
+          <div>
+            <p class="brand-title">Nexflow</p>
+            <p class="brand-sub">Operations Console</p>
+          </div>
         </div>
-        <p style="margin:16px 0 0;color:#94a3b8;font-size:12px">ถ้าหน้านี้ไม่ปิดเอง ให้กลับไปที่ Nexflow แล้วกดรีเฟรชสถานะ Shopee API</p>
+        <div class="chip">Shopee Open API</div>
       </div>
+      <div class="content">
+        <div class="status">
+          <div class="status-icon" aria-hidden="true">%s</div>
+          <div>
+            <div class="eyebrow">สถานะ: %s</div>
+            <h1 id="callback-title">%s</h1>
+            <p class="message">%s</p>
+            <p class="hint">%s</p>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="primary" type="button" onclick="closePopup()">ปิดหน้าต่างนี้</button>
+        </div>
+        <p class="close-note">%s</p>
+        <p id="close-fallback" class="close-fallback">ถ้าปุ่มปิดไม่ทำงาน ให้ปิด popup/แท็บนี้จาก browser แล้วกลับไป Nexflow ที่เปิดอยู่</p>
+      </div>
+      <div class="footer">หน้าต่างนี้ใช้สำหรับรับผลจาก Shopee เท่านั้น หลังปิดแล้วให้ทำงานต่อใน Nexflow</div>
     </section>
   </main>
+  <script>
+    const shouldAutoClose = %t;
+    function closePopup() {
+      window.close();
+      window.setTimeout(function () {
+        document.getElementById('close-fallback')?.classList.add('is-visible');
+      }, 450);
+    }
+    if (shouldAutoClose) {
+      window.setTimeout(closePopup, 1200);
+    }
+  </script>
 </body>
 </html>`,
+		iconBg,
+		iconText,
 		border,
-		bg,
-		border,
+		statusBg,
 		tone,
+		iconSymbol,
 		html.EscapeString(statusLabel),
 		html.EscapeString(title),
 		html.EscapeString(message),
-		html.EscapeString(statusDetail),
-		html.EscapeString(backURL),
+		html.EscapeString(statusHint+" · "+statusDetail),
+		html.EscapeString(closeHint),
+		autoClose,
 	)
 }

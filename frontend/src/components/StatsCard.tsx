@@ -12,7 +12,7 @@ export interface StatsCardProps {
 }
 
 const tone: Record<NonNullable<StatsCardProps['variant']>, string> = {
-  primary: 'bg-primary/10 text-primary',
+  primary: 'bg-primary/10 text-accent-strong',
   success: 'bg-success/10 text-success',
   warning: 'bg-warning/10 text-warning',
   danger: 'bg-destructive/10 text-destructive',
@@ -28,7 +28,7 @@ export default function StatsCard({
   className,
 }: StatsCardProps) {
   return (
-    <Card className={cn('rounded-xl border-border/80 shadow-sm transition-shadow hover:shadow-md', className)}>
+    <Card className={cn('rounded-lg border-border/80 shadow-sm transition-shadow hover:shadow-md', className)}>
       <CardContent className="flex items-start justify-between gap-3 p-5">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-muted-foreground">{label}</p>

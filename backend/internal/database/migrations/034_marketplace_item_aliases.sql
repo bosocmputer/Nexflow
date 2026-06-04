@@ -1,5 +1,5 @@
 -- Marketplace item aliases map platform-specific SKU/name/variant keys to SML items.
--- They let staff confirm a product once in BillFlow instead of editing 1000+
+-- They let staff confirm a product once in Nexflow instead of editing 1000+
 -- marketplace listings by hand.
 
 CREATE TABLE IF NOT EXISTS marketplace_item_aliases (

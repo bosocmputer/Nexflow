@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
+import dayjs from 'dayjs'
 import {
   AlertCircle,
   AlertTriangle,
@@ -28,6 +29,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -36,6 +44,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { PageHeader } from '@/components/common/PageHeader'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { ActionSafetyPanel } from '@/components/common/ActionSafetyPanel'
+import { DateRangePicker, type DateRangePreset } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -323,7 +334,7 @@ function shopeeAPIReadiness(status: ShopeeAPIStatus): APIReadiness {
   }
   return {
     title: live ? 'เชื่อมร้านจริงแล้ว' : 'เชื่อม sandbox แล้ว',
-    description: 'ดึง order แบบ preview-only ก่อนสร้างบิล เพื่อให้ตรวจข้อมูลก่อนส่งเข้า SML',
+    description: 'ดึง order เพื่อตรวจรายการก่อนสร้างบิล และตรวจข้อมูลก่อนส่งเข้า SML',
     tone: live ? 'success' : 'warning',
     steps,
   }
@@ -380,6 +391,42 @@ const shopeeOrderStatusOptions = [
   { value: 'PROCESSED', label: 'กำลังเตรียมพัสดุ (PROCESSED)' },
 ]
 
+const NO_SHOP_SELECTED = '__no_shop_selected__'
+const shopeeImportPresets: DateRangePreset[] = [
+  {
+    label: 'วันนี้',
+    getRange: () => {
+      const today = dayjs().format('YYYY-MM-DD')
+      return { from: today, to: today }
+    },
+  },
+  {
+    label: '7 วัน',
+    getRange: () => ({
+      from: dayjs().subtract(6, 'day').format('YYYY-MM-DD'),
+      to: dayjs().format('YYYY-MM-DD'),
+    }),
+  },
+  {
+    label: '15 วัน',
+    getRange: () => ({
+      from: dayjs().subtract(14, 'day').format('YYYY-MM-DD'),
+      to: dayjs().format('YYYY-MM-DD'),
+    }),
+  },
+]
+
+const CANONICAL_PUBLIC_URL = 'https://animal-galvanize-tameness.ngrok-free.dev'
+
+function hostFromURL(value?: string) {
+  if (!value) return ''
+  try {
+    return new URL(value).host
+  } catch {
+    return ''
+  }
+}
+
 function apiErrorMessage(err: unknown, fallback: string) {
   const data = (err as { response?: { data?: { error?: string; error_code?: string } } })?.response?.data
   const raw = data?.error ?? ''
@@ -435,7 +482,7 @@ function SummaryCard({
   const tone: Record<typeof variant, string> = {
     success: 'border-success/30 bg-success/5 text-success',
     danger: 'border-destructive/30 bg-destructive/5 text-destructive',
-    primary: 'border-primary/30 bg-primary/5 text-primary',
+    primary: 'border-primary/30 bg-primary/5 text-accent-strong',
     muted: 'border-border bg-muted/30 text-foreground',
   }
   return (
@@ -474,6 +521,8 @@ export default function ShopeeImport() {
   const [selectedConnectionID, setSelectedConnectionID] = useState('')
   const [editingConnectionID, setEditingConnectionID] = useState('')
   const [editingLabel, setEditingLabel] = useState('')
+  const [confirmConnectOpen, setConfirmConnectOpen] = useState(false)
+  const [disableConnection, setDisableConnection] = useState<ShopeeAPIConnection | null>(null)
   const [apiBusy, setAPIBusy] = useState(false)
   const [apiFrom, setAPIFrom] = useState(() => {
     const d = new Date()
@@ -674,7 +723,7 @@ export default function ShopeeImport() {
 
     authWindow.document.title = 'กำลังเปิด Shopee Open API'
     authWindow.document.body.style.cssText =
-      'margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8fafc;color:#0f172a;display:grid;place-items:center;min-height:100vh;'
+      'margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#F8FBFF;color:#0F172A;display:grid;place-items:center;min-height:100vh;'
     authWindow.document.body.textContent = 'กำลังเปิดหน้า Shopee เพื่อเชื่อมต่อร้าน...'
 
     setAPIBusy(true)
@@ -836,6 +885,11 @@ export default function ShopeeImport() {
   const apiCanFetch = (apiStatus?.can_fetch ?? false) && Boolean(selectedConnection?.can_fetch)
   const apiConnectDisabled = apiBusy || !apiCanConnect
   const apiFetchDisabled = apiBusy || !apiCanFetch || !!apiDateError || needsShopSelection
+  const currentHost = typeof window !== 'undefined' ? window.location.host : ''
+  const canonicalHost = hostFromURL(CANONICAL_PUBLIC_URL)
+  const redirectHost = hostFromURL(apiStatus?.redirect_url)
+  const connectHostWarning = Boolean(currentHost && canonicalHost && currentHost !== canonicalHost)
+  const redirectHostWarning = Boolean(redirectHost && canonicalHost && redirectHost !== canonicalHost)
   const confirmDisabled = selectedIDs.size === 0 || !!preview?.more
   const confirmTitle = preview?.more
     ? 'ลดช่วงวันที่หรือเลือกสถานะแยกก่อนยืนยันนำเข้า'
@@ -914,13 +968,41 @@ export default function ShopeeImport() {
   const previewHasNoOrders = !!preview && preview.orders.length === 0
   const resetPreviewLabel = previewSource === 'api' ? 'กลับไปเลือกช่วงวันที่ใหม่' : 'เลือกไฟล์ใหม่'
   const resetDoneLabel = previewSource === 'api' ? 'ดึงออเดอร์ใหม่' : 'นำเข้าไฟล์ใหม่'
+  const connectConfirmDescription = [
+    `Domain สำหรับ Shopee: ${CANONICAL_PUBLIC_URL}`,
+    `หน้าที่เปิดอยู่: ${currentHost || 'ไม่ทราบ host'}`,
+    `Redirect ใน server: ${apiStatus?.redirect_url || 'ยังไม่ได้ตั้งค่า'}`,
+    '',
+    connectHostWarning
+      ? 'คำเตือน: ตอนนี้ไม่ได้เปิดผ่าน ngrok canonical domain ถ้าเชื่อมร้านจาก LAN/IP อาจทำให้ Shopee redirect/callback ไม่ตรง domain'
+      : 'Domain ปัจจุบันตรงกับ ngrok canonical domain สำหรับ Shopee callback',
+    redirectHostWarning
+      ? 'คำเตือน: redirect host ใน server ไม่ตรงกับ ngrok canonical domain ให้ตรวจ PUBLIC_BASE_URL / SHOPEE_OPEN_API_REDIRECT_URL ก่อนเชื่อมร้านจริง'
+      : 'หลัง Shopee approve ระบบจะเปิด popup และ callback จะปิดหน้าต่างเองเมื่อเชื่อมสำเร็จ',
+  ].join('\n')
+  const disableConnectionDescription = disableConnection
+    ? [
+        `ร้าน: ${disableConnection.label || disableConnection.shop_name || 'Shopee shop'} · ${disableConnection.shop_id}`,
+        'ผลกระทบ: ร้านนี้จะไม่ถูกใช้ดึง order ผ่าน API และจะไม่ปรากฏเป็นตัวเลือก import ปกติ',
+        'ข้อมูลเดิม: เอกสารที่สร้างไว้แล้วใน Nexflow และเอกสารที่ส่งเข้า SML แล้วจะไม่ถูกลบ',
+        'Rollback: เปิดใช้งานร้านนี้กลับมาได้จากหน้ารายละเอียดสำหรับแอดมิน',
+      ].join('\n')
+    : ''
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Shopee"
-        description={`เลือก Shopee shop แล้วดึง API หรืออัปโหลด Excel เพื่อสร้าง${destination.documentName}สำหรับตรวจและส่งเข้า SML`}
+        description={`ตรวจรายการก่อนสร้างเอกสาร: เลือก Shopee shop แล้วดึง API หรืออัปโหลด Excel เพื่อสร้าง${destination.documentName} (${destination.shortName}) ไว้ตรวจก่อนส่งเข้า SML`}
       />
+
+      <Card className="border-border/80 bg-card/95 shadow-sm">
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-3">
+          <SummaryCard label="พร้อมสร้างใหม่" value={preview?.new_count ?? 0} variant="primary" />
+          <SummaryCard label="ซ้ำ/ข้าม" value={(preview?.duplicate_count ?? 0) + (preview?.skipped_count ?? 0)} variant="muted" />
+          <SummaryCard label="ต้องตรวจ" value={previewIssueCount} variant={previewIssueCount > 0 ? 'danger' : 'success'} />
+        </CardContent>
+      </Card>
 
       <input
         ref={fileRef}
@@ -943,7 +1025,7 @@ export default function ShopeeImport() {
             <CardHeader className="pb-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Store className="h-5 w-5 text-primary" />
+                  <Store className="h-5 w-5 text-accent-strong" />
                   ดึงออเดอร์จาก Shopee
                 </CardTitle>
                 <Badge variant="outline">{destination.shortName}</Badge>
@@ -960,9 +1042,12 @@ export default function ShopeeImport() {
                     <Button
                       variant={activeConnections.length > 0 ? 'outline' : 'default'}
                       size="sm"
-                      onClick={handleConnectAPI}
+                      onClick={() => setConfirmConnectOpen(true)}
                       disabled={apiConnectDisabled}
-                      title={apiStatus.blocking_reason || undefined}
+                      title={
+                        apiStatus.blocking_reason ||
+                        (connectHostWarning ? 'ควรเปิดผ่าน ngrok canonical domain ก่อนเชื่อมร้าน' : undefined)
+                      }
                     >
                       {apiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
                       {apiConnectLabel}
@@ -973,75 +1058,75 @@ export default function ShopeeImport() {
 
               {apiStatus ? (
                 <>
-                  <div className="grid gap-3 lg:grid-cols-[minmax(220px,0.85fr)_repeat(4,minmax(0,1fr))_auto]">
-                    <label className="text-xs font-medium text-muted-foreground">
+                  <div className="rounded-md border border-border bg-muted/15 p-3">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(220px,0.9fr)_minmax(260px,1fr)_minmax(170px,0.72fr)_minmax(220px,0.9fr)_auto] lg:items-end">
+                    <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                       ร้านค้า
                       {activeConnections.length > 1 ? (
-                        <select
-                          value={selectedConnectionID}
-                          onChange={(e) => setSelectedConnectionID(e.target.value)}
-                          className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                        <Select
+                          value={selectedConnectionID || NO_SHOP_SELECTED}
+                          onValueChange={(value) => setSelectedConnectionID(value === NO_SHOP_SELECTED ? '' : value)}
                         >
-                          <option value="">เลือกร้าน Shopee</option>
-                          {activeConnections.map((conn) => (
-                            <option key={conn.id} value={conn.id}>
-                              {conn.label || conn.shop_name || 'Shopee shop'} · {conn.shop_id}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger className="h-10 bg-background text-sm">
+                            <SelectValue placeholder="เลือกร้าน Shopee" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NO_SHOP_SELECTED}>เลือกร้าน Shopee</SelectItem>
+                            {activeConnections.map((conn) => (
+                              <SelectItem key={conn.id} value={conn.id}>
+                                {conn.label || conn.shop_name || 'Shopee shop'} · {conn.shop_id}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       ) : (
-                        <div className="mt-1 flex h-10 items-center rounded-md border border-border bg-muted/30 px-3 text-sm text-foreground">
+                        <div className="flex h-10 items-center rounded-md border border-border bg-background px-3 text-sm text-foreground">
                           <span className="truncate">{selectedConnection?.label || selectedConnection?.shop_name || 'ยังไม่มีร้านที่เชื่อมต่อ'}</span>
                         </div>
                       )}
                     </label>
-                    <label className="text-xs font-medium text-muted-foreground">
-                      จากวันที่
-                      <input
-                        type="date"
-                        value={apiFrom}
-                        onChange={(e) => setAPIFrom(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-medium text-muted-foreground">ช่วงวันที่</div>
+                      <DateRangePicker
+                        from={apiFrom}
+                        to={apiTo}
+                        onFromChange={setAPIFrom}
+                        onToChange={setAPITo}
+                        presets={shopeeImportPresets}
+                        title="ช่วงวันที่ Shopee"
+                        description="ดึง order ได้ครั้งละไม่เกิน 15 วัน"
+                        className="h-10 w-full min-w-0 bg-background text-sm"
                       />
-                    </label>
-                    <label className="text-xs font-medium text-muted-foreground">
-                      ถึงวันที่
-                      <input
-                        type="date"
-                        value={apiTo}
-                        onChange={(e) => setAPITo(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                      />
-                    </label>
-                    <label className="text-xs font-medium text-muted-foreground">
+                    </div>
+                    <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                       ค้นหาจาก
-                      <select
+                      <Select
                         value={apiTimeRangeField}
-                        onChange={(e) => setAPITimeRangeField(e.target.value as 'create_time' | 'update_time')}
-                        className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                        onValueChange={(value) => setAPITimeRangeField(value as 'create_time' | 'update_time')}
                       >
-                        <option value="create_time">วันที่สร้าง order</option>
-                        <option value="update_time">วันที่อัปเดต order</option>
-                      </select>
+                        <SelectTrigger className="h-10 bg-background text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="create_time">วันที่สร้าง order</SelectItem>
+                          <SelectItem value="update_time">วันที่อัปเดต order</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </label>
-                    <label className="text-xs font-medium text-muted-foreground">
+                    <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
                       สถานะ
-                      <select
-                        value={apiOrderStatus}
-                        onChange={(e) => setAPIOrderStatus(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                      >
-                        {shopeeOrderStatusOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      {apiOrderStatus === 'ready_to_bill' && (
-                        <p className="mt-1 text-[11px] font-normal leading-4 text-muted-foreground">
-                          รวม order ที่จัดส่งแล้ว รอลูกค้ายืนยันรับสินค้า และสำเร็จแล้ว
-                        </p>
-                      )}
+                      <Select value={apiOrderStatus} onValueChange={setAPIOrderStatus}>
+                        <SelectTrigger className="h-10 bg-background text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {shopeeOrderStatusOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </label>
                     <Button
                       className="h-10 self-end"
@@ -1053,6 +1138,42 @@ export default function ShopeeImport() {
                       ดึงออเดอร์
                     </Button>
                   </div>
+                    {apiOrderStatus === 'ready_to_bill' && (
+                      <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
+                        สถานะพร้อมออกบิลรวม order ที่จัดส่งแล้ว รอลูกค้ายืนยันรับสินค้า และสำเร็จแล้ว
+                      </p>
+                    )}
+                  </div>
+
+                  <ActionSafetyPanel
+                    title="ตรวจขอบเขตก่อนดึงออเดอร์ Shopee"
+                    description="ขั้นตอนนี้เป็นการตรวจรายการก่อนสร้างเอกสาร ยังไม่สร้างบิลจนกว่าจะกดยืนยันในขั้นตอนถัดไป"
+                    tone="info"
+                    items={[
+                      {
+                        label: 'ร้าน',
+                        value: selectedConnection
+                          ? `${selectedConnection.label || selectedConnection.shop_name || 'Shopee shop'} · ${selectedConnection.shop_id}`
+                          : 'ยังไม่ได้เลือกร้าน',
+                        detail: needsShopSelection ? 'ต้องเลือกร้านก่อนดึง order' : 'กันการดึงผิดร้านก่อนสร้างเอกสาร',
+                      },
+                      {
+                        label: 'ช่วงวันที่',
+                        value: `${apiFrom || '—'} ถึง ${apiTo || '—'}`,
+                        detail: apiTimeRangeField === 'create_time' ? 'ค้นจากวันที่สร้าง order' : 'ค้นจากวันที่อัปเดต order',
+                      },
+                      {
+                        label: 'สถานะ',
+                        value: shopeeOrderStatusOptions.find((option) => option.value === apiOrderStatus)?.label || apiOrderStatus,
+                        detail: 'ระบบจะตรวจซ้ำด้วย Order ID + ร้าน ก่อนสร้างเอกสาร',
+                      },
+                      {
+                        label: 'หลังดึงข้อมูล',
+                        value: 'ตรวจรายการก่อนสร้างเอกสาร',
+                        detail: 'ยังไม่ส่ง SML และยังไม่แก้เอกสารเดิม',
+                      },
+                    ]}
+                  />
 
                   {(apiDateError || apiLastSyncError || needsShopSelection) && (
                     <div className="space-y-1 text-xs">
@@ -1113,7 +1234,7 @@ export default function ShopeeImport() {
 
                       <div className="rounded-md border border-border bg-background p-3">
                         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
-                          <Store className="h-4 w-4 text-primary" />
+                          <Store className="h-4 w-4 text-accent-strong" />
                           ร้าน Shopee ที่เชื่อมต่อ
                         </div>
                         {apiStatus && !apiStatus.enabled ? (
@@ -1189,7 +1310,17 @@ export default function ShopeeImport() {
                                           <Pencil className="h-3.5 w-3.5" />
                                           ชื่อ
                                         </Button>
-                                        <Button type="button" size="sm" variant={disabled ? 'outline' : 'ghost'} className="h-8 px-2" onClick={() => toggleConnectionDisabled(conn)} disabled={apiBusy}>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant={disabled ? 'outline' : 'ghost'}
+                                          className="h-8 px-2"
+                                          onClick={() => {
+                                            if (disabled) void toggleConnectionDisabled(conn)
+                                            else setDisableConnection(conn)
+                                          }}
+                                          disabled={apiBusy}
+                                        >
                                           <Power className="h-3.5 w-3.5" />
                                           {disabled ? 'เปิดใช้' : 'ปิดใช้'}
                                         </Button>
@@ -1316,7 +1447,7 @@ export default function ShopeeImport() {
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
                       <Badge variant={run.status === 'confirmed' ? 'default' : 'secondary'}>
-                        {run.status === 'confirmed' ? 'สร้างแล้ว' : 'Preview'}
+                        {run.status === 'confirmed' ? 'สร้างแล้ว' : 'ตรวจรายการ'}
                       </Badge>
                       <Badge variant="outline">ใหม่ {run.new_orders}</Badge>
                       <Badge variant="outline">ซ้ำ {run.duplicate_orders}</Badge>
@@ -1523,7 +1654,7 @@ export default function ShopeeImport() {
                           <div className="space-y-1">
                             <button
                               type="button"
-                              className="inline-flex items-center gap-1 font-mono text-xs font-medium text-foreground hover:text-primary"
+                              className="inline-flex items-center gap-1 font-mono text-xs font-medium text-foreground hover:text-link"
                               onClick={() => toggleExpand(order.order_id)}
                             >
                               {expanded ? (
@@ -1696,7 +1827,7 @@ export default function ShopeeImport() {
             </div>
             <div className="grid gap-3 p-5 sm:grid-cols-3">
               <div className="rounded-md border border-border p-3">
-                <Database className="h-4 w-4 text-primary" />
+                <Database className="h-4 w-4 text-accent-strong" />
                 <p className="mt-2 text-xs font-medium">Order ที่เลือก</p>
                 <p className="mt-1 text-2xl font-semibold tabular-nums">
                   {selectedIDs.size}
@@ -1826,6 +1957,27 @@ export default function ShopeeImport() {
           </Card>
         </>
       )}
+      <ConfirmDialog
+        open={confirmConnectOpen}
+        onOpenChange={setConfirmConnectOpen}
+        title="เปิด Shopee OAuth ผ่าน ngrok domain?"
+        description={connectConfirmDescription}
+        confirmLabel={activeConnections.length > 0 ? 'เชื่อมร้านเพิ่ม' : 'เชื่อมต่อร้าน Shopee'}
+        onConfirm={handleConnectAPI}
+      />
+      <ConfirmDialog
+        open={disableConnection !== null}
+        onOpenChange={(open) => !open && setDisableConnection(null)}
+        title="ปิดใช้งานร้าน Shopee นี้?"
+        description={disableConnectionDescription}
+        confirmLabel="ปิดใช้งานร้าน"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!disableConnection) return
+          await toggleConnectionDisabled(disableConnection)
+          setDisableConnection(null)
+        }}
+      />
     </div>
   )
 }

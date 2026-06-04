@@ -123,94 +123,89 @@ const CHANNEL_META: Record<string, { label: string; cls: string }> = {
 
 function HelpBanner() {
   return (
-    <Card className="border-info/20 bg-info/5 px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Info className="h-4 w-4 text-info" />
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">คู่มือเชื่อมต่อ Gmail / IMAP</div>
-            <div className="truncate text-xs text-muted-foreground">
-              เปิด 2-Step Verification, สร้าง App Password, เปิด IMAP แล้วค่อยเพิ่มกล่องเมล
-            </div>
+    <details className="group rounded-md border border-info/20 bg-info/[0.035] text-sm">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <Info className="h-4 w-4 shrink-0 text-info" />
+          <span className="font-medium text-foreground">รายละเอียดสำหรับแอดมิน: Gmail / IMAP</span>
+        </span>
+        <span className="text-xs text-link group-open:hidden">เปิด</span>
+        <span className="hidden text-xs text-muted-foreground group-open:inline">ย่อ</span>
+      </summary>
+      <div className="border-t border-info/15 px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs leading-5 text-muted-foreground">
+            เปิด 2-Step Verification, สร้าง App Password, เปิด IMAP แล้วค่อยเพิ่มกล่องเมล
           </div>
-        </div>
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8">
-              เปิดคู่มือ
-            </Button>
-          </SheetTrigger>
-          <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-            <SheetHeader>
-              <SheetTitle>Nexflow ดึงอีเมลแบบไหน</SheetTitle>
-              <SheetDescription>
-                ระบบจะอ่านอีเมลจากกล่องที่เพิ่มไว้ แล้วสร้างบิลให้อัตโนมัติ
-              </SheetDescription>
-            </SheetHeader>
-            <div className="mt-5 space-y-4 text-sm">
-              <div className={cn('grid grid-cols-1 gap-3', PHASE >= 2 && 'sm:grid-cols-2')}>
-                <div className="rounded-md border border-border bg-card p-3">
-                  <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
-                    <ShoppingBag className="h-4 w-4 text-warning" />
-                    กล่องเมล Shopee
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    สำหรับ Gmail/Outlook ที่มีอีเมลจาก Shopee — Phase 1 ใช้สร้างบิลซื้อจากอีเมล:
-                  </p>
-                  <ul className="mt-1.5 space-y-0.5 pl-4 text-xs">
-                    <li className="list-disc">
-                      Subject "<b>ถูกจัดส่งแล้ว</b>" หรือ "<b>ยืนยันการชำระเงิน</b>" → บิลซื้อ
-                    </li>
-                    <li className="list-disc">
-                      บิลที่สร้างแล้วจะไปตรวจต่อที่หน้า <b>ใบสั่งซื้อ</b>
-                    </li>
-                  </ul>
-                </div>
-                {PHASE >= 2 && (
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8">
+                เปิดคู่มือเต็ม
+              </Button>
+            </SheetTrigger>
+            <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+              <SheetHeader>
+                <SheetTitle>Nexflow ดึงอีเมลแบบไหน</SheetTitle>
+                <SheetDescription>
+                  ระบบจะอ่านอีเมลจากกล่องที่เพิ่มไว้ แล้วสร้างบิลให้อัตโนมัติ
+                </SheetDescription>
+              </SheetHeader>
+              <div className="mt-5 space-y-4 text-sm">
+                <div className={cn('grid grid-cols-1 gap-3', PHASE >= 2 && 'sm:grid-cols-2')}>
                   <div className="rounded-md border border-border bg-card p-3">
                     <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
-                      <FileText className="h-4 w-4 text-info" />
-                      กล่องเมลไฟล์แนบทั่วไป
+                      <ShoppingBag className="h-4 w-4 text-warning" />
+                      กล่องเมล Shopee
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      สำหรับ PDF / Excel แนบจากผู้ขายทั่วไป ใช้ใน Phase ถัดไป
+                      สำหรับ Gmail/Outlook ที่มีอีเมลจาก Shopee ใช้สร้างบิลซื้อจากอีเมล
                     </p>
                     <ul className="mt-1.5 space-y-0.5 pl-4 text-xs">
-                      <li className="list-disc">ระบบอ่านข้อมูลจากไฟล์แนบแล้วสร้างบิล</li>
-                      <li className="list-disc">รองรับ .pdf, .jpg, .png, .xls, .xlsx</li>
+                      <li className="list-disc">Subject “ถูกจัดส่งแล้ว” หรือ “ยืนยันการชำระเงิน” → บิลซื้อ</li>
+                      <li className="list-disc">บิลที่สร้างแล้วจะไปตรวจต่อที่หน้าใบสั่งซื้อ</li>
                     </ul>
                   </div>
-                )}
+                  {PHASE >= 2 && (
+                    <div className="rounded-md border border-border bg-card p-3">
+                      <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+                        <FileText className="h-4 w-4 text-info" />
+                        กล่องเมลไฟล์แนบทั่วไป
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        สำหรับ PDF / Excel แนบจากผู้ขายทั่วไป ใช้ในช่องทางเสริม
+                      </p>
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
+                  Gmail ต้องเตรียม 3 อย่างก่อนเชื่อม: เปิด <b>2-Step Verification</b>, สร้าง{' '}
+                  <b>App Password 16 ตัวอักษร</b>, และเปิด <b>IMAP</b> ใน Gmail. วาง App Password
+                  แบบมีช่องว่างได้ ระบบจะลบช่องว่างให้ก่อนส่งต่อ
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    ['เปิด 2-Step Verification', GMAIL_SECURITY_URL],
+                    ['สร้าง App Password', GMAIL_APP_PASSWORDS_URL],
+                    ['เปิด Gmail IMAP', GMAIL_IMAP_SETTINGS_URL],
+                  ].map(([label, href]) => (
+                    <a
+                      key={href}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground hover:bg-accent"
+                    >
+                      {label}
+                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                    </a>
+                  ))}
+                </div>
               </div>
-              <div className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">
-                Gmail ต้องเตรียม 3 อย่างก่อนเชื่อม: เปิด <b>2-Step Verification</b>, สร้าง{' '}
-                <b>App Password 16 ตัวอักษร</b>, และเปิด <b>IMAP</b> ใน Gmail. วาง App Password
-                แบบมีช่องว่างได้ เช่น <code>qzqq vwqb zydo dtsi</code> ระบบจะส่งเป็น{' '}
-                <code>qzqqvwqbzydodtsi</code> อัตโนมัติ.
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  ['เปิด 2-Step Verification', GMAIL_SECURITY_URL],
-                  ['สร้าง App Password', GMAIL_APP_PASSWORDS_URL],
-                  ['เปิด Gmail IMAP', GMAIL_IMAP_SETTINGS_URL],
-                ].map(([label, href]) => (
-                  <a
-                    key={href}
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground hover:bg-accent"
-                  >
-                    {label}
-                    <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                  </a>
-                ))}
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
+            </SheetContent>
+          </Sheet>
+        </div>
       </div>
-    </Card>
+    </details>
   )
 }
 
@@ -803,7 +798,7 @@ function SummaryPill({
             ? 'border-border bg-muted/50 text-muted-foreground'
             : 'border-border bg-background text-foreground'
   return (
-    <div className={cn('rounded-md border px-3 py-2', cls)}>
+    <div className={cn('rounded-md border px-2.5 py-2', cls)}>
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="font-mono text-lg font-semibold leading-tight tabular-nums">{value.toLocaleString('th-TH')}</div>
     </div>
@@ -1210,34 +1205,79 @@ export default function EmailAccounts() {
         actions={headerActions}
       />
 
-      {instanceContext && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
-          <Mail className="h-3.5 w-3.5 text-primary" />
-          <span>กล่องเมลหน้านี้ผูกกับ Nexflow instance:</span>
-          <span className="font-medium text-foreground">{instanceContext.instance_name || 'Nexflow'}</span>
-          <span className="font-mono text-[11px]">({instanceContext.instance_slug || 'default'})</span>
-          {instanceContext.sml_database && (
-            <>
-              <span>· SML tenant</span>
-              <span className="font-mono text-[11px] text-foreground">{instanceContext.sml_database}</span>
-            </>
-          )}
-        </div>
-      )}
-
-      <HelpBanner />
-
-      {!loading && warningAccounts.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm text-warning">
-          <div className="flex items-center gap-2 font-medium">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>มีกล่องเมลต้องตรวจ {warningAccounts.length.toLocaleString('th-TH')} กล่อง</span>
+      <div className="rounded-lg border border-border bg-card p-3 shadow-none">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Mail className="h-4 w-4 text-accent-strong" />
+              <h2 className="text-sm font-semibold text-foreground">Email Intake Readiness</h2>
+              <Badge variant={summaryCounts.attention > 0 ? 'destructive' : 'secondary'} className="h-6">
+                {summaryCounts.attention > 0 ? 'ต้องตรวจ' : summaryCounts.ready > 0 ? 'พร้อมใช้งาน' : 'ยังไม่มีกล่องพร้อม'}
+              </Badge>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              ตรวจว่ากล่องอีเมลรับบิลอ่านได้ล่าสุดหรือไม่ ก่อนปล่อยให้ระบบสร้างใบสั่งซื้อจากอีเมล
+            </p>
+            {instanceContext && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                <span>Instance</span>
+                <span className="font-medium text-foreground">{instanceContext.instance_name || 'Nexflow'}</span>
+                <span className="font-mono">({instanceContext.instance_slug || 'default'})</span>
+                {instanceContext.sml_database && (
+                  <>
+                    <span>· SML tenant</span>
+                    <span className="font-mono text-foreground">{instanceContext.sml_database}</span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
-          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setStateFilter('attention')}>
-            ดูเฉพาะที่ต้องตรวจ
-          </Button>
+
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" onClick={handleAdd}>
+              <Plus className="h-3.5 w-3.5" />
+              เพิ่มกล่องเมล
+            </Button>
+            {summaryCounts.backlog > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={handlePollAllBacklog}
+                disabled={pollingBacklogAll}
+              >
+                {pollingBacklogAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5" />}
+                เร่งดึง {summaryCounts.backlog.toLocaleString('th-TH')} กล่อง
+              </Button>
+            )}
+          </div>
         </div>
-      )}
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <SummaryPill label="ทั้งหมด" value={summaryCounts.total} />
+          <SummaryPill label="พร้อมใช้งาน" value={summaryCounts.ready} tone="success" />
+          <SummaryPill label="กำลังทยอยอ่าน" value={summaryCounts.backlog} tone="warning" />
+          <SummaryPill label="ต้องตรวจ" value={summaryCounts.attention} tone="danger" />
+          <SummaryPill label="ปิดใช้งาน" value={summaryCounts.disabled} tone="muted" />
+          <SummaryPill label="ยังไม่เคยดึง" value={summaryCounts.unknown} tone="muted" />
+        </div>
+
+        {!loading && warningAccounts.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/35 bg-warning/[0.07] px-3 py-2 text-sm text-warning">
+            <div className="flex items-center gap-2 font-medium">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>มีกล่องเมลต้องตรวจ {warningAccounts.length.toLocaleString('th-TH')} กล่อง</span>
+            </div>
+            <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setStateFilter('attention')}>
+              ดูเฉพาะที่ต้องตรวจ
+            </Button>
+          </div>
+        )}
+
+        <div className="mt-3">
+          <HelpBanner />
+        </div>
+      </div>
 
       {!loading && accounts.length === 0 ? (
         <EmptyState
@@ -1254,15 +1294,6 @@ export default function EmailAccounts() {
       ) : (
         <TooltipProvider delayDuration={0}>
           <div className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-              <SummaryPill label="ทั้งหมด" value={summaryCounts.total} />
-              <SummaryPill label="พร้อมใช้งาน" value={summaryCounts.ready} tone="success" />
-              <SummaryPill label="กำลังทยอยอ่าน" value={summaryCounts.backlog} tone="warning" />
-              <SummaryPill label="ต้องตรวจ" value={summaryCounts.attention} tone="danger" />
-              <SummaryPill label="ปิดใช้งาน" value={summaryCounts.disabled} tone="muted" />
-              <SummaryPill label="ยังไม่เคยดึง" value={summaryCounts.unknown} tone="muted" />
-            </div>
-
             <div className="flex flex-col gap-2 rounded-md border border-border bg-card p-3 sm:flex-row sm:items-center">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1297,17 +1328,6 @@ export default function EmailAccounts() {
                   <SelectItem value="lazada">Lazada</SelectItem>
                 </SelectContent>
               </Select>
-              {summaryCounts.backlog > 0 && (
-                <Button
-                  variant="outline"
-                  className="h-10 gap-1.5"
-                  onClick={handlePollAllBacklog}
-                  disabled={pollingBacklogAll}
-                >
-                  {pollingBacklogAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-                  เร่งดึงทั้งหมด
-                </Button>
-              )}
             </div>
 
             <div className="space-y-2">

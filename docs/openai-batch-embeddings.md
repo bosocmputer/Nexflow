@@ -38,7 +38,7 @@ curl https://api.openai.com/v1/batches \
     "endpoint": "/v1/embeddings",
     "completion_window": "24h",
     "metadata": {
-      "feature": "billflow_catalog_embed",
+      "feature": "nexflow_catalog_embed",
       "tenant": "SML1_2026"
     }
   }'
@@ -91,7 +91,7 @@ Implementation mapping:
 - `error != null` or missing embedding -> `SetEmbeddingError(item_code)`
 - record `batch_id`, `input_file_id`, `output_file_id`, `request_counts`, and stable status in a new job table
 
-## BillFlow Integration Sketch
+## Nexflow Integration Sketch
 
 1. Add `OPENAI_API_KEY` and provider config, keeping current OpenRouter embed path as fallback.
 2. Add `catalog_embedding_jobs` table:

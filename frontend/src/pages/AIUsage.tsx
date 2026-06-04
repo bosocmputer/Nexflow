@@ -119,7 +119,7 @@ function StatCard({
     )}>
       <CardContent className="flex items-center gap-3 p-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-md bg-background">
-          <Icon className="h-4 w-4 text-primary" />
+          <Icon className="h-4 w-4 text-accent-strong" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-xs text-muted-foreground">{label}</div>
@@ -335,7 +335,7 @@ export default function AIUsage() {
                     </TableCell>
                     <TableCell>
                       {l.bill_id ? (
-                        <Link className="font-mono text-xs text-primary hover:underline" to={`/bills/${l.bill_id}`}>
+                        <Link className="font-mono text-xs text-link hover:underline" to={`/bills/${l.bill_id}`}>
                           {l.bill_id.slice(0, 8)}…
                         </Link>
                       ) : (
@@ -378,7 +378,7 @@ function SessionLink({ log }: { log: UsageLog }) {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex max-w-[180px] items-center gap-1 font-mono text-xs text-primary hover:underline"
+      className="inline-flex max-w-[180px] items-center gap-1 font-mono text-xs text-link hover:underline"
       title={id}
     >
       <span className="truncate">{id}</span>

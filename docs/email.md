@@ -7,7 +7,7 @@
 
 ## ภาพรวม
 
-BillFlow poll Gmail/Outlook/IMAP อื่นตาม inbox ที่ admin เพิ่มใน `/settings/email` เพื่อตรวจหา email ใหม่ที่มี attachment
+Nexflow polls Gmail/Outlook/IMAP อื่นตาม inbox ที่ admin เพิ่มใน `/settings/email` เพื่อตรวจหา email ใหม่ที่มี attachment
 เมื่อพบ → ส่ง AI อ่าน → map รหัสสินค้า → ส่งสร้างบิลใน SML โดยอัตโนมัติ
 
 ---
@@ -139,7 +139,7 @@ Gmail มี rate limit — ถ้า poll ถี่กว่า 5 นาที 
 ## PDF ทำงานยังไง (Mistral OCR)
 
 Gmail ส่ง PDF บางฉบับเป็น `Content-Disposition: inline` (ไม่ใช่ attachment)
-BillFlow รองรับทั้ง 2 กรณี:
+Nexflow รองรับทั้ง 2 กรณี:
 
 ```
 Email → Part header
@@ -223,10 +223,10 @@ AUTO_CONFIRM_THRESHOLD=0.85
 
 ```bash
 # 1. ดู logs
-docker logs billflow-backend --tail=50 2>&1 | grep -i "imap\|email\|poll"
+docker logs nexflow-backend --tail=50 2>&1 | grep -i "imap\|email\|poll"
 
 # 2. ตรวจ IMAP config/status ใน DB
-docker exec billflow-postgres psql -U billflow -d billflow \
+docker exec nexflow-postgres psql -U nexflow -d nexflow \
   -c "SELECT name, enabled, last_poll_status, consecutive_failures, last_poll_error FROM imap_accounts;"
 
 # 3. ทดสอบ IMAP connection ด้วย curl
@@ -234,7 +234,7 @@ curl -v --ssl-reqd 'imaps://imap.gmail.com:993/INBOX' \
   --user 'email@gmail.com:apppassword16หลัก' 2>&1 | head -20
 
 # 4. ดูบิลใน DB
-docker exec billflow-postgres psql -U billflow -d billflow \
+docker exec nexflow-postgres psql -U nexflow -d nexflow \
   -c "SELECT id, status, error_msg, created_at FROM bills WHERE source='email' ORDER BY created_at DESC LIMIT 5;"
 ```
 

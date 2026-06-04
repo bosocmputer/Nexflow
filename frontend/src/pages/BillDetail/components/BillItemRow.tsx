@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, Edit, Trash2, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, Edit, Info, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { TableRow, TableCell } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { UnitSelect } from '@/components/common/UnitSelect'
+import { money } from '@/lib/shopeeBill'
 import { cn } from '@/lib/utils'
 import api from '@/api/client'
 import type { BillItem, CatalogMatch } from '@/types'
@@ -13,6 +20,13 @@ import { useMatchInfo } from '../hooks/useMatchInfo'
 import { scoreStyle } from '../utils/formatters'
 import { rowIssueReason } from '../utils/validation'
 import { MapItemModal } from './MapItemModal'
+
+export interface DiscountInfo {
+  effectiveDiscount: number
+  couponDiscount: number
+  coinAmount: number
+  grossTotal: number
+}
 
 interface Props {
   item: BillItem
@@ -26,6 +40,7 @@ interface Props {
   highlighted?: boolean
   rawNameLabel?: string
   showDiscountColumn?: boolean
+  discountInfo?: DiscountInfo
   tableColumnCount?: number
 }
 
@@ -71,6 +86,7 @@ export function BillItemRow({
   highlighted,
   rawNameLabel = 'ชื่อสินค้าจากต้นทาง',
   showDiscountColumn = false,
+  discountInfo,
   tableColumnCount = 9,
 }: Props) {
   // When the parent flips `highlighted` true (admin clicked "ดู →" in the
@@ -199,6 +215,13 @@ export function BillItemRow({
   const discountAmount = item.discount_amount ?? 0
   const grossAmount = (item.qty ?? 0) * billPrice
   const netAmount = Math.max(grossAmount - discountAmount, 0)
+  const canExplainDiscount =
+    Boolean(discountInfo) &&
+    !isShopeeShippingLine &&
+    discountAmount > 0 &&
+    grossAmount > 0 &&
+    (discountInfo?.grossTotal ?? 0) > 0
+  const discountRate = discountInfo ? (discountInfo.effectiveDiscount / discountInfo.grossTotal) * 100 : 0
 
   if (!editing) {
     return (
@@ -281,7 +304,39 @@ export function BillItemRow({
           {showDiscountColumn && (
             <TableCell className="text-right tabular-nums">
               {discountAmount > 0 ? (
-                <span className="font-medium text-success">-฿{discountAmount.toLocaleString()}</span>
+                <span className="inline-flex items-center justify-end gap-1 font-medium text-success">
+                  -฿{discountAmount.toLocaleString()}
+                  {canExplainDiscount && discountInfo && (
+                    <TooltipProvider delayDuration={120}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-full text-info hover:bg-info/10"
+                            aria-label="ดูสูตรส่วนลดรายการนี้"
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-xs text-xs leading-5">
+                          <div className="space-y-1">
+                            <p className="font-medium text-popover-foreground">
+                              ส่วนลดรวม {money(discountInfo.effectiveDiscount)}
+                            </p>
+                            <p>
+                              = โค้ด {money(discountInfo.couponDiscount)} + Coin {money(discountInfo.coinAmount)}
+                            </p>
+                            <p>อัตรา = {discountRate.toFixed(3)}%</p>
+                            <p>
+                              ส่วนลด row = {money(discountInfo.effectiveDiscount)} × ({money(grossAmount)} / {money(discountInfo.grossTotal)})
+                            </p>
+                            <p>= {money(discountAmount)}</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </span>
               ) : (
                 <span className="text-muted-foreground">—</span>
               )}

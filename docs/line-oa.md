@@ -7,7 +7,7 @@
 
 ## ภาพรวม
 
-LINE OA ใน BillFlow ตอนนี้เป็นระบบแชท 2 ทางระหว่างลูกค้ากับ admin ไม่ใช่ bot สั่งซื้ออัตโนมัติ ลูกค้าส่ง text/image/file/audio เข้ามา → ระบบบันทึกใน `/messages` → admin ตอบกลับผ่าน Reply API หรือ Push API และสามารถเปิดบิลขายจาก conversation ได้
+LINE OA ใน Nexflow ตอนนี้เป็นระบบแชท 2 ทางระหว่างลูกค้ากับ admin ไม่ใช่ bot สั่งซื้ออัตโนมัติ ลูกค้าส่ง text/image/file/audio เข้ามา → ระบบบันทึกใน `/messages` → admin ตอบกลับผ่าน Reply API หรือ Push API และสามารถเปิดบิลขายจาก conversation ได้
 
 ---
 

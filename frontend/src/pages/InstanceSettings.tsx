@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, AlertTriangle, Bell, Bot, Building2, CheckCircle2, Database, Plug, RotateCw, Save, Settings2, XCircle } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Bell, Bot, Building2, CheckCircle2, Database, FileClock, PackageCheck, Plug, ReceiptText, RotateCw, Save, Settings2, ShieldCheck, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
@@ -50,6 +50,19 @@ type ShopeeAPIStatus = {
   shop_name?: string
   redirect_url?: string
   blocking_reason?: string
+}
+
+type SetupStatusLite = {
+  blocking_ready_count: number
+  blocking_total_count: number
+  steps: Array<{ key: string; ready: boolean; status: string; blocking?: boolean }>
+  documents: {
+    pending: number
+    needs_review: number
+    failed: number
+    sent: number
+    saleinvoice: number
+  }
 }
 
 const GROUP_META: Record<SettingGroup, { title: string; description: string; icon: typeof Building2 }> = {
@@ -116,8 +129,71 @@ function sourceBadgeVariant(s: InstanceSetting): 'default' | 'outline' | 'second
   return 'outline'
 }
 
+function isCriticalSetting(s: InstanceSetting) {
+  const key = s.key.toLowerCase()
+  return (
+    s.restart_required ||
+    s.group === 'sml' ||
+    s.group === 'sml_db' ||
+    s.group === 'ai' ||
+    s.secret ||
+    key.includes('public') ||
+    key.includes('redirect') ||
+    key.includes('url') ||
+    key.includes('database') ||
+    key.includes('provider')
+  )
+}
+
+function settingPreviewValue(s: InstanceSetting, value: string) {
+  if (s.secret || s.type === 'password') return value ? '••••••••' : 'ว่าง'
+  return value || 'ว่าง'
+}
+
+function ReadinessMini({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  icon: typeof Building2
+  label: string
+  value: string
+  detail: string
+  tone: 'ok' | 'warn' | 'danger'
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-md border p-3',
+        tone === 'ok' && 'border-success/25 bg-success/[0.04]',
+        tone === 'warn' && 'border-warning/30 bg-warning/[0.06]',
+        tone === 'danger' && 'border-destructive/25 bg-destructive/[0.05]',
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <Icon
+          className={cn(
+            'mt-0.5 h-4 w-4 shrink-0',
+            tone === 'ok' && 'text-success',
+            tone === 'warn' && 'text-warning',
+            tone === 'danger' && 'text-destructive',
+          )}
+        />
+        <div className="min-w-0">
+          <div className="text-[11px] text-muted-foreground">{label}</div>
+          <div className="mt-0.5 truncate text-sm font-semibold text-foreground">{value}</div>
+          <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{detail}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function InstanceSettings() {
   const [settings, setSettings] = useState<InstanceSetting[]>([])
+  const [setupStatus, setSetupStatus] = useState<SetupStatusLite | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -147,6 +223,10 @@ export default function InstanceSettings() {
         .get<ShopeeAPIStatus>('/api/settings/shopee-api/status')
         .then((statusRes) => setShopeeAPIStatus(statusRes.data))
         .catch(() => setShopeeAPIStatus(null))
+      client
+        .get<SetupStatusLite>('/api/setup/status')
+        .then((statusRes) => setSetupStatus(statusRes.data))
+        .catch(() => setSetupStatus(null))
     } catch {
       toast.error('โหลดค่าการเชื่อมต่อไม่สำเร็จ')
     } finally {
@@ -164,6 +244,16 @@ export default function InstanceSettings() {
       items: settings.filter((s) => !s.locked && s.group === group && !(PHASE < 2 && PHASE1_HIDDEN_KEYS.has(s.key))),
     })).filter((g) => g.items.length > 0)
   }, [settings])
+  const criticalGrouped = useMemo(() => (
+    grouped
+      .map(({ group, items }) => ({ group, items: items.filter(isCriticalSetting) }))
+      .filter((g) => g.items.length > 0)
+  ), [grouped])
+  const optionalGrouped = useMemo(() => (
+    grouped
+      .map(({ group, items }) => ({ group, items: items.filter((s) => !isCriticalSetting(s)) }))
+      .filter((g) => g.items.length > 0)
+  ), [grouped])
 
   const visibleKeys = useMemo(
     () => new Set(grouped.flatMap((g) => g.items.map((s) => s.key))),
@@ -179,6 +269,14 @@ export default function InstanceSettings() {
   }, [shopeeAPIStatus?.redirect_url])
   const currentHost = typeof window !== 'undefined' ? window.location.host : ''
   const shopeeRedirectMismatch = Boolean(shopeeAPIStatus?.enabled && shopeeRedirectHost && currentHost && shopeeRedirectHost !== currentHost)
+  const setupStep = (key: string) => setupStatus?.steps.find((step) => step.key === key)
+  const channelsStep = setupStep('channels')
+  const catalogStep = setupStep('catalog')
+  const docs = setupStatus?.documents
+  const pendingWork = (docs?.pending ?? 0) + (docs?.needs_review ?? 0)
+  const readinessLabel = setupStatus
+    ? `${setupStatus.blocking_ready_count}/${setupStatus.blocking_total_count}`
+    : 'กำลังโหลด'
 
   const waitForBackend = async () => {
     await new Promise((resolve) => setTimeout(resolve, 1200))
@@ -223,11 +321,15 @@ export default function InstanceSettings() {
     const changed = settings.filter(
       (s) => visibleKeys.has(s.key) && !s.locked && (draft[s.key] ?? '') !== (s.value ?? ''),
     )
-    const important = changed.filter((s) => s.restart_required || s.group === 'sml' || s.group === 'ai' || s.secret)
+    const important = changed.filter(isCriticalSetting)
     if (important.length > 0) {
-      const labels = important.slice(0, 5).map((s) => s.label).join(', ')
+      const labels = important.slice(0, 5).map((s) => {
+        const before = settingPreviewValue(s, s.value ?? '')
+        const after = settingPreviewValue(s, draft[s.key] ?? '')
+        return `- ${s.label}: ${before} เป็น ${after}`
+      }).join('\n')
       const more = important.length > 5 ? ` และอีก ${important.length - 5} ค่า` : ''
-      setConfirmSaveDesc(`ค่าที่มีผลต่อระบบจริง:\n${labels}${more}\n\nระบบจะ restart backend เพื่อเริ่มใช้ค่าใหม่`)
+      setConfirmSaveDesc(`ค่าที่จะเปลี่ยนบน production:\n${labels}${more}\n\nผลกระทบ: backend จะ restart ประมาณ 10-30 วินาที\nตรวจหลังบันทึก: health, SML connection, Shopee status, channel routes และ logs ล่าสุด\nRollback: กลับมาใส่ค่าเดิม แล้วกดบันทึกและเริ่มใช้ค่าใหม่อีกครั้ง`)
       setConfirmSave(true)
     } else {
       void doSave()
@@ -292,27 +394,70 @@ export default function InstanceSettings() {
         }
       />
 
+      <Card className="border-primary/20 bg-primary/[0.03] shadow-none">
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground">Production readiness</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                สรุปค่าที่มีผลต่อการใช้งานจริงก่อนบันทึกหรือ restart: SML, route, catalog, Shopee/SI และงานค้าง
+              </p>
+            </div>
+            <Badge variant="outline" className="w-fit bg-background text-xs">
+              ขั้นตอนสำคัญ {readinessLabel}
+            </Badge>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            <ReadinessMini
+              icon={ShieldCheck}
+              label="Backend"
+              value={pendingRestart ? 'มีค่ารอเริ่มใช้' : 'ใช้ค่าล่าสุดแล้ว'}
+              detail={pendingRestart ? 'กด restart ก่อนส่ง SML หรือ sync สินค้า' : 'ค่าที่บันทึกตรงกับ runtime'}
+              tone={pendingRestart ? 'warn' : 'ok'}
+            />
+            <ReadinessMini
+              icon={Database}
+              label="SML ERP"
+              value={testResults?.sml ? (testResults.sml.ok ? 'ทดสอบผ่าน' : 'ทดสอบไม่ผ่าน') : 'รอทดสอบค่า'}
+              detail={testResults?.sml?.detail || testResults?.sml?.error || 'กดทดสอบค่าที่กรอกอยู่ก่อนบันทึก production'}
+              tone={testResults?.sml ? (testResults.sml.ok ? 'ok' : 'danger') : 'warn'}
+            />
+            <ReadinessMini
+              icon={FileClock}
+              label="เส้นทางเอกสาร"
+              value={channelsStep?.ready ? 'พร้อมใช้งาน' : 'ต้องตั้งค่า'}
+              detail={channelsStep?.status || 'Shopee/Marketplace ควรชี้ไปขายสินค้าและบริการ / SI'}
+              tone={channelsStep?.ready ? 'ok' : 'danger'}
+            />
+            <ReadinessMini
+              icon={PackageCheck}
+              label="สินค้าใน SML"
+              value={catalogStep?.ready ? 'พร้อมจับคู่' : 'ควรซิงก์สินค้า'}
+              detail={catalogStep?.status || 'ช่วยลด mapping ผิดก่อนส่งเอกสารจริง'}
+              tone={catalogStep?.ready ? 'ok' : 'warn'}
+            />
+            <ReadinessMini
+              icon={ReceiptText}
+              label="คิวขายสินค้า"
+              value={(docs?.failed ?? 0) > 0 ? `${(docs?.failed ?? 0).toLocaleString('th-TH')} ส่งไม่สำเร็จ` : `${(docs?.saleinvoice ?? 0).toLocaleString('th-TH')} SI`}
+              detail={`ส่งแล้ว ${(docs?.sent ?? 0).toLocaleString('th-TH')} · ค้าง ${pendingWork.toLocaleString('th-TH')}`}
+              tone={(docs?.failed ?? 0) > 0 ? 'danger' : pendingWork > 0 ? 'warn' : 'ok'}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Status banner */}
-      <div className={cn(
-        'rounded-lg border p-3 text-sm',
-        pendingRestart ? 'border-warning/35 bg-warning/[0.07]' : 'border-success/25 bg-success/[0.05]',
-      )}>
+      {pendingRestart && (
+      <div className="rounded-lg border border-warning/35 bg-warning/[0.07] p-3 text-sm">
         <div className="flex gap-2.5">
-          {pendingRestart ? (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-          ) : (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-          )}
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div>
-            <p className="font-medium text-foreground">
-              {pendingRestart ? 'มีค่าที่บันทึกแล้ว แต่ backend ยังไม่ได้เริ่มใช้' : 'ค่าที่ใช้งานจริงตรงกับค่าที่บันทึกแล้ว'}
-            </p>
+            <p className="font-medium text-foreground">มีค่าที่บันทึกแล้ว แต่ backend ยังไม่ได้เริ่มใช้</p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              {pendingRestart
-                ? 'กด "รีสตาร์ทและใช้ค่าทันที" ก่อน Sync สินค้าหรือส่ง SML เพื่อไม่ให้ระบบใช้ headers ชุดเก่า'
-                : 'หลังบันทึก ระบบจะ restart backend อัตโนมัติและรอจนกลับมาพร้อมใช้งาน ปกติใช้เวลาประมาณ 10-30 วินาที'}
+              กด "รีสตาร์ทและใช้ค่าทันที" ก่อน Sync สินค้าหรือส่ง SML เพื่อไม่ให้ระบบใช้ headers ชุดเก่า
             </p>
-            {pendingRestart && restartKeys.length > 0 && (
+            {restartKeys.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
                 {restartKeys.map((key) => (
                   <Badge key={key} variant="outline" className="h-5 px-1.5 text-[10px]">
@@ -324,6 +469,7 @@ export default function InstanceSettings() {
           </div>
         </div>
       </div>
+      )}
 
       {shopeeAPIStatus && (!shopeeAPIStatus.enabled || shopeeRedirectMismatch) && (
         <div className="rounded-lg border border-warning/35 bg-warning/[0.07] p-3 text-sm">
@@ -350,7 +496,7 @@ export default function InstanceSettings() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm">
-              <Plug className="h-4 w-4 text-primary" />
+              <Plug className="h-4 w-4 text-accent-strong" />
               ผลการทดสอบการเชื่อมต่อ
             </CardTitle>
           </CardHeader>
@@ -381,14 +527,35 @@ export default function InstanceSettings() {
       )}
 
       {/* Setting groups */}
-      {grouped.map(({ group, items }) => {
+      {[
+        {
+          key: 'critical',
+          title: 'ค่าที่มีผลต่อ production',
+          description: 'ตรวจให้ถูกก่อนบันทึก เพราะมีผลกับ SML, database, public URL, token และการ restart',
+          groups: criticalGrouped,
+        },
+        {
+          key: 'optional',
+          title: 'ค่าเสริมและการแจ้งเตือน',
+          description: 'ข้อมูลร้าน การแจ้งเตือน และ automation ที่ไม่ใช่เส้นทางส่งเอกสารหลัก',
+          groups: optionalGrouped,
+        },
+      ].map((section) => section.groups.length > 0 && (
+        <section key={section.key} className="space-y-2.5">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">{section.title}</h2>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {section.description}
+            </p>
+          </div>
+          {section.groups.map(({ group, items }) => {
         const meta = GROUP_META[group]
         const Icon = meta.icon
         return (
           <Card key={group}>
             <CardHeader className="pb-3">
               <CardTitle className="flex items-start gap-2 text-sm font-semibold">
-                <Icon className="mt-0.5 h-4 w-4 text-primary" />
+                <Icon className="mt-0.5 h-4 w-4 text-accent-strong" />
                 <span>
                   {meta.title}
                   <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
@@ -482,13 +649,15 @@ export default function InstanceSettings() {
             </CardContent>
           </Card>
         )
-      })}
+          })}
+        </section>
+      ))}
 
       {/* Confirm save dialog */}
       <ConfirmDialog
         open={confirmSave}
         onOpenChange={setConfirmSave}
-        title="บันทึกและ restart backend?"
+        title="บันทึกและเริ่มใช้ค่าบน production?"
         description={confirmSaveDesc}
         confirmLabel="บันทึกและเริ่มใช้ค่าใหม่"
         onConfirm={doSave}
@@ -498,8 +667,8 @@ export default function InstanceSettings() {
       <ConfirmDialog
         open={confirmRestart}
         onOpenChange={setConfirmRestart}
-        title="รีสตาร์ท backend?"
-        description="backend จะหยุดชั่วคราวประมาณ 10-30 วินาที แล้วกลับมาพร้อมใช้ค่าที่บันทึกไว้ล่าสุด"
+        title="รีสตาร์ท backend เพื่อใช้ค่าล่าสุด?"
+        description="ผลกระทบ: backend จะหยุดชั่วคราวประมาณ 10-30 วินาที แล้วกลับมาพร้อมใช้ค่าที่บันทึกไว้ล่าสุด\nRollback: ถ้าหลังรีสตาร์ทเชื่อมต่อไม่ได้ ให้ตรวจค่าที่เพิ่งแก้ในหน้านี้หรือ restore ค่าเดิมจาก .env/เอกสาร deploy"
         confirmLabel="รีสตาร์ทเลย"
         onConfirm={doRestart}
       />

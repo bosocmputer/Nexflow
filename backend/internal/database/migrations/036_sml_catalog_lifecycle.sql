@@ -1,6 +1,6 @@
 -- 036_sml_catalog_lifecycle.sql — soft lifecycle for SML catalog rows
 --
--- SML product master currently exposes only a full-list API. BillFlow therefore
+-- SML product master currently exposes only a full-list API. Nexflow therefore
 -- keeps local rows for audit/history, but marks products that disappear from a
 -- full SML sync as inactive instead of hard-deleting them.
 

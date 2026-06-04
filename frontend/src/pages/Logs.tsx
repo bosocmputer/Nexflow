@@ -47,6 +47,7 @@ import { DateRangePicker } from '@/components/common/DateRangePicker'
 import { JsonViewer } from '@/components/common/JsonViewer'
 import { PageHeader } from '@/components/common/PageHeader'
 import api from '@/api/client'
+import { displayOperatorEmail, displayOperatorName } from '@/lib/operator-display'
 import { cn } from '@/lib/utils'
 import {
   ACTION_META,
@@ -76,7 +77,7 @@ interface LogsResponse {
 
 const ALL = '__all__'
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
-type QuickView = 'all' | 'actionable' | 'sml_failed' | 'imports' | 'mapping' | 'data_quality'
+type QuickView = 'actionable' | 'sml' | 'imports' | 'settings' | 'all' | 'mapping' | 'data_quality'
   | 'shopee_settlement'
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -185,11 +186,11 @@ function guidanceFor(log: AuditLog): LogGuidance | null {
   const rawError = parsedError.error ?? d.error ?? ''
   const errorText = String(rawError).toLowerCase()
 
-  if (log.action === 'demo_test_data_reset') {
+  if (log.action === 'maintenance_data_reset' || log.action === 'demo_test_data_reset') {
     return {
-      title: 'ไม่ใช่ error: มีการล้างข้อมูลทดสอบ',
+      title: 'ไม่ใช่ error: มีการรีเซ็ตข้อมูลชั่วคราว',
       description:
-        'รายการนี้เกิดจากผู้ดูแลกดล้างข้อมูลทดสอบในหน้าเริ่มต้นใช้งาน ระบบลบเฉพาะบิล/import/log เดิม และเก็บการตั้งค่า สินค้า SML ตารางจับคู่ และประวัติ AI ไว้ตามค่าเริ่มต้น',
+        'รายการนี้เกิดจากผู้ดูแลกดรีเซ็ตข้อมูลในหน้าเริ่มต้นใช้งาน ระบบลบเฉพาะบิล/import/log เดิม และเก็บการตั้งค่า สินค้า SML ตารางจับคู่ และประวัติ AI ไว้ตามค่าเริ่มต้น',
       tone: 'info',
     }
   }
@@ -388,7 +389,7 @@ function actorName(log: AuditLog): string {
     if (normalized === 'system') return 'ระบบ'
     if (normalized === 'email worker') return 'ระบบอ่านอีเมล'
     if (normalized === 'unknown user') return 'ผู้ใช้ไม่ทราบชื่อ'
-    return log.actor.name
+    return displayOperatorName(log.actor.name, log.actor.email)
   }
   if (log.user_id) return 'ผู้ใช้ไม่ทราบชื่อ'
   if (log.source === 'email' || log.source === 'shopee_email' || log.source === 'shopee_shipped') return 'ระบบอ่านอีเมล'
@@ -412,7 +413,7 @@ function makeFacts(log: AuditLog): LogFact[] {
       value: (
         <Link
           to="/shopee-settlements"
-          className="font-mono text-primary hover:underline"
+          className="font-mono text-link hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
           {log.target_id.slice(0, 8)}…
@@ -426,7 +427,7 @@ function makeFacts(log: AuditLog): LogFact[] {
       value: (
         <Link
           to={`/bills/${log.target_id}`}
-          className="font-mono text-primary hover:underline"
+          className="font-mono text-link hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
           {log.target_id.slice(0, 8)}…
@@ -438,7 +439,7 @@ function makeFacts(log: AuditLog): LogFact[] {
 
   facts.push({
     label: 'ผู้ทำรายการ',
-    value: `${actorName(log)}${log.actor?.email ? ` · ${log.actor.email}` : ''}`,
+    value: `${actorName(log)}${log.actor?.email ? ` · ${displayOperatorEmail(log.actor.email)}` : ''}`,
     tone: log.actor?.type === 'user' ? 'normal' : 'muted',
   })
 
@@ -461,7 +462,7 @@ function makeFacts(log: AuditLog): LogFact[] {
   if (log.duration_ms != null) facts.push({ label: 'เวลาใช้', value: `${log.duration_ms.toLocaleString()}ms`, mono: true })
   if (log.trace_id) facts.push({ label: 'Trace', value: <CopyChip value={log.trace_id} label="trace" /> })
 
-  if (log.action === 'demo_test_data_reset') {
+  if (log.action === 'maintenance_data_reset' || log.action === 'demo_test_data_reset') {
     const beforeDocuments = d.before_documents && typeof d.before_documents === 'object' ? d.before_documents : {}
     const beforeImports = d.before_imports && typeof d.before_imports === 'object' ? d.before_imports : {}
     const beforeTotal = Number(beforeDocuments.total ?? 0)
@@ -535,7 +536,7 @@ function LogExpandedSummary({
   const d = log.detail ?? {}
   const parsedError = parseDetailError(log)
   const errorMessage = humanizeAuditError(parsedError.error ?? d.error)
-  const facts = makeFacts(log)
+  const facts = makeFacts(log).filter((fact) => devMode || fact.label !== 'Trace')
   const guidance = guidanceFor(log)
   const isSmlSent = log.action === 'sml_sent'
   const isSmlFailed = log.action === 'sml_failed'
@@ -778,7 +779,7 @@ function LogRow({ log, onRetried, devMode }: { log: AuditLog; onRetried: () => v
       className={cn(
         'rounded-md border bg-card transition-colors',
         isError
-          ? 'border-destructive/25 border-l-4 bg-card'
+          ? 'border-destructive/35 bg-destructive/[0.035]'
           : expanded
             ? 'border-primary/25 bg-primary/[0.025]'
             : 'border-border hover:bg-accent/30',
@@ -1074,7 +1075,7 @@ function ImportGroupCard({
                 ข้าม {skipped}
               </Badge>
             )}
-            {group.logs[0]?.trace_id && <CopyChip value={group.logs[0].trace_id ?? ''} label="trace" />}
+            {devMode && group.logs[0]?.trace_id && <CopyChip value={group.logs[0].trace_id ?? ''} label="trace" />}
           </div>
           <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
             {previewDetail.filename ? `${previewDetail.filename} · ` : ''}
@@ -1167,10 +1168,12 @@ function quickViewMatch(log: AuditLog, quickView: QuickView): boolean {
   switch (quickView) {
     case 'actionable':
       return log.level === 'error' || log.level === 'warn' || hasDocNoQualityIssue(log)
-    case 'sml_failed':
-      return log.action === 'sml_failed'
+    case 'sml':
+      return log.action.startsWith('sml_') || log.action === 'sml_failed' || log.source === 'sml'
     case 'imports':
       return isImportLog(log)
+    case 'settings':
+      return log.source === 'channel_defaults' || log.source === 'system' || log.action.includes('settings') || log.action.includes('defaults')
     case 'shopee_settlement':
       return isShopeeSettlementLog(log)
     case 'mapping':
@@ -1207,7 +1210,7 @@ function SummaryButton({
           : tone === 'info'
             ? 'text-info'
             : tone === 'primary'
-              ? 'text-primary'
+              ? 'text-link'
               : 'text-muted-foreground'
   return (
     <button
@@ -1237,9 +1240,9 @@ function ActorBadge({ log }: { log: AuditLog }) {
       variant="secondary"
       className={cn(
         'h-5 gap-1 px-1.5 text-[10px] font-medium',
-        log.actor?.type === 'user' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+        log.actor?.type === 'user' ? 'bg-primary/10 text-accent-strong' : 'bg-muted text-muted-foreground',
       )}
-      title={log.actor?.email || actorName(log)}
+      title={displayOperatorEmail(log.actor?.email) || actorName(log)}
     >
       <UserRound className="h-3 w-3" />
       {actorName(log)}
@@ -1260,7 +1263,7 @@ export default function Logs() {
   const [userID, setUserID] = useState<string>(ALL)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [quickView, setQuickView] = useState<QuickView>('all')
+  const [quickView, setQuickView] = useState<QuickView>('actionable')
   const [devMode, setDevMode] = useState(false)
   const pageSize = 50
 
@@ -1293,7 +1296,7 @@ export default function Logs() {
   }, [source, action, level, userID, dateFrom, dateTo])
 
   const hasFilters =
-    source !== ALL || action !== ALL || level !== ALL || userID !== ALL || !!dateFrom || !!dateTo || quickView !== 'all'
+    source !== ALL || action !== ALL || level !== ALL || userID !== ALL || !!dateFrom || !!dateTo || quickView !== 'actionable'
 
   const resetFilters = () => {
     setSource(ALL)
@@ -1302,7 +1305,7 @@ export default function Logs() {
     setUserID(ALL)
     setDateFrom('')
     setDateTo('')
-    setQuickView('all')
+    setQuickView('actionable')
   }
 
   const visibleLogs = useMemo(
@@ -1322,9 +1325,10 @@ export default function Logs() {
   const pageStats = useMemo(() => ({
     all: logs.length,
     actionable: logs.filter((l) => quickViewMatch(l, 'actionable')).length,
-    smlFailed: logs.filter((l) => l.action === 'sml_failed').length,
+    sml: logs.filter((l) => quickViewMatch(l, 'sml')).length,
     shopeeSettlement: logs.filter(isShopeeSettlementLog).length,
     imports: logs.filter(isImportLog).length,
+    settings: logs.filter((l) => quickViewMatch(l, 'settings')).length,
     mapping: logs.filter((l) => l.action === 'mapping_feedback').length,
     dataQuality: logs.filter(hasDocNoQualityIssue).length,
     sent: logs.filter((l) => l.action === 'sml_sent').length,
@@ -1336,7 +1340,7 @@ export default function Logs() {
       if (log.actor?.type !== 'user' || !log.actor.id) continue
       seen.set(log.actor.id, {
         id: log.actor.id,
-        label: `${log.actor.name}${log.actor.email ? ` · ${log.actor.email}` : ''}`,
+        label: `${displayOperatorName(log.actor.name, log.actor.email)}${log.actor.email ? ` · ${displayOperatorEmail(log.actor.email)}` : ''}`,
       })
     }
     return Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label))
@@ -1373,15 +1377,7 @@ export default function Logs() {
           }
         />
 
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-8">
-          <SummaryButton
-            label="ทั้งหมดในหน้านี้"
-            value={pageStats.all}
-            icon={Activity}
-            tone="muted"
-            active={quickView === 'all'}
-            onClick={() => setQuickView('all')}
-          />
+        <div className="flex flex-wrap gap-2">
           <SummaryButton
             label="ต้องแก้"
             value={pageStats.actionable}
@@ -1391,38 +1387,15 @@ export default function Logs() {
             onClick={() => setQuickView('actionable')}
           />
           <SummaryButton
-            label="SML ล้มเหลว"
-            value={pageStats.smlFailed}
+            label="SML"
+            value={pageStats.sml}
             icon={ShieldAlert}
-            tone={pageStats.smlFailed > 0 ? 'danger' : 'muted'}
-            active={quickView === 'sml_failed'}
-            onClick={() => setQuickView('sml_failed')}
+            tone={pageStats.sml > 0 ? 'success' : 'muted'}
+            active={quickView === 'sml'}
+            onClick={() => setQuickView('sml')}
           />
           <SummaryButton
-            label="ส่งสำเร็จ"
-            value={pageStats.sent}
-            icon={CheckCircle2}
-            tone="success"
-            active={false}
-            onClick={() => {
-              setQuickView('all')
-              setAction('sml_sent')
-            }}
-          />
-          <SummaryButton
-            label="รับชำระ Shopee"
-            value={pageStats.shopeeSettlement}
-            icon={ScrollText}
-            tone="success"
-            active={quickView === 'shopee_settlement'}
-            onClick={() => {
-              setQuickView('shopee_settlement')
-              setSource(ALL)
-              setAction(ALL)
-            }}
-          />
-          <SummaryButton
-            label="นำเข้าไฟล์"
+            label="นำเข้า"
             value={pageStats.imports}
             icon={Layers3}
             tone="info"
@@ -1430,20 +1403,20 @@ export default function Logs() {
             onClick={() => setQuickView('imports')}
           />
           <SummaryButton
-            label="จับคู่สินค้า"
-            value={pageStats.mapping}
-            icon={Sparkles}
+            label="ตั้งค่า"
+            value={pageStats.settings}
+            icon={Database}
             tone="primary"
-            active={quickView === 'mapping'}
-            onClick={() => setQuickView('mapping')}
+            active={quickView === 'settings'}
+            onClick={() => setQuickView('settings')}
           />
           <SummaryButton
-            label="เลขเอกสารแปลก"
-            value={pageStats.dataQuality}
-            icon={Bug}
-            tone={pageStats.dataQuality > 0 ? 'warning' : 'muted'}
-            active={quickView === 'data_quality'}
-            onClick={() => setQuickView('data_quality')}
+            label="ทั้งหมด"
+            value={pageStats.all}
+            icon={Activity}
+            tone="muted"
+            active={quickView === 'all'}
+            onClick={() => setQuickView('all')}
           />
         </div>
 
@@ -1566,11 +1539,20 @@ export default function Logs() {
           ) : visibleLogs.length === 0 ? (
             <EmptyState
               icon={ScrollText}
-              title="ยังไม่มีประวัติ"
+              title={quickView === 'actionable' ? 'ตอนนี้ไม่มีรายการที่ต้องแก้' : 'ยังไม่มีประวัติตามมุมมองนี้'}
               description={
-                hasFilters
+                quickView === 'actionable'
+                  ? 'ไม่พบ error, warning หรือเลขเอกสารผิดรูปแบบในชุดข้อมูลล่าสุด'
+                  : hasFilters
                   ? 'ลองล้างตัวกรองหรือขยายช่วงวันที่'
                   : 'เมื่อระบบทำงานจะมีประวัติแสดงที่นี่'
+              }
+              action={
+                quickView !== 'all' && (
+                  <Button variant="outline" size="sm" onClick={() => setQuickView('all')}>
+                    ดูทั้งหมด
+                  </Button>
+                )
               }
             />
           ) : (

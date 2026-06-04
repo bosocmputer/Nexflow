@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -123,9 +124,9 @@ func (h *SetupHandler) Status(c *gin.Context) {
 			"blocking":    false,
 		},
 		{
-			"key":         "uat",
-			"title":       "ข้อมูลทดสอบ",
-			"description": "ตรวจจำนวนเอกสารค้าง, รอบนำเข้า และประวัติการทำงานก่อนส่งให้ลูกค้าทดลอง",
+			"key":         "operations",
+			"title":       "สถานะการใช้งาน",
+			"description": "ตรวจจำนวนเอกสารค้าง, รอบนำเข้า และประวัติการทำงานระหว่างใช้งานจริง",
 			"href":        "/setup",
 			"ready":       true,
 			"status":      "พร้อมตรวจสอบ",
@@ -170,6 +171,12 @@ type resetTestDataRequest struct {
 }
 
 func (h *SetupHandler) ResetTestData(c *gin.Context) {
+	if strings.EqualFold(strings.TrimSpace(h.cfg.Env), "production") &&
+		!strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_PRODUCTION_RESET_TEST_DATA")), "true") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "reset test data is disabled in production"})
+		return
+	}
+
 	var req resetTestDataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -260,7 +267,7 @@ func (h *SetupHandler) ResetTestData(c *gin.Context) {
 			uid = &v
 		}
 		_ = h.auditRepo.Log(models.AuditEntry{
-			Action: "demo_test_data_reset",
+			Action: "maintenance_data_reset",
 			UserID: uid,
 			Source: "setup",
 			Level:  "warn",

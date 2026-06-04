@@ -109,7 +109,6 @@ func TestProcessOneShippedOrderRecordsEventOnExistingBill(t *testing.T) {
 		htmlBody,
 		messageID,
 		nil,
-		nil,
 		"trace-1",
 		time.Now(),
 		mailSourceForTest(),
@@ -140,7 +139,7 @@ func TestConfiguredShopeeShippingLineDisabledDoesNothing(t *testing.T) {
 		WithArgs("shopee_shipped", "purchase").
 		WillReturnRows(channelDefaultRows().AddRow(
 			"shopee_shipped", "purchase", "", "", "", "", "", "PO", "/api/v1/ic/purchase-orders",
-			"NX-PO", "YYMM####", "", "", "", "", false, "", "", "", "", "", "", "", "", "", "", -1, -1.0, nil, time.Now(),
+			"NX-PO", "YYMM####", "", "", "", "", false, "", "", "", "", "", "", "", "", "", "", -1, -1.0, -1, "", nil, time.Now(),
 		))
 
 	item, ready := h.configuredShopeeShippingLine("#2601AAA", 38, true)
@@ -167,7 +166,7 @@ func TestConfiguredShopeeShippingLineUsesConfiguredItem(t *testing.T) {
 		WithArgs("shopee_shipped", "purchase").
 		WillReturnRows(channelDefaultRows().AddRow(
 			"shopee_shipped", "purchase", "", "", "", "", "", "PO", "/api/v1/ic/purchase-orders",
-			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_TEST", "ครั้ง", "", "", "", "", "", "", "", "", -1, -1.0, nil, time.Now(),
+			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_TEST", "ครั้ง", "", "", "", "", "", "", "", "", -1, -1.0, -1, "", nil, time.Now(),
 		))
 
 	item, ready := h.configuredShopeeShippingLine("#2601AAA", 38, true)
@@ -209,7 +208,7 @@ func TestConfiguredShopeeShippingLineAllowsZeroAmount(t *testing.T) {
 		WithArgs("shopee_shipped", "purchase").
 		WillReturnRows(channelDefaultRows().AddRow(
 			"shopee_shipped", "purchase", "", "", "", "", "", "PO", "/api/v1/ic/purchase-orders",
-			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_TEST", "ครั้ง", "", "", "", "", "", "", "", "", -1, -1.0, nil, time.Now(),
+			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_TEST", "ครั้ง", "", "", "", "", "", "", "", "", -1, -1.0, -1, "", nil, time.Now(),
 		))
 
 	item, ready := h.configuredShopeeShippingLine("#2601AAA", 0, true)
@@ -260,7 +259,7 @@ func TestEnsureShopeeShippingLineForSendAddsMissingConfiguredLine(t *testing.T) 
 		WithArgs("shopee_shipped", "purchase").
 		WillReturnRows(channelDefaultRows().AddRow(
 			"shopee_shipped", "purchase", "", "", "", "", "", "PO", "/api/v1/ic/purchase-orders",
-			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_POL", "บาท", "", "", "", "", "", "", "", "", -1, -1.0, nil, time.Now(),
+			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_POL", "บาท", "", "", "", "", "", "", "", "", -1, -1.0, -1, "", nil, time.Now(),
 		))
 	mock.ExpectQuery("INSERT INTO bill_items").
 		WithArgs(
@@ -327,7 +326,7 @@ func TestEnsureShopeeShippingLineForSendAddsZeroAmountLine(t *testing.T) {
 		WithArgs("shopee_shipped", "purchase").
 		WillReturnRows(channelDefaultRows().AddRow(
 			"shopee_shipped", "purchase", "", "", "", "", "", "PO", "/api/v1/ic/purchase-orders",
-			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_POL", "บาท", "", "", "", "", "", "", "", "", -1, -1.0, nil, time.Now(),
+			"NX-PO", "YYMM####", "", "", "", "", true, "SHIP_POL", "บาท", "", "", "", "", "", "", "", "", -1, -1.0, -1, "", nil, time.Now(),
 		))
 	mock.ExpectQuery("INSERT INTO bill_items").
 		WithArgs(
@@ -410,7 +409,7 @@ func channelDefaultRows() *sqlmock.Rows {
 		"branch_code", "sale_code", "unit_code", "doc_time",
 		"shipping_item_enabled", "shipping_item_code", "shipping_item_unit_code",
 		"passbook_code", "passbook_name", "bank_code", "bank_branch", "expense_code", "expense_name",
-		"wh_code", "shelf_code", "vat_type", "vat_rate",
+		"wh_code", "shelf_code", "vat_type", "vat_rate", "inquiry_type", "remark_2",
 		"updated_by", "updated_at",
 	})
 }

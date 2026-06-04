@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
+  AlertTriangle,
   CheckCircle2,
   Clock,
   Eye,
@@ -42,6 +43,7 @@ import {
   type BulkSendJob,
   type BulkSendJobItem,
 } from '@/hooks/useBills'
+import { displayOperator } from '@/lib/operator-display'
 import { cn } from '@/lib/utils'
 
 const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
@@ -104,7 +106,7 @@ function statusTone(status: string) {
   if (status === 'completed') return 'border-success/30 bg-success/10 text-success'
   if (status === 'completed_with_errors') return 'border-warning/30 bg-warning/10 text-warning'
   if (status === 'failed') return 'border-destructive/30 bg-destructive/10 text-destructive'
-  if (status === 'running') return 'border-primary/30 bg-primary/10 text-primary'
+  if (status === 'running') return 'border-primary/30 bg-primary/10 text-accent-strong'
   return 'border-muted-foreground/20 bg-muted text-muted-foreground'
 }
 
@@ -211,6 +213,14 @@ export default function BulkSendJobs() {
     failed: jobs.reduce((sum, job) => sum + job.failed_count, 0),
     skipped: jobs.reduce((sum, job) => sum + job.skipped_count, 0),
   }), [jobs])
+  const activeJobs = useMemo(
+    () => jobs.filter((job) => job.status === 'queued' || job.status === 'running'),
+    [jobs],
+  )
+  const problemJobs = useMemo(
+    () => jobs.filter((job) => job.status === 'failed' || job.status === 'completed_with_errors' || job.failed_count > 0),
+    [jobs],
+  )
 
   const setParam = (key: 'status' | 'route', value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -245,33 +255,75 @@ export default function BulkSendJobs() {
         description="ตรวจย้อนหลังว่าแต่ละ batch ส่งกี่บิล สำเร็จ/ไม่สำเร็จ/ข้ามอะไร และเปิดดูบิลต้นทางได้ทันที"
       />
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <StatCard label="จำนวนงานทั้งหมด" value={total} />
-        <StatCard label="ส่งสำเร็จในหน้านี้" value={pageStats.sent} tone="success" />
-        <StatCard label="ไม่สำเร็จในหน้านี้" value={pageStats.failed} tone={pageStats.failed > 0 ? 'danger' : undefined} />
-        <StatCard label="ข้ามในหน้านี้" value={pageStats.skipped} tone={pageStats.skipped > 0 ? 'warning' : undefined} />
-      </div>
-
-      <Card className="border-primary/20 bg-primary/5 shadow-none">
-        <CardContent className="flex flex-col gap-2 p-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-2">
-            <ReceiptText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-            <span>
-              หน้านี้เป็นประวัติส่ง “บิล” เข้า SML แบบกลุ่มเท่านั้น ส่วนงานรับชำระ Shopee และเลข RC ดูแยกที่หน้า{' '}
-              <Link to="/shopee-settlements" className="font-medium text-primary hover:underline">
-                รับชำระ Shopee
-              </Link>
-            </span>
+      <Card className="border-border/70 shadow-sm">
+        <CardContent className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_420px] xl:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              {activeJobs.length > 0 ? (
+                <Clock className="h-5 w-5 text-warning" />
+              ) : problemJobs.length > 0 ? (
+                <AlertTriangle className="h-5 w-5 text-warning" />
+              ) : (
+                <CheckCircle2 className="h-5 w-5 text-success" />
+              )}
+              <h2 className="text-base font-semibold">
+                {activeJobs.length > 0
+                  ? `มี batch กำลังทำงาน ${activeJobs.length.toLocaleString('th-TH')} งาน`
+                  : 'ตอนนี้ไม่มี batch กำลังส่ง'}
+              </h2>
+              <Badge variant="outline" className="bg-background text-xs">
+                ประวัติทั้งหมด {total.toLocaleString('th-TH')} งาน
+              </Badge>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {activeJobs.length > 0
+                ? 'เปิดดูรายการเพื่อเช็ค progress และรายการที่ถูกข้ามได้'
+                : problemJobs.length > 0
+                  ? `มี batch ในอดีตที่เคยมีปัญหา ${problemJobs.length.toLocaleString('th-TH')} งาน ใช้ตรวจย้อนหลัง ไม่ได้แปลว่าคิวปัจจุบันกำลังล้มเหลว`
+                  : 'คิวส่งแบบกลุ่มสงบอยู่ ใช้หน้านี้เพื่อตรวจหลักฐานย้อนหลังเมื่อมีคำถามเรื่อง batch'}
+            </p>
           </div>
-          <Button asChild variant="outline" size="sm" className="shrink-0">
-            <Link to="/shopee-settlements">เปิดหน้ารับชำระ</Link>
-          </Button>
+          <div className="grid grid-cols-3 gap-2">
+            <StatCard label="ส่งสำเร็จ" value={pageStats.sent} tone="success" />
+            <StatCard label="เคย fail" value={pageStats.failed} tone={pageStats.failed > 0 ? 'warning' : undefined} />
+            <StatCard label="ถูกข้าม" value={pageStats.skipped} tone={pageStats.skipped > 0 ? 'warning' : undefined} />
+          </div>
         </CardContent>
       </Card>
+
+      {problemJobs.length > 0 && (
+        <Card className="border-warning/25 bg-warning/[0.04] shadow-none">
+          <CardContent className="flex flex-col gap-3 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">ประวัติ batch ที่เคยมีปัญหา</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  แสดงไว้เพื่อ audit ย้อนหลัง เปิดดูรายการเพื่อดูบิลที่ fail/ถูกข้ามในรอบนั้น
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              {problemJobs.slice(0, 2).map((job) => (
+                <Button key={job.id} variant="outline" size="sm" onClick={() => openDetail(job)}>
+                  <Eye className="h-4 w-4" />
+                  {fmtDate(job.created_at)}
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="shadow-none">
         <CardContent className="space-y-3 p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">ประวัติย้อนหลัง</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                เลือก filter เมื่อต้อง audit งานเก่า รายละเอียดแต่ละ batch ยังเปิดดูได้เหมือนเดิม
+              </p>
+            </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <Select value={status} onValueChange={(value) => setParam('status', value)}>
                 <SelectTrigger className="h-9 min-w-[180px]">
@@ -358,7 +410,7 @@ export default function BulkSendJobs() {
                       <span className="text-muted-foreground">{job.skipped_count.toLocaleString('th-TH')} ข้าม</span>
                     </TableCell>
                     <TableCell className="max-w-[180px] truncate align-top text-sm text-muted-foreground">
-                      {job.created_by_email || 'system'}
+                      {displayOperator(job.created_by_email, 'ระบบ')}
                     </TableCell>
                     <TableCell className="text-right align-top">
                       <Button variant="ghost" size="sm" onClick={() => openDetail(job)}>

@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import client from '@/api/client'
 import { PageHeader } from '@/components/common/PageHeader'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -49,12 +50,19 @@ const ROLE_LABEL: Record<User['role'], string> = {
   viewer: 'ดูข้อมูลอย่างเดียว',
 }
 
+const ROLE_IMPACT: Record<User['role'], string> = {
+  admin: 'เห็นและแก้ไข settings, ผู้ใช้, route, action อันตราย และงานส่ง SML ตามสิทธิ์ admin',
+  staff: 'ใช้คิวงานประจำ เช่น import, ตรวจบิล และส่งงานที่ได้รับอนุญาต แต่ไม่ควรแก้ setting สำคัญ',
+  viewer: 'ดูข้อมูลและสถานะย้อนหลังได้เท่านั้น ไม่ควรมีปุ่มเปลี่ยนข้อมูลหรือส่งเข้า SML',
+}
+
 export default function UserSettings() {
   const { user: currentUser } = useAuth()
   const [users, setUsers] = useState<User[]>([])
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [deletingUser, setDeletingUser] = useState<User | null>(null)
 
   const editing = Boolean(form.id)
   const sortedUsers = useMemo(
@@ -115,7 +123,6 @@ export default function UserSettings() {
   }
 
   const deleteUser = async (u: User) => {
-    if (!confirm(`ลบผู้ใช้ ${u.email}?`)) return
     try {
       await client.delete(`/api/settings/users/${u.id}`)
       toast.success('ลบผู้ใช้แล้ว')
@@ -192,9 +199,10 @@ export default function UserSettings() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          onClick={() => deleteUser(u)}
+                          onClick={() => setDeletingUser(u)}
                           disabled={u.id === currentUser.id}
-                          aria-label="ลบผู้ใช้"
+                          aria-label={u.id === currentUser.id ? 'ลบผู้ใช้ตัวเองไม่ได้' : 'ลบผู้ใช้'}
+                          title={u.id === currentUser.id ? 'ลบผู้ใช้ที่กำลัง login อยู่ไม่ได้' : 'ลบผู้ใช้นี้'}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
@@ -211,7 +219,7 @@ export default function UserSettings() {
           <CardContent className="p-4">
             <form className="space-y-4" onSubmit={submit}>
               <div className="flex items-center gap-2">
-                <UsersRound className="h-4 w-4 text-primary" />
+                <UsersRound className="h-4 w-4 text-accent-strong" />
                 <div className="font-semibold">{editing ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้ใหม่'}</div>
               </div>
               <div className="space-y-2">
@@ -220,7 +228,7 @@ export default function UserSettings() {
                   id="user-name"
                   value={form.name}
                   onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
-                  placeholder="เช่น Admin Henna"
+                  placeholder="เช่น Admin Nexflow"
                   required
                 />
               </div>
@@ -247,6 +255,10 @@ export default function UserSettings() {
                     <SelectItem value="viewer">ดูข้อมูลอย่างเดียว</SelectItem>
                   </SelectContent>
                 </Select>
+                <div className="rounded-md border border-info/20 bg-info/[0.04] px-3 py-2 text-xs leading-5 text-muted-foreground">
+                  <span className="font-medium text-foreground">{ROLE_LABEL[form.role]}:</span>{' '}
+                  {ROLE_IMPACT[form.role]}
+                </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="user-password">{editing ? 'รหัสผ่านใหม่' : 'รหัสผ่าน'}</Label>
@@ -273,6 +285,25 @@ export default function UserSettings() {
           </CardContent>
         </Card>
       </div>
+      <ConfirmDialog
+        open={deletingUser !== null}
+        onOpenChange={(open) => !open && setDeletingUser(null)}
+        title="ลบผู้ใช้ออกจาก production workspace?"
+        description={deletingUser ? [
+          `ผู้ใช้: ${deletingUser.name} · ${deletingUser.email}`,
+          `สิทธิ์: ${ROLE_LABEL[deletingUser.role]}`,
+          'ผลกระทบ: ผู้ใช้นี้จะ login เข้า Nexflow ไม่ได้อีก และจะไม่สามารถทำ action ใหม่ในระบบได้',
+          'ข้อมูลเดิม: audit logs และเอกสารที่เคยทำไว้จะยังคงอยู่เพื่อการตรวจสอบย้อนหลัง',
+          'Rollback: ต้องสร้างผู้ใช้ใหม่หรือ restore จาก backup หากลบผิด',
+        ].join('\n') : ''}
+        confirmLabel="ลบผู้ใช้"
+        variant="destructive"
+        onConfirm={async () => {
+          if (!deletingUser) return
+          await deleteUser(deletingUser)
+          setDeletingUser(null)
+        }}
+      />
     </div>
   )
 }

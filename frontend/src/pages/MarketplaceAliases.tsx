@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import client from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Input } from '@/components/ui/input'
 import {
@@ -46,6 +47,12 @@ interface ReviewResponse {
 
 const PER_PAGE = 30
 
+type PendingAliasConfirm = {
+  group: MarketplaceAliasReviewGroup
+  match: CatalogMatch
+  mode: 'suggested' | 'picked'
+}
+
 export default function MarketplaceAliases() {
   const [groups, setGroups] = useState<MarketplaceAliasReviewGroup[]>([])
   const [total, setTotal] = useState(0)
@@ -57,6 +64,7 @@ export default function MarketplaceAliases() {
   const [loading, setLoading] = useState(true)
   const [confirmingKey, setConfirmingKey] = useState<string | null>(null)
   const [selected, setSelected] = useState<MarketplaceAliasReviewGroup | null>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<PendingAliasConfirm | null>(null)
 
   const totalItemsOnPage = useMemo(() => groups.reduce((sum, g) => sum + g.item_count, 0), [groups])
   const totalBillsOnPage = useMemo(() => groups.reduce((sum, g) => sum + g.bill_count, 0), [groups])
@@ -129,7 +137,7 @@ export default function MarketplaceAliases() {
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-normal text-foreground">สินค้ารอยืนยัน</h1>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-            ใช้หน้านี้เมื่อชื่อสินค้าใน Shopee, TikTok, Lazada ไม่ตรงกับ SML เลือกสินค้า SML ให้หนึ่งครั้ง แล้ว Nexflow จะจำไว้ใช้กับบิลถัดไป
+            เลือกสินค้า SML ให้ชื่อสินค้าจาก marketplace หนึ่งครั้ง แล้ว Nexflow จะจำไว้ใช้กับบิลถัดไป
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => void loadGroups()} disabled={loading}>
@@ -139,12 +147,14 @@ export default function MarketplaceAliases() {
       </div>
 
       <div className="rounded-lg border bg-card px-3 py-2">
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <SummaryItem label="กลุ่มรอยืนยัน" value={total} />
           <SummaryItem label="รายการในหน้านี้" value={totalItemsOnPage} />
           <SummaryItem label="บิลในหน้านี้" value={totalBillsOnPage} />
+          </div>
           <span className="text-xs text-muted-foreground">
-            ถ้าระบบแนะนำคะแนนต่ำหรือสี/รุ่นไม่ตรง ให้กด <span className="font-medium text-foreground">เลือกจาก SML</span>
+            ยืนยันแล้วจะใช้กับบิลถัดไป ถ้าไม่มั่นใจให้เลือกจาก SML ก่อน
           </span>
         </div>
       </div>
@@ -294,7 +304,11 @@ export default function MarketplaceAliases() {
                             size="sm"
                             variant="outline"
                             disabled={confirmingKey === group.group_key}
-                            onClick={() => confirmGroup(group, group.suggested_match as CatalogMatch)}
+                            onClick={() => setPendingConfirm({
+                              group,
+                              match: group.suggested_match as CatalogMatch,
+                              mode: 'suggested',
+                            })}
                           >
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             ใช้ตัวนี้
@@ -350,16 +364,42 @@ export default function MarketplaceAliases() {
           currentPrice={0}
           rawNameLabel="ชื่อสินค้า marketplace"
           onPick={(code, unitCode, picked) => {
-            void confirmGroup(selected, picked ?? {
-              item_code: code,
-              item_name: code,
-              unit_code: unitCode,
-              score: 1,
+            setPendingConfirm({
+              group: selected,
+              match: picked ?? {
+                item_code: code,
+                item_name: code,
+                unit_code: unitCode,
+                score: 1,
+              },
+              mode: 'picked',
             })
+            setSelected(null)
           }}
           onClose={() => setSelected(null)}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        onOpenChange={(open) => !open && setPendingConfirm(null)}
+        title="ยืนยันการจับคู่สินค้านี้?"
+        description={pendingConfirm ? [
+          `Marketplace: ${SOURCE_LABEL[pendingConfirm.group.source] ?? pendingConfirm.group.source}`,
+          `ชื่อสินค้า: ${pendingConfirm.group.raw_name}`,
+          `รหัส SML ที่จะใช้: ${pendingConfirm.match.item_code}${pendingConfirm.match.item_name ? ` · ${pendingConfirm.match.item_name}` : ''}`,
+          `ผลกระทบ: Nexflow จะจำการจับคู่นี้ และใช้กับบิลถัดไปที่ชื่อสินค้าเหมือนกัน`,
+          pendingConfirm.mode === 'suggested'
+            ? 'ตรวจอีกครั้งถ้าคะแนนแนะนำต่ำ สี/รุ่น/ขนาดอาจไม่ตรงกับสินค้าใน SML'
+            : 'การเลือกจาก SML จะใช้ค่าที่คุณเลือกเป็นแหล่งอ้างอิงหลัก',
+        ].join('\n') : ''}
+        confirmLabel="ยืนยันการจับคู่"
+        onConfirm={async () => {
+          if (!pendingConfirm) return
+          await confirmGroup(pendingConfirm.group, pendingConfirm.match)
+          setPendingConfirm(null)
+        }}
+      />
     </div>
   )
 }

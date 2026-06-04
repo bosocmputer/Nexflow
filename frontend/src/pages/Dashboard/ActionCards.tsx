@@ -130,7 +130,7 @@ function ActionCard({
     <Link
       to={to}
       className={cn(
-        'group relative flex min-h-[112px] flex-col gap-2 rounded-xl border bg-background/70 p-4 transition-all',
+        'group relative flex min-h-[112px] flex-col gap-2 rounded-lg border bg-background/70 p-4 transition-all',
         'hover:-translate-y-0.5 hover:bg-card hover:shadow-sm',
         isUrgent
           ? 'border-destructive/30 hover:border-destructive/50'

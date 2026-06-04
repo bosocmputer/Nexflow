@@ -37,6 +37,11 @@ export function shopeeGoodsTotal(bill: Bill): number | null {
   return rawNumber(bill.raw_data, 'goods_total_amount')
 }
 
+export function shopeeCoinAmount(bill: Bill): number | null {
+  if (!isShopeePurchaseBill(bill)) return null
+  return rawNumber(bill.raw_data, 'shopee_coin_amount')
+}
+
 export function money(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—'
   return `฿${value.toLocaleString('th-TH')}`

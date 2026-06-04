@@ -178,7 +178,7 @@ export function ArtifactList({ billId, emailGroup }: Props) {
 
   if (visibleItems.length === 0) {
     return (
-      <Card className="rounded-2xl border-border/70 shadow-sm">
+      <Card className="rounded-lg border-border/70 shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm font-semibold">
             <Paperclip className="h-4 w-4 text-muted-foreground" />
@@ -198,7 +198,7 @@ export function ArtifactList({ billId, emailGroup }: Props) {
 
   return (
     <>
-      <Card className="rounded-2xl border-border/70 shadow-sm">
+      <Card className="rounded-lg border-border/70 shadow-sm">
         <CardHeader className="pb-3">
           <div>
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">

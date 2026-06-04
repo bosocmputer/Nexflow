@@ -1,15 +1,16 @@
-import { Component, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Component, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import dayjs from 'dayjs'
 import {
   AlertTriangle,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CheckCircle2,
-  Clock,
   Eye,
   EyeOff,
+  Filter,
   Loader2,
   ReceiptText,
   RefreshCw,
@@ -18,7 +19,6 @@ import {
   Send,
   Settings,
   Store,
-  type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -26,7 +26,6 @@ import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -34,11 +33,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { DateRangePicker, type DateRangePreset } from '@/components/common/DateRangePicker'
-import { PageHeader } from '@/components/common/PageHeader'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { cn } from '@/lib/utils'
 
 type ShopeeConnection = {
@@ -152,6 +166,8 @@ const DEFAULT_COUNTS: SettlementCounts = {
   failed: 0,
   partial: 0,
 }
+const DEFAULT_PER_PAGE = 20
+const PAGE_SIZE_OPTIONS = [20, 50, 100] as const
 
 const STATUS_OPTIONS = [
   { value: ALL, label: 'ทุกสถานะ' },
@@ -162,6 +178,27 @@ const STATUS_OPTIONS = [
   { value: 'failed', label: 'ไม่สำเร็จ' },
   { value: 'partial', label: 'ต้องตรวจ' },
 ]
+const SETTLEMENT_QUICK_STATUS_VALUES = [ALL, 'ready', 'partial', 'failed']
+const SETTLEMENT_QUICK_STATUS_OPTIONS = STATUS_OPTIONS.filter((o) => SETTLEMENT_QUICK_STATUS_VALUES.includes(o.value))
+const SETTLEMENT_SECONDARY_STATUS_OPTIONS = STATUS_OPTIONS.filter((o) => !SETTLEMENT_QUICK_STATUS_VALUES.includes(o.value))
+const HIDDEN_OPTIONS = [
+  { value: VISIBLE, label: 'รายการปกติ' },
+  { value: 'only', label: 'งานที่ซ่อน' },
+  { value: 'all', label: 'ทั้งหมด' },
+]
+const NO_CONNECTION = '__none__'
+
+function readURLPage(params: URLSearchParams): number {
+  const n = Number(params.get('page'))
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
+
+function readURLPerPage(params: URLSearchParams): typeof PAGE_SIZE_OPTIONS[number] {
+  const n = Number(params.get('per_page'))
+  return PAGE_SIZE_OPTIONS.includes(n as typeof PAGE_SIZE_OPTIONS[number])
+    ? n as typeof PAGE_SIZE_OPTIONS[number]
+    : DEFAULT_PER_PAGE
+}
 
 const money = (v: number | undefined) =>
   new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(Number(v ?? 0))
@@ -292,6 +329,7 @@ function ShopeeSettlementContent() {
   const [connections, setConnections] = useState<ShopeeConnection[]>([])
   const [apiStatus, setApiStatus] = useState<ShopeeAPIStatus | null>(null)
   const [defaults, setDefaults] = useState<SettlementDefaults | null>(null)
+  const [basicsLoaded, setBasicsLoaded] = useState(false)
   const [runs, setRuns] = useState<SettlementRun[]>([])
   const [totalRuns, setTotalRuns] = useState(0)
   const [counts, setCounts] = useState<SettlementCounts>(DEFAULT_COUNTS)
@@ -310,13 +348,15 @@ function ShopeeSettlementContent() {
   const [selectedRun, setSelectedRun] = useState<SettlementRun | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmHideOpen, setConfirmHideOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [hidingRun, setHidingRun] = useState(false)
   const [sendRemark, setSendRemark] = useState(DEFAULT_SETTLEMENT_REMARK)
   const [sendDocDate, setSendDocDate] = useState(today())
   const [sendDocTime, setSendDocTime] = useState(dayjs().format('HH:mm'))
-  const page = Math.max(1, Number(searchParams.get('page') || '1') || 1)
-  const perPage = 20
+  const page = readURLPage(searchParams)
+  const perPage = readURLPerPage(searchParams)
+  const [pageJumpInput, setPageJumpInput] = useState(() => String(page))
   const totalPages = Math.max(1, Math.ceil(totalRuns / perPage))
 
   const settingsReady = Boolean(defaults?.doc_format_code && defaults?.passbook_code)
@@ -335,12 +375,37 @@ function ShopeeSettlementContent() {
     diff: Number(selectedRun?.difference_amount_total ?? selectedItems.reduce((sum, i) => sum + Math.max(0, Number(i.difference_amount || 0)), 0) ?? 0),
   }
   const activeDetail = isActive(selectedRun?.status)
+  const selectedStatusLabel = STATUS_OPTIONS.find((o) => o.value === status)?.label ?? 'สถานะอื่น'
+  const secondaryStatusActive = SETTLEMENT_SECONDARY_STATUS_OPTIONS.some((o) => o.value === status)
+  const hiddenLabel = HIDDEN_OPTIONS.find((o) => o.value === hiddenMode)?.label ?? 'รายการปกติ'
 
   const setPage = (nextPage: number) => {
     const next = new URLSearchParams(searchParams)
     if (nextPage <= 1) next.delete('page')
     else next.set('page', String(nextPage))
     setSearchParams(next)
+  }
+
+  const handlePerPageChange = (value: string) => {
+    const nextSize = Number(value)
+    if (!PAGE_SIZE_OPTIONS.includes(nextSize as typeof PAGE_SIZE_OPTIONS[number])) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('page')
+    if (nextSize === DEFAULT_PER_PAGE) next.delete('per_page')
+    else next.set('per_page', String(nextSize))
+    setSearchParams(next, { replace: true })
+    setPageJumpInput('1')
+  }
+
+  const handleJumpToPage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const next = Number(pageJumpInput)
+    if (!Number.isInteger(next) || next < 1) {
+      setPageJumpInput(String(page))
+      toast.error('เลขหน้าต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป')
+      return
+    }
+    setPage(Math.min(next, totalPages))
   }
 
   const resetPage = () => {
@@ -365,6 +430,7 @@ function ShopeeSettlementContent() {
       setPullConnectionID(conns[0].id)
     }
     setDefaults(defaultRes.data.data ?? null)
+    setBasicsLoaded(true)
   }
 
   const listParams = useMemo(() => {
@@ -438,6 +504,10 @@ function ShopeeSettlementContent() {
     loadBasics().catch((e) => toast.error('โหลดข้อมูลตั้งต้นไม่สำเร็จ: ' + apiError(e)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    setPageJumpInput(String(page))
+  }, [page])
 
   useEffect(() => {
     loadRuns()
@@ -560,7 +630,6 @@ function ShopeeSettlementContent() {
 
   const hideSelectedRun = async () => {
     if (!selectedRun?.id || hidingRun) return
-    if (!window.confirm('ซ่อนงานรับชำระนี้จากรายการปกติใช่ไหม? ข้อมูลประวัติและการกันส่งซ้ำจะยังอยู่ครบ')) return
     setHidingRun(true)
     try {
       const res = await client.post<{ data: SettlementRun }>(`/api/shopee-settlements/${selectedRun.id}/hide`, {
@@ -603,51 +672,53 @@ function ShopeeSettlementContent() {
 
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="รับชำระ Shopee"
-        description="ดึงรายการ Shopee ที่ release เงินแล้ว จับคู่กับใบขาย SML และส่งเข้าเมนูรับชำระหนี้"
-        actions={
-          <Button
-            className="gap-2"
-            onClick={() => setPullOpen(true)}
-            disabled={!shopeeAPIEnabled}
-            title={!shopeeAPIEnabled ? 'Shopee API ปิดใช้งานใน instance นี้' : undefined}
-          >
-            <RefreshCw className="h-4 w-4" />
-            ดึงรอบถอนเงิน
-          </Button>
-        }
-      />
-
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
-        <QueueMetric label="กำลังทำงาน" value={counts.running + counts.sending} icon={Clock} tone="primary" />
-        <QueueMetric label="พร้อมส่ง" value={counts.ready} icon={ReceiptText} tone="success" />
-        <QueueMetric label="ส่งแล้ว" value={counts.sent} icon={CheckCircle2} tone="success" />
-        <QueueMetric label="ต้องตรวจ" value={counts.partial} icon={AlertTriangle} tone="warning" />
-        <QueueMetric label="ผิดพลาด" value={counts.failed} icon={AlertTriangle} tone="danger" />
-      </div>
-
-      <div className="rounded-xl border border-border/70 bg-card p-3 shadow-sm">
-        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <ReceiptText className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <Link to="/sale-invoices" className="font-medium text-primary hover:underline">
-            ขายสินค้าและบริการ
-          </Link>
-          <span>→</span>
-          <span className="font-medium text-foreground">ลูกหนี้ -&gt; รับชำระหนี้</span>
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-            RC
-          </code>
-          <Link to="/settings/channels" className="font-medium text-primary hover:underline sm:ml-auto">
-            ตั้งค่าเส้นทาง
-          </Link>
+      <div className="rounded-lg border border-border/70 bg-card p-2.5 shadow-sm">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-semibold tracking-tight text-foreground">รับชำระ Shopee</h1>
+              <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-strong">
+                RC
+              </code>
+              <p className="sr-only">ดึงรายการ Shopee ที่ release เงินแล้ว จับคู่กับใบขาย SML และส่งเข้าเมนูรับชำระหนี้</p>
+              <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
+              <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                <ReceiptText className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
+                <Link to="/sale-invoices" className="font-medium text-link hover:underline">
+                  ขายสินค้าและบริการ
+                </Link>
+                <span>→</span>
+                <span className="font-medium text-foreground">ลูกหนี้ -&gt; รับชำระหนี้</span>
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
+            <SettlementMetricChip label="กำลังทำงาน" value={counts.running + counts.sending} tone="primary" />
+            <SettlementMetricChip label="พร้อมส่ง" value={counts.ready} tone="success" />
+            <SettlementMetricChip label="ส่งแล้ว" value={counts.sent} tone="success" />
+            <SettlementMetricChip label="ต้องตรวจ" value={counts.partial} tone="warning" />
+            <SettlementMetricChip label="ผิดพลาด" value={counts.failed} tone="danger" />
+            <Button
+              className="h-8 w-full justify-center gap-1.5 sm:w-auto"
+              size="sm"
+              onClick={() => setPullOpen(true)}
+              disabled={!shopeeAPIEnabled}
+              title={!shopeeAPIEnabled ? 'Shopee API ปิดใช้งานใน instance นี้' : undefined}
+            >
+              <RefreshCw className="h-4 w-4" />
+              ดึงรอบถอนเงิน
+            </Button>
+            <Button asChild size="sm" variant="outline" className="h-8 w-full justify-center sm:w-auto">
+              <Link to="/settings/channels">ตั้งค่าเส้นทาง</Link>
+            </Button>
+          </div>
         </div>
 
-        {!settingsReady && (
-          <Alert className="mb-3 border-warning/40 bg-warning/10 text-warning">
+        {basicsLoaded && !settingsReady && (
+          <Alert className="mt-2 border-warning/40 bg-warning/10 py-2 text-warning">
             <Settings className="h-4 w-4" />
             <AlertTitle>ยังตั้งค่ารับชำระ Shopee ไม่ครบ</AlertTitle>
-            <AlertDescription>
+            <AlertDescription className="text-xs">
               กรุณาเลือก doc format รับชำระและบัญชีรับเงินในหน้า{' '}
               <Link to="/settings/channels" className="font-medium underline">
                 เส้นทางเอกสาร SML
@@ -657,107 +728,153 @@ function ShopeeSettlementContent() {
           </Alert>
         )}
         {apiStatus && !apiStatus.enabled && (
-          <Alert className="mb-3 border-warning/40 bg-warning/10 text-warning">
+          <Alert className="mt-2 border-warning/40 bg-warning/10 py-2 text-warning">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Shopee API ปิดใช้งานใน instance นี้</AlertTitle>
-            <AlertDescription>
+            <AlertDescription className="text-xs">
               ระบบซ่อนร้าน Shopee ที่เคยเชื่อมต่อไว้ก่อน เพื่อไม่ให้เข้าใจผิดว่าสามารถดึงรอบถอนเงินได้.
               {apiStatus.blocking_reason ? ` ${apiStatus.blocking_reason}` : ' ให้เปิดใช้งาน Shopee API ใน server ก่อนใช้เมนูนี้'}
             </AlertDescription>
           </Alert>
         )}
 
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {STATUS_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => {
-                setStatus(o.value)
-                resetPage()
-              }}
-              className={cn(
-                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                status === o.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-              )}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full max-w-sm">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="ค้นหา order SN / ใบขาย SML / RC doc_no..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
-                resetPage()
-              }}
-              className="h-9 pl-8"
-            />
-          </div>
-          <label className="flex w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs text-muted-foreground sm:w-auto">
-            <Store className="h-3.5 w-3.5 text-primary" />
-            <select
-              value={shopID}
-              onChange={(e) => {
-                setShopID(e.target.value)
-                resetPage()
-              }}
-              className="h-9 min-w-0 bg-transparent text-xs text-foreground outline-none"
-              aria-label="กรองตามร้าน Shopee"
-            >
-              <option value={ALL}>ทุกร้าน Shopee</option>
-              {visibleConnections.map((shop) => (
-                <option key={shop.id} value={String(shop.shop_id)}>
-                  {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
-                </option>
+        <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
+          <div className="grid gap-2 xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)_auto] xl:items-center">
+            <div className="relative w-full">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="ค้นหา order SN / ใบขาย SML / RC doc_no..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  resetPage()
+                }}
+                className="h-8 pl-8 text-sm"
+              />
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {SETTLEMENT_QUICK_STATUS_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => {
+                    setStatus(o.value)
+                    resetPage()
+                  }}
+                  className={cn(
+                    'h-7 rounded-full border px-2.5 text-xs font-medium transition-colors',
+                    status === o.value
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                  )}
+                >
+                  {o.label}
+                </button>
               ))}
-            </select>
-          </label>
-          <Input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => {
-              setDateFrom(e.target.value)
-              resetPage()
-            }}
-            className="h-9 w-full sm:w-auto"
-          />
-          <Input
-            type="date"
-            value={dateTo}
-            onChange={(e) => {
-              setDateTo(e.target.value)
-              resetPage()
-            }}
-            className="h-9 w-full sm:w-auto"
-          />
-          <label className="flex w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs text-muted-foreground sm:w-auto">
-            แสดง
-            <select
-              value={hiddenMode}
-              onChange={(e) => {
-                setHiddenMode(e.target.value)
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full justify-center gap-1.5 xl:w-auto"
+              onClick={() => { void loadBasics(); void loadRuns() }}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              รีเฟรช
+            </Button>
+          </div>
+
+          <div className="grid gap-1.5 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
+            <Select
+              value={shopID}
+              onValueChange={(value) => {
+                setShopID(value)
                 resetPage()
               }}
-              className="h-9 min-w-0 bg-transparent text-xs text-foreground outline-none"
-              aria-label="กรองงานที่ซ่อน"
             >
-              <option value={VISIBLE}>ปกติ</option>
-              <option value="only">ที่ซ่อน</option>
-              <option value="all">ทั้งหมด</option>
-            </select>
-          </label>
-          <Button variant="outline" size="sm" className="gap-1.5 sm:ml-auto" onClick={() => { void loadBasics(); void loadRuns() }}>
-            <RefreshCw className="h-3.5 w-3.5" />
-            รีเฟรช
-          </Button>
+              <SelectTrigger
+                className="h-8 w-full text-xs sm:w-[220px]"
+                aria-label="กรองตามร้าน Shopee"
+              >
+                <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-accent-strong" />
+                <SelectValue placeholder="ร้าน Shopee" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>ทุกร้าน Shopee</SelectItem>
+                {visibleConnections.map((shop) => (
+                  <SelectItem key={shop.id} value={String(shop.shop_id)}>
+                    {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <DateRangePicker
+              from={dateFrom}
+              to={dateTo}
+              onFromChange={(value) => {
+                setDateFrom(value)
+                resetPage()
+              }}
+              onToChange={(value) => {
+                setDateTo(value)
+                resetPage()
+              }}
+              title="วันที่ release เงิน"
+              description="กรองรอบถอนเงินตามวันที่ Shopee ปล่อยเงินเข้าร้าน"
+              className="!h-8 w-full !min-w-0 text-xs sm:w-[260px]"
+            />
+            <Select
+              value={hiddenMode}
+              onValueChange={(value) => {
+                setHiddenMode(value)
+                resetPage()
+              }}
+            >
+              <SelectTrigger
+                className="h-8 w-full text-xs sm:w-[150px]"
+                aria-label="กรองงานที่ซ่อน"
+              >
+                <SelectValue placeholder={hiddenLabel} />
+              </SelectTrigger>
+              <SelectContent>
+                {HIDDEN_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant={secondaryStatusActive ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-8 w-full justify-between gap-1.5 px-2.5 text-xs sm:w-auto"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Filter className="h-3.5 w-3.5" />
+                    {secondaryStatusActive ? selectedStatusLabel : 'สถานะอื่น'}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-44">
+                <DropdownMenuLabel className="text-xs">สถานะงาน</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={status}
+                  onValueChange={(value) => {
+                    setStatus(value)
+                    resetPage()
+                  }}
+                >
+                  {SETTLEMENT_SECONDARY_STATUS_OPTIONS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>
+                      {o.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
 
@@ -767,8 +884,13 @@ function ShopeeSettlementContent() {
         page={page}
         total={totalRuns}
         totalPages={totalPages}
+        perPage={perPage}
         hiddenMode={hiddenMode}
         onPageChange={setPage}
+        onPerPageChange={handlePerPageChange}
+        pageJumpInput={pageJumpInput}
+        onPageJumpInputChange={setPageJumpInput}
+        onJumpToPage={handleJumpToPage}
         onOpen={openRun}
       />
 
@@ -813,7 +935,7 @@ function ShopeeSettlementContent() {
           }
         }}
         onSend={openSendConfirm}
-        onHide={hideSelectedRun}
+        onHide={() => setConfirmHideOpen(true)}
         onRestore={restoreSelectedRun}
       />
 
@@ -831,6 +953,20 @@ function ShopeeSettlementContent() {
         setRemark={setSendRemark}
         sending={sending}
         onConfirm={sendReceipt}
+      />
+      <ConfirmDialog
+        open={confirmHideOpen}
+        onOpenChange={setConfirmHideOpen}
+        title="ซ่อนงานรับชำระ Shopee จากรายการปกติ?"
+        description={[
+          `งาน: ${selectedRun?.id?.slice(0, 8) || '—'}`,
+          `ร้าน: ${selectedRun?.shop_label || selectedRun?.shop_id || 'Shopee shop'}`,
+          'ผลกระทบ: งานนี้จะถูกซ่อนจากรายการปกติและไม่รบกวนคิวประจำวัน',
+          'ข้อมูลเดิม: ประวัติ, รายการย่อย และข้อมูลกันส่งซ้ำจะยังอยู่ครบ',
+          'Rollback: เปิดมุมมองงานที่ซ่อนแล้วกู้คืนกลับมาได้',
+        ].join('\n')}
+        confirmLabel="ซ่อนงานนี้"
+        onConfirm={hideSelectedRun}
       />
     </div>
   )
@@ -865,24 +1001,30 @@ function PullDialog(props: {
             </AlertDescription>
           </Alert>
           <Field label="ร้าน Shopee">
-            <select
-              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-              value={props.connectionID}
-              onChange={(e) => props.setConnectionID(e.target.value)}
+            <Select
+              value={props.connectionID || NO_CONNECTION}
+              onValueChange={(value) => {
+                if (value !== NO_CONNECTION) props.setConnectionID(value)
+              }}
               disabled={!props.apiEnabled || props.connections.length === 0}
             >
-              {!props.apiEnabled ? (
-                <option value="">Shopee API ปิดใช้งาน</option>
-              ) : props.connections.length === 0 ? (
-                <option value="">ยังไม่มีร้านที่เชื่อมต่อ</option>
-              ) : (
-                props.connections.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label || c.shop_name || c.shop_id}
-                  </option>
-                ))
-              )}
-            </select>
+              <SelectTrigger className="h-10 w-full text-sm">
+                <SelectValue placeholder="เลือกร้าน Shopee" />
+              </SelectTrigger>
+              <SelectContent>
+                {!props.apiEnabled ? (
+                  <SelectItem value={NO_CONNECTION}>Shopee API ปิดใช้งาน</SelectItem>
+                ) : props.connections.length === 0 ? (
+                  <SelectItem value={NO_CONNECTION}>ยังไม่มีร้านที่เชื่อมต่อ</SelectItem>
+                ) : (
+                  props.connections.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.label || c.shop_name || c.shop_id}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
           </Field>
           <Field label="ช่วงวันที่ Shopee release เงิน">
             <DateRangePicker
@@ -911,18 +1053,42 @@ function PullDialog(props: {
   )
 }
 
-function SettlementTable({ runs, loading, page, total, totalPages, hiddenMode, onPageChange, onOpen }: {
+function SettlementTable({
+  runs,
+  loading,
+  page,
+  total,
+  totalPages,
+  perPage,
+  hiddenMode,
+  onPageChange,
+  onPerPageChange,
+  pageJumpInput,
+  onPageJumpInputChange,
+  onJumpToPage,
+  onOpen,
+}: {
   runs: SettlementRun[]
   loading: boolean
   page: number
   total: number
   totalPages: number
+  perPage: typeof PAGE_SIZE_OPTIONS[number]
   hiddenMode: string
   onPageChange: (page: number) => void
+  onPerPageChange: (value: string) => void
+  pageJumpInput: string
+  onPageJumpInputChange: (value: string) => void
+  onJumpToPage: (event: FormEvent<HTMLFormElement>) => void
   onOpen: (run: SettlementRun) => void
 }) {
+  const pageStart = total === 0 ? 0 : (page - 1) * perPage + 1
+  const pageEnd = total === 0 ? 0 : Math.min(page * perPage, total)
+  const hasPreviousPage = page > 1
+  const hasNextPage = page < totalPages
+
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px] text-sm">
           <thead className="bg-muted/50 text-xs text-muted-foreground">
@@ -986,26 +1152,72 @@ function SettlementTable({ runs, loading, page, total, totalPages, hiddenMode, o
           </tbody>
         </table>
       </div>
-      <div className="flex flex-col gap-2 border-t border-border bg-muted/20 px-3 py-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 border-t border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
         <span>
-          หน้า {page.toLocaleString('th-TH')} / {totalPages.toLocaleString('th-TH')} · ทั้งหมด {total.toLocaleString('th-TH')} รอบ
+          {total > 0
+            ? `แสดง ${pageStart.toLocaleString()}-${pageEnd.toLocaleString()} จาก ${total.toLocaleString()} รอบ`
+            : `แสดง ${runs.length.toLocaleString()} รอบ`}
         </span>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <label className="inline-flex items-center gap-1.5">
+            <span>ต่อหน้า</span>
+            <Select value={String(perPage)} onValueChange={onPerPageChange}>
+              <SelectTrigger className="h-8 w-[82px] text-xs" aria-label="จำนวนรอบต่อหน้า">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
           <Button
             variant="outline"
             size="sm"
-            disabled={page <= 1 || loading}
-            onClick={() => onPageChange(page - 1)}
+            disabled={!hasPreviousPage || loading}
+            onClick={() => onPageChange(1)}
           >
-            ก่อนหน้า
+            หน้าแรก
           </Button>
           <Button
             variant="outline"
             size="sm"
-            disabled={page >= totalPages || loading}
+            disabled={!hasPreviousPage || loading}
+            onClick={() => onPageChange(page - 1)}
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            ก่อนหน้า
+          </Button>
+          <span className="min-w-[92px] text-center tabular-nums">
+            หน้า {page.toLocaleString()} / {totalPages.toLocaleString()}
+          </span>
+          <form className="inline-flex items-center gap-1.5" onSubmit={onJumpToPage}>
+            <span>ไปหน้า</span>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={totalPages}
+              value={pageJumpInput}
+              onChange={(e) => onPageJumpInputChange(e.target.value)}
+              className="h-8 w-20 px-2 text-center text-xs tabular-nums"
+              aria-label="ไปหน้าที่"
+            />
+            <Button type="submit" variant="outline" size="sm" disabled={totalPages <= 1 || loading}>
+              ไป
+            </Button>
+          </form>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!hasNextPage || loading}
             onClick={() => onPageChange(page + 1)}
           >
             ถัดไป
+            <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
@@ -1135,7 +1347,7 @@ function RunDetailDialog(props: {
             <div className="rounded-md border border-border bg-background p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold text-foreground">รายการที่จะส่งเข้า SML รอบนี้</div>
-                <Badge variant="secondary" className="bg-primary/10 text-primary">RC = ใบรับชำระใน SML</Badge>
+                <Badge variant="secondary" className="bg-primary/10 text-accent-strong">RC = ใบรับชำระใน SML</Badge>
               </div>
               {run.ready_count > 0 ? (
                 <div className="mt-3 grid gap-2 text-sm md:grid-cols-3">
@@ -1385,33 +1597,23 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>
 }
 
-function QueueMetric({ label, value, icon: Icon, tone }: {
+function SettlementMetricChip({ label, value, tone }: {
   label: string
   value: number
-  icon: LucideIcon
   tone: 'primary' | 'success' | 'warning' | 'danger'
 }) {
+  const toneCls = tone === 'success'
+    ? 'border-success/25 bg-success/10 text-success'
+    : tone === 'warning'
+      ? 'border-warning/30 bg-warning/10 text-warning'
+      : tone === 'danger'
+        ? 'border-destructive/25 bg-destructive/10 text-destructive'
+        : 'border-primary/25 bg-primary/10 text-accent-strong'
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-3">
-        <div className={cn(
-          'rounded-md p-2',
-          tone === 'success'
-            ? 'bg-success/10 text-success'
-            : tone === 'warning'
-              ? 'bg-warning/15 text-warning'
-              : tone === 'danger'
-                ? 'bg-destructive/10 text-destructive'
-                : 'bg-primary/10 text-primary',
-        )}>
-          <Icon className="h-4 w-4" />
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="text-lg font-semibold tabular-nums">{value.toLocaleString()}</div>
-        </div>
-      </CardContent>
-    </Card>
+    <span className={cn('inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px]', toneCls)}>
+      <span className="font-semibold tabular-nums">{value.toLocaleString()}</span>
+      <span className="text-foreground/75">{label}</span>
+    </span>
   )
 }
 

@@ -315,14 +315,14 @@ function StatChip({
     success: 'border-success/25 bg-success/5 text-success',
     warning: 'border-warning/25 bg-warning/5 text-warning',
     danger: 'border-destructive/25 bg-destructive/5 text-destructive',
-    primary: 'border-primary/25 bg-primary/5 text-primary',
+    primary: 'border-primary/25 bg-primary/5 text-accent-strong',
     muted: 'border-border bg-card text-foreground',
   }
   const chip = (
-    <Card className={cn('min-w-[150px] flex-1 shadow-none', styles[variant])}>
-      <CardContent className="flex items-baseline justify-between gap-3 px-3 py-2.5">
-        <p className="text-lg font-semibold tabular-nums leading-none">{value}</p>
-        <p className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <Card className={cn('min-w-[145px] flex-1 shadow-none', styles[variant])}>
+      <CardContent className="flex items-center justify-between gap-3 px-3 py-2">
+        <p className="text-base font-semibold tabular-nums leading-none">{value}</p>
+        <p className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
           {label}
           {tooltip && <Info className="h-3 w-3" />}
         </p>
@@ -354,7 +354,7 @@ function HiddenCodeStatCard({
       <CardContent className="flex items-center justify-between gap-3 px-3 py-2.5">
         <div className="min-w-0">
           <p className="text-lg font-semibold tabular-nums leading-none">{count.toLocaleString()}</p>
-          <p className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
             รหัสซ่อน
             <TooltipProvider delayDuration={120}>
               <Tooltip>
@@ -589,7 +589,7 @@ function CatalogPullDialog({
                 {hiddenCodes.length > 5 && <div>และอีก {hiddenCodes.length - 5} รหัส</div>}
               </div>
               <div className="mt-2 text-muted-foreground">
-                Action: ตรวจรหัสนี้ใน SML master และแก้ให้ตรงกับรหัสที่แนะนำก่อนรีเฟรชหรือซิงก์ใหม่
+                สิ่งที่ต้องทำ: ตรวจรหัสนี้ใน SML master และแก้ให้ตรงกับรหัสที่แนะนำก่อนรีเฟรชหรือซิงก์ใหม่
               </div>
             </div>
           )}
@@ -808,6 +808,7 @@ export default function CatalogSettings() {
   const [pullDialogOpen, setPullDialogOpen] = useState(false)
   const [hiddenCodesOpen, setHiddenCodesOpen] = useState(false)
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false)
+  const [embedConfirmOpen, setEmbedConfirmOpen] = useState(false)
   const [params, setParams] = useReducer(
     (_prev: FetchParams, next: Partial<FetchParams> & { reset?: boolean }) => {
       const base = next.reset ? { page: 1, filter: '' as StatusFilter, query: '' } : _prev
@@ -1068,7 +1069,18 @@ export default function CatalogSettings() {
               <Database className="h-3.5 w-3.5" />
               ดึงรายตัวจาก SML
             </Button>
-            <Button size="sm" onClick={handleEmbedAll} disabled={isEmbedBusy}>
+            <Button
+              size="sm"
+              onClick={() => setEmbedConfirmOpen(true)}
+              disabled={isEmbedBusy || (stats?.total ?? 0) === 0}
+              title={
+                isEmbedBusy
+                  ? 'กำลังเตรียมข้อมูลจับคู่อยู่'
+                  : (stats?.total ?? 0) === 0
+                    ? 'ยังไม่มีสินค้าใน Catalog ให้เตรียมข้อมูล'
+                    : 'สร้างข้อมูลจับคู่จาก catalog ปัจจุบัน'
+              }
+            >
               {isEmbedBusy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
@@ -1091,7 +1103,7 @@ export default function CatalogSettings() {
             <div className="min-w-0 flex-1">
               <p className="font-medium text-foreground">ยัง Sync สินค้าไม่ได้ เพราะมีค่า SML ที่รอรีสตาร์ท</p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                ไปที่ <Link to="/settings/instance" className="font-medium text-primary hover:underline">การเชื่อมต่อระบบ</Link> แล้วกด “รีสตาร์ทและใช้ค่าทันที” ก่อน เพื่อให้ Nexflow ใช้ headers ชุดล่าสุด
+                ไปที่ <Link to="/settings/instance" className="font-medium text-link hover:underline">การเชื่อมต่อระบบ</Link> แล้วกด “รีสตาร์ทและใช้ค่าทันที” ก่อน เพื่อให้ Nexflow ใช้ headers ชุดล่าสุด
               </p>
               {pendingRestartKeys.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
@@ -1110,7 +1122,7 @@ export default function CatalogSettings() {
       {stats?.sync_running && (
         <div className="rounded-lg border border-primary/25 bg-primary/[0.06] p-3 text-sm">
           <div className="flex items-start gap-2.5">
-            <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
+            <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-accent-strong" />
             <div>
               <p className="font-medium text-foreground">กำลัง Sync สินค้าจาก SML</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
@@ -1130,7 +1142,7 @@ export default function CatalogSettings() {
             <BookOpen className="h-4 w-4 shrink-0 text-info" strokeWidth={2.25} />
             <span className="font-medium text-foreground">Catalog คือฐานสินค้า SML สำหรับจับคู่ชื่อสินค้าจาก Email และ Marketplace</span>
           </span>
-          <span className="text-[11px] text-primary group-open:hidden">รายละเอียด</span>
+          <span className="text-[11px] text-link group-open:hidden">รายละเอียด</span>
           <span className="hidden text-[11px] text-muted-foreground group-open:inline">ย่อ</span>
         </summary>
         <div className="border-t border-info/15 px-3.5 py-3">
@@ -1150,7 +1162,7 @@ export default function CatalogSettings() {
             </div>
             <p className="text-[12px] text-muted-foreground">
               ต่างจาก{' '}
-              <Link to="/mappings" className="font-medium text-primary hover:underline">
+              <Link to="/mappings" className="font-medium text-link hover:underline">
                 ตารางจับคู่สินค้า
               </Link>{' '}
               ที่เก็บชื่อสินค้าที่เคยแก้แล้ว — ใช้คู่กันแต่คนละขั้นตอน
@@ -1194,13 +1206,13 @@ export default function CatalogSettings() {
             <Card className="flex-1 border-primary/30 bg-primary/5">
               <CardContent className="flex items-center gap-3 px-4 py-3">
                 {stats.embed_running ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <Loader2 className="h-4 w-4 animate-spin text-accent-strong" />
                 ) : (
-                  <Sparkles className="h-4 w-4 text-primary" />
+                  <Sparkles className="h-4 w-4 text-accent-strong" />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <p className="text-sm font-medium text-primary">
+                    <p className="text-sm font-medium text-accent-strong">
                       {stats.embed_running ? 'กำลังเตรียมข้อมูลจับคู่…' : 'รอบเตรียมข้อมูลล่าสุด'}
                     </p>
                     {stats.embed_status?.session_id && (
@@ -1208,7 +1220,7 @@ export default function CatalogSettings() {
                         href={`https://openrouter.ai/logs?tab=sessions&session_id=${encodeURIComponent(stats.embed_status.session_id)}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-link hover:underline"
                       >
                         OpenRouter session
                         <ExternalLink className="h-3 w-3" />
@@ -1477,9 +1489,26 @@ export default function CatalogSettings() {
         open={syncConfirmOpen}
         onOpenChange={setSyncConfirmOpen}
         title="ซิงก์สินค้าทั้งหมดจาก SML"
-        description="งานนี้จะดึง master สินค้าทั้งหมดจาก SML และอาจใช้เวลาหลายนาที ถ้าต้องการเพิ่มสินค้าไม่กี่รหัส ให้ใช้ปุ่ม “ดึงรายตัวจาก SML” แทน"
+        description={[
+          'งานนี้จะดึง master สินค้าทั้งหมดจาก SML และอาจใช้เวลาหลายนาที',
+          'ผลกระทบ: รายการสินค้าใน Nexflow จะอัปเดตตาม SML master ล่าสุด แต่ไม่แก้ master data ใน SML',
+          'ถ้าต้องการเพิ่มสินค้าไม่กี่รหัส ให้ใช้ปุ่ม “ดึงรายตัวจาก SML” แทน',
+        ].join('\n')}
         confirmLabel="เริ่มซิงก์ทั้งหมด"
         onConfirm={handleSync}
+      />
+
+      <ConfirmDialog
+        open={embedConfirmOpen}
+        onOpenChange={setEmbedConfirmOpen}
+        title="สร้างข้อมูลจับคู่สินค้า?"
+        description={[
+          `ระบบจะเตรียมข้อมูลจับคู่จากสินค้าใน Catalog ประมาณ ${(stats?.total ?? 0).toLocaleString('th-TH')} รายการ`,
+          'ผลกระทบ: งานนี้ช่วยให้ Nexflow แนะนำรหัสสินค้า SML จากชื่อสินค้า marketplace ได้แม่นขึ้น และอาจใช้เวลาหลายนาที',
+          'งานที่ทำแล้วจะไม่หายหาก backend restart ระหว่างประมวลผล',
+        ].join('\n')}
+        confirmLabel="เริ่มสร้างข้อมูลจับคู่"
+        onConfirm={handleEmbedAll}
       />
 
       <ConfirmDialog
@@ -1488,10 +1517,14 @@ export default function CatalogSettings() {
         title="ลบสินค้าออกจาก Catalog"
         description={
           pendingDelete
-            ? `ลบ ${pendingDelete} ออกจาก Nexflow catalog? — SML 248 จะไม่ถูกแตะ ทำงานเฉพาะ Nexflow ฝั่งเดียว`
+            ? [
+                `รหัสสินค้า: ${pendingDelete}`,
+                'ผลกระทบ: ลบเฉพาะข้อมูลใน Nexflow catalog และข้อมูลจับคู่ที่เกี่ยวกับรายการนี้',
+                'SML master จะไม่ถูกแตะ หากลบผิดให้กดดึงรายตัวจาก SML หรือซิงก์ใหม่',
+              ].join('\n')
             : ''
         }
-        confirmLabel="ลบ"
+        confirmLabel="ลบจาก Nexflow"
         variant="destructive"
         onConfirm={() => {
           if (pendingDelete) handleDeleteOne(pendingDelete)

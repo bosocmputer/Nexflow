@@ -42,6 +42,8 @@ interface SMLMasterOption {
   bank_branch?: string
 }
 
+const SELECT_NONE_VALUE = '__none__'
+
 import {
   CHANNEL_LABELS,
   destinationFor,
@@ -231,17 +233,22 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const docWarning = docNoPatternWarning(docPrefixTrimmed, docRunningFormatTrimmed)
   const selectedPassbook = passbooks.find((p) => p.code === passbookCodeTrimmed)
   const selectedExpense = expenses.find((p) => p.code === expenseCodeTrimmed)
-  const canSave =
-    !!selectedDestinationMeta &&
-    (isSettlement || (
-      docPrefixTrimmed !== '' &&
-      docRunningFormatTrimmed !== '' &&
-      docRunningFormatTrimmed.includes('#')
-    )) &&
-    (!isSettlement || (selectedDocFormatCode !== '' && passbookCodeTrimmed !== '')) &&
-    (!isShopeePurchase || !shippingEnabled || shippingItemCodeTrimmed !== '') &&
-    (isSettlement || !docWarning) &&
-    !saving
+  const saveDisabledReason = (() => {
+    if (saving) return 'กำลังบันทึก'
+    if (!selectedDestinationMeta) return 'เลือกปลายทาง SML ก่อน'
+    if (docFormatsLoading) return 'รอโหลดรูปแบบเอกสารจาก SML'
+    if (isSettlement && !selectedDocFormatCode) return 'เลือกรูปแบบเอกสารรับชำระก่อน'
+    if (isSettlement && !passbookCodeTrimmed) return 'เลือกบัญชีรับเงินจริงก่อน'
+    if (!isSettlement && (!docPrefixTrimmed || !docRunningFormatTrimmed || !docRunningFormatTrimmed.includes('#'))) {
+      return 'เลือกรูปแบบเอกสารที่มีเลขรันให้ครบก่อน'
+    }
+    if (!isSettlement && docWarning) return docWarning
+    if (isShopeePurchase && shippingEnabled && !shippingItemCodeTrimmed) {
+      return 'เลือกสินค้า SML สำหรับค่าขนส่งก่อนเปิดใช้งาน'
+    }
+    return ''
+  })()
+  const canSave = !saveDisabledReason
 
   const handleDestinationChange = (value: EndpointKind) => {
     const destination = destinationOptions.find((option) => option.value === value)
@@ -422,7 +429,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             {isSettlement && (
               <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <div className="text-xs font-semibold text-foreground">
                     ตั้งค่ารับชำระ Shopee
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -433,19 +440,23 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                 <div className="grid gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs">บัญชีรับเงิน</Label>
-                    <select
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                      value={passbookCode}
+                    <Select
+                      value={passbookCode || SELECT_NONE_VALUE}
+                      onValueChange={(value) => setPassbookCode(value === SELECT_NONE_VALUE ? '' : value)}
                       disabled={settlementMastersLoading}
-                      onChange={(e) => setPassbookCode(e.target.value)}
                     >
-                      <option value="">เลือกบัญชีรับเงินจาก SML</option>
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="เลือกบัญชีรับเงินจาก SML" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={SELECT_NONE_VALUE}>เลือกบัญชีรับเงินจาก SML</SelectItem>
                       {passbooks.map((p) => (
-                        <option key={p.code} value={p.code}>
+                        <SelectItem key={p.code} value={p.code}>
                           {p.code} · {p.name_1}{p.bank_code ? ` · ${p.bank_code}` : ''}{p.bank_branch ? ` ${p.bank_branch}` : ''}
-                        </option>
+                        </SelectItem>
                       ))}
-                    </select>
+                      </SelectContent>
+                    </Select>
                     <p className="text-[11px] text-muted-foreground">
                       {passbookCodeTrimmed
                         ? 'ค่าที่เลือกนี้จะถูกบันทึกเป็นบัญชีรับเงินจริงสำหรับรับชำระ Shopee'
@@ -454,19 +465,23 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs">ส่วนต่าง Shopee</Label>
-                    <select
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                      value={expenseCode}
+                    <Select
+                      value={expenseCode || SELECT_NONE_VALUE}
+                      onValueChange={(value) => setExpenseCode(value === SELECT_NONE_VALUE ? '' : value)}
                       disabled={settlementMastersLoading}
-                      onChange={(e) => setExpenseCode(e.target.value)}
                     >
-                      <option value="">ยังไม่กำหนดค่าใช้จ่ายส่วนต่าง</option>
+                      <SelectTrigger className="h-10">
+                        <SelectValue placeholder="ยังไม่กำหนดค่าใช้จ่ายส่วนต่าง" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={SELECT_NONE_VALUE}>ยังไม่กำหนดค่าใช้จ่ายส่วนต่าง</SelectItem>
                       {expenses.map((p) => (
-                        <option key={p.code} value={p.code}>
+                        <SelectItem key={p.code} value={p.code}>
                           {p.code} · {p.name_1}
-                        </option>
+                        </SelectItem>
                       ))}
-                    </select>
+                      </SelectContent>
+                    </Select>
                     <p className="text-[11px] text-muted-foreground">
                       {expenseCodeTrimmed
                         ? 'ค่าที่เลือกนี้จะใช้เมื่อต้องลงค่าธรรมเนียม/ส่วนต่าง Shopee'
@@ -486,7 +501,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             {!isSettlement && (
             <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="text-xs font-semibold text-foreground">
                   เลขเอกสาร SML (doc_no)
                 </div>
                 <span className="text-[10px] text-muted-foreground">ดึงจากรูปแบบเอกสารที่เลือก</span>
@@ -517,7 +532,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             {!isSettlement && (
             <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="text-xs font-semibold text-foreground">
                   ค่าเริ่มต้นตอนส่ง SML
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -747,13 +762,20 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             )}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-              ยกเลิก
-            </Button>
-            <Button onClick={handleSave} disabled={!canSave}>
-              {saving ? 'กำลังบันทึก...' : 'บันทึก'}
-            </Button>
+          <DialogFooter className="items-start gap-2 sm:items-center sm:justify-between">
+            {saveDisabledReason && (
+              <p className="max-w-[20rem] text-left text-[11px] leading-relaxed text-muted-foreground">
+                {saveDisabledReason}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+                ยกเลิก
+              </Button>
+              <Button onClick={handleSave} disabled={!canSave} title={saveDisabledReason || undefined}>
+                {saving ? 'กำลังบันทึก...' : 'บันทึก'}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

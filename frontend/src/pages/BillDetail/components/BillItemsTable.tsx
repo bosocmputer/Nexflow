@@ -1,3 +1,4 @@
+import { Info } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table,
@@ -6,10 +7,16 @@ import {
   TableBody,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import type { Bill, BillItem } from '@/types'
-import { isShopeePurchaseBill, isShopeeSalesBill, money } from '@/lib/shopeeBill'
+import { isShopeePurchaseBill, isShopeeSalesBill, money, shopeeCoinAmount } from '@/lib/shopeeBill'
 import { hasInvalidPrice } from '../utils/validation'
-import { BillItemRow } from './BillItemRow'
+import { BillItemRow, type DiscountInfo } from './BillItemRow'
 
 interface Props {
   bill: Bill
@@ -52,8 +59,22 @@ export function BillItemsTable({
   const showDiscountColumn = isShopeePurchaseBill(bill)
   const discountSummary = showDiscountColumn ? discountSummaryFromBill(bill) : null
   const totalDiscount = discountSummary?.total_discount_amount ?? 0
+  const coinAmt = shopeeCoinAmount(bill) ?? 0
+  const effectiveDiscount = Math.round((totalDiscount + coinAmt) * 100) / 100
+  const grossTotal = items
+    .filter((item) => item.source_sku !== '__shopee_shipping__')
+    .reduce((sum, item) => sum + (item.qty ?? 0) * (item.price ?? 0), 0)
+  const rowDiscountInfo: DiscountInfo | undefined =
+    showDiscountColumn && effectiveDiscount > 0 && grossTotal > 0
+      ? {
+          effectiveDiscount,
+          couponDiscount: totalDiscount,
+          coinAmount: coinAmt,
+          grossTotal,
+        }
+      : undefined
   const itemDiscountTotal = items.reduce((sum, item) => sum + (item.discount_amount ?? 0), 0)
-  const parsedDiscountNotApplied = bill.status === 'sent' && totalDiscount > 0 && itemDiscountTotal <= 0
+  const parsedDiscountNotApplied = bill.status === 'sent' && effectiveDiscount > 0 && itemDiscountTotal <= 0
   const discountCodes = [
     ...(discountSummary?.shopee_discount_codes ?? []),
     ...(discountSummary?.shop_discount_codes ?? []),
@@ -73,7 +94,7 @@ export function BillItemsTable({
   }).length
 
   return (
-    <Card className="rounded-2xl border-border/70 shadow-sm">
+    <Card className="rounded-lg border-border/70 shadow-sm">
       <CardHeader className="flex flex-row items-start justify-between gap-3 pb-3">
         <div>
           <CardTitle className="text-sm font-semibold">
@@ -84,13 +105,37 @@ export function BillItemsTable({
           </p>
           {showDiscountColumn && (
             <div className="mt-2 max-w-3xl rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
-              <span className="font-medium text-foreground">ส่วนลด:</span>{' '}
+              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                ส่วนลด
+                <TooltipProvider delayDuration={120}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-info hover:bg-info/10"
+                        aria-label="ดูสูตรการกระจายส่วนลด Shopee"
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-xs text-xs leading-5">
+                      <div className="space-y-1">
+                        <p className="font-medium text-popover-foreground">สูตรส่วนลด Shopee</p>
+                        <p>1. อ่านยอดสินค้า โค้ดส่วนลด Coin ยอดชำระ และค่าขนส่งจากอีเมล</p>
+                        <p>2. รวมโค้ดส่วนลดกับ Coin เป็นส่วนลดที่ใช้จริง</p>
+                        <p>3. กระจายตาม % มูลค่าสินค้าแต่ละรายการ ไม่รวมค่าขนส่ง</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                :
+              </span>{' '}
               {parsedDiscountNotApplied
-                ? `${money(totalDiscount)} พบในอีเมล แต่บิลนี้ส่ง SML แล้ว ระบบไม่แก้ย้อนหลัง`
-                : totalDiscount > 0
-                ? `${money(totalDiscount)} จากโค้ด Shopee ${money(discountSummary?.shopee_discount_amount ?? 0)} + ร้านค้า ${money(discountSummary?.shop_discount_amount ?? 0)}`
+                ? `${money(effectiveDiscount)} พบในอีเมล แต่บิลนี้ส่ง SML แล้ว ระบบไม่แก้ย้อนหลัง`
+                : effectiveDiscount > 0
+                ? `โค้ด ${money(totalDiscount)} + Coin ${money(coinAmt)} = รวม ${money(effectiveDiscount)}`
                 : 'ไม่พบส่วนลดในอีเมลนี้'}
-              {!parsedDiscountNotApplied && ' · หารเท่ากันตามจำนวนรายการสินค้า ไม่รวมค่าขนส่ง'}
+              {!parsedDiscountNotApplied && ' · กระจายตาม % มูลค่าสินค้า ไม่รวมค่าขนส่ง'}
               {discountCodes.length > 0 && (
                 <span className="ml-1">· โค้ด: {discountCodes.join(', ')}</span>
               )}
@@ -139,6 +184,7 @@ export function BillItemsTable({
                   highlighted={item.id === highlightItemId}
                   rawNameLabel={rawNameLabel}
                   showDiscountColumn={showDiscountColumn}
+                  discountInfo={rowDiscountInfo}
                   tableColumnCount={visibleColumnCount}
                 />
               ))}

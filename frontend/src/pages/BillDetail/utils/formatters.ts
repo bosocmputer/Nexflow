@@ -18,12 +18,12 @@ export const FLOW_META: Record<
   email_pdf: {
     label: 'Email + PDF',
     icon: '📎',
-    variant: 'bg-blue-100 text-blue-800',
+    variant: 'bg-info/10 text-info',
   },
   shopee_email_order: {
     label: 'Shopee Email (Order)',
     icon: '🛒',
-    variant: 'bg-orange-100 text-orange-800',
+    variant: 'bg-warning/10 text-warning',
   },
   shopee_shipped: {
     // Both COD-shipped emails ("ถูกจัดส่งแล้ว") and pay-now confirmation
@@ -31,17 +31,17 @@ export const FLOW_META: Record<
     // claim the package shipped. Frame it by outcome: produces a PO bill.
     label: 'Email บิลซื้อ Shopee',
     icon: '📦',
-    variant: 'bg-amber-100 text-amber-800',
+    variant: 'bg-warning/10 text-warning',
   },
   shopee_excel: {
     label: 'Shopee',
     icon: '📊',
-    variant: 'bg-green-100 text-green-700',
+    variant: 'bg-primary/10 text-accentStrong',
   },
   tiktok_excel: {
     label: 'TikTok Excel',
     icon: '📊',
-    variant: 'bg-slate-100 text-slate-700',
+    variant: 'bg-muted text-muted-foreground',
   },
 }
 
@@ -126,23 +126,23 @@ export function scoreStyle(score: number | null): {
     return { color: 'text-muted-foreground', bg: 'bg-muted', label: 'เลือกเอง', icon: '✎' }
   const pct = Math.round(score * 100)
   if (score >= 0.85)
-    return { color: 'text-green-700', bg: 'bg-green-100', label: `${pct}%`, icon: '✓' }
+    return { color: 'text-success', bg: 'bg-success/10', label: `${pct}%`, icon: '✓' }
   if (score >= 0.6)
-    return { color: 'text-amber-700', bg: 'bg-amber-100', label: `${pct}%`, icon: '⚠' }
-  return { color: 'text-red-700', bg: 'bg-red-100', label: `${pct}%`, icon: '⚠' }
+    return { color: 'text-warning', bg: 'bg-warning/10', label: `${pct}%`, icon: '⚠' }
+  return { color: 'text-destructive', bg: 'bg-destructive/10', label: `${pct}%`, icon: '⚠' }
 }
 
 /** Returns raw hex/css color for inline status accents. */
 export function scoreColor(score: number | null): string {
-  if (score == null) return '#94a3b8'
-  if (score >= 0.85) return '#15803d'
-  if (score >= 0.6) return '#a16207'
-  return '#b91c1c'
+  if (score == null) return 'hsl(var(--muted-foreground))'
+  if (score >= 0.85) return 'hsl(var(--success))'
+  if (score >= 0.6) return 'hsl(var(--warning))'
+  return 'hsl(var(--destructive))'
 }
 
 /** Returns a border-color class string for catalog result buttons */
 export function scoreBorderClass(score: number): string {
-  if (score >= 0.85) return 'border-green-500'
-  if (score >= 0.6) return 'border-amber-400'
-  return 'border-red-400'
+  if (score >= 0.85) return 'border-success'
+  if (score >= 0.6) return 'border-warning'
+  return 'border-destructive'
 }

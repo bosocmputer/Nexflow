@@ -1,5 +1,5 @@
 import dayjs from 'dayjs'
-import type { MouseEvent } from 'react'
+import type { KeyboardEvent, MouseEvent } from 'react'
 import { Archive, Mail, Printer, RotateCcw, Store, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -44,56 +44,80 @@ export default function BillTable({
   onDelete,
   onPermanentDelete,
 }: Props) {
+  const openBill = (bill: Bill) => onRowClick(bill.id)
+
   return (
-    <DataTable<Bill>
-      data={bills}
-      loading={loading}
-      onRowClick={(b) => onRowClick(b.id)}
-      getRowKey={(b) => b.id}
-      empty="ไม่พบรายการบิล"
-      dense
-      virtualize={virtualize}
-      virtualizeThreshold={100}
-      virtualRowHeight={76}
-      virtualMaxHeight={620}
-      columns={[
+    <>
+      <div className="space-y-2 md:hidden">
+        {loading ? (
+          Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="rounded-lg border border-border bg-card p-3">
+              <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+              <div className="mt-3 h-3 w-full animate-pulse rounded bg-muted" />
+              <div className="mt-2 h-3 w-2/3 animate-pulse rounded bg-muted" />
+            </div>
+          ))
+        ) : bills.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
+            ไม่พบรายการบิล
+          </div>
+        ) : (
+          bills.map((bill) => (
+            <MobileBillCard
+              key={bill.id}
+              bill={bill}
+              canManage={canManage}
+              canPermanentDelete={canPermanentDelete}
+              onOpen={openBill}
+              onArchive={onArchive}
+              onRestore={onRestore}
+              onDelete={onDelete}
+              onPermanentDelete={onPermanentDelete}
+            />
+          ))
+        )}
+      </div>
+
+      <DataTable<Bill>
+        className="hidden md:block"
+        data={bills}
+        loading={loading}
+        onRowClick={openBill}
+        getRowKey={(b) => b.id}
+        empty="ไม่พบรายการบิล"
+        dense
+        virtualize={virtualize}
+        virtualizeThreshold={100}
+        virtualRowHeight={76}
+        virtualMaxHeight={620}
+        columns={[
         {
           key: 'doc',
           header: 'บิล / คำสั่งซื้อ',
           className: 'py-2',
-          width: '44%',
+          width: '46%',
           cell: (b) => {
             const displayDate = billDisplayDate(b)
+            const routeLabel = documentRouteBadge(b)
             return (
-              <div className="min-w-0 space-y-1">
-                <div className="flex items-center gap-2">
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                   {b.sml_doc_no ? (
-                    <span className="font-mono text-xs font-medium text-foreground">
+                    <span className="min-w-0 truncate font-mono text-xs font-semibold text-foreground">
                       {b.sml_doc_no}
                     </span>
                   ) : (
-                    <span className="font-mono text-xs text-foreground">
+                    <span className="font-mono text-xs font-medium text-foreground">
                       {b.id.slice(0, 8)}…
                     </span>
                   )}
-                  {b.bill_type === 'purchase' && (
-                    <Badge
-                      variant="secondary"
-                      className="h-5 bg-warning/15 px-1.5 text-[10px] font-medium text-warning hover:bg-warning/20"
-                      title="ซื้อ -> ใบสั่งซื้อ"
-                    >
-                      บิลซื้อ
-                    </Badge>
-                  )}
-                  {b.bill_type === 'sale' && (
-                    <Badge
-                      variant="secondary"
-                      className="h-5 bg-primary/10 px-1.5 text-[10px] font-medium text-primary hover:bg-primary/15"
-                      title={b.document_route === 'saleinvoice' ? 'ขาย -> ขายสินค้าและบริการ' : 'ขาย -> ใบสั่งขาย'}
-                    >
-                      {b.document_route === 'saleinvoice' ? 'ขายสินค้าฯ' : 'บิลขาย'}
-                    </Badge>
-                  )}
+                  <Badge
+                    variant="secondary"
+                    className={routeLabel.className}
+                    title={routeLabel.title}
+                  >
+                    {routeLabel.label}
+                  </Badge>
                   <span className="text-[11px] text-muted-foreground" title={displayDate.title}>
                     {displayDate.prefix && (
                       <span className="mr-1 text-[10px] font-medium text-info">{displayDate.prefix}</span>
@@ -110,8 +134,6 @@ export default function BillTable({
                 {isShopeeSalesBill(b) && (
                   <ShopeeSalesSummary bill={b} />
                 )}
-                <ShopeeShopLine bill={b} />
-                <EmailGroupLine bill={b} />
               </div>
             )
           },
@@ -120,13 +142,16 @@ export default function BillTable({
           key: 'source',
           header: 'ช่องทาง',
           className: 'py-2',
+          width: '19%',
           cell: (b) => {
             const inbox = emailInboxLabel(b)
             return (
-              <div className="flex min-w-0 flex-col gap-1">
+              <div className="flex min-w-0 flex-col gap-1.5">
                 <span className="inline-flex w-fit rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
                   {billSourceLabel(b.source)}
                 </span>
+                <ShopeeShopLine bill={b} />
+                <EmailGroupLine bill={b} />
                 {inbox && (
                   <span className="max-w-[180px] truncate text-[11px] text-muted-foreground" title={inbox}>
                     {inbox}
@@ -138,9 +163,10 @@ export default function BillTable({
         },
         {
           key: 'amount',
-          header: 'ยอดชำระ',
+          header: 'ยอด',
           headerClassName: 'text-right',
           className: 'py-2 text-right',
+          width: '13%',
           cell: (b) => {
             const payable = shopeePayableTotal(b)
             const fallback = b.total_amount ?? 0
@@ -199,18 +225,133 @@ export default function BillTable({
             />
           ),
         },
-      ]}
-      rowClassName={(b) =>
-        b.archived_at
-          ? 'bg-muted/25 opacity-80'
-          : b.status === 'needs_review'
-          ? 'bg-warning/[0.025]'
-          : b.status === 'failed'
-            ? 'bg-destructive/[0.025]'
-            : ''
-      }
-    />
+        ]}
+        rowClassName={(b) =>
+          b.archived_at
+            ? 'bg-muted/25 opacity-80'
+            : b.status === 'needs_review'
+            ? 'bg-warning/[0.025]'
+            : b.status === 'failed'
+              ? 'bg-destructive/[0.025]'
+              : ''
+        }
+      />
+    </>
   )
+}
+
+function MobileBillCard({
+  bill,
+  canManage,
+  canPermanentDelete,
+  onOpen,
+  onArchive,
+  onRestore,
+  onDelete,
+  onPermanentDelete,
+}: {
+  bill: Bill
+  canManage: boolean
+  canPermanentDelete: boolean
+  onOpen: (bill: Bill) => void
+  onArchive?: (bill: Bill) => void
+  onRestore?: (bill: Bill) => void
+  onDelete?: (bill: Bill) => void
+  onPermanentDelete?: (bill: Bill) => void
+}) {
+  const displayDate = billDisplayDate(bill)
+  const routeLabel = documentRouteBadge(bill)
+  const payable = shopeePayableTotal(bill)
+  const fallback = bill.total_amount ?? 0
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onOpen(bill)
+    }
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="rounded-lg border border-border bg-card p-3 text-sm transition-colors hover:bg-muted/35 focus:outline-none focus:ring-2 focus:ring-ring"
+      onClick={() => onOpen(bill)}
+      onKeyDown={handleKeyDown}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate font-mono text-sm font-semibold text-foreground">
+              {bill.sml_doc_no || `${bill.id.slice(0, 8)}…`}
+            </span>
+            <Badge variant="secondary" className={routeLabel.className} title={routeLabel.title}>
+              {routeLabel.label}
+            </Badge>
+          </div>
+          <div className="mt-1 text-[11px] text-muted-foreground" title={displayDate.title}>
+            {displayDate.prefix ? `${displayDate.prefix} ` : ''}{displayDate.short}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="font-semibold tabular-nums text-foreground">
+            {money(payable ?? fallback)}
+          </div>
+          {payable != null && bill.total_amount != null && payable !== bill.total_amount && (
+            <div className="text-[10px] text-muted-foreground">สินค้า {money(bill.total_amount)}</div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2 space-y-1.5">
+        {isShopeePurchaseBill(bill) && <ShopeePurchaseSummary bill={bill} />}
+        {isShopeeSalesBill(bill) && <ShopeeSalesSummary bill={bill} />}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
+            {billSourceLabel(bill.source)}
+          </span>
+          <ShopeeShopLine bill={bill} />
+          <EmailGroupLine bill={bill} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/70 pt-2">
+        <BillStatusBadge status={bill.status} />
+        <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          <BillRowActions
+            bill={bill}
+            canManage={canManage}
+            canPermanentDelete={canPermanentDelete}
+            onArchive={onArchive}
+            onRestore={onRestore}
+            onDelete={onDelete}
+            onPermanentDelete={onPermanentDelete}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function documentRouteBadge(bill: Bill) {
+  if (bill.bill_type === 'purchase') {
+    return {
+      label: 'PO',
+      title: 'ซื้อ -> ใบสั่งซื้อ',
+      className: 'h-5 bg-warning/15 px-1.5 font-mono text-[10px] font-semibold text-warning hover:bg-warning/20',
+    }
+  }
+  if (bill.document_route === 'saleinvoice') {
+    return {
+      label: 'SI',
+      title: 'ขาย -> ขายสินค้าและบริการ',
+      className: 'h-5 bg-primary/10 px-1.5 font-mono text-[10px] font-semibold text-accent-strong hover:bg-primary/15',
+    }
+  }
+  return {
+    label: 'SO',
+    title: 'ขาย -> ใบสั่งขาย',
+    className: 'h-5 bg-accent px-1.5 font-mono text-[10px] font-semibold text-link hover:bg-accent',
+  }
 }
 
 function BillRowActions({
@@ -240,7 +381,7 @@ function BillRowActions({
   if (bill.archived_at) {
     return (
       <div className="flex justify-end gap-1.5">
-        <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={stop(onRestore)}>
+        <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={stop(onRestore)} title="กู้คืนบิลกลับเข้าคิวงาน">
           <RotateCcw className="mr-1 h-3.5 w-3.5" />
           กู้คืน
         </Button>
@@ -251,6 +392,7 @@ function BillRowActions({
             variant="ghost"
             className="h-7 px-2 text-xs text-destructive hover:text-destructive"
             onClick={stop(onPermanentDelete)}
+            title="ลบบิลถาวร ต้องยืนยันใน dialog ถัดไป"
           >
             <Trash2 className="mr-1 h-3.5 w-3.5" />
             ลบถาวร
@@ -262,9 +404,9 @@ function BillRowActions({
 
   if (bill.status === 'sent' || bill.status === 'skipped') {
     return (
-      <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={stop(onArchive)}>
+      <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={stop(onArchive)} title="เก็บออกจากคิวงานประจำ ยังกู้คืนได้">
         <Archive className="mr-1 h-3.5 w-3.5" />
-        เก็บบิล
+        เก็บ
       </Button>
     )
   }
@@ -276,9 +418,10 @@ function BillRowActions({
       variant="ghost"
       className="h-7 px-2 text-xs text-destructive hover:text-destructive"
       onClick={stop(onDelete)}
+      title="ลบบิลที่ยังไม่ได้ส่ง ต้องยืนยันใน dialog ถัดไป"
     >
       <Trash2 className="mr-1 h-3.5 w-3.5" />
-      ลบบิล
+      ลบ
     </Button>
   )
 }
@@ -313,20 +456,20 @@ export function ShopeeOrderStatusBadge({
 function shopeeStatusClass(eventType: string): string {
   switch (eventType) {
     case 'delivered':
-      return 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-50'
+      return 'border-success/30 bg-success/10 text-success hover:bg-success/10'
     case 'cancelled':
-      return 'border-red-300 bg-red-50 text-red-700 hover:bg-red-50'
+      return 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/10'
     case 'refund':
     case 'return':
-      return 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-50'
+      return 'border-warning/30 bg-warning/10 text-warning hover:bg-warning/10'
     case 'picked_up':
-      return 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-50'
+      return 'border-primary/30 bg-primary/10 text-accentStrong hover:bg-primary/10'
     case 'shipped':
     case 'ready_to_ship':
     case 'payment_confirmed':
-      return 'border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-50'
+      return 'border-info/30 bg-info/10 text-info hover:bg-info/10'
     default:
-      return 'border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-50'
+      return 'border-border bg-muted text-muted-foreground hover:bg-muted'
   }
 }
 
@@ -429,7 +572,7 @@ function ShopeeShopLine({ bill }: { bill: Bill }) {
     >
       <Store className="h-3 w-3 shrink-0" />
       <span className="min-w-0 truncate">{label}</span>
-      <span className="shrink-0 font-mono">· {shopID}</span>
+      <span className="hidden shrink-0 font-mono sm:inline">· {shopID}</span>
     </div>
   )
 }

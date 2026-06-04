@@ -102,7 +102,9 @@ export default function OldDataSettings() {
   const [archiving, setArchiving] = useState(false)
   const [purging, setPurging] = useState(false)
 
+  const [confirmArchive, setConfirmArchive] = useState(false)
   const [confirmPurge, setConfirmPurge] = useState(false)
+  const [purgeConfirmText, setPurgeConfirmText] = useState('')
   const [purgeBills, setPurgeBills] = useState(false)
   const [purgeAudit, setPurgeAudit] = useState(false)
   const [purgeAI, setPurgeAI] = useState(false)
@@ -128,6 +130,7 @@ export default function OldDataSettings() {
 
   const handleArchive = async () => {
     setArchiving(true)
+    setConfirmArchive(false)
     try {
       const res = await api.post('/api/bills/old-data/archive', { archive_days: archiveDays })
       toast.success(`เก็บบิลเก่าสำเร็จ ${numberFormat(res.data.archived ?? 0)} รายการ`)
@@ -142,6 +145,7 @@ export default function OldDataSettings() {
   const handlePurge = async () => {
     setPurging(true)
     setConfirmPurge(false)
+    setPurgeConfirmText('')
     try {
       const res = await api.post('/api/bills/old-data/purge', {
         purge_days: purgeDays,
@@ -175,6 +179,13 @@ export default function OldDataSettings() {
   const chatMetrics = metricOrEmpty(summary?.chat_messages)
   const logsEligible = auditMetrics.to_purge + aiUsageMetrics.to_purge + chatMetrics.to_purge
   const dbSizeMB = summary?.db_size_mb ?? 0
+  const purgeImpact = [
+    purgeBills ? `บิล ${numberFormat(toPurgeBills)} รายการ` : '',
+    purgeAudit ? `ประวัติการทำงาน ${numberFormat(auditMetrics.to_purge)} รายการ` : '',
+    purgeAI ? `ประวัติ AI ${numberFormat(aiUsageMetrics.to_purge)} รายการ` : '',
+    purgeChat ? `ข้อความแชท ${numberFormat(chatMetrics.to_purge)} ข้อความ` : '',
+  ].filter(Boolean)
+  const canConfirmPurge = purgeConfirmText === 'DELETE OLD DATA'
 
   const tableRows = useMemo(
     () => [
@@ -219,33 +230,66 @@ export default function OldDataSettings() {
         }
       />
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          icon={HardDrive}
-          label="ขนาดฐานข้อมูล"
-          value={summaryReady ? sizeFormat(dbSizeMB) : '—'}
-          hint="รวมฐานข้อมูล Nexflow ทั้งหมด"
-        />
-        <MetricCard
-          icon={Archive}
-          label="บิลที่เก็บแล้ว"
-          value={summaryReady ? numberFormat(archivedCount) : '—'}
-          hint="ซ่อนจากคิวงานประจำ แต่ยังค้นย้อนหลังได้"
-        />
-        <MetricCard
-          icon={CalendarClock}
-          label="บิลเข้าเงื่อนไขเก็บ"
-          value={summaryReady ? numberFormat(toArchive) : '—'}
-          hint={`สถานะปิดงาน, ข้าม หรือล้มเหลว เก่ากว่า ${summary?.archive_days ?? archiveDays} วัน`}
-          tone={toArchive > 0 ? 'warning' : 'default'}
-        />
-        <MetricCard
-          icon={ScrollText}
-          label="Logs เข้าเงื่อนไขลบ"
-          value={summaryReady ? numberFormat(logsEligible) : '—'}
-          hint={`ข้อมูลละเอียดเก่ากว่า ${summary?.purge_days ?? purgeDays} วัน`}
-          tone={logsEligible > 0 ? 'warning' : 'default'}
-        />
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-accent-strong" />
+              <h2 className="text-sm font-semibold text-foreground">สถานะข้อมูลสำหรับงานประจำ</h2>
+              <Badge variant="secondary" className="h-6">
+                ไม่มีการลบอัตโนมัติจากหน้านี้
+              </Badge>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Archive ช่วยเอาบิลที่ปิดงานแล้วออกจากคิวประจำวันโดยไม่ลบข้อมูล ส่วน purge อยู่ใน Danger Zone ด้านล่าง
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={fetchSummary} disabled={loading} size="sm">
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              คำนวณใหม่
+            </Button>
+            <Button
+              onClick={() => setConfirmArchive(true)}
+              disabled={archiving || !summary || toArchive === 0}
+              variant="outline"
+              size="sm"
+              title={toArchive === 0 ? 'ไม่มีบิลที่เข้าเงื่อนไขเก็บตอนนี้' : 'ซ่อนบิลที่ปิดงานแล้วออกจากคิวประจำวัน'}
+            >
+              <Archive className={cn('h-3.5 w-3.5', archiving && 'animate-pulse')} />
+              {archiving ? 'กำลังเก็บ...' : `เก็บบิลเก่า ${numberFormat(toArchive)} รายการ`}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            icon={HardDrive}
+            label="ขนาดฐานข้อมูล"
+            value={summaryReady ? sizeFormat(dbSizeMB) : '—'}
+            hint="รวมฐานข้อมูล Nexflow"
+          />
+          <MetricCard
+            icon={Archive}
+            label="บิลที่เก็บแล้ว"
+            value={summaryReady ? numberFormat(archivedCount) : '—'}
+            hint="ยังค้นย้อนหลังได้"
+          />
+          <MetricCard
+            icon={CalendarClock}
+            label="รอ archive"
+            value={summaryReady ? numberFormat(toArchive) : '—'}
+            hint={`เก่ากว่า ${summary?.archive_days ?? archiveDays} วัน`}
+            tone={toArchive > 0 ? 'warning' : 'default'}
+          />
+          <MetricCard
+            icon={ScrollText}
+            label="เข้าเงื่อนไข purge"
+            value={summaryReady ? numberFormat(logsEligible + toPurgeBills) : '—'}
+            hint={`เก่ากว่า ${summary?.purge_days ?? purgeDays} วัน`}
+            tone={logsEligible + toPurgeBills > 0 ? 'warning' : 'default'}
+          />
+        </div>
       </div>
 
       {loadError && (
@@ -261,7 +305,7 @@ export default function OldDataSettings() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
-              <ShieldCheck className="h-4 w-4 text-primary" />
+              <ShieldCheck className="h-4 w-4 text-accent-strong" />
               นโยบายข้อมูล
             </CardTitle>
             <CardDescription>
@@ -323,6 +367,25 @@ export default function OldDataSettings() {
         </Card>
       </div>
 
+      <details className="group rounded-lg border border-destructive/25 bg-destructive/[0.015]">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <Trash2 className="h-4 w-4 shrink-0 text-destructive" />
+            <span className="font-semibold text-destructive">Danger Zone: ลบข้อมูลถาวร</span>
+          </span>
+          <span className="text-xs text-link group-open:hidden">เปิดเพื่อเลือกข้อมูล</span>
+          <span className="hidden text-xs text-muted-foreground group-open:inline">ย่อ</span>
+        </summary>
+        <div className="border-t border-destructive/20 p-4">
+          <div className="mb-4 rounded-md border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">
+            <div className="flex gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                ใช้เฉพาะหลังตรวจ backup แล้ว ข้อมูลที่ purge จะ rollback จาก Nexflow ไม่ได้ ต้อง restore ฐานข้อมูลเท่านั้น
+              </div>
+            </div>
+          </div>
+
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -377,36 +440,7 @@ export default function OldDataSettings() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Archive className="h-4 w-4 text-primary" />
-              เก็บบิลเก่า
-            </CardTitle>
-            <CardDescription>
-              ซ่อนบิลที่ปิดงานแล้ว, ข้ามแล้ว หรือต้องเก็บออกจากคิวประจำวัน ข้อมูลยังอยู่ครบและกู้คืนได้
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-md border bg-muted/30 p-4 text-sm">
-              มีบิลที่เข้าเงื่อนไขเก็บ{' '}
-              <span className="font-semibold tabular-nums text-foreground">{numberFormat(toArchive)}</span>{' '}
-              รายการ จากช่วงเก่ากว่า{' '}
-              <span className="font-semibold">{summary?.archive_days ?? archiveDays}</span> วัน
-            </div>
-            <Button
-              onClick={handleArchive}
-              disabled={archiving || !summary || toArchive === 0}
-              variant="outline"
-            >
-              <Archive className={cn('mr-2 h-4 w-4', archiving && 'animate-pulse')} />
-              {archiving ? 'กำลังเก็บข้อมูล...' : `เก็บบิลเก่า ${numberFormat(toArchive)} รายการ`}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="border-destructive/30 bg-destructive/[0.015]">
+        <Card className="mt-4 border-destructive/30 bg-destructive/[0.015] shadow-none">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm text-destructive">
               <Trash2 className="h-4 w-4" />
@@ -448,8 +482,15 @@ export default function OldDataSettings() {
           </CardContent>
         </Card>
       </div>
+      </details>
 
-      <Dialog open={confirmPurge} onOpenChange={setConfirmPurge}>
+      <Dialog
+        open={confirmPurge}
+        onOpenChange={(open) => {
+          setConfirmPurge(open)
+          if (!open) setPurgeConfirmText('')
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-destructive">
@@ -460,15 +501,57 @@ export default function OldDataSettings() {
               <span className="block">
                 ข้อมูลที่เลือกและเก่ากว่า <strong>{purgeDays} วัน</strong> จะถูกลบออกจากฐานข้อมูลถาวร
               </span>
+              <span className="block">
+                Scope ที่เลือก: <strong>{purgeImpact.length ? purgeImpact.join(', ') : 'ยังไม่ได้เลือกข้อมูล'}</strong>
+              </span>
               <span className="block font-medium text-destructive">
-                ตรวจ backup และขอบเขตข้อมูลให้เรียบร้อยก่อนดำเนินการ
+                Rollback จากหน้าจอนี้ไม่ได้ ต้อง restore จาก backup ฐานข้อมูลเท่านั้น
               </span>
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <div className="space-y-2">
+            <Label htmlFor="purge-confirm-text">พิมพ์ DELETE OLD DATA เพื่อยืนยัน</Label>
+            <Input
+              id="purge-confirm-text"
+              value={purgeConfirmText}
+              onChange={(e) => setPurgeConfirmText(e.target.value)}
+              placeholder="DELETE OLD DATA"
+              autoComplete="off"
+              className="font-mono"
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
             <Button variant="outline" onClick={() => setConfirmPurge(false)}>ยกเลิก</Button>
-            <Button variant="destructive" onClick={handlePurge}>
-              ยืนยัน ลบข้อมูลถาวร
+            <Button variant="destructive" onClick={handlePurge} disabled={!canConfirmPurge || purging}>
+              ยืนยันลบข้อมูลถาวร
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmArchive} onOpenChange={setConfirmArchive}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Archive className="h-5 w-5" />
+              เก็บบิลเก่าออกจากคิวงานประจำ?
+            </DialogTitle>
+            <DialogDescription className="space-y-2">
+              <span className="block">
+                ระบบจะเก็บบิลที่ปิดงานแล้ว, ข้ามแล้ว หรือต้องเก็บ เก่ากว่า <strong>{archiveDays} วัน</strong> จำนวนประมาณ <strong>{numberFormat(toArchive)} รายการ</strong>
+              </span>
+              <span className="block">
+                ผลกระทบ: บิลเหล่านี้จะไม่แสดงในคิวงานประจำและไม่ถูกหยิบไป bulk send แต่ข้อมูลยังอยู่ครบ
+              </span>
+              <span className="block">
+                Rollback: สามารถค้นจากมุมมองบิลที่เก็บแล้วและกู้คืนกลับเข้าคิวได้
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setConfirmArchive(false)}>ยกเลิก</Button>
+            <Button onClick={handleArchive} disabled={archiving || toArchive === 0}>
+              เก็บบิลเก่า {numberFormat(toArchive)} รายการ
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -491,18 +574,16 @@ function MetricCard({
   tone?: 'default' | 'warning'
 }) {
   return (
-    <Card className={cn(tone === 'warning' && 'border-warning/40 bg-warning/5')}>
-      <CardContent className="flex items-start gap-3 p-4">
-        <div className={cn('rounded-md bg-muted p-2', tone === 'warning' && 'bg-warning/15 text-warning')}>
-          <Icon className="h-4 w-4" />
-        </div>
-        <div className="min-w-0">
-          <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums tracking-tight">{value}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className={cn('flex items-start gap-3 rounded-md border border-border bg-background px-3 py-2.5', tone === 'warning' && 'border-warning/35 bg-warning/[0.06]')}>
+      <div className={cn('rounded-md bg-muted p-2', tone === 'warning' && 'bg-warning/15 text-warning')}>
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="mt-1 text-xl font-semibold tabular-nums tracking-tight">{value}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+      </div>
+    </div>
   )
 }
 

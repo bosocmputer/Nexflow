@@ -317,6 +317,76 @@ func TestConsumeLatestPendingShopeeOAuthStateRejectsMissingState(t *testing.T) {
 	}
 }
 
+func TestResolveShopeeOAuthUserIDFallsBackToCurrentUserByEmail(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", "11111111-1111-1111-1111-111111111111")
+	c.Set("user_email", "admin@nexflow.local")
+
+	handler := &ShopeeImportHandler{db: db, logger: zap.NewNop()}
+
+	mock.ExpectQuery("SELECT id::text, role FROM users WHERE id::text = \\$1").
+		WithArgs("11111111-1111-1111-1111-111111111111").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT id::text, role FROM users WHERE lower\\(email\\) = lower\\(\\$1\\)").
+		WithArgs("admin@nexflow.local").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role"}).
+			AddRow("91e80d9f-aba7-4d9e-89db-e7e4e6d262ef", "admin"))
+
+	got, status, err := handler.resolveShopeeOAuthUserID(context.Background(), c)
+	if err != nil {
+		t.Fatalf("resolveShopeeOAuthUserID: %v", err)
+	}
+	if status != "" {
+		t.Fatalf("status = %q", status)
+	}
+	if got != "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef" {
+		t.Fatalf("user id = %q", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestResolveShopeeOAuthUserIDRejectsCurrentNonAdmin(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("user_id", "29778969-ecea-4b36-864e-fb045ed2c580")
+	c.Set("user_email", "qa.viewer@nexflow.local")
+
+	handler := &ShopeeImportHandler{db: db, logger: zap.NewNop()}
+
+	mock.ExpectQuery("SELECT id::text, role FROM users WHERE id::text = \\$1").
+		WithArgs("29778969-ecea-4b36-864e-fb045ed2c580").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "role"}).
+			AddRow("29778969-ecea-4b36-864e-fb045ed2c580", "viewer"))
+
+	got, status, err := handler.resolveShopeeOAuthUserID(context.Background(), c)
+	if err != nil {
+		t.Fatalf("resolveShopeeOAuthUserID: %v", err)
+	}
+	if got != "" || status != "forbidden" {
+		t.Fatalf("got id=%q status=%q", got, status)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
 func TestResolveShopeeAPIConnectionRequiresSelectionWhenMultipleActive(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

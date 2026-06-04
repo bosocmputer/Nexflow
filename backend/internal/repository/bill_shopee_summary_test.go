@@ -244,7 +244,57 @@ func TestExtractShopeePaymentSummaryMissingBlockIsTolerant(t *testing.T) {
 	}
 }
 
-func TestAllocateShopeeDiscountsByLineEqualExcludesShippingAndRounds(t *testing.T) {
+func TestExtractShopeeMoneyLabelPrefersHTML(t *testing.T) {
+	bodyText := `
+หมายเลขคำสั่งซื้อ: #2601AAA
+ยอดที่ต้องชำระทั้งหมด: ฿999
+`
+	bodyHTML := `
+<table>
+  <tr><td>หมายเลขคำสั่งซื้อ:</td><td>#2601AAA</td></tr>
+  <tr><td>ยอดที่ต้องชำระทั้งหมด:</td><td>฿279</td></tr>
+</table>`
+
+	got, ok := ExtractShopeeMoneyLabel(bodyText, bodyHTML, "#2601AAA", "ยอดที่ต้องชำระทั้งหมด")
+	if !ok || got != 279 {
+		t.Fatalf("paid total = %v ok=%v, want 279 true", got, ok)
+	}
+}
+
+func TestCalcShopeeCoinAmount(t *testing.T) {
+	got := CalcShopeeCoinAmount(338, 19, 279, 0)
+	if got != 40 {
+		t.Fatalf("coin = %v, want 40", got)
+	}
+	if got := CalcShopeeCoinAmount(338, 59, 279, 0); got != 0 {
+		t.Fatalf("coin = %v, want 0 for non-positive coin", got)
+	}
+}
+
+func TestExtractShopeeCoinAmountRequiresSummaryLabels(t *testing.T) {
+	bodyHTML := `
+<table>
+  <tr><td>หมายเลขคำสั่งซื้อ:</td><td>#2601AAA</td></tr>
+  <tr><td>ยอดรวมค่าสินค้า:</td><td>฿338</td></tr>
+  <tr><td>ค่าจัดส่งสินค้า:</td><td>฿0</td></tr>
+  <tr><td>ยอดที่ต้องชำระทั้งหมด:</td><td>฿279</td></tr>
+</table>`
+	got, ok := ExtractShopeeCoinAmount("", bodyHTML, "#2601AAA", 19)
+	if !ok || got != 40 {
+		t.Fatalf("coin = %v ok=%v, want 40 true", got, ok)
+	}
+
+	missingShipping := `
+หมายเลขคำสั่งซื้อ: #2601AAA
+ยอดรวมค่าสินค้า: ฿338
+ยอดที่ต้องชำระทั้งหมด: ฿279
+`
+	if got, ok := ExtractShopeeCoinAmount(missingShipping, "", "#2601AAA", 19); ok || got != 0 {
+		t.Fatalf("missing shipping coin = %v ok=%v, want 0 false", got, ok)
+	}
+}
+
+func TestAllocateShopeeDiscountsByLineProportionalExcludesShippingAndRounds(t *testing.T) {
 	p100 := 100.0
 	p200 := 200.0
 	p38 := 38.0
@@ -255,7 +305,7 @@ func TestAllocateShopeeDiscountsByLineEqualExcludesShippingAndRounds(t *testing.
 	}
 
 	got := AllocateShopeeDiscountsByLine(items, 10.01)
-	want := []float64{5.01, 5, 0}
+	want := []float64{3.34, 6.67, 0}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("discount[%d] = %v, want %v (all=%v)", i, got[i], want[i], got)
@@ -263,7 +313,7 @@ func TestAllocateShopeeDiscountsByLineEqualExcludesShippingAndRounds(t *testing.
 	}
 }
 
-func TestAllocateShopeeDiscountsByLineCapsAndRedistributes(t *testing.T) {
+func TestAllocateShopeeDiscountsByLineProportionalByGross(t *testing.T) {
 	p2 := 2.0
 	p100 := 100.0
 	items := []models.BillItem{
@@ -272,7 +322,38 @@ func TestAllocateShopeeDiscountsByLineCapsAndRedistributes(t *testing.T) {
 	}
 
 	got := AllocateShopeeDiscountsByLine(items, 20)
-	if got[0] != 2 || got[1] != 18 {
-		t.Fatalf("discounts = %v, want [2 18]", got)
+	if got[0] != 0.39 || got[1] != 19.61 {
+		t.Fatalf("discounts = %v, want [0.39 19.61]", got)
+	}
+}
+
+func TestAllocateShopeeDiscountsByLineCapsAtGross(t *testing.T) {
+	p2 := 2.0
+	p100 := 100.0
+	items := []models.BillItem{
+		{Qty: 1, Price: &p2},
+		{Qty: 1, Price: &p100},
+	}
+
+	got := AllocateShopeeDiscountsByLine(items, 150)
+	if got[0] != 2 || got[1] != 100 {
+		t.Fatalf("discounts = %v, want [2 100]", got)
+	}
+}
+
+func TestAllocateShopeeDiscountsByLineResidualGoesToLargestGross(t *testing.T) {
+	p100 := 100.0
+	items := []models.BillItem{
+		{Qty: 1, Price: &p100},
+		{Qty: 1, Price: &p100},
+		{Qty: 1, Price: &p100},
+	}
+
+	got := AllocateShopeeDiscountsByLine(items, 10)
+	want := []float64{3.34, 3.33, 3.33}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("discount[%d] = %v, want %v (all=%v)", i, got[i], want[i], got)
+		}
 	}
 }

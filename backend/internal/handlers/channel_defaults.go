@@ -177,7 +177,7 @@ func validChannelBillTypeCombo(channel, billType string) bool {
 		return billType == "purchase"
 	case "email":
 		return billType == "sale" || billType == "purchase"
-	case "shopee", "shopee_email", "line", "manual":
+	case "shopee", "shopee_realtime", "shopee_email", "line", "manual":
 		return billType == "sale"
 	case "lazada":
 		return billType == "sale" || billType == "purchase"

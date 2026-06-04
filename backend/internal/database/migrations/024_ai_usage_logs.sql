@@ -1,6 +1,6 @@
 -- AI usage accounting for OpenRouter requests.
 -- Stores token/cost estimates by model + feature so admins can inspect spend
--- inside BillFlow instead of checking provider logs manually.
+-- inside Nexflow instead of checking provider logs manually.
 
 CREATE TABLE IF NOT EXISTS ai_usage_logs (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),

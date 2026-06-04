@@ -7,6 +7,7 @@ import Bills from './pages/Bills'
 import BillDetail from './pages/BillDetail'
 import Import from './pages/Import'
 import ShopeeImport from './pages/ShopeeImport'
+import ShopeeOperations from './pages/ShopeeOperations'
 import ShopeeSettlement from './pages/ShopeeSettlement'
 import LazadaImport from './pages/LazadaImport'
 import TikTokImport from './pages/TikTokImport'
@@ -21,17 +22,24 @@ import ChannelDefaults from './pages/ChannelDefaults'
 import InstanceSettings from './pages/InstanceSettings'
 import AIUsage from './pages/AIUsage'
 import UserSettings from './pages/UserSettings'
+import LineNotifications from './pages/LineNotifications'
 import ChatTags from './pages/ChatTags'
 import LineOA from './pages/LineOA'
 import Messages from './pages/Messages'
 import QuickReplies from './pages/QuickReplies'
 import Showcase from './pages/Showcase'
-import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
+import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
 import SetupCenter from './pages/SetupCenter'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
   if (!token) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user)
+  if (user?.role !== 'admin') return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -51,7 +59,7 @@ export default function App() {
             </RequireAuth>
           }
         >
-          <Route index element={<Navigate to="/setup" replace />} />
+          <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="setup" element={<SetupCenter />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="bills" element={<Bills mode="purchase-order" />} />
@@ -63,6 +71,7 @@ export default function App() {
           <Route path="messages" element={ENABLE_CHAT ? <Messages /> : <Navigate to="/dashboard" replace />} />
           <Route path="import" element={<Import />} />
           <Route path="import/shopee" element={ENABLE_SHOPEE_EXCEL ? <ShopeeImport /> : <Navigate to="/dashboard" replace />} />
+          <Route path="shopee-operations" element={ENABLE_SHOPEE_REALTIME_OPS ? <ShopeeOperations /> : <Navigate to="/dashboard" replace />} />
           <Route path="shopee-settlements" element={ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? <ShopeeSettlement /> : <Navigate to="/dashboard" replace />} />
           <Route path="import/lazada" element={ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS ? <LazadaImport /> : <Navigate to="/dashboard" replace />} />
           <Route path="import/tiktok" element={ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS ? <TikTokImport /> : <Navigate to="/dashboard" replace />} />
@@ -78,6 +87,7 @@ export default function App() {
           <Route path="settings/instance" element={<InstanceSettings />} />
           <Route path="settings/ai-usage" element={<AIUsage />} />
           <Route path="settings/users" element={<UserSettings />} />
+          <Route path="settings/line-notifications" element={<RequireAdmin><LineNotifications /></RequireAdmin>} />
           <Route path="settings/line-oa" element={ENABLE_CHAT ? <LineOA /> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/quick-replies" element={ENABLE_CHAT ? <QuickReplies /> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/chat-tags" element={ENABLE_CHAT ? <ChatTags /> : <Navigate to="/settings/instance" replace />} />

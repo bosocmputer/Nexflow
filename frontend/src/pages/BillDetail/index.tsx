@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import axios from 'axios'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
+import client from '@/api/client'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DetailPageSkeleton } from '@/components/common/LoadingSkeleton'
 import type { BillItem } from '@/types'
 
@@ -21,6 +24,7 @@ import { validateForSML } from './utils/validation'
 import type { RetryBillPayload } from '@/hooks/useBills'
 import { useSMLReadiness } from '@/hooks/useSMLReadiness'
 import { humanizeSMLConnectionError, isSMLReady, smlBlockedMessage } from '@/lib/sml-readiness'
+import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 
 type SingleSMLSendResult = {
   docNo?: string | null
@@ -34,6 +38,11 @@ type SendProgressState = {
   status: SMLSendProgressStatus
   docNo: string | null
   error: string | null
+}
+
+type RecreateRouteResponse = {
+  redirect_url?: string
+  message?: string
 }
 
 export default function BillDetail() {
@@ -71,6 +80,9 @@ export default function BillDetail() {
   // sendDialogOpen — SML 248 documents show a dialog (party picker + WH/VAT)
   // before the retry call, so admin can override per-bill send values.
   const [sendDialogOpen, setSendDialogOpen] = useState(false)
+  const [directSendConfirmOpen, setDirectSendConfirmOpen] = useState(false)
+  const [recreateRouteConfirmOpen, setRecreateRouteConfirmOpen] = useState(false)
+  const [recreatingRoute, setRecreatingRoute] = useState(false)
   const [sendProgress, setSendProgress] = useState<SendProgressState>({
     open: false,
     status: 'sending',
@@ -145,7 +157,7 @@ export default function BillDetail() {
     if (bill?.bill_type === 'purchase' || (bill?.bill_type === 'sale' && (bill?.source === 'shopee' || bill?.source === 'lazada' || bill?.source === 'tiktok'))) {
       setSendDialogOpen(true)
     } else {
-      void runSingleSMLSend(() => handleRetry())
+      setDirectSendConfirmOpen(true)
     }
   }
 
@@ -187,6 +199,61 @@ export default function BillDetail() {
     bill.status === 'pending' ||
     bill.status === 'needs_review'
   const canEdit = canSend
+  const isShopeeRealtimeBill =
+    bill.source === 'shopee' && bill.raw_data?.flow === 'shopee_realtime'
+  const canRecreateDocumentRoute =
+    isShopeeRealtimeBill &&
+    bill.status !== 'sent' &&
+    !bill.sml_doc_no &&
+    !bill.archived_at
+  const directRouteLabel =
+    bill.preview?.route === 'saleinvoice'
+      ? 'ขาย -> ขายสินค้าและบริการ'
+      : bill.preview?.route === 'saleorder'
+        ? 'ขาย -> ใบสั่งขาย'
+        : bill.preview?.route === 'purchaseorder'
+          ? 'ซื้อ -> ใบสั่งซื้อ'
+          : bill.preview?.route === 'sale_reserve'
+            ? 'ใบสั่งจอง'
+            : bill.preview?.route || 'ใช้ route จาก backend'
+  const directSendDescription = [
+    `เอกสาร: ${bill.sml_doc_no || bill.preview?.doc_no || bill.id.slice(0, 8)}`,
+    `ปลายทาง: ${directRouteLabel}${bill.preview?.doc_format_code ? ` · ${bill.preview.doc_format_code}` : ''}`,
+    `จำนวนรายการ: ${(bill.items ?? []).length.toLocaleString('th-TH')} รายการ · ยอดรวมประมาณ ฿${total.toLocaleString('th-TH')}`,
+    '',
+    'ผลกระทบ: ระบบจะส่งเอกสารใบนี้เข้า SML ทันที และบันทึกผลกลับมาที่ Nexflow',
+    'Rollback: ถ้าส่งสำเร็จแล้ว Nexflow ไม่สามารถลบหรือย้อนเอกสารใน SML ให้เอง ต้องแก้ไข/ยกเลิกใน SML ตามขั้นตอนของร้าน',
+    bill.sml_doc_no ? 'Retry: จะใช้ doc_no เดิมที่บันทึกไว้ ไม่ออกเลขใหม่โดยอัตโนมัติ' : 'เลขเอกสาร: ถ้ายังไม่มี doc_no ระบบจะใช้เลขจาก backend/SML ตอนส่ง',
+  ].join('\n')
+
+  const handleDirectSendConfirm = async () => {
+    await runSingleSMLSend(() => handleRetry())
+  }
+
+  const handleRecreateRouteConfirm = async () => {
+    setRecreatingRoute(true)
+    try {
+      const res = await client.post<RecreateRouteResponse>(
+        `/api/bills/${bill.id}/shopee-realtime/recreate-route`,
+        { confirm: 'RECREATE_DOCUMENT_WITH_CURRENT_ROUTE' },
+      )
+      toast.success('พร้อมสร้างเอกสารใหม่แล้ว', {
+        description: res.data.message || 'กลับไป Shopee Realtime แล้วกดสร้างเอกสารอีกครั้ง',
+      })
+      notifyWorkQueueChanged()
+      navigate(res.data.redirect_url || '/shopee-operations')
+    } catch (err) {
+      const message = axios.isAxiosError(err)
+        ? err.response?.data?.error || err.response?.data?.message || err.message
+        : err instanceof Error
+          ? err.message
+          : 'เตรียมสร้างเอกสารใหม่ไม่สำเร็จ'
+      toast.error('ยังสร้างใหม่ไม่ได้', { description: message })
+      throw err
+    } finally {
+      setRecreatingRoute(false)
+    }
+  }
 
   const handleItemUpdated = (updated: BillItem) => {
     setBill((prev) => {
@@ -216,7 +283,40 @@ export default function BillDetail() {
 
   return (
     <div className="space-y-4">
-      <BillHeader bill={bill} />
+      <BillHeader
+        bill={bill}
+        total={total}
+        retrying={retrying}
+        onRetry={handleSendClick}
+        validation={validation}
+        expectedRoute={bill.preview?.route}
+        expectedEndpoint={bill.preview?.endpoint}
+        expectedDocFormat={bill.preview?.doc_format}
+        smlReadiness={smlReadiness}
+        smlReadinessLoading={smlReadinessLoading}
+      />
+
+      {canRecreateDocumentRoute && (
+        <div className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <div className="font-medium text-foreground">ต้องการเปลี่ยนเส้นทางเอกสาร?</div>
+            <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
+              เอกสารนี้ยังไม่ส่งเข้า SML สามารถปลดออกจาก Shopee Realtime แล้วกลับไปสร้างใหม่ตามเส้นทางล่าสุดในหน้าเส้นทางเอกสาร SML ได้
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 gap-2 bg-card"
+            onClick={() => setRecreateRouteConfirmOpen(true)}
+            disabled={recreatingRoute}
+          >
+            <RefreshCw className={recreatingRoute ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            สร้างใหม่ตามเส้นทางปัจจุบัน
+          </Button>
+        </div>
+      )}
 
       {(bill.error_msg || retryError) && (
         <BillFailureCard
@@ -293,6 +393,28 @@ export default function BillDetail() {
         docNo={sendProgress.docNo}
         error={sendProgress.error}
         onClose={() => setSendProgress((prev) => ({ ...prev, open: false }))}
+      />
+      <ConfirmDialog
+        open={directSendConfirmOpen}
+        onOpenChange={setDirectSendConfirmOpen}
+        title="ยืนยันส่งเอกสารเข้า SML?"
+        description={directSendDescription}
+        confirmLabel="ส่งเข้า SML 1 ใบ"
+        variant={bill.status === 'failed' ? 'destructive' : 'default'}
+        onConfirm={handleDirectSendConfirm}
+      />
+      <ConfirmDialog
+        open={recreateRouteConfirmOpen}
+        onOpenChange={setRecreateRouteConfirmOpen}
+        title="สร้างเอกสารใหม่ตามเส้นทางปัจจุบัน?"
+        description={[
+          'ระบบจะเก็บเอกสารเดิมไว้ใน Nexflow และปลด order นี้กลับไปที่ Shopee Realtime',
+          'ยังไม่ส่งเข้า SML และไม่ลบเอกสารใน SML เพราะเอกสารนี้ยังไม่มีเลข SML',
+          'หลังยืนยัน ให้กด “สร้างเอกสาร” ใน Shopee Realtime อีกครั้ง ระบบจะใช้เส้นทางล่าสุดจากหน้าเส้นทางเอกสาร SML',
+        ].join('\n')}
+        confirmLabel="ปลดเอกสารเดิม"
+        variant="destructive"
+        onConfirm={handleRecreateRouteConfirm}
       />
     </div>
   )

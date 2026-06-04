@@ -6,6 +6,7 @@ export type ChannelKey =
   | 'line'
   | 'email'
   | 'shopee'
+  | 'shopee_realtime'
   | 'shopee_email'
   | 'shopee_shipped'
   | 'lazada'
@@ -191,7 +192,7 @@ export function destinationKindFor(
   if (lower.includes('saleorder') || lower.includes('sale-orders')) return 'saleorder'
   // No keyword match → default by channel+bill_type
   if (channel === 'shopee_shipped' || billType === 'purchase') return 'purchaseorder'
-  if (channel === 'shopee' || channel === 'shopee_email' || channel === 'lazada' || channel === 'tiktok') return 'saleorder'
+  if (channel === 'shopee' || channel === 'shopee_realtime' || channel === 'shopee_email' || channel === 'lazada' || channel === 'tiktok') return 'saleorder'
   return 'saleorder'
 }
 
@@ -199,6 +200,7 @@ export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   line: 'LINE OA',
   email: 'Email',
   shopee: 'Shopee',
+  shopee_realtime: 'Shopee Realtime',
   shopee_email: 'Shopee Order',
   shopee_shipped: 'Email บิลซื้อ Shopee',
   lazada: 'Lazada Excel',

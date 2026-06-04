@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -280,6 +281,16 @@ type ImportRunSummary struct {
 	ConfirmedAt     *time.Time      `json:"confirmed_at,omitempty"`
 }
 
+type ShopeeBillCreateOptions struct {
+	Config      ShopeeConfigRequest
+	SourceFlow  string
+	ImportRunID string
+	Connection  *ShopeeAPIConnection
+	UserID      *string
+	TraceID     string
+	StartedAt   time.Time
+}
+
 // ─── GET /api/settings/shopee-config ─────────────────────────────────────────
 
 // GetConfig returns the active Shopee SML config — env defaults overlaid with
@@ -287,6 +298,14 @@ type ImportRunSummary struct {
 // /import/shopee page renders this as a summary card so users see what'll
 // actually be sent on Retry.
 func (h *ShopeeImportHandler) GetConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, h.CurrentShopeeSaleConfig())
+}
+
+func (h *ShopeeImportHandler) CurrentShopeeSaleConfig() ShopeeConfigRequest {
+	return h.CurrentShopeeSaleConfigForChannel("shopee")
+}
+
+func (h *ShopeeImportHandler) CurrentShopeeSaleConfigForChannel(channel string) ShopeeConfigRequest {
 	custCode := ""
 	whCode := h.cfg.ShopeeSMLWHCode
 	shelfCode := h.cfg.ShopeeSMLShelfCode
@@ -294,8 +313,12 @@ func (h *ShopeeImportHandler) GetConfig(c *gin.Context) {
 	vatRate := h.cfg.ShopeeSMLVATRate
 	docFormat := h.cfg.ShopeeSMLDocFormat
 	endpoint := ""
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		channel = "shopee"
+	}
 	if h.channelDefaults != nil {
-		if def, _ := h.channelDefaults.Get("shopee", "sale"); def != nil {
+		if def, _ := h.channelDefaults.Get(channel, "sale"); def != nil {
 			custCode = def.PartyCode
 			endpoint = def.Endpoint
 			if def.WHCode != "" {
@@ -315,7 +338,7 @@ func (h *ShopeeImportHandler) GetConfig(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusOK, ShopeeConfigRequest{
+	return ShopeeConfigRequest{
 		ServerURL:  h.cfg.ShopeeSMLURL,
 		GUID:       h.cfg.ShopeeSMLGUID,
 		Provider:   h.cfg.ShopeeSMLProvider,
@@ -332,7 +355,7 @@ func (h *ShopeeImportHandler) GetConfig(c *gin.Context) {
 		VATType:    vatType,
 		VATRate:    vatRate,
 		DocTime:    h.cfg.ShopeeSMLDocTime,
-	})
+	}
 }
 
 // ListRuns returns recent Shopee Excel import sessions so admins can see
@@ -1104,6 +1127,7 @@ func (h *ShopeeImportHandler) findShopeeOrderBillIDForShop(orderID, shopID strin
 			`SELECT id::text
 			   FROM bills
 			  WHERE source = 'shopee'
+			    AND archived_at IS NULL
 			    AND (raw_data->>'order_id' = $1 OR sml_order_id = $1)
 			    AND (
 			      raw_data->>'shopee_shop_id' = $2
@@ -1118,6 +1142,7 @@ func (h *ShopeeImportHandler) findShopeeOrderBillIDForShop(orderID, shopID strin
 			`SELECT id::text
 			   FROM bills
 			  WHERE source = 'shopee'
+			    AND archived_at IS NULL
 			    AND (raw_data->>'order_id' = $1 OR sml_order_id = $1)
 			    AND COALESCE(raw_data->>'shopee_shop_id', '') = ''
 			  ORDER BY created_at DESC
@@ -1234,6 +1259,268 @@ func (h *ShopeeImportHandler) finishShopeeImportRun(id string, createdCount, fai
 	}
 }
 
+func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, order ShopeeOrder, opts ShopeeBillCreateOptions) (ConfirmResult, error) {
+	if h == nil || h.billRepo == nil {
+		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "Shopee import handler ยังไม่พร้อม"}, fmt.Errorf("shopee import handler is not ready")
+	}
+	if strings.TrimSpace(order.OrderID) == "" {
+		return ConfirmResult{Success: false, Message: "order_id ว่าง"}, fmt.Errorf("order_id is required")
+	}
+	_ = ctx // Current repository helpers are sync APIs; keep ctx in the interface for future DB/API work.
+
+	sourceFlow := strings.TrimSpace(opts.SourceFlow)
+	if sourceFlow == "" {
+		sourceFlow = "shopee_realtime"
+	}
+	documentRoute := shopeeImportRoute(opts.Config)
+	destinationName := shopeeImportDocumentName(opts.Config)
+	reviewPath := shopeeImportReviewPath(opts.Config)
+	defaultUnit := opts.Config.UnitCode
+
+	shopID := strings.TrimSpace(order.ShopeeShopID)
+	shopLabel := strings.TrimSpace(order.ShopeeShopLabel)
+	connectionID := strings.TrimSpace(order.ShopeeConnectionID)
+	if opts.Connection != nil {
+		shopID = strconv.FormatInt(opts.Connection.ShopID, 10)
+		shopLabel = opts.Connection.DisplayLabel()
+		connectionID = opts.Connection.ID
+	}
+	if billID, exists, err := h.findShopeeOrderBillIDForShop(order.OrderID, shopID); err != nil {
+		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "ตรวจ duplicate order ไม่สำเร็จ: " + err.Error()}, err
+	} else if exists {
+		return ConfirmResult{
+			OrderID: order.OrderID,
+			Success: false,
+			BillID:  billID,
+			Message: "order นี้มีอยู่ในระบบแล้ว (reuse)",
+		}, nil
+	}
+
+	const topK = 5
+	const highConfThreshold = 0.85
+	type matchResolution struct {
+		learned *models.Mapping
+		matches []models.CatalogMatch
+	}
+	type itemEnriched struct {
+		item       models.BillItem
+		candidates []models.CatalogMatch
+	}
+	resolutionCache := map[string]matchResolution{}
+	enriched := []itemEnriched{}
+	allHigh := true
+
+	for _, it := range order.Items {
+		rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
+		resolved, ok := resolutionCache[rawName]
+		if !ok {
+			if h.mappingRepo != nil {
+				if m, err := h.mappingRepo.FindByRawName(rawName); err == nil {
+					resolved.learned = m
+				} else {
+					h.logger.Warn("shopee_realtime: lookup mapping failed",
+						zap.String("raw_name", rawName),
+						zap.Error(err))
+				}
+			}
+			if resolved.learned == nil && h.embSvc != nil && h.embSvc.IsConfigured() && h.catalogIdx != nil && h.catalogIdx.Size() > 0 {
+				if emb, err := h.embSvc.EmbedText(rawName); err == nil {
+					resolved.matches = h.catalogIdx.Search(emb, topK)
+				} else {
+					h.logger.Warn("shopee_realtime: embedding lookup failed",
+						zap.String("raw_name", rawName),
+						zap.Error(err))
+				}
+			}
+			if resolved.learned == nil && len(resolved.matches) == 0 && h.catalogSvc != nil {
+				resolved.matches, _ = h.catalogSvc.SearchByText(rawName, topK)
+			}
+			resolutionCache[rawName] = resolved
+		}
+		matches := resolved.matches
+
+		price := it.Price
+		bi := models.BillItem{
+			RawName:   rawName,
+			SourceSKU: it.SKU,
+			Qty:       it.Qty,
+			Price:     &price,
+		}
+
+		switch {
+		case resolved.learned != nil:
+			bi.ItemCode = &resolved.learned.ItemCode
+			bi.UnitCode = &resolved.learned.UnitCode
+			bi.MappingID = &resolved.learned.ID
+			bi.Mapped = true
+			_ = h.mappingRepo.IncrementUsage(resolved.learned.ID)
+		case len(matches) > 0 && matches[0].Score >= highConfThreshold:
+			bi.ItemCode = &matches[0].ItemCode
+			unit := matches[0].UnitCode
+			if unit == "" {
+				unit = defaultUnit
+			}
+			bi.UnitCode = &unit
+			bi.Mapped = true
+		case it.SKU != "":
+			if cat := h.lookupCatalogItem(it.SKU); cat != nil {
+				code := cat.ItemCode
+				unit := cat.UnitCode
+				if unit == "" {
+					unit = defaultUnit
+				}
+				bi.ItemCode = &code
+				bi.UnitCode = &unit
+				bi.Mapped = true
+			} else {
+				bi.Mapped = false
+				allHigh = false
+			}
+		default:
+			if len(matches) > 0 {
+				bi.ItemCode = &matches[0].ItemCode
+				unit := matches[0].UnitCode
+				if unit == "" {
+					unit = defaultUnit
+				}
+				bi.UnitCode = &unit
+			}
+			bi.Mapped = false
+			allHigh = false
+		}
+
+		enriched = append(enriched, itemEnriched{item: bi, candidates: matches})
+	}
+
+	if len(enriched) == 0 {
+		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "order นี้ไม่มี item ที่สร้างบิลได้"}, fmt.Errorf("order has no importable items")
+	}
+
+	status := "pending"
+	if !allHigh {
+		status = "needs_review"
+	}
+
+	aiConf := 1.0
+	raw := map[string]interface{}{
+		"flow":               sourceFlow,
+		"shopee_order_id":    order.OrderID,
+		"order_id":           order.OrderID,
+		"doc_date":           order.DocDate,
+		"order_datetime":     order.OrderDateTime,
+		"payment_time":       order.PaymentTime,
+		"payment_channel":    order.PaymentChannel,
+		"customer_name":      order.BuyerUsername,
+		"buyer_username":     order.BuyerUsername,
+		"tracking_no":        order.TrackingNo,
+		"package_number":     order.PackageNumber,
+		"shipping_carrier":   order.ShippingCarrier,
+		"cod":                order.COD,
+		"status":             order.Status,
+		"item_count":         order.ItemCount,
+		"total_qty":          order.TotalQty,
+		"paid_total_amount":  order.PaidAmount,
+		"order_total_amount": order.OrderTotalAmount,
+		"item_gross_amount":  order.ItemGrossAmount,
+		"line_paid_amount":   order.LinePaidAmount,
+		"shipping_amount":    order.ShippingAmount,
+		"discount_amount":    order.DiscountAmount,
+		"has_no_sku":         order.HasNoSKU,
+		"no_sku_item_count":  order.NoSKUItemCount,
+		"amount_mismatch":    order.AmountMismatch,
+		"multi_line":         order.MultiLine,
+		"import_run_id":      opts.ImportRunID,
+		"document_route":     documentRoute,
+		"sml_destination":    destinationName,
+	}
+	if shopID != "" {
+		raw["shopee_shop_id"] = shopID
+	}
+	if connectionID != "" {
+		raw["shopee_connection_id"] = connectionID
+	}
+	if shopLabel != "" {
+		raw["shopee_shop_label"] = shopLabel
+	}
+	rawData, _ := json.Marshal(raw)
+	bill := &models.Bill{
+		BillType:      "sale",
+		Source:        "shopee",
+		Status:        status,
+		DocumentRoute: documentRoute,
+		AIConfidence:  &aiConf,
+		RawData:       rawData,
+		SMLOrderID:    order.OrderID,
+	}
+	if opts.UserID != nil {
+		bill.CreatedBy = opts.UserID
+	}
+	if err := h.billRepo.Create(bill); err != nil {
+		if isDuplicateShopeeBillError(err) {
+			billID, _, _ := h.findShopeeOrderBillIDForShop(order.OrderID, shopID)
+			return ConfirmResult{
+				OrderID: order.OrderID,
+				Success: false,
+				BillID:  billID,
+				Message: "order นี้ถูกสร้างไปแล้วระหว่างนำเข้า (reuse)",
+			}, nil
+		}
+		h.logger.Error("shopee_realtime: create bill failed", zap.String("order_id", order.OrderID), zap.Error(err))
+		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "บันทึก bill ล้มเหลว: " + err.Error()}, err
+	}
+
+	for i := range enriched {
+		enriched[i].item.BillID = bill.ID
+		candidatesJSON, _ := json.Marshal(enriched[i].candidates)
+		if err := h.billRepo.InsertItemWithCandidates(&enriched[i].item, candidatesJSON); err != nil {
+			h.logger.Warn("shopee_realtime: insert bill item failed",
+				zap.String("bill_id", bill.ID),
+				zap.String("order_id", order.OrderID),
+				zap.Error(err))
+		}
+	}
+
+	if h.auditRepo != nil {
+		billIDStr := bill.ID
+		started := opts.StartedAt
+		if started.IsZero() {
+			started = time.Now()
+		}
+		durMs := int(time.Since(started).Milliseconds())
+		_ = h.auditRepo.Log(models.AuditEntry{
+			Action:     "bill_created",
+			TargetID:   &billIDStr,
+			UserID:     opts.UserID,
+			Source:     sourceFlow,
+			Level:      "info",
+			TraceID:    opts.TraceID,
+			DurationMs: &durMs,
+			Detail: map[string]interface{}{
+				"order_id":       order.OrderID,
+				"shopee_shop_id": shopID,
+				"items_count":    len(enriched),
+				"all_high_conf":  allHigh,
+				"status":         status,
+				"via":            "shopee_realtime",
+			},
+		})
+	}
+
+	h.logger.Info("shopee_realtime: bill created",
+		zap.String("order_id", order.OrderID),
+		zap.String("shopee_shop_id", shopID),
+		zap.String("bill_id", bill.ID),
+		zap.String("status", status),
+	)
+
+	return ConfirmResult{
+		OrderID: order.OrderID,
+		Success: true,
+		BillID:  bill.ID,
+		Message: fmt.Sprintf("สร้าง%sแล้ว (status=%s) — รอตรวจสอบใน %s", destinationName, status, reviewPath),
+	}, nil
+}
+
 func isDuplicateShopeeBillError(err error) bool {
 	if err == nil {
 		return false
@@ -1275,7 +1562,16 @@ func shopeeImportReviewPath(cfg ShopeeConfigRequest) string {
 
 func shopeeImportRoute(cfg ShopeeConfigRequest) string {
 	route := strings.ToLower(strings.TrimSpace(cfg.Endpoint + " " + cfg.DocFormat))
-	if strings.Contains(route, "saleinvoice") || strings.Contains(route, " si") || strings.TrimSpace(strings.ToUpper(cfg.DocFormat)) == "SI" {
+	compact := strings.NewReplacer("-", "", "_", "", "/", "", " ", "").Replace(route)
+	docFormat := strings.ToUpper(strings.TrimSpace(cfg.DocFormat))
+	if strings.Contains(compact, "saleinvoice") ||
+		strings.Contains(route, "sale-invoice") ||
+		strings.Contains(route, "sale-invoices") ||
+		strings.Contains(route, "sale_invoice") ||
+		strings.Contains(route, "sale_invoices") ||
+		strings.Contains(route, " si") ||
+		docFormat == "SI" ||
+		strings.Contains(docFormat, "INV") {
 		return "saleinvoice"
 	}
 	return "saleorder"

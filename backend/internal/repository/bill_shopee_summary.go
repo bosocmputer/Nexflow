@@ -31,7 +31,9 @@ func enrichShopeeBillRawData(b *models.Bill, itemCount int, stripBody bool) {
 	if orderID == "" {
 		orderID = strings.TrimSpace(stringField(raw, "shopee_order_id"))
 	}
-	body := shopeeSummaryBody(stringField(raw, "body_text"), stringField(raw, "body_html"))
+	bodyText := stringField(raw, "body_text")
+	bodyHTML := stringField(raw, "body_html")
+	body := shopeeSummaryBody(bodyText, bodyHTML)
 	block := shopeeOrderBlock(body, orderID)
 	if block == "" {
 		block = body
@@ -39,13 +41,19 @@ func enrichShopeeBillRawData(b *models.Bill, itemCount int, stripBody bool) {
 
 	setIfEmpty(raw, "order_datetime", firstSubmatch(shopeeOrderDatePattern, block))
 	setIfEmpty(raw, "seller_name", firstSubmatch(shopeeSellerPattern, block))
-	setMoneyIfMissing(raw, "goods_total_amount", "ยอดรวมค่าสินค้า", block)
-	setMoneyIfMissing(raw, "shipping_amount", "ค่าจัดส่งสินค้า", block)
-	setMoneyIfMissing(raw, "paid_total_amount", "ยอดที่ต้องชำระทั้งหมด", block)
-	if summary := extractShopeeDiscountSummaryFromBlock(block); summary.HasAny() {
+	setShopeeMoneyIfMissing(raw, "goods_total_amount", "ยอดรวมค่าสินค้า", bodyText, bodyHTML, orderID)
+	setShopeeMoneyIfMissing(raw, "shipping_amount", "ค่าจัดส่งสินค้า", bodyText, bodyHTML, orderID)
+	setShopeeMoneyIfMissing(raw, "paid_total_amount", "ยอดที่ต้องชำระทั้งหมด", bodyText, bodyHTML, orderID)
+	summary := ExtractShopeeDiscountSummary(bodyText, bodyHTML, orderID)
+	if summary.HasAny() {
 		raw["discount_summary"] = summary
 	}
-	if summary := extractShopeePaymentSummaryFromBlock(block); summary.HasAny() {
+	if _, exists := raw["shopee_coin_amount"]; !exists {
+		if coinAmount, ok := ExtractShopeeCoinAmount(bodyText, bodyHTML, orderID, summary.TotalDiscountAmount); ok && coinAmount > 0 {
+			raw["shopee_coin_amount"] = coinAmount
+		}
+	}
+	if summary := ExtractShopeePaymentSummary(bodyText, bodyHTML, orderID); summary.HasAny() {
 		raw["payment_summary"] = summary
 	}
 	if itemCount > 0 {
@@ -66,12 +74,7 @@ func enrichShopeeBillRawData(b *models.Bill, itemCount int, stripBody bool) {
 // Shopee purchase order email block. It shares the same parsing path as list
 // enrichment so persisted shipping-line behavior matches what users see.
 func ExtractShopeeShippingAmount(bodyText, bodyHTML, orderID string) (float64, bool) {
-	body := shopeeSummaryBody(bodyText, bodyHTML)
-	block := shopeeOrderBlock(body, strings.TrimSpace(orderID))
-	if block == "" {
-		block = body
-	}
-	return extractMoneyLabel("ค่าจัดส่งสินค้า", block)
+	return ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, "ค่าจัดส่งสินค้า")
 }
 
 // ShopeeDiscountSummary is persisted in bills.raw_data.discount_summary. The
@@ -94,12 +97,16 @@ func (s ShopeeDiscountSummary) HasAny() bool {
 // a single order block. It never treats coupon-code text as money because money
 // extraction requires the Thai baht symbol.
 func ExtractShopeeDiscountSummary(bodyText, bodyHTML, orderID string) ShopeeDiscountSummary {
-	body := shopeeSummaryBody(bodyText, bodyHTML)
-	block := shopeeOrderBlock(body, strings.TrimSpace(orderID))
-	if block == "" {
-		block = body
+	for _, body := range shopeeSummaryBodiesHTMLFirst(bodyText, bodyHTML) {
+		block := shopeeOrderBlock(body, strings.TrimSpace(orderID))
+		if block == "" {
+			block = body
+		}
+		if summary := extractShopeeDiscountSummaryFromBlock(block); summary.HasAny() {
+			return summary
+		}
 	}
-	return extractShopeeDiscountSummaryFromBlock(block)
+	return ShopeeDiscountSummary{}
 }
 
 // ShopeePaymentSummary is persisted in bills.raw_data.payment_summary. It is
@@ -144,7 +151,7 @@ func extractShopeeDiscountSummaryFromBlock(block string) ShopeeDiscountSummary {
 	summary.ShopDiscountAmount = roundMoney(summary.ShopDiscountAmount)
 	summary.TotalDiscountAmount = roundMoney(summary.ShopeeDiscountAmount + summary.ShopDiscountAmount)
 	if summary.HasAny() {
-		summary.AllocationMethod = "equal_by_item_line_excluding_shipping"
+		summary.AllocationMethod = "proportional_by_gross_excluding_shipping"
 	}
 	return summary
 }
@@ -212,40 +219,69 @@ func extractShopeeDiscountParts(block, label string) (float64, []string) {
 	return total, codes
 }
 
-// AllocateShopeeDiscountsByLine splits total discount equally across item rows,
-// excluding Shopee shipping rows, while capping each line at its gross amount.
+// ExtractShopeeMoneyLabel returns one Shopee money label scoped to orderID. It
+// checks the HTML MIME part before text because Shopee sometimes omits summary
+// rows from text/plain while keeping them in the HTML table.
+func ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, label string) (float64, bool) {
+	for _, body := range shopeeSummaryBodiesHTMLFirst(bodyText, bodyHTML) {
+		block := shopeeOrderBlock(body, strings.TrimSpace(orderID))
+		if block == "" {
+			block = body
+		}
+		if amount, ok := extractMoneyLabel(label, block); ok {
+			return roundMoney(amount), true
+		}
+	}
+	return 0, false
+}
+
+func CalcShopeeCoinAmount(goodsTotal, couponDiscount, paidTotal, shippingAmount float64) float64 {
+	coinAmount := roundMoney(goodsTotal - couponDiscount - (paidTotal - shippingAmount))
+	if coinAmount <= 0 {
+		return 0
+	}
+	return coinAmount
+}
+
+func ExtractShopeeCoinAmount(bodyText, bodyHTML, orderID string, couponDiscount float64) (float64, bool) {
+	goodsTotal, okGoods := ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, "ยอดรวมค่าสินค้า")
+	paidTotal, okPaid := ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, "ยอดที่ต้องชำระทั้งหมด")
+	shippingAmount, okShipping := ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, "ค่าจัดส่งสินค้า")
+	if !okGoods || !okPaid || !okShipping {
+		return 0, false
+	}
+	return CalcShopeeCoinAmount(goodsTotal, couponDiscount, paidTotal, shippingAmount), true
+}
+
+// AllocateShopeeDiscountsByLine splits total discount proportionally by gross
+// item value, excluding Shopee shipping rows, while capping each line at gross.
 func AllocateShopeeDiscountsByLine(items []models.BillItem, totalDiscount float64) []float64 {
 	out := make([]float64, len(items))
-	remaining := roundMoney(totalDiscount)
-	if remaining <= 0 {
+	target := roundMoney(totalDiscount)
+	if target <= 0 {
 		return out
 	}
+
 	active := discountableItemIndexes(items, out)
-	for len(active) > 0 && remaining > 0 {
-		before := remaining
-		share := remaining / float64(len(active))
-		distributed := 0.0
-		for i, idx := range active {
-			portion := roundMoney(share)
-			if i == len(active)-1 {
-				portion = roundMoney(remaining - distributed)
-			}
-			capacity := roundMoney(itemGross(items[idx]) - out[idx])
-			if portion > capacity {
-				portion = capacity
-			}
-			if portion < 0 {
-				portion = 0
-			}
-			out[idx] = roundMoney(out[idx] + portion)
-			distributed = roundMoney(distributed + portion)
-		}
-		remaining = roundMoney(remaining - distributed)
-		if remaining == before {
-			break
-		}
-		active = discountableItemIndexes(items, out)
+	grossTotal := 0.0
+	for _, idx := range active {
+		grossTotal = roundMoney(grossTotal + itemGross(items[idx]))
 	}
+	if grossTotal <= 0 {
+		return out
+	}
+	if target > grossTotal {
+		target = grossTotal
+	}
+	for _, idx := range active {
+		gross := itemGross(items[idx])
+		portion := roundMoney(target * gross / grossTotal)
+		if portion > gross {
+			portion = gross
+		}
+		out[idx] = portion
+	}
+	rebalanceShopeeDiscountResidual(items, active, out, target)
 	return out
 }
 
@@ -276,6 +312,65 @@ func itemGross(item models.BillItem) float64 {
 	return roundMoney(item.Qty * *item.Price)
 }
 
+func rebalanceShopeeDiscountResidual(items []models.BillItem, indexes []int, allocated []float64, target float64) {
+	for attempts := 0; attempts < len(indexes)+2; attempts++ {
+		diff := roundMoney(target - sumMoney(allocated))
+		if math.Abs(diff) < 0.005 {
+			return
+		}
+		if diff > 0 {
+			idx := largestGrossWithCapacity(items, indexes, allocated)
+			if idx < 0 {
+				return
+			}
+			capacity := roundMoney(itemGross(items[idx]) - allocated[idx])
+			allocated[idx] = roundMoney(allocated[idx] + math.Min(diff, capacity))
+			continue
+		}
+		idx := largestAllocatedIndex(indexes, allocated)
+		if idx < 0 {
+			return
+		}
+		allocated[idx] = roundMoney(allocated[idx] - math.Min(-diff, allocated[idx]))
+	}
+}
+
+func largestGrossWithCapacity(items []models.BillItem, indexes []int, allocated []float64) int {
+	best := -1
+	bestGross := -1.0
+	for _, idx := range indexes {
+		if roundMoney(itemGross(items[idx])-allocated[idx]) <= 0 {
+			continue
+		}
+		gross := itemGross(items[idx])
+		if gross > bestGross {
+			best = idx
+			bestGross = gross
+		}
+	}
+	return best
+}
+
+func largestAllocatedIndex(indexes []int, allocated []float64) int {
+	best := -1
+	bestAmount := -1.0
+	for _, idx := range indexes {
+		if allocated[idx] > bestAmount {
+			best = idx
+			bestAmount = allocated[idx]
+		}
+	}
+	return best
+}
+
+func sumMoney(values []float64) float64 {
+	sum := 0.0
+	for _, value := range values {
+		sum = roundMoney(sum + value)
+	}
+	return sum
+}
+
 func roundMoney(v float64) float64 {
 	return math.Round(v*100) / 100
 }
@@ -291,6 +386,29 @@ func shopeeSummaryBody(bodyText, bodyHTML string) string {
 		return bodyText
 	}
 	return htmlToSummaryText(bodyHTML)
+}
+
+func shopeeSummaryBodiesHTMLFirst(bodyText, bodyHTML string) []string {
+	bodies := []string{}
+	add := func(body string) {
+		body = strings.TrimSpace(body)
+		if body == "" {
+			return
+		}
+		for _, existing := range bodies {
+			if existing == body {
+				return
+			}
+		}
+		bodies = append(bodies, body)
+	}
+	add(htmlToSummaryText(bodyHTML))
+	if looksLikeHTML(bodyText) {
+		add(htmlToSummaryText(bodyText))
+	} else {
+		add(bodyText)
+	}
+	return bodies
 }
 
 func looksLikeHTML(s string) bool {
@@ -366,11 +484,11 @@ func firstSubmatch(re *regexp.Regexp, text string) string {
 	return strings.TrimSpace(m[1])
 }
 
-func setMoneyIfMissing(raw map[string]interface{}, key, label, text string) {
+func setShopeeMoneyIfMissing(raw map[string]interface{}, key, label, bodyText, bodyHTML, orderID string) {
 	if _, ok := raw[key]; ok {
 		return
 	}
-	if v, ok := extractMoneyLabel(label, text); ok {
+	if v, ok := ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, label); ok {
 		raw[key] = v
 	}
 }

@@ -1,10 +1,26 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Info, Mail, Search, Send, Settings, Store, UploadCloud } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Filter, Info, Mail, Search, Send, Settings, Store, UploadCloud } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import BillTable from '@/components/BillTable'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -18,6 +34,8 @@ import {
   BILL_TYPE_LABEL,
   PAGE_TITLE,
 } from '@/lib/labels'
+import { cn } from '@/lib/utils'
+import { WORK_QUEUE_CHANGED_EVENT } from '@/lib/work-queue-events'
 import type { Bill } from '@/types'
 
 const DEFAULT_PER_PAGE = 20
@@ -72,6 +90,9 @@ const ARCHIVE_OPTIONS = [
   { value: 'only', label: 'บิลที่เก็บแล้ว' },
 ] as const
 type ArchiveMode = typeof ARCHIVE_OPTIONS[number]['value']
+const QUICK_STATUS_VALUES = [ALL, 'pending', 'needs_review', 'failed']
+const QUICK_STATUS_OPTIONS = STATUS_OPTIONS.filter((o) => QUICK_STATUS_VALUES.includes(o.value))
+const SECONDARY_STATUS_OPTIONS = STATUS_OPTIONS.filter((o) => !QUICK_STATUS_VALUES.includes(o.value))
 
 type BillsMode = 'purchase-order' | 'sales-order' | 'sale-invoice'
 
@@ -113,7 +134,7 @@ const MODE_CONFIG: Record<BillsMode, {
   },
   'sales-order': {
     title: PAGE_TITLE.salesOrders,
-    description: 'ตรวจข้อมูลจาก Marketplace Excel ที่นำเข้า แล้วสร้างเป็นใบสั่งขายเพื่อส่งเข้า SML',
+    description: 'คิวเอกสารขายที่ปลายทางเป็นใบสั่งขาย ยังใช้งานได้ครบสำหรับช่องทางที่ตั้งค่าไว้',
     source: '',
     sourceLabel: 'Marketplace Excel',
     billType: 'sale',
@@ -132,7 +153,7 @@ const MODE_CONFIG: Record<BillsMode, {
   },
   'sale-invoice': {
     title: PAGE_TITLE.saleInvoices,
-    description: 'ตรวจข้อมูลจาก Marketplace Excel ที่นำเข้า แล้วสร้างเป็นเอกสารขายสินค้าและบริการเพื่อส่งเข้า SML',
+    description: 'เส้นทางใช้งานหลักสำหรับงานขาย Marketplace ตรวจรายการจาก Shopee, Lazada หรือ TikTok แล้วส่งเป็นขายสินค้าและบริการ / SI เข้า SML',
     source: '',
     sourceLabel: 'Marketplace Excel',
     billType: 'sale',
@@ -245,8 +266,12 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
         : bulkCandidateCount > BULK_BATCH_SIZE
           ? `ส่ง SML เอกสารสถานะพร้อมส่งชุดแรก ${BULK_BATCH_SIZE}/${bulkCandidateCount.toLocaleString()} รายการ`
           : `ส่ง SML เอกสารสถานะพร้อมส่ง ${bulkCandidateCount.toLocaleString()} รายการ`
+  const bulkCompactLabel = `ส่ง SML ${Math.min(bulkCandidateCount, BULK_BATCH_SIZE).toLocaleString()} ใบ`
   const detailBasePath =
     mode === 'sale-invoice' ? '/sale-invoices' : mode === 'sales-order' ? '/sales-orders' : '/bills'
+  const selectedStatusLabel = STATUS_OPTIONS.find((o) => o.value === status)?.label ?? 'สถานะอื่น'
+  const selectedArchiveLabel = ARCHIVE_OPTIONS.find((o) => o.value === archiveMode)?.label ?? 'รายการปกติ'
+  const secondaryStatusActive = SECONDARY_STATUS_OPTIONS.some((o) => o.value === status)
 
   const resetPage = (cb: () => void) => {
     cb()
@@ -340,6 +365,18 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
   }, [config.source, config.billType, config.documentRoute, emailAccountId, archiveMode, shopeeStatus, shopeeShopId, search])
 
   useEffect(() => {
+    const onWorkQueueChanged = () => {
+      void refetch()
+      fetchCounts().catch(() => {
+        setCounts({ needs_review: 0, pending: 0, sent: 0, failed: 0, skipped: 0, total: 0 })
+      })
+    }
+    window.addEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
+    return () => window.removeEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refetch, config.source, config.billType, config.documentRoute, emailAccountId, archiveMode, shopeeStatus, shopeeShopId, search])
+
+  useEffect(() => {
     if (!loading && data && page > totalPages) {
       setPage(totalPages)
     }
@@ -388,156 +425,219 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        <QueueMetric label="ต้องตรวจสินค้า" value={counts.needs_review} icon={AlertTriangle} tone="warning" />
-        <QueueMetric label="เอกสารสถานะพร้อมส่ง" value={counts.pending} icon={Clock} tone="primary" />
-        <QueueMetric label="ส่งแล้ว" value={counts.sent} icon={CheckCircle2} tone="success" />
-        <QueueMetric label="ส่งไม่สำเร็จ" value={counts.failed} icon={Send} tone="danger" />
-      </div>
-
-      <div className="rounded-xl border border-border/70 bg-card p-3 shadow-sm">
-        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <Link to={config.routeTo} className="font-medium text-primary hover:underline">
-            {config.routeLabel}
-          </Link>
-          <span>→</span>
-          <span className="font-medium text-foreground">{config.destination}</span>
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
-            {config.docCode}
-          </code>
-          <Link
-            to="/settings/channels"
-            className="font-medium text-primary hover:underline sm:ml-auto"
-          >
-            ตั้งค่าเส้นทาง
-          </Link>
-        </div>
-
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {STATUS_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => resetPage(() => setStatus(o.value))}
-              className={[
-                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                status === o.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-              ].join(' ')}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {ARCHIVE_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => resetPage(() => setArchiveMode(o.value))}
-              className={[
-                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',
-                archiveMode === o.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-              ].join(' ')}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full max-w-sm">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder={config.searchPlaceholder}
-              value={search}
-              onChange={(e) => resetPage(() => setSearch(e.target.value))}
-              className="h-9 pl-8"
-            />
+      <div className="rounded-lg border border-border/70 bg-card p-2.5 shadow-sm">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-semibold tracking-tight text-foreground">
+                {config.title}
+              </h1>
+              <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-strong">
+                {config.docCode}
+              </code>
+              <p className="sr-only">{config.description}</p>
+              <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
+              <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                <Info className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
+                <Link to={config.routeTo} className="font-medium text-link hover:underline">
+                  {config.routeLabel}
+                </Link>
+                <span>→</span>
+                <span className="font-medium text-foreground">{config.destination}</span>
+              </span>
+            </div>
           </div>
+          <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
+            <QueueMetricChip label="ต้องตรวจ" value={counts.needs_review} tone="warning" />
+            <QueueMetricChip label="พร้อมส่ง" value={counts.pending} tone="primary" />
+            <QueueMetricChip label="ส่งแล้ว" value={counts.sent} tone="success" />
+            <QueueMetricChip label="ไม่สำเร็จ" value={counts.failed} tone="danger" />
+            <Button
+              asChild
+              size="sm"
+              variant={mode === 'sale-invoice' ? 'default' : 'outline'}
+              className="h-8 w-full justify-center gap-1.5 sm:w-auto"
+            >
+              <Link to={config.emptyActionTo}>
+                {mode === 'purchase-order' ? <Settings className="h-4 w-4" /> : <UploadCloud className="h-4 w-4" />}
+                {mode === 'sale-invoice' ? 'ตรวจรายการ Shopee' : config.emptyActionLabel}
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="h-8 w-full justify-center sm:w-auto">
+              <Link to="/settings/channels">ตั้งค่าเส้นทาง</Link>
+            </Button>
+          </div>
+        </div>
 
-          {mode !== 'purchase-order' && (
-            <span className="w-full rounded-md border border-border bg-background px-2.5 py-2 text-xs text-muted-foreground sm:w-auto">
-              {(config.sourceLabel ?? BILL_SOURCE_LABEL[config.source])} · {BILL_TYPE_LABEL[config.billType]}
-            </span>
-          )}
-          {showShopeeStatusFilter && (
-            <select
-              value={shopeeStatus}
-              onChange={(e) => resetPage(() => setShopeeStatus(e.target.value))}
-              className="h-9 w-full min-w-0 rounded-md border border-border bg-background px-2.5 text-xs text-foreground sm:w-auto"
-              aria-label="กรองตามสถานะคำสั่งซื้อ Shopee"
-            >
-              {SHOPEE_STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+        <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
+          <div className="grid gap-2 xl:grid-cols-[minmax(260px,340px)_minmax(0,1fr)_auto] xl:items-center">
+            <div className="relative w-full">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder={config.searchPlaceholder}
+                value={search}
+                onChange={(e) => resetPage(() => setSearch(e.target.value))}
+                className="h-8 pl-8 text-sm"
+              />
+            </div>
+
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {QUICK_STATUS_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => resetPage(() => setStatus(o.value))}
+                  className={cn(
+                    'h-7 rounded-full border px-2.5 text-xs font-medium transition-colors',
+                    status === o.value
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                  )}
+                >
                   {o.label}
-                </option>
+                </button>
               ))}
-            </select>
-          )}
-          {showShopeeShopFilter && shopeeShops.length > 0 && (
-            <label className="flex w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 text-xs text-muted-foreground sm:w-auto">
-              <Store className="h-3.5 w-3.5 text-primary" />
-              <select
-                value={shopeeShopId}
-                onChange={(e) => resetPage(() => setShopeeShopId(e.target.value))}
-                className="h-9 min-w-0 bg-transparent text-xs text-foreground outline-none"
-                aria-label="กรองตามร้าน Shopee"
-              >
-                <option value={ALL}>ทุกร้าน Shopee</option>
-                {shopeeShops.map((shop) => (
-                  <option key={shop.id} value={String(shop.shop_id)}>
-                    {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {inboxes.length > 0 && config.routeTo === '/settings/email' && (
-            <select
-              value={emailAccountId}
-              onChange={(e) => resetPage(() => setEmailAccountId(e.target.value))}
-              className="h-9 w-full min-w-0 rounded-md border border-border bg-background px-2.5 text-xs text-foreground sm:w-auto"
-              aria-label="กรองตามกล่องอีเมล"
-            >
-              <option value={ALL}>ทุกกล่องอีเมล</option>
-              {inboxes.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} · {a.username}
-                </option>
-              ))}
-            </select>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            className="w-full min-w-0 justify-center gap-1.5 sm:ml-auto sm:w-auto"
-            disabled={bulkDisabled}
-            onClick={() => setBulkOpen(true)}
+            </div>
+
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 w-full min-w-0 justify-center gap-1.5 xl:w-auto"
+              disabled={bulkDisabled}
+              onClick={() => setBulkOpen(true)}
             title={
               archiveMode !== 'active'
-                ? 'Bulk send ปิดไว้เมื่อดูบิลที่เก็บแล้ว เพื่อไม่ส่งเอกสารย้อนหลังโดยไม่ตั้งใจ'
-                : !bulkStatusAllowed
-                  ? 'Bulk send ส่งเฉพาะเอกสารสถานะพร้อมส่ง จึงเปิดได้เมื่อเลือกทุกสถานะหรือสถานะพร้อมส่ง'
-                : counts.needs_review > 0
-                  ? `มีรายการต้องตรวจสินค้า ${counts.needs_review.toLocaleString()} รายการ ปุ่มนี้ส่งเฉพาะเอกสารสถานะพร้อมส่ง`
-                  : undefined
-            }
-          >
-            <Send className="h-3.5 w-3.5" />
-            <span className="truncate">{bulkButtonLabel}</span>
-          </Button>
-        </div>
-        {counts.needs_review > 0 && archiveMode === 'active' && (
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            รายการต้องตรวจสินค้า {counts.needs_review.toLocaleString()} รายการจะไม่ถูกรวมในปุ่มส่ง SML เอกสารสถานะพร้อมส่ง
+                  ? 'ส่ง SML แบบกลุ่มปิดไว้เมื่อดูบิลที่เก็บแล้ว เพื่อไม่ส่งเอกสารย้อนหลังโดยไม่ตั้งใจ'
+                  : !bulkStatusAllowed
+                    ? 'ส่ง SML แบบกลุ่มส่งเฉพาะเอกสารสถานะพร้อมส่ง จึงเปิดได้เมื่อเลือกทุกสถานะหรือสถานะพร้อมส่ง'
+                  : counts.needs_review > 0
+                    ? `มีรายการต้องตรวจสินค้า ${counts.needs_review.toLocaleString()} รายการ ปุ่มนี้ส่งเฉพาะเอกสารสถานะพร้อมส่ง`
+                    : bulkButtonLabel
+              }
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span className="truncate">{bulkCompactLabel}</span>
+            </Button>
           </div>
-        )}
+
+          <div className="grid gap-1.5 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant={secondaryStatusActive ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-8 w-full justify-between gap-1.5 px-2.5 text-xs sm:w-auto"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Filter className="h-3.5 w-3.5" />
+                    {secondaryStatusActive ? selectedStatusLabel : 'สถานะอื่น'}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                <DropdownMenuLabel className="text-xs">สถานะเอกสาร</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={status}
+                  onValueChange={(value) => resetPage(() => setStatus(value))}
+                >
+                  {SECONDARY_STATUS_OPTIONS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>
+                      {o.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant={archiveMode === 'active' ? 'outline' : 'default'}
+                  size="sm"
+                  className="h-8 w-full justify-between gap-1.5 px-2.5 text-xs sm:w-auto"
+                >
+                  {selectedArchiveLabel}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuLabel className="text-xs">มุมมองรายการ</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup
+                  value={archiveMode}
+                  onValueChange={(value) => resetPage(() => setArchiveMode(value as ArchiveMode))}
+                >
+                  {ARCHIVE_OPTIONS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>
+                      {o.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {showShopeeStatusFilter && (
+              <Select value={shopeeStatus} onValueChange={(value) => resetPage(() => setShopeeStatus(value))}>
+                <SelectTrigger
+                  className="h-8 w-full text-xs sm:w-[210px]"
+                  aria-label="กรองตามสถานะคำสั่งซื้อ Shopee"
+                >
+                  <SelectValue placeholder="สถานะคำสั่งซื้อ" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SHOPEE_STATUS_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {showShopeeShopFilter && shopeeShops.length > 0 && (
+              <Select value={shopeeShopId} onValueChange={(value) => resetPage(() => setShopeeShopId(value))}>
+                <SelectTrigger
+                  className="h-8 w-full text-xs sm:w-[220px]"
+                  aria-label="กรองตามร้าน Shopee"
+                >
+                  <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-accent-strong" />
+                  <SelectValue placeholder="ร้าน Shopee" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>ทุกร้าน Shopee</SelectItem>
+                  {shopeeShops.map((shop) => (
+                    <SelectItem key={shop.id} value={String(shop.shop_id)}>
+                      {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            {inboxes.length > 0 && config.routeTo === '/settings/email' && (
+              <Select value={emailAccountId} onValueChange={(value) => resetPage(() => setEmailAccountId(value))}>
+                <SelectTrigger
+                  className="h-8 w-full text-xs sm:w-[220px]"
+                  aria-label="กรองตามกล่องอีเมล"
+                >
+                  <SelectValue placeholder="กล่องอีเมล" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>ทุกกล่องอีเมล</SelectItem>
+                  {inboxes.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name} · {a.username}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {counts.needs_review > 0 && archiveMode === 'active' && (
+            <div className="text-[11px] text-muted-foreground">
+              รายการต้องตรวจสินค้า {counts.needs_review.toLocaleString()} รายการจะไม่ถูกรวมในปุ่มส่ง SML เอกสารสถานะพร้อมส่ง
+            </div>
+          )}
+        </div>
       </div>
 
       {!loading && bills.length === 0 && !search && status === ALL && shopeeStatus === ALL && archiveMode === 'active' ? (
@@ -586,18 +686,21 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <label className="inline-flex items-center gap-1.5">
             <span>ต่อหน้า</span>
-            <select
+            <Select
               value={String(perPage)}
-              onChange={(e) => handlePerPageChange(e.target.value)}
-              className="h-8 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-              aria-label="จำนวนรายการต่อหน้า"
+              onValueChange={handlePerPageChange}
             >
-              {PAGE_SIZE_OPTIONS.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="h-8 w-[82px] text-xs" aria-label="จำนวนรายการต่อหน้า">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAGE_SIZE_OPTIONS.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
           <Button
             variant="outline"
@@ -683,47 +786,64 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
 
 function confirmActionTitle(action: { kind: 'archive' | 'restore' | 'delete' | 'permanent'; bill: Bill } | null) {
   if (!action) return ''
-  if (action.kind === 'archive') return 'เก็บบิลนี้?'
-  if (action.kind === 'restore') return 'กู้คืนบิลนี้?'
-  if (action.kind === 'permanent') return 'ลบถาวร?'
-  return 'ลบบิลนี้?'
+  if (action.kind === 'archive') return 'เก็บบิลออกจากคิวงานประจำ?'
+  if (action.kind === 'restore') return 'กู้คืนบิลกลับเข้าคิวงาน?'
+  if (action.kind === 'permanent') return 'ลบบิลถาวรจาก Nexflow?'
+  return 'ลบบิลที่ยังไม่ได้ส่ง?'
 }
 
 function confirmActionDescription(action: { kind: 'archive' | 'restore' | 'delete' | 'permanent'; bill: Bill } | null) {
   if (!action) return ''
   const doc = action.bill.sml_doc_no || action.bill.id.slice(0, 8)
-  if (action.kind === 'archive') return `เก็บบิล ${doc} ออกจากหน้างานประจำ แต่ยังค้นย้อนหลังและดู logs ได้`
-  if (action.kind === 'restore') return `นำบิล ${doc} กลับมาแสดงในรายการปกติ`
-  if (action.kind === 'permanent') return `ลบบิล ${doc} และไฟล์แนบถาวร คืนไม่ได้ แต่ logs จะยังเก็บข้อมูลสำคัญไว้`
-  return `ลบบิล ${doc} ที่ยังไม่ได้ส่งเข้า SML พร้อมรายการสินค้าและไฟล์แนบ`
+  const order = action.bill.sml_order_id ? `\nOrder อ้างอิง: ${action.bill.sml_order_id}` : ''
+  if (action.kind === 'archive') {
+    return [
+      `เอกสาร: ${doc}${order}`,
+      'ผลกระทบ: เอกสารจะถูกซ่อนจากคิวงานประจำและ bulk send จะไม่หยิบไปส่ง',
+      'Rollback: ยังค้นย้อนหลังในมุมมองบิลที่เก็บแล้วและกู้คืนกลับมาได้',
+    ].join('\n')
+  }
+  if (action.kind === 'restore') {
+    return [
+      `เอกสาร: ${doc}${order}`,
+      'ผลกระทบ: เอกสารจะกลับมาแสดงในรายการปกติและเข้าข่าย workflow เดิมอีกครั้ง',
+      'Rollback: ถ้ากู้คืนผิด สามารถเก็บออกจากคิวงานประจำใหม่ได้',
+    ].join('\n')
+  }
+  if (action.kind === 'permanent') {
+    return [
+      `เอกสาร: ${doc}${order}`,
+      'ผลกระทบ: ลบบิล รายการสินค้า และไฟล์แนบออกจาก Nexflow ถาวร',
+      'Rollback: ทำกลับจากหน้าจอนี้ไม่ได้ ต้องอาศัย backup ฐานข้อมูลเท่านั้น',
+      'หมายเหตุ: การลบใน Nexflow ไม่ได้ลบเอกสารที่เคยส่งสำเร็จใน SML',
+    ].join('\n')
+  }
+  return [
+    `เอกสาร: ${doc}${order}`,
+    'ผลกระทบ: ลบบิลที่ยังไม่ได้ส่งเข้า SML พร้อมรายการสินค้าและไฟล์แนบ',
+    'Rollback: ทำกลับจากหน้าจอนี้ไม่ได้ หากลบผิดต้องนำเข้าหรือสร้างเอกสารใหม่',
+  ].join('\n')
 }
 
-function QueueMetric({
+function QueueMetricChip({
   label,
   value,
-  icon: Icon,
   tone,
 }: {
   label: string
   value: number
-  icon: typeof AlertTriangle
   tone: 'primary' | 'warning' | 'success' | 'danger'
 }) {
   const toneCls = {
-    primary: 'bg-primary/10 text-primary',
-    warning: 'bg-warning/10 text-warning',
-    success: 'bg-success/10 text-success',
-    danger: 'bg-destructive/10 text-destructive',
+    primary: 'border-primary/25 bg-primary/10 text-accent-strong',
+    warning: 'border-warning/30 bg-warning/10 text-warning',
+    success: 'border-success/25 bg-success/10 text-success',
+    danger: 'border-destructive/25 bg-destructive/10 text-destructive',
   }[tone]
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm">
-      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${toneCls}`}>
-        <Icon className="h-4 w-4" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-xl font-semibold leading-6 tabular-nums">{value.toLocaleString()}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
-      </div>
-    </div>
+    <span className={cn('inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px]', toneCls)}>
+      <span className="font-semibold tabular-nums">{value.toLocaleString()}</span>
+      <span className="text-foreground/75">{label}</span>
+    </span>
   )
 }

@@ -311,7 +311,7 @@ export function MapItemModal({
                         </div>
                         <div className="flex shrink-0 flex-col items-end gap-1.5">
                           <ScorePill score={r.score} recommended={recommended} />
-                          <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                          <span className="rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-accent-strong">
                             เลือก
                           </span>
                         </div>

@@ -175,7 +175,15 @@ func (h *EmailHandler) processOneShippedOrder(
 		h.recordShopeeOrderEvent(existingBillID, subject, from, messageID, source, orderID)
 		h.saveShopeeShippedEmailArtifacts(existingBillID, subject, from, bodyText, bodyHTML, messageID)
 		discountSummary := repository.ExtractShopeeDiscountSummary(bodyText, bodyHTML, orderID)
-		if ok, err := h.billRepo.ApplyShopeePurchaseDiscountsToBill(existingBillID, discountSummary); err != nil {
+		coinAmount, coinKnown := repository.ExtractShopeeCoinAmount(bodyText, bodyHTML, orderID, discountSummary.TotalDiscountAmount)
+		var ok bool
+		var err error
+		if coinKnown {
+			ok, err = h.billRepo.ApplyShopeePurchaseDiscountsToBill(existingBillID, discountSummary, coinAmount)
+		} else {
+			ok, err = h.billRepo.ApplyShopeePurchaseDiscountsToBill(existingBillID, discountSummary)
+		}
+		if err != nil {
 			h.logger.Warn("shopee_shipped: existing bill discount update failed",
 				zap.String("message_id", messageID),
 				zap.String("order_id", orderID),
@@ -276,12 +284,23 @@ func (h *EmailHandler) processOneShippedOrder(
 		}
 	}
 	discountSummary := repository.ExtractShopeeDiscountSummary(bodyText, bodyHTML, orderID)
-	if discountSummary.HasAny() {
+	goodsTotal, hasGoodsTotal := repository.ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, "ยอดรวมค่าสินค้า")
+	paidTotal, hasPaidTotal := repository.ExtractShopeeMoneyLabel(bodyText, bodyHTML, orderID, "ยอดที่ต้องชำระทั้งหมด")
+	coinAmount := 0.0
+	hasCoinAmount := hasGoodsTotal && hasPaidTotal && hasShippingAmount
+	if hasCoinAmount {
+		coinAmount = repository.CalcShopeeCoinAmount(goodsTotal, discountSummary.TotalDiscountAmount, paidTotal, shippingAmount)
+	}
+	effectiveDiscount := discountSummary.TotalDiscountAmount
+	if hasCoinAmount && coinAmount > 0 {
+		effectiveDiscount += coinAmount
+	}
+	if effectiveDiscount > 0 {
 		itemCopies := make([]models.BillItem, len(itemsWithCandidates))
 		for i := range itemsWithCandidates {
 			itemCopies[i] = itemsWithCandidates[i].item
 		}
-		repository.ApplyShopeeDiscountsToItems(itemCopies, discountSummary.TotalDiscountAmount)
+		repository.ApplyShopeeDiscountsToItems(itemCopies, effectiveDiscount)
 		for i := range itemsWithCandidates {
 			itemsWithCandidates[i].item.DiscountAmount = itemCopies[i].DiscountAmount
 		}
@@ -309,8 +328,17 @@ func (h *EmailHandler) processOneShippedOrder(
 	if hasShippingAmount {
 		rawDataMap["shipping_amount"] = shippingAmount
 	}
+	if hasGoodsTotal {
+		rawDataMap["goods_total_amount"] = goodsTotal
+	}
+	if hasPaidTotal {
+		rawDataMap["paid_total_amount"] = paidTotal
+	}
 	if discountSummary.HasAny() {
 		rawDataMap["discount_summary"] = discountSummary
+	}
+	if hasCoinAmount && coinAmount > 0 {
+		rawDataMap["shopee_coin_amount"] = coinAmount
 	}
 	if paymentSummary := repository.ExtractShopeePaymentSummary(bodyText, bodyHTML, orderID); paymentSummary.HasAny() {
 		rawDataMap["payment_summary"] = paymentSummary

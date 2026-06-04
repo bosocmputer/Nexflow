@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"nexflow/internal/models"
 	"nexflow/internal/services/itemcode"
-	"github.com/lib/pq"
 )
 
 type BillRepo struct {
@@ -1146,11 +1148,7 @@ func (r *BillRepo) BackfillShopeePurchasePaymentSummaries() (int, error) {
 	return updated, nil
 }
 
-func (r *BillRepo) ApplyShopeePurchaseDiscountsToBill(billID string, summary ShopeeDiscountSummary) (bool, error) {
-	if !summary.HasAny() {
-		return false, nil
-	}
-
+func (r *BillRepo) ApplyShopeePurchaseDiscountsToBill(billID string, summary ShopeeDiscountSummary, coinAmounts ...float64) (bool, error) {
 	var rawData json.RawMessage
 	err := r.db.QueryRow(`
 		SELECT raw_data
@@ -1172,12 +1170,24 @@ func (r *BillRepo) ApplyShopeePurchaseDiscountsToBill(billID string, summary Sho
 	if err := json.Unmarshal(rawData, &raw); err != nil {
 		raw = map[string]interface{}{}
 	}
+	coinAmount, coinKnown := resolveShopeeCoinAmount(raw, summary.TotalDiscountAmount, coinAmounts...)
+	effectiveDiscount := roundMoney(summary.TotalDiscountAmount + coinAmount)
+	if !summary.HasAny() && effectiveDiscount <= 0 {
+		return false, nil
+	}
 	items, err := r.findItems(billID)
 	if err != nil {
 		return false, err
 	}
-	ApplyShopeeDiscountsToItems(items, summary.TotalDiscountAmount)
-	raw["discount_summary"] = summary
+	ApplyShopeeDiscountsToItems(items, effectiveDiscount)
+	if summary.HasAny() {
+		raw["discount_summary"] = summary
+	}
+	if coinKnown && coinAmount > 0 {
+		raw["shopee_coin_amount"] = coinAmount
+	} else if coinKnown {
+		delete(raw, "shopee_coin_amount")
+	}
 	rawJSON, _ := json.Marshal(raw)
 
 	tx, err := r.db.Begin()
@@ -1268,10 +1278,56 @@ func (r *BillRepo) backfillShopeePurchaseDiscount(billID string, rawData json.Ra
 		return false, nil
 	}
 	summary := ExtractShopeeDiscountSummary(stringField(raw, "body_text"), stringField(raw, "body_html"), orderID)
-	if !summary.HasAny() {
-		return false, nil
-	}
 	return r.ApplyShopeePurchaseDiscountsToBill(billID, summary)
+}
+
+func resolveShopeeCoinAmount(raw map[string]interface{}, couponDiscount float64, coinAmounts ...float64) (float64, bool) {
+	if len(coinAmounts) > 0 {
+		return roundPositiveMoney(coinAmounts[0]), true
+	}
+	if amount, ok := numberField(raw, "shopee_coin_amount"); ok {
+		return roundPositiveMoney(amount), true
+	}
+	orderID := strings.TrimSpace(stringField(raw, "order_id"))
+	if orderID == "" {
+		orderID = strings.TrimSpace(stringField(raw, "shopee_order_id"))
+	}
+	if orderID == "" {
+		return 0, false
+	}
+	return ExtractShopeeCoinAmount(stringField(raw, "body_text"), stringField(raw, "body_html"), orderID, couponDiscount)
+}
+
+func roundPositiveMoney(amount float64) float64 {
+	amount = roundMoney(amount)
+	if amount <= 0 {
+		return 0
+	}
+	return amount
+}
+
+func numberField(raw map[string]interface{}, key string) (float64, bool) {
+	v, ok := raw[key]
+	if !ok || v == nil {
+		return 0, false
+	}
+	switch value := v.(type) {
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+		return value, true
+	case int:
+		return float64(value), true
+	case json.Number:
+		parsed, err := value.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", ""), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // ExistsDuplicateToday checks if a bill with the same source, customer name, and item codes

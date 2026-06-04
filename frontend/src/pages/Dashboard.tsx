@@ -75,8 +75,8 @@ export default function Dashboard() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Nexflow Review Desk"
-        description={ENABLE_SALES_ORDERS ? 'โต๊ะงานสำหรับตรวจเอกสารจากทุกช่องทาง แล้วส่งเป็นใบสั่งซื้อ/ใบสั่งขายเข้า SML' : 'โต๊ะงานสำหรับตรวจบิลซื้อจากอีเมล แล้วส่งเป็นใบสั่งซื้อเข้า SML'}
+        title="Nexflow Operations Console"
+        description={ENABLE_SALES_ORDERS ? 'คอนโซลตรวจคิวเอกสารจาก Email และ Marketplace โดยใช้ขายสินค้าและบริการ / SI เป็นเส้นทางใช้งานหลัก และยังคงใบสั่งขายไว้ครบตามเดิม' : 'คอนโซลตรวจบิลซื้อจากอีเมล แล้วส่งเป็นใบสั่งซื้อเข้า SML'}
         actions={
           PHASE >= 2 && user?.role === 'admin' && (
             <Button size="sm" onClick={handleGenerate} disabled={generating}>
@@ -88,20 +88,26 @@ export default function Dashboard() {
       />
 
       {setupStatus && !setupStatus.ready && (
-        <Card className="border-warning/35 bg-warning/[0.07]">
+        <Card className={smlSetupIssue ? 'border-warning/35 bg-warning/[0.07]' : 'border-border/70 bg-muted/25'}>
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-2.5">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              {smlSetupIssue ? (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              ) : (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+              )}
               <div>
-                <p className="text-sm font-semibold">ระบบยังตั้งค่าไม่ครบ</p>
+                <p className="text-sm font-semibold">
+                  {smlSetupIssue ? 'ระบบหลักยังต้องตรวจ' : 'งานขายหลักพร้อมใช้งาน งานเสริมยังตั้งค่าไม่ครบ'}
+                </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {smlSetupIssue
                     ? `SML ยังไม่พร้อม: ${smlSetupIssue.status}`
-                    : `พร้อมแล้ว ${setupStatus.ready_count}/${setupStatus.total_count} ขั้น กรุณาตรวจหน้าเริ่มต้นใช้งานก่อนเริ่มรับบิลจริง`}
+                    : `พร้อมแล้ว ${setupStatus.ready_count}/${setupStatus.total_count} ขั้น ส่วนที่เหลือเป็นช่องทางหรือ readiness เสริม`}
                 </p>
               </div>
             </div>
-            <Button asChild size="sm">
+            <Button asChild size="sm" variant={smlSetupIssue ? 'default' : 'outline'}>
               <Link to="/setup">ไปที่เริ่มต้นใช้งาน</Link>
             </Button>
           </CardContent>
@@ -112,7 +118,7 @@ export default function Dashboard() {
         <Card className="border-primary/25 bg-primary/[0.04]">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-2.5">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-accent-strong" />
               <div>
                 <p className="text-sm font-semibold">ระบบพร้อมแล้ว แต่ยังไม่มีเอกสาร</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -144,104 +150,125 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <ActionCenter stats={stats} setupStatus={setupStatus} loading={loading} />
-
-      <PilotResultCard stats={stats} loading={loading} />
-
-      <Card className="overflow-hidden rounded-2xl border-border/70 bg-card shadow-sm">
-        <CardContent className="grid gap-0 p-0 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="border-b border-border/70 p-5 lg:border-b-0 lg:border-r">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-                  งานที่ต้องทำตอนนี้
-                </p>
-                <h2 className="mt-1 text-xl font-semibold tracking-tight">
-                  ตรวจคิวเอกสารตามช่องทางให้จบในที่เดียว
-                </h2>
-              </div>
-              <div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                Multi-channel
-              </div>
-            </div>
-            <ActionCards stats={stats} loading={loading} />
-          </div>
-          <div className="grid grid-cols-2 gap-px bg-border/70">
-            <DeskMetric
-              label="บิลในระบบ"
-              value={stats?.total_bills ?? 0}
-              icon={FileText}
-              loading={loading}
-            />
-            <DeskMetric
-              label="ต้องจัดการ"
-              value={awaitingReview}
-              icon={AlertTriangle}
-              tone="warning"
-              loading={loading}
-            />
-            <DeskMetric
-              label="ส่งแล้ว"
-              value={stats?.sml_success ?? 0}
-              icon={CheckCircle2}
-              tone="success"
-              loading={loading}
-            />
-            <DeskMetric
-              label="อีเมลมีปัญหา"
-              value={stats?.email_inbox_errors ?? 0}
-              icon={Mail}
-              tone="danger"
-              loading={loading}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
-        <Card className="rounded-2xl border-border/70 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <Send className="h-4 w-4 text-primary" />
-              เส้นทางงานเอกสาร
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2">
-            <FlowStep
-              icon={FileText}
-              title="Email รับบิล"
-              desc="กล่องอีเมลรับบิล → ตรวจสินค้า → ใบสั่งซื้อหรือเอกสารขายตามเส้นทางที่ตั้งไว้"
-            />
-            {ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS && (
-              <FlowStep
-                icon={ShoppingBag}
-                title="Shopee"
-                desc="ดึงผ่าน Open API หรืออัปโหลด Excel → แยกตามปลายทางที่ตั้งไว้ → ใบสั่งขายหรือขายสินค้าและบริการ"
-              />
-            )}
-            {ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS && (
-              <FlowStep
-                icon={ShoppingBag}
-                title="Lazada Excel"
-                desc="นำเข้าไฟล์จาก Lazada Seller Center → ตรวจสินค้า → ใบสั่งขายหรือขายสินค้าและบริการ"
-              />
-            )}
-            {ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS && (
-              <FlowStep
-                icon={ShoppingBag}
-                title="TikTok Excel"
-                desc="นำเข้าไฟล์ Excel/CSV จาก TikTok Seller Center → ตรวจสินค้า → ใบสั่งขายหรือขายสินค้าและบริการ"
-              />
-            )}
-          </CardContent>
-        </Card>
-
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
-          <InsightCard insight={insight} />
-          {mapStats && <LearningProgress stats={mapStats} />}
+          <OperationsConsoleBoard stats={stats} loading={loading} />
+          <ActionCenter stats={stats} setupStatus={setupStatus} loading={loading} />
         </div>
+        <ProductionStatusCard stats={stats} setupStatus={setupStatus} loading={loading} />
       </div>
+
+      <details className="group rounded-lg border border-border/70 bg-card shadow-sm">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold">
+          <span className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-accent-strong" />
+            รายงานและ diagnostics
+          </span>
+          <span className="text-xs font-normal text-muted-foreground group-open:hidden">เปิดดูเมื่อต้องสรุปผลหรือจูนระบบ</span>
+          <span className="hidden text-xs font-normal text-muted-foreground group-open:inline">ซ่อนรายละเอียด</span>
+        </summary>
+        <div className="space-y-4 border-t border-border/70 p-4">
+          <PilotResultCard stats={stats} loading={loading} />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+            <Card className="rounded-lg border-border/70 shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                  <Send className="h-4 w-4 text-accent-strong" />
+                  เส้นทางงานเอกสาร
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2">
+                <FlowStep
+                  icon={FileText}
+                  title="Email รับบิล"
+                  desc="กล่องอีเมลรับบิล → ตรวจสินค้า → ใบสั่งซื้อหรือเอกสารขายตามเส้นทางที่ตั้งไว้"
+                />
+                {ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS && (
+                  <FlowStep
+                    icon={ShoppingBag}
+                    title="Shopee"
+                    desc="ดึงผ่าน Open API หรืออัปโหลด Excel → แยกตามปลายทางที่ตั้งไว้ → ใบสั่งขายหรือขายสินค้าและบริการ"
+                  />
+                )}
+                {ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS && (
+                  <FlowStep
+                    icon={ShoppingBag}
+                    title="Lazada Excel"
+                    desc="นำเข้าไฟล์จาก Lazada Seller Center → ตรวจสินค้า → ใบสั่งขายหรือขายสินค้าและบริการ"
+                  />
+                )}
+                {ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS && (
+                  <FlowStep
+                    icon={ShoppingBag}
+                    title="TikTok Excel"
+                    desc="นำเข้าไฟล์ Excel/CSV จาก TikTok Seller Center → ตรวจสินค้า → ใบสั่งขายหรือขายสินค้าและบริการ"
+                  />
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="space-y-4">
+              <InsightCard insight={insight} />
+              {mapStats && <LearningProgress stats={mapStats} />}
+            </div>
+          </div>
+        </div>
+      </details>
     </div>
+  )
+}
+
+function ProductionStatusCard({
+  stats,
+  setupStatus,
+  loading,
+}: {
+  stats: DashboardStats | null
+  setupStatus: SetupStatus | null
+  loading: boolean
+}) {
+  const failed = (stats?.purchase_failed ?? 0) + (stats?.sales_failed ?? 0)
+  const needsReview = (stats?.purchase_needs_review ?? 0) + (stats?.sales_needs_review ?? 0)
+  const pending = (stats?.purchase_pending ?? 0) + (stats?.sales_pending ?? 0)
+  const optionalSetupMissing = Boolean(setupStatus && !setupStatus.ready && !setupStatus.steps?.some((step) => step.key === 'instance' && !step.ready))
+
+  return (
+    <Card className="border-border/70 shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <CheckCircle2 className="h-4 w-4 text-success" />
+          สถานะใช้งานจริง
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          <DeskMetric label="บิลทั้งหมด" value={stats?.total_bills ?? 0} icon={FileText} loading={loading} />
+          <DeskMetric label="ส่ง SML แล้ว" value={stats?.sml_success ?? 0} icon={CheckCircle2} tone="success" loading={loading} />
+          <DeskMetric label="ต้องตรวจ" value={needsReview} icon={AlertTriangle} tone={needsReview > 0 ? 'warning' : 'success'} loading={loading} />
+          <DeskMetric label="ส่งไม่สำเร็จ" value={failed} icon={AlertTriangle} tone={failed > 0 ? 'danger' : 'success'} loading={loading} />
+        </div>
+        <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          {failed > 0
+            ? 'มีเอกสารส่ง SML ไม่สำเร็จ ให้เปิด Logs หรือหน้าบิลเพื่อดู error ก่อน retry'
+            : pending > 0
+              ? `มีเอกสารพร้อมส่ง ${pending.toLocaleString()} ใบ ต้องตรวจ dialog ก่อนยืนยันส่งจริง`
+              : optionalSetupMissing
+                ? 'งานขายหลักใช้งานได้ ส่วนช่องทางเสริมหรือ readiness บางข้อยังตั้งค่าไม่ครบ'
+                : 'ตอนนี้ไม่มีคิวเร่งด่วนสำหรับงานขายหลัก'}
+        </div>
+        <div className="grid gap-2">
+          <Button asChild size="sm">
+            <Link to="/import/shopee">ตรวจรายการ Shopee</Link>
+          </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/sale-invoices">ดูขายสินค้าและบริการ</Link>
+          </Button>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/logs">ดู Logs</Link>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -262,6 +289,7 @@ function ActionCenter({
   const salesFailed = stats?.sales_failed ?? 0
   const emailErrors = stats?.email_inbox_errors ?? 0
   const totalBills = stats?.total_bills ?? 0
+  const coreSetupIssue = setupStatus?.steps?.find((step) => step.key === 'instance' && !step.ready)
 
   const actions: Array<{
     title: string
@@ -271,10 +299,10 @@ function ActionCenter({
     tone: 'danger' | 'warning' | 'primary' | 'success'
   }> = []
 
-  if (setupStatus && !setupStatus.ready) {
+  if (coreSetupIssue) {
     actions.push({
-      title: 'ตั้งค่าระบบให้ครบก่อนรับงานจริง',
-      desc: `พร้อมแล้ว ${setupStatus.ready_count}/${setupStatus.total_count} ขั้น ตรวจ SML, email, สินค้า และ AI ให้ครบ`,
+      title: 'ระบบหลักยังต้องตรวจ',
+      desc: `SML หรือ instance ยังไม่พร้อม: ${coreSetupIssue.status}`,
       to: '/setup',
       cta: 'ตรวจ setup',
       tone: 'warning',
@@ -329,10 +357,10 @@ function ActionCenter({
   const visible = actions.slice(0, 4)
 
   return (
-    <Card className="rounded-2xl border-border/70 shadow-sm">
+    <Card className="rounded-lg border-border/70 shadow-sm">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <ListChecks className="h-4 w-4 text-primary" />
+          <ListChecks className="h-4 w-4 text-accent-strong" />
           Action Center
         </CardTitle>
       </CardHeader>
@@ -361,6 +389,102 @@ function ActionCenter({
       </CardContent>
     </Card>
   )
+}
+
+function OperationsConsoleBoard({
+  stats,
+  loading,
+}: {
+  stats: DashboardStats | null
+  loading: boolean
+}) {
+  const lanes = [
+    {
+      label: 'Intake',
+      value: (stats?.today_bills ?? 0),
+      desc: 'เอกสารที่เข้ามาวันนี้',
+      to: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? '/import/shopee' : '/settings/email',
+      cta: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? 'ตรวจรายการ Shopee' : 'เปิด Email intake',
+      tone: 'primary' as const,
+    },
+    {
+      label: 'Needs Mapping',
+      value: (stats?.purchase_needs_review ?? 0) + (stats?.sales_needs_review ?? 0),
+      desc: 'ต้องจับคู่สินค้า/ตรวจข้อมูล',
+      to: '/mappings',
+      cta: 'ตรวจ mapping',
+      tone: 'warning' as const,
+    },
+    {
+      label: 'Ready For SML',
+      value: (stats?.purchase_pending ?? 0) + (stats?.sales_pending ?? 0),
+      desc: 'พร้อมส่ง แต่ต้องยืนยันใน dialog',
+      to: ENABLE_SALES_ORDERS ? '/sale-invoices?status=pending' : '/bills?status=pending',
+      cta: 'ดูคิวพร้อมส่ง',
+      tone: 'primary' as const,
+    },
+    {
+      label: 'Sent',
+      value: stats?.sml_success ?? 0,
+      desc: 'ส่งเข้า SML สำเร็จแล้ว',
+      to: ENABLE_SALES_ORDERS ? '/sale-invoices?status=sent' : '/bills?status=sent',
+      cta: 'ดูเอกสารส่งแล้ว',
+      tone: 'success' as const,
+    },
+  ]
+
+  return (
+    <div className="grid gap-4">
+      <Card className="overflow-hidden border-border/80 bg-card/95 shadow-sm">
+        <CardHeader className="border-b border-border/70 pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+            <ListChecks className="h-4 w-4 text-accent-strong" />
+            Work Queue
+          </CardTitle>
+          <p className="text-xs leading-5 text-muted-foreground">
+            เรียงตามลำดับงานประจำวัน: รับข้อมูล, ตรวจ mapping, ส่ง SML, และหลักฐานที่ส่งแล้ว
+          </p>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+          {lanes.map((lane) => (
+            <Link
+              key={lane.label}
+              to={lane.to}
+              className="group flex min-h-[154px] flex-col justify-between rounded-lg border border-border bg-background/70 p-3 transition-transform hover:-translate-y-0.5 hover:border-primary/50 hover:bg-card"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {lane.label}
+                  </span>
+                  <span className={queueToneClass(lane.tone)}>
+                    {loading ? '—' : lane.value.toLocaleString()}
+                  </span>
+                </div>
+                <div className="mt-4 text-2xl font-semibold tabular-nums text-foreground">
+                  {loading ? '—' : lane.value.toLocaleString()}
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{lane.desc}</p>
+              </div>
+              <div className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-foreground">
+                {lane.cta}
+                <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+              </div>
+            </Link>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function queueToneClass(tone: 'primary' | 'warning' | 'success') {
+  const classes = {
+    primary: 'rounded-full bg-primary/20 px-2 py-0.5 text-xs font-semibold text-foreground',
+    warning: 'rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning',
+    success: 'rounded-full bg-success/15 px-2 py-0.5 text-xs font-semibold text-foreground',
+  }
+  return classes[tone]
 }
 
 function PilotResultCard({
@@ -400,12 +524,12 @@ function PilotResultCard({
   }
 
   return (
-    <Card className="overflow-hidden rounded-2xl border-primary/20 bg-card shadow-sm">
+    <Card className="overflow-hidden rounded-lg border-primary/20 bg-card shadow-sm">
       <CardHeader className="border-b border-border/70 bg-primary/[0.035] pb-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <TrendingUp className="h-4 w-4 text-primary" />
+              <TrendingUp className="h-4 w-4 text-accent-strong" />
               ผลลัพธ์ Pilot 30 วัน
             </CardTitle>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -481,7 +605,7 @@ function PilotResultCard({
                 : 'ยังไม่มีบิลในช่วง 30 วันล่าสุด เริ่มจาก import หรือดึง email เพื่อสร้าง baseline'}
             </span>
             {remaining > 0 && (
-              <Link to="/mappings" className="inline-flex items-center gap-1 font-medium text-primary">
+              <Link to="/mappings" className="inline-flex items-center gap-1 font-medium text-link">
                 ลดงานค้างด้วย mapping
                 <ArrowRight className="h-3 w-3" />
               </Link>
@@ -509,7 +633,7 @@ function PilotMetric({
   loading: boolean
 }) {
   const toneCls = {
-    primary: 'bg-primary/10 text-primary',
+    primary: 'bg-primary/10 text-accent-strong',
     warning: 'bg-warning/10 text-warning',
     success: 'bg-success/10 text-success',
   }[tone]
@@ -603,7 +727,7 @@ function ActionCenterItem({
   const toneCls = {
     danger: 'border-destructive/30 bg-destructive/[0.05] text-destructive',
     warning: 'border-warning/35 bg-warning/[0.06] text-warning',
-    primary: 'border-primary/25 bg-primary/[0.04] text-primary',
+    primary: 'border-primary/25 bg-primary/[0.04] text-accent-strong',
     success: 'border-success/25 bg-success/[0.05] text-success',
   }[tone]
   return (
@@ -615,7 +739,7 @@ function ActionCenterItem({
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-foreground">{title}</div>
           <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{desc}</div>
-          <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary">
+          <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-link">
             {cta}
             <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
           </div>
@@ -639,7 +763,7 @@ function DeskMetric({
   loading: boolean
 }) {
   const toneCls = {
-    primary: 'text-primary bg-primary/10',
+    primary: 'text-accent-strong bg-primary/10',
     warning: 'text-warning bg-warning/10',
     success: 'text-success bg-success/10',
     danger: 'text-destructive bg-destructive/10',
@@ -665,8 +789,8 @@ function FlowStep({
   desc: string
 }) {
   return (
-    <div className="rounded-xl border border-border/70 bg-muted/25 p-4">
-      <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+    <div className="rounded-lg border border-border/70 bg-muted/25 p-4">
+      <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
         <Icon className="h-4 w-4" />
       </div>
       <p className="text-sm font-semibold">{title}</p>

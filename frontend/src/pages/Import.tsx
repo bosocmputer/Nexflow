@@ -1,10 +1,15 @@
 import { useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import {
   AlertCircle,
   AlertTriangle,
+  ArrowRight,
   Construction,
   FileSpreadsheet,
+  Settings2,
+  ShieldCheck,
+  ShoppingBag,
   Upload,
 } from 'lucide-react'
 
@@ -38,7 +43,6 @@ import {
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { cn } from '@/lib/utils'
-import { PAGE_TITLE } from '@/lib/labels'
 import { useAuth } from '@/hooks/useAuth'
 import type { BillPreview, ImportConfirmResponse } from '@/types'
 import { LazadaColumnMapping } from './Import/LazadaColumnMapping'
@@ -173,36 +177,147 @@ export default function Import() {
 
   const confirmable = bills.filter((b) => !b.has_block)
   const blocked = bills.filter((b) => b.has_block)
+  const legacyOpen = step !== 'idle' || Boolean(errorMsg)
+
+  const importChannels = [
+    {
+      title: 'Shopee',
+      description: 'เชื่อมร้านหรือดึงรายการจากไฟล์ แล้วตรวจรายการก่อนสร้างเอกสาร',
+      to: '/import/shopee',
+      badge: 'ใช้งานหลัก',
+      route: 'Shopee -> ขายสินค้าและบริการ / SI',
+      primary: true,
+    },
+    {
+      title: 'Lazada Excel',
+      description: 'อัปโหลดไฟล์จาก Seller Center และสร้างคิวเอกสารให้ตรวจต่อ',
+      to: '/import/lazada',
+      badge: 'ไฟล์ Excel',
+      route: 'Lazada -> ขายสินค้าและบริการ / SI',
+      primary: false,
+    },
+    {
+      title: 'TikTok Excel',
+      description: 'อัปโหลด Excel/CSV จาก TikTok และกันรายการซ้ำก่อนสร้างเอกสาร',
+      to: '/import/tiktok',
+      badge: 'ไฟล์ Excel/CSV',
+      route: 'TikTok -> ขายสินค้าและบริการ / SI',
+      primary: false,
+    },
+  ]
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title={PAGE_TITLE.importLazada}
-        description="อัปโหลดไฟล์ Excel จาก Lazada Seller Center เพื่อสร้างบิลเข้า SML อัตโนมัติ"
+        title="ศูนย์นำเข้า Marketplace"
+        description="เลือกช่องทางนำเข้า แล้วตรวจรายการก่อนสร้างเอกสารขายและส่งเข้า SML"
       />
 
-      {/* Column mapping editor — collapsible. Lives on the import page (not
-          /settings) so the "set up column names → upload file" flow happens
-          on a single page. Admin only; staff users won't see this card. */}
-      <LazadaColumnMapping platform="lazada" adminOnly={user?.role === 'admin'} />
+      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="bg-primary text-primary-foreground hover:bg-primary">
+                เส้นทางใช้งานหลัก
+              </Badge>
+              <Badge variant="outline">ขายสินค้าและบริการ / SI</Badge>
+            </div>
+            <h2 className="mt-3 text-base font-semibold text-foreground">
+              Marketplace → ตรวจรายการ → สร้างเอกสาร → ส่ง SML
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+              หน้านี้เป็นจุดเลือกช่องทางนำเข้า ไม่ใช่หน้าส่ง SML โดยตรง เพื่อให้คนทำงานเห็นชัดว่าต้องตรวจข้อมูลก่อนสร้างเอกสารจริง
+            </p>
+          </div>
+          <Button asChild className="w-full lg:w-auto">
+            <Link to="/import/shopee">
+              ตรวจรายการ Shopee
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {importChannels.map((channel) => (
+          <Link
+            key={channel.to}
+            to={channel.to}
+            className="group rounded-lg border border-border bg-card p-4 transition-colors hover:border-accent-strong/40 hover:bg-muted/30"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted text-accent-strong">
+                <ShoppingBag className="h-4 w-4" />
+              </div>
+              <Badge variant={channel.primary ? 'default' : 'secondary'}>
+                {channel.badge}
+              </Badge>
+            </div>
+            <div className="mt-4 min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-foreground">{channel.title}</h3>
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {channel.description}
+              </p>
+              <div className="mt-3 rounded-md bg-muted/45 px-2.5 py-1.5 text-[11px] text-foreground">
+                {channel.route}
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      <details className="rounded-lg border border-border bg-card p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
+          <span className="inline-flex items-center gap-2">
+            <Settings2 className="h-4 w-4 text-muted-foreground" />
+            รายละเอียดสำหรับแอดมิน: Column Mapping Lazada
+          </span>
+          <Badge variant="secondary">พับไว้</Badge>
+        </summary>
+        <div className="mt-4">
+          <LazadaColumnMapping platform="lazada" adminOnly={user?.role === 'admin'} />
+        </div>
+      </details>
+
+      <details open={legacyOpen} className="rounded-lg border border-warning/30 bg-warning/[0.04] p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-foreground">
+          <span className="inline-flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-warning" />
+            เครื่องมือเก่า: อัปโหลดแล้วส่ง SML โดยตรง
+          </span>
+          <Badge variant="outline" className="border-warning/40 text-warning">
+            ใช้เมื่อจำเป็น
+          </Badge>
+        </summary>
+
+        <Alert className="mt-4 border-warning/30 bg-warning/[0.05]">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertTitle>เครื่องมือนี้ไม่ใช่ flow หลักสำหรับ production</AlertTitle>
+          <AlertDescription>
+            หลังยืนยัน ระบบจะส่งเข้า SML ทันที ใช้เฉพาะกรณีที่ต้องใช้ endpoint เก่าและตรวจไฟล์เรียบร้อยแล้ว หากเป็นงานประจำให้ใช้ Shopee, Lazada Excel หรือ TikTok Excel ด้านบน
+          </AlertDescription>
+        </Alert>
 
       {(step === 'idle' || step === 'uploading') && (
         <>
           {lazadaDisabled && (
             <Alert>
               <Construction className="h-4 w-4" />
-              <AlertTitle>Lazada import ยังพัฒนาไม่เสร็จ</AlertTitle>
+              <AlertTitle>Legacy Lazada direct send ไม่ใช่ช่องทางหลัก</AlertTitle>
               {PHASE < 2 ? (
                 <AlertDescription>
-                  Phase 1 ตอนนี้โฟกัส Email → บิลซื้อ หน้านำเข้า marketplace ถูกซ่อนไว้จากเมนูหลักก่อน
+                  ระบบ production ให้ใช้เมนู Lazada Excel ที่สร้างรายการให้ตรวจก่อนส่งเข้า SML
                 </AlertDescription>
               ) : (
                 <AlertDescription>
-                  รอไฟล์ตัวอย่างจากลูกค้าเพื่อสร้าง parser — ระหว่างนี้ใช้{' '}
-                  <a href="/import/shopee" className="font-medium text-primary hover:underline">
-                    /import/shopee
-                  </a>{' '}
-                  สำหรับ Shopee Excel แทน
+                  ถ้าต้องนำเข้า Lazada ให้ใช้{' '}
+                  <Link to="/import/lazada" className="font-medium text-link hover:underline">
+                    Lazada Excel
+                  </Link>{' '}
+                  ที่มีขั้นตรวจรายการก่อนสร้างเอกสาร
                 </AlertDescription>
               )}
             </Alert>
@@ -259,7 +374,7 @@ export default function Import() {
             {step === 'uploading' ? (
               <p className="text-sm text-muted-foreground">กำลังประมวลผล…</p>
             ) : isDragActive ? (
-              <p className="text-sm font-medium text-primary">วางไฟล์ที่นี่</p>
+              <p className="text-sm font-medium text-accent-strong">วางไฟล์ที่นี่</p>
             ) : (
               <>
                 <FileSpreadsheet className="mb-3 h-10 w-10 text-muted-foreground" />
@@ -457,6 +572,7 @@ export default function Import() {
           <Button onClick={reset}>นำเข้าไฟล์ใหม่</Button>
         </>
       )}
+      </details>
     </div>
   )
 }

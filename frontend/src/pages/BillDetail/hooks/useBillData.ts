@@ -106,7 +106,7 @@ export function useBillData(id: string | undefined): UseBillDataReturn {
         const message =
           err instanceof Error && err.message
             ? err.message
-            : 'Retry ล้มเหลว — กรุณาลองใหม่อีกครั้ง'
+            : 'Retry ล้มเหลว: กรุณาลองใหม่อีกครั้ง'
         setRetryError(message)
         toast.error('ส่ง SML ไม่สำเร็จ', {
           description: 'ดูรายละเอียดในการ์ด Error ด้านบน',

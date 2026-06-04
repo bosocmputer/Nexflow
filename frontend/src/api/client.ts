@@ -15,11 +15,11 @@ client.interceptors.request.use((config) => {
   return config
 })
 
-// On 401, clear auth and redirect to login
+// On 401, clear auth and redirect to login — skip if already on login page
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    if (err.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
       useAuthStore.getState().logout()
       window.location.href = '/login'
     }

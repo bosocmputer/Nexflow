@@ -247,7 +247,7 @@ function AppPasswordHelp({ host }: { host: string }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          className="inline-flex items-center gap-1 text-xs text-link hover:underline"
         >
           <HelpCircle className="h-3 w-3" />
           วิธีรับ App Password
@@ -266,7 +266,7 @@ function AppPasswordHelp({ host }: { host: string }) {
                 href={guide.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                className="mt-1 inline-flex items-center gap-1 text-xs text-link hover:underline"
               >
                 {guide.url}
                 <ExternalLink className="h-3 w-3" />
@@ -398,7 +398,7 @@ function PresetCard({
       <Icon
         className={cn(
           'h-4 w-4',
-          selected ? 'text-primary' : 'text-muted-foreground',
+          selected ? 'text-accent-strong' : 'text-muted-foreground',
         )}
       />
       <div className="text-sm font-semibold leading-tight">{preset.title}</div>
@@ -503,7 +503,7 @@ function SectionHeader({
 }) {
   return (
     <div className="flex items-center gap-2 border-b border-border/60 pb-1.5">
-      <Icon className="h-4 w-4 text-primary" />
+      <Icon className="h-4 w-4 text-accent-strong" />
       <div>
         <h4 className="text-sm font-semibold leading-none">{title}</h4>
         {subtitle && (

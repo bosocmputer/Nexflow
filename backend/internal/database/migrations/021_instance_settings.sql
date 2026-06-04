@@ -1,5 +1,5 @@
 -- 021_instance_settings.sql — DB-backed per-deploy instance config.
--- BillFlow is still deployed as one isolated instance per customer, but these
+-- Nexflow is still deployed as one isolated instance per customer, but these
 -- settings let admins/support change customer-specific integration values from
 -- the UI instead of editing scattered .env keys by hand. Runtime services still
 -- use boot-time config, so SML/AI changes apply after backend restart.

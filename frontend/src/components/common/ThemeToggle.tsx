@@ -18,16 +18,24 @@ const options: Array<{ key: Theme; label: string; icon: typeof Sun }> = [
 export function ThemeToggle({
   variant = 'icon',
   className,
+  tone = 'default',
 }: {
   variant?: 'icon' | 'menu-item'
   className?: string
+  tone?: 'default' | 'sidebar'
 }) {
   const { theme, setTheme } = useTheme()
+  const sidebarTone = tone === 'sidebar'
 
   if (variant === 'menu-item') {
     return (
       <div className={cn('flex flex-col gap-0.5 px-1 py-1', className)}>
-        <div className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        <div
+          className={cn(
+            'px-2 pb-1 text-[10px] font-medium uppercase tracking-wider',
+            sidebarTone ? 'text-sidebar-foreground/50' : 'text-muted-foreground',
+          )}
+        >
           ธีม
         </div>
         {options.map((opt) => {
@@ -39,15 +47,18 @@ export function ThemeToggle({
               type="button"
               onClick={() => setTheme(opt.key)}
               className={cn(
-                'flex items-center justify-between rounded-sm px-2 py-1.5 text-sm hover:bg-accent',
-                active && 'text-foreground',
+                'flex items-center justify-between rounded-sm px-2 py-1.5 text-sm transition-colors',
+                sidebarTone
+                  ? 'text-sidebar-foreground/78 hover:bg-sidebar-accent hover:text-sidebar-foreground'
+                  : 'hover:bg-accent',
+                active && (sidebarTone ? 'text-sidebar-foreground' : 'text-foreground'),
               )}
             >
               <span className="flex items-center gap-2">
                 <Icon className="h-3.5 w-3.5" />
                 {opt.label}
               </span>
-              {active && <Check className="h-3.5 w-3.5 text-primary" />}
+              {active && <Check className="h-3.5 w-3.5 text-accent-strong" />}
             </button>
           )
         })}
@@ -74,7 +85,7 @@ export function ThemeToggle({
             >
               <Icon className="h-4 w-4" />
               {opt.label}
-              {theme === opt.key && <Check className="ml-auto h-3.5 w-3.5 text-primary" />}
+              {theme === opt.key && <Check className="ml-auto h-3.5 w-3.5 text-accent-strong" />}
             </DropdownMenuItem>
           )
         })}

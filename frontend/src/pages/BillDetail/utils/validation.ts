@@ -33,7 +33,7 @@ export interface ValidationResult {
 }
 
 const ISSUE_LABEL: Record<IssueKind, string> = {
-  no_items: 'ยังไม่มีรายการในบิล — เพิ่มอย่างน้อย 1 รายการก่อน',
+  no_items: 'ยังไม่มีรายการในบิล: เพิ่มอย่างน้อย 1 รายการก่อน',
   unmapped_item_code: 'ยังไม่ได้จับคู่กับสินค้าใน SML',
   unconfirmed_match: 'ที่ระบบแนะนำสินค้าแล้วแต่ยังไม่ได้ยืนยัน',
   unmapped_unit_code: 'ยังไม่ได้ตั้งหน่วย',

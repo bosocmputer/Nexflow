@@ -1,7 +1,7 @@
 # Async SML Bulk Send Jobs
 
 > Updated: 2026-05-21 09:25 +07
-> Status: deployed on BillFlow main, smoke-tested against real SML purchaseorder and verified through the history page.
+> Status: deployed on Nexflow, smoke-tested against real SML purchaseorder and verified through the history page.
 
 ## Summary
 

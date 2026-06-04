@@ -82,7 +82,7 @@ export function DataTable<T>({
         key={getRowKey ? getRowKey(row, actualIndex) : actualIndex}
         className={cn(
           rowHeight,
-          onRowClick && 'cursor-pointer hover:bg-accent/30',
+          onRowClick && 'cursor-pointer hover:bg-muted/45',
           dynClass,
         )}
         onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -99,20 +99,20 @@ export function DataTable<T>({
   return (
     <div
       className={cn(
-        'rounded-xl border border-border/80 bg-card shadow-sm',
-        useVirtualRows ? 'overflow-auto' : 'overflow-hidden',
+        'rounded-lg border border-border/80 bg-card/95 shadow-sm',
+        useVirtualRows ? 'overflow-auto' : 'overflow-x-auto',
         className,
       )}
       style={useVirtualRows ? { maxHeight: virtualMaxHeight } : undefined}
       onScroll={useVirtualRows ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
     >
-      <Table>
+      <Table className="min-w-full">
         <TableHeader className={useVirtualRows ? 'sticky top-0 z-10' : undefined}>
-          <TableRow className="bg-muted/50 hover:bg-muted/50">
+          <TableRow className="bg-muted/60 hover:bg-muted/60">
             {columns.map((col) => (
               <TableHead
                 key={col.key}
-                className={cn('text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', col.headerClassName)}
+                className={cn('text-[11px] font-semibold text-muted-foreground', col.headerClassName)}
                 style={col.width ? { width: col.width } : undefined}
               >
                 {col.header}

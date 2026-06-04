@@ -30,6 +30,7 @@ import (
 	"nexflow/internal/services/events"
 	"nexflow/internal/services/insight"
 	lineservice "nexflow/internal/services/line"
+	linenotify "nexflow/internal/services/line_notifications"
 	"nexflow/internal/services/mapper"
 	"nexflow/internal/services/media"
 	"nexflow/internal/services/mistral"
@@ -59,6 +60,8 @@ func main() {
 		logger.Fatal("database connect", zap.Error(err))
 	}
 	defer db.Close()
+	appCtx, stopBackgroundJobs := context.WithCancel(context.Background())
+	defer stopBackgroundJobs()
 
 	seedAdminUser(db, logger)
 
@@ -100,8 +103,11 @@ func main() {
 	chatNoteRepo := repository.NewChatNoteRepo(db)
 	chatTagRepo := repository.NewChatTagRepo(db)
 	lineOARepo := repository.NewLineOAAccountRepo(db)
+	lineNotificationRepo := repository.NewLineNotificationRepo(db)
 	appSettingsRepo := repository.NewAppSettingsRepo(db)
 	aiUsageRepo := repository.NewAIUsageRepo(db)
+	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db)
+	notificationRepo := repository.NewNotificationRepo(db)
 	if err := appSettingsRepo.ApplyToConfig(cfg); err != nil {
 		logger.Warn("apply DB instance settings", zap.Error(err))
 	}
@@ -380,6 +386,8 @@ func main() {
 	chatInboxH := handlers.NewChatInboxHandler(chatConvRepo, chatMessageRepo, chatMediaRepo, billRepo, auditLogRepo, lineRegistry, aiClient, ocrClient, mediaSigner, eventBroker, cfg.PublicBaseURL, logger)
 	publicMediaH := handlers.NewPublicMediaHandler(chatMediaRepo, mediaSigner, logger)
 	sseH := handlers.NewSSEHandler(eventBroker, mediaSigner)
+	notificationH := handlers.NewNotificationHandler(notificationRepo, eventBroker)
+	lineNotificationSvc := linenotify.NewService(lineNotificationRepo, cfg.PublicBaseURL, logger)
 	emailH := handlers.NewEmailHandler(aiClient, ocrClient, mapperSvc, anomalySvc, billRepo, auditLogRepo, lineSvc, cfg.AutoConfirmThreshold, logger)
 	emailH.SetCatalogServices(catalogSvc, embSvc, catalogIdx, catalogRepo)
 	emailH.SetChannelDefaults(channelDefaultRepo)
@@ -399,6 +407,9 @@ func main() {
 	importH := handlers.NewImportHandler(platformRepo, mapperSvc, anomalySvc, saleOrderClient, billRepo, channelDefaultRepo, docCounterRepo, cfg, cfg.AutoConfirmThreshold, logger)
 	shopeeH := handlers.NewShopeeImportHandler(db, billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogSvc, embSvc, catalogIdx, catalogRepo, logger)
 	shopeeH.SetArtifactService(artifactSvc)
+	shopeeRealtimeH := handlers.NewShopeeRealtimeHandler(shopeeRealtimeRepo, notificationRepo, eventBroker, shopeeH, billH, cfg, logger)
+	shopeeRealtimeH.SetLineNotifier(lineNotificationSvc)
+	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogSvc, embSvc, catalogIdx, catalogRepo, logger)
 	lazadaH.SetArtifactService(artifactSvc)
 	tiktokH := handlers.NewTikTokImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogSvc, embSvc, catalogIdx, catalogRepo, logger)
@@ -421,6 +432,7 @@ func main() {
 	//   /webhook/line        → legacy single-OA fallback (resolves via Destination → Any())
 	r.POST("/webhook/line/:oaId", lineH.Webhook)
 	r.POST("/webhook/line", lineH.Webhook)
+	r.POST("/webhook/shopee", shopeeRealtimeH.Webhook)
 
 	// Public media endpoint — NO JWT, the HMAC token IS the auth.
 	// LINE servers fetch this URL to deliver image messages to customers.
@@ -448,6 +460,27 @@ func main() {
 		// EventSource uses as ?t=<token> on /api/admin/events. JWT-protected.
 		api.POST("/admin/events/token", sseH.IssueToken)
 
+		// In-app notifications — scoped to the logged-in operator.
+		api.GET("/notifications", middleware.RequireRole("admin", "staff"), notificationH.List)
+		api.GET("/notifications/count", middleware.RequireRole("admin", "staff"), notificationH.Count)
+		api.POST("/notifications/:id/read", middleware.RequireRole("admin", "staff"), notificationH.MarkRead)
+		api.POST("/notifications/read-all", middleware.RequireRole("admin", "staff"), notificationH.MarkAllRead)
+
+		// LINE order notifications — admin-only, separate from LINE chat feature.
+		lineNotificationH := handlers.NewLineNotificationHandler(lineOARepo, lineNotificationRepo, lineRegistry, auditLogRepo, cfg, logger)
+		lineNotificationGroup := api.Group("/settings/line-notifications")
+		lineNotificationGroup.Use(middleware.RequireRole("admin"))
+		{
+			lineNotificationGroup.GET("", lineNotificationH.Overview)
+			lineNotificationGroup.POST("/senders", lineNotificationH.CreateSender)
+			lineNotificationGroup.PUT("/senders/:id", lineNotificationH.UpdateSender)
+			lineNotificationGroup.POST("/senders/:id/test", lineNotificationH.TestSender)
+			lineNotificationGroup.POST("/recipients", lineNotificationH.CreateRecipient)
+			lineNotificationGroup.PUT("/recipients/:id", lineNotificationH.UpdateRecipient)
+			lineNotificationGroup.DELETE("/recipients/:id", lineNotificationH.DeleteRecipient)
+			lineNotificationGroup.POST("/recipients/:id/test", lineNotificationH.TestRecipient)
+		}
+
 		// Old Data (archive / purge) — admin only
 		oldDataH := handlers.NewOldDataHandler(db, logger)
 		api.GET("/bills/old-data/summary", middleware.RequireRole("admin"), oldDataH.Summary)
@@ -468,6 +501,7 @@ func main() {
 		api.POST("/bills/:id/ensure-shopee-shipping-line", middleware.RequireRole("admin", "staff"), billH.EnsureShopeeShippingLine)
 		api.GET("/bills/:id/latest-doc-no", middleware.RequireRole("admin", "staff"), billH.LatestDocNo)
 		api.POST("/bills/:id/regenerate-doc-no", middleware.RequireRole("admin", "staff"), billH.RegenerateDocNo)
+		api.POST("/bills/:id/shopee-realtime/recreate-route", middleware.RequireRole("admin", "staff"), billH.RecreateShopeeRealtimeDocumentRoute)
 		api.POST("/bills/:id/archive", middleware.RequireRole("admin", "staff"), billH.Archive)
 		api.POST("/bills/:id/restore", middleware.RequireRole("admin", "staff"), billH.Restore)
 		api.DELETE("/bills/:id", middleware.RequireRole("admin"), billH.Delete)
@@ -530,6 +564,21 @@ func main() {
 		api.POST("/import/shopee/preview", middleware.RequireRole("admin", "staff"), shopeeH.Preview)
 		api.POST("/import/shopee/api/preview", middleware.RequireRole("admin", "staff"), shopeeH.PreviewFromAPI)
 		api.POST("/import/shopee/confirm", middleware.RequireRole("admin", "staff"), shopeeH.Confirm)
+		api.GET("/shopee-operations/readiness", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Readiness)
+		api.GET("/shopee-operations/orders", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ListOrders)
+		api.GET("/shopee-operations/counts", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Counts)
+		api.POST("/shopee-operations/sync", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SyncNow)
+		api.POST("/shopee-operations/:shop_id/:order_sn/create-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CreateDocument)
+		api.POST("/shopee-operations/:shop_id/:order_sn/save-erp", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SaveERP)
+		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-parameters", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingParameters)
+		api.POST("/shopee-operations/:shop_id/:order_sn/reconcile-shipping", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ReconcileShipping)
+		api.GET("/shopee-operations/:shop_id/:order_sn/tracking", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Tracking)
+		api.GET("/shopee-operations/:shop_id/:order_sn/timeline", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Timeline)
+		api.POST("/shopee-operations/:shop_id/:order_sn/ship", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShipOrder)
+		api.POST("/shopee-operations/:shop_id/:order_sn/shipping-document/create", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingDocumentCreate)
+		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-document/result", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingDocumentResult)
+		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-document/download", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingDocumentDownload)
+		api.GET("/shopee-operations/diagnostics", middleware.RequireRole("admin"), shopeeRealtimeH.Diagnostics)
 
 		// Lazada import — same manual-review flow as Shopee Excel
 		api.GET("/settings/lazada-config", lazadaH.GetConfig)
@@ -684,6 +733,24 @@ func main() {
 
 	// Background jobs
 	c := cron.New()
+	go lineNotificationSvc.StartWorker(appCtx, 15*time.Second, 10)
+	if cfg.ShopeeRealtimeOpsEnabled {
+		go shopeeRealtimeH.StartReconcileWorker(appCtx, 5*time.Second, 10)
+	}
+	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeRealtimeSyncIntervalSeconds > 0 {
+		interval := time.Duration(cfg.ShopeeRealtimeSyncIntervalSeconds) * time.Second
+		if _, err := c.AddFunc("@every "+interval.String(), func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if n, err := shopeeRealtimeH.SyncAllActive(ctx, 14); err != nil {
+				logger.Warn("shopee realtime scheduled sync failed", zap.Error(err))
+			} else {
+				logger.Info("shopee realtime scheduled sync completed", zap.Int("orders", n))
+			}
+		}); err != nil {
+			logger.Warn("register shopee realtime scheduled sync", zap.Error(err))
+		}
+	}
 	insightCron := jobs.NewInsightCron(insightSvc, billRepo, insightRepo, lineSvc, cfg.InsightLineNotify, logger)
 	insightCron.Register(c, cfg.InsightCronHour)
 

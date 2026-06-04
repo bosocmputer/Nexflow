@@ -114,6 +114,9 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 				// Broker closed our channel — happens during shutdown.
 				return
 			}
+			if ev.TargetUserID != "" && ev.TargetUserID != userID {
+				continue
+			}
 			payload, err := json.Marshal(ev.Payload)
 			if err != nil {
 				// Bad payload → skip this event but keep the stream open.

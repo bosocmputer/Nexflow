@@ -2,7 +2,7 @@
 
 ## Purpose
 
-BillFlow stores only SML image metadata in `sml_catalog`. Actual image bytes stay in the SML image database and are lazy-loaded through:
+Nexflow stores only SML image metadata in `sml_catalog`. Actual image bytes stay in the SML image database and are lazy-loaded through:
 
 - `GET /api/catalog/:code/image`
 - `GET /api/catalog/:code/images`
@@ -40,10 +40,10 @@ scripts/apply-sml-image-index.sh
 
 This mode passes the password through `PGPASSWORD`, not as a `psql` command argument.
 
-If `psql` is only available inside the BillFlow PostgreSQL container on the server:
+If `psql` is only available inside the Nexflow PostgreSQL container on the server:
 
 ```bash
-PSQL_BIN='docker exec -i -e PGPASSWORD billflow-postgres psql' \
+PSQL_BIN='docker exec -i -e PGPASSWORD nexflow-postgres psql' \
 SML_PGHOST=192.168.2.248 \
 SML_PGUSER=postgres \
 SML_PGPASSWORD='***' \
@@ -80,7 +80,7 @@ Run this whenever:
 - creating a new tenant/database;
 - restoring only data without indexes;
 - creating a new image database manually;
-- changing BillFlow `/settings/instance` to a new `Database (tenant)`.
+- changing Nexflow `/settings/instance` to a new `Database (tenant)`.
 
 If the migration uses a full `pg_dump` / `pg_restore` of schema and data, the index should already come along. Still verify it.
 
@@ -110,7 +110,7 @@ RESET enable_seqscan;
 
 Expected: `Index Scan using images_trim_image_id_order_roworder_file_idx`.
 
-## BillFlow Cutover Checklist
+## Nexflow Cutover Checklist
 
 1. Go to `/settings/instance`.
 2. Change `SML REST URL` and/or `Database (tenant)`.
@@ -126,6 +126,6 @@ Expected: `Index Scan using images_trim_image_id_order_roworder_file_idx`.
 
 - Keep `CREATE INDEX CONCURRENTLY`; avoid table write blocking.
 - Do not run inside `BEGIN/COMMIT`.
-- Do not copy binary images into BillFlow PostgreSQL for v1.
-- If the image DB is unavailable, BillFlow should continue syncing products with `image_count=0`.
+- Do not copy binary images into Nexflow PostgreSQL for v1.
+- If the image DB is unavailable, Nexflow should continue syncing products with `image_count=0`.
 - If images feel slow later, add a dedicated thumbnail cache instead of returning base64 in catalog/search JSON.
