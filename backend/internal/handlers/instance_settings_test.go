@@ -29,6 +29,34 @@ func TestNormalizeInstanceSettingDatabaseName(t *testing.T) {
 	}
 }
 
+func TestNormalizeInstanceSettingSMLProvider(t *testing.T) {
+	def := settingDef{Key: "sml.provider"}
+	got, msg := normalizeInstanceSetting(def, " DATA ")
+	if msg != "" {
+		t.Fatalf("normalizeInstanceSetting() error = %q, want none", msg)
+	}
+	if got != "DATA" {
+		t.Fatalf("provider = %q, want DATA", got)
+	}
+	if _, msg := normalizeInstanceSetting(def, "DATA;DROP"); msg == "" {
+		t.Fatal("normalizeInstanceSetting() accepted unsafe provider")
+	}
+}
+
+func TestNormalizeInstanceSettingSMLConfigFile(t *testing.T) {
+	def := settingDef{Key: "sml.config_file"}
+	got, msg := normalizeInstanceSetting(def, " SMLConfigDATA.xml ")
+	if msg != "" {
+		t.Fatalf("normalizeInstanceSetting() error = %q, want none", msg)
+	}
+	if got != "SMLConfigDATA.xml" {
+		t.Fatalf("config file = %q, want SMLConfigDATA.xml", got)
+	}
+	if _, msg := normalizeInstanceSetting(def, "../SMLConfigDATA.xml"); msg == "" {
+		t.Fatal("normalizeInstanceSetting() accepted unsafe config path")
+	}
+}
+
 func TestNormalizeInstanceSettingRejectsUnsafeDatabaseName(t *testing.T) {
 	def := settingDef{Key: "sml.database"}
 	if _, msg := normalizeInstanceSetting(def, "SML1_2026;DROP"); msg == "" {

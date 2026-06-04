@@ -19,6 +19,14 @@ type AppSettingsRepo struct {
 	db *sql.DB
 }
 
+type SMLRuntimeSettings struct {
+	RestBaseURL     string
+	Provider        string
+	ConfigFile      string
+	Database        string
+	StockRequestURL string
+}
+
 func NewAppSettingsRepo(db *sql.DB) *AppSettingsRepo {
 	return &AppSettingsRepo{db: db}
 }
@@ -100,6 +108,12 @@ func (r *AppSettingsRepo) ApplyToConfig(cfg *config.Config) error {
 	if v := get("sml.rest_base_url"); v != "" {
 		cfg.ShopeeSMLURL = v
 	}
+	if v := get("sml.provider"); v != "" {
+		cfg.ShopeeSMLProvider = v
+	}
+	if v := get("sml.config_file"); v != "" {
+		cfg.ShopeeSMLConfigFile = v
+	}
 	if v := get("sml.database"); v != "" {
 		cfg.ShopeeSMLDatabase = v
 	}
@@ -123,6 +137,8 @@ func (r *AppSettingsRepo) ApplyToConfig(cfg *config.Config) error {
 func RuntimeSettingValues(cfg *config.Config) map[string]string {
 	return map[string]string{
 		"sml.rest_base_url":                 cfg.ShopeeSMLURL,
+		"sml.provider":                      cfg.ShopeeSMLProvider,
+		"sml.config_file":                   cfg.ShopeeSMLConfigFile,
 		"sml.database":                      cfg.ShopeeSMLDatabase,
 		"line.notify_channel_secret":        cfg.LineChannelSecret,
 		"line.notify_channel_access_token":  cfg.LineChannelAccessToken,
@@ -135,7 +151,25 @@ func RuntimeSettingValues(cfg *config.Config) map[string]string {
 	}
 }
 
-
+func (r *AppSettingsRepo) SMLRuntimeSettings(cfg *config.Config) (SMLRuntimeSettings, error) {
+	settings, err := r.All()
+	if err != nil {
+		return SMLRuntimeSettings{}, err
+	}
+	get := func(key, fallback string) string {
+		if setting, ok := settings[key]; ok {
+			return strings.TrimSpace(setting.Value)
+		}
+		return strings.TrimSpace(fallback)
+	}
+	return SMLRuntimeSettings{
+		RestBaseURL:     get("sml.rest_base_url", cfg.ShopeeSMLURL),
+		Provider:        get("sml.provider", cfg.ShopeeSMLProvider),
+		ConfigFile:      get("sml.config_file", cfg.ShopeeSMLConfigFile),
+		Database:        get("sml.database", cfg.ShopeeSMLDatabase),
+		StockRequestURL: get("sml.stock_request_url", ""),
+	}, nil
+}
 
 // GetValue returns the stored value for key, or "" if the key is not found.
 func (r *AppSettingsRepo) GetValue(key string) (string, error) {

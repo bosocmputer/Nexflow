@@ -121,9 +121,17 @@ func (h *BillHandler) triggerStockRecalculation(billID, docNo, route, bulkJobID 
 	if h.appSettingsRepo == nil || len(itemCodes) == 0 {
 		return
 	}
-	stockURL, _ := h.appSettingsRepo.GetValue("sml.stock_request_url")
-	if strings.TrimSpace(stockURL) == "" {
+	stockCfg, err := h.resolveStockRecalcConfig()
+	if err != nil {
+		h.recordStockRecalcFailure(billID, docNo, route, bulkJobID, len(itemCodes), "", "", fmt.Sprintf("load SML instance config: %v", err))
+		return
+	}
+	if stockCfg.StockRequestURL == "" {
 		return // not configured — skip silently
+	}
+	if stockCfg.Provider == "" || stockCfg.Database == "" {
+		h.recordStockRecalcFailure(billID, docNo, route, bulkJobID, len(itemCodes), stockCfg.Provider, stockCfg.Database, "missing SML instance config for stock recalc: provider and database are required")
+		return
 	}
 
 	go func() {
@@ -133,56 +141,76 @@ func (h *BillHandler) triggerStockRecalculation(billID, docNo, route, bulkJobID 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		c := sml.NewStockRequestClient(stockURL, h.cfg.ShopeeSMLProvider, h.cfg.ShopeeSMLDatabase, h.log)
+		c := sml.NewStockRequestClient(stockCfg.StockRequestURL, stockCfg.Provider, stockCfg.Database, h.log)
 		if err := c.ProcessStockRequest(ctx, itemCodes); err != nil {
-			// Audit every bill regardless of bulk suppression
-			_ = h.auditRepo.Log(models.AuditEntry{
-				Action:   "sml_stock_recalc_failed",
-				TargetID: &billID,
-				Source:   "sml",
-				Level:    "warn",
-				Detail: map[string]any{
-					"error":       err.Error(),
-					"doc_no":      docNo,
-					"route":       route,
-					"item_count":  len(itemCodes),
-					"bulk_job_id": bulkJobID,
-				},
-			})
-			// Suppress duplicate app.Warn() in bulk — only log the first failure per job
-			logApp := true
-			if bulkJobID != "" {
-				stockWarnOnceMu.Lock()
-				if _, warned := stockWarnedJobs[bulkJobID]; warned {
-					logApp = false
-				} else {
-					stockWarnedJobs[bulkJobID] = struct{}{}
-				}
-				stockWarnOnceMu.Unlock()
-			}
-			if logApp {
-				h.log.Warn("stock recalc failed (best-effort, bill still sent)",
-					zap.String("bill_id", billID),
-					zap.String("doc_no", docNo),
-					zap.String("bulk_job_id", bulkJobID),
-					zap.Error(err),
-				)
-			}
+			h.recordStockRecalcFailure(billID, docNo, route, bulkJobID, len(itemCodes), stockCfg.Provider, stockCfg.Database, err.Error())
 			return
 		}
 
+		if h.auditRepo != nil {
+			_ = h.auditRepo.Log(models.AuditEntry{
+				Action:   "sml_stock_recalc_ok",
+				TargetID: &billID,
+				Source:   "sml",
+				Level:    "info",
+				Detail: map[string]any{
+					"doc_no":     docNo,
+					"route":      route,
+					"item_count": len(itemCodes),
+					"provider":   stockCfg.Provider,
+					"database":   stockCfg.Database,
+				},
+			})
+		}
+	}()
+}
+
+func (h *BillHandler) resolveStockRecalcConfig() (repository.SMLRuntimeSettings, error) {
+	if h.appSettingsRepo == nil {
+		return repository.SMLRuntimeSettings{}, nil
+	}
+	return h.appSettingsRepo.SMLRuntimeSettings(h.cfg)
+}
+
+func (h *BillHandler) recordStockRecalcFailure(billID, docNo, route, bulkJobID string, itemCount int, provider, database, errMessage string) {
+	if h.auditRepo != nil {
 		_ = h.auditRepo.Log(models.AuditEntry{
-			Action:   "sml_stock_recalc_ok",
+			Action:   "sml_stock_recalc_failed",
 			TargetID: &billID,
 			Source:   "sml",
-			Level:    "info",
+			Level:    "warn",
 			Detail: map[string]any{
-				"doc_no":     docNo,
-				"route":      route,
-				"item_count": len(itemCodes),
+				"error":       errMessage,
+				"doc_no":      docNo,
+				"route":       route,
+				"item_count":  itemCount,
+				"bulk_job_id": bulkJobID,
+				"provider":    provider,
+				"database":    database,
 			},
 		})
-	}()
+	}
+
+	logApp := true
+	if bulkJobID != "" {
+		stockWarnOnceMu.Lock()
+		if _, warned := stockWarnedJobs[bulkJobID]; warned {
+			logApp = false
+		} else {
+			stockWarnedJobs[bulkJobID] = struct{}{}
+		}
+		stockWarnOnceMu.Unlock()
+	}
+	if logApp && h.log != nil {
+		h.log.Warn("stock recalc failed (best-effort, bill still sent)",
+			zap.String("bill_id", billID),
+			zap.String("doc_no", docNo),
+			zap.String("bulk_job_id", bulkJobID),
+			zap.String("provider", provider),
+			zap.String("database", database),
+			zap.String("error", errMessage),
+		)
+	}
 }
 
 // ─── Doc no ───────────────────────────────────────────────────────────────────

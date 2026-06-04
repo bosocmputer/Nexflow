@@ -48,6 +48,8 @@ var instanceSettingDefs = []settingDef{
 	{Key: "instance.support_contact", Label: "ผู้ดูแลระบบ", Group: "instance", Type: "text", DefaultValue: "", Description: "ไม่บังคับ เบอร์หรือชื่อคนที่ดูแลระบบชุดนี้"},
 
 	{Key: "sml.rest_base_url", Label: "SML REST URL", Group: "sml", Type: "url", Restart: true, Required: true, Description: "URL ของ sml-api-byboss เช่น http://172.24.0.1:8200 (ใช้ร่วมกันทุกร้าน)"},
+	{Key: "sml.provider", Label: "Provider", Group: "sml", Type: "text", Restart: true, Required: true, Description: "รหัส provider ของ SML instance นี้ เช่น DATA ใช้กับ SML REST และ stock process"},
+	{Key: "sml.config_file", Label: "Config file", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อไฟล์ config ของ SML instance นี้ เช่น SMLConfigDATA.xml"},
 	{Key: "sml.database", Label: "Database (tenant)", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อ database SML ของร้านนี้ ต้องเป็น lowercase เช่น sml1_2026 (sml-api-byboss แปลงเป็น lowercase เสมอ ห้ามใช้ตัวพิมพ์ใหญ่)"},
 	{Key: "sml.stock_request_url", Label: "Stock Request URL", Group: "sml", Type: "url", Restart: false, Required: false, Description: "URL ของ SML server คำนวณต้นทุนสต๊อก (ไม่ใช่ sml-api-byboss) — path /SMLJavaWebService/rest/v1/processstockrequest จะถูกเติมอัตโนมัติ เช่น http://192.168.2.248:8080 (ว่าง = ข้ามการคำนวณ)"},
 
@@ -63,6 +65,8 @@ var instanceSettingDefs = []settingDef{
 }
 
 var smlDatabaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+var smlProviderPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+var smlConfigFilePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func (h *InstanceSettingsHandler) Get(c *gin.Context) {
 	dbSettings, err := h.repo.All()
@@ -413,8 +417,6 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 	})
 }
 
-
-
 func maskSecret(v string) string {
 	if len(v) <= 8 {
 		return "••••••••"
@@ -432,6 +434,14 @@ func normalizeInstanceSetting(def settingDef, value string) (string, string) {
 			return "", "" // allow clear
 		}
 		return normalizeInstanceURL(value)
+	case "sml.provider":
+		if !smlProviderPattern.MatchString(value) {
+			return "", "Provider ใช้ได้เฉพาะตัวอักษร ตัวเลข และ _ เท่านั้น"
+		}
+	case "sml.config_file":
+		if !smlConfigFilePattern.MatchString(value) {
+			return "", "Config file ใช้ได้เฉพาะตัวอักษร ตัวเลข จุด ขีดกลาง และ _ เท่านั้น"
+		}
 	case "sml.database":
 		if !smlDatabaseNamePattern.MatchString(value) {
 			return "", "Database (tenant) ใช้ได้เฉพาะตัวอักษร ตัวเลข และ _ เท่านั้น"

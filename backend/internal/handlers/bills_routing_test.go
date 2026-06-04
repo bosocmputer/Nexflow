@@ -5,7 +5,11 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
+	"nexflow/internal/config"
 	"nexflow/internal/models"
+	"nexflow/internal/repository"
 )
 
 func TestResolveEndpointUsesExplicitEndpointKeyword(t *testing.T) {
@@ -81,6 +85,42 @@ func TestValidateResolvedSendFieldsRequiresVisibleConfig(t *testing.T) {
 	}
 	if err := h.validateResolvedSendFields("PO", "WH", "SH", "09:00", 0, 7); err != nil {
 		t.Fatalf("complete visible config rejected: %v", err)
+	}
+}
+
+func TestResolveStockRecalcConfigUsesInstanceSettings(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT key, value, is_secret, updated_at").
+		WillReturnRows(sqlmock.NewRows([]string{"key", "value", "is_secret", "updated_at"}).
+			AddRow("sml.provider", "DATA", false, "2026-06-04").
+			AddRow("sml.config_file", "SMLConfigDATA.xml", false, "2026-06-04").
+			AddRow("sml.database", "aoy", false, "2026-06-04").
+			AddRow("sml.stock_request_url", "http://demserver.3bbddns.com:47308", false, "2026-06-04"))
+
+	h := &BillHandler{
+		appSettingsRepo: repository.NewAppSettingsRepo(db),
+		cfg: &config.Config{
+			ShopeeSMLProvider: "SMLGOH",
+			ShopeeSMLDatabase: "SML1_2026",
+		},
+	}
+	got, err := h.resolveStockRecalcConfig()
+	if err != nil {
+		t.Fatalf("resolveStockRecalcConfig: %v", err)
+	}
+	if got.Provider != "DATA" || got.Database != "aoy" {
+		t.Fatalf("stock recalc config did not use instance settings: %#v", got)
+	}
+	if got.StockRequestURL != "http://demserver.3bbddns.com:47308" {
+		t.Fatalf("stock url = %q", got.StockRequestURL)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
 	}
 }
 
