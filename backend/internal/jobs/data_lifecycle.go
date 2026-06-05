@@ -196,9 +196,16 @@ func (j *DataLifecycle) batchDelete(table string, olderThanDays int) (int64, err
 }
 
 func (j *DataLifecycle) pruneSummaries() error {
-	_, err := j.db.Exec(`
-		DELETE FROM audit_log_daily_summaries WHERE day < CURRENT_DATE - ($1 || ' days')::INTERVAL;
-		DELETE FROM ai_usage_daily_summaries WHERE day < CURRENT_DATE - ($1 || ' days')::INTERVAL`,
-		fmt.Sprintf("%d", j.summaryRetentionDays))
+	retentionDays := fmt.Sprintf("%d", j.summaryRetentionDays)
+	if _, err := j.db.Exec(
+		`DELETE FROM audit_log_daily_summaries WHERE day < CURRENT_DATE - ($1 || ' days')::INTERVAL`,
+		retentionDays,
+	); err != nil {
+		return err
+	}
+	_, err := j.db.Exec(
+		`DELETE FROM ai_usage_daily_summaries WHERE day < CURRENT_DATE - ($1 || ' days')::INTERVAL`,
+		retentionDays,
+	)
 	return err
 }

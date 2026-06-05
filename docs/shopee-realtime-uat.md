@@ -1,4 +1,4 @@
-# Shopee Realtime UAT Checklist
+# คำสั่งซื้อ Shopee UAT Checklist
 
 ใช้ checklist นี้ตอนทดสอบ order จริงกับลูกค้า โดยไม่กด action ที่เปลี่ยนข้อมูลเกินกว่าที่ตั้งใจไว้
 
@@ -24,7 +24,7 @@
 
 ## 3. สร้างเอกสารใน Nexflow
 
-- ใน Shopee Realtime กด `สร้างเอกสาร` เฉพาะ order ที่ต้องการทดสอบ
+- ในหน้า `คำสั่งซื้อ Shopee` กด `สร้างเอกสาร` เฉพาะ order ที่ต้องการทดสอบ
 - Dialog ต้องบอกชัดว่า “ยังไม่ส่งเข้า SML”
 - หลังสำเร็จ กด `เปิดเอกสาร`
 - ตรวจว่าเอกสารไปอยู่ route ที่ตั้งไว้ใน `เส้นทางเอกสาร SML`
@@ -34,7 +34,7 @@
 - เปิดเอกสารจาก `/sales-orders` หรือ `/sale-invoices` ตาม route ที่ตั้งไว้
 - ตรวจรายการสินค้า, mapping, customer, ยอดเงิน และ warning
 - กดส่ง SML เฉพาะ order ที่อนุมัติให้ทดสอบจริง
-- กลับมาที่ Shopee Realtime แล้วเปิด Timeline
+- กลับมาที่ `คำสั่งซื้อ Shopee` แล้วเปิด Timeline
 - Milestone `ส่ง SML` ต้องเปลี่ยนเป็นส่งแล้ว และมีเลขเอกสาร SML
 
 ## 5. จัดส่งและใบปะหน้า
@@ -54,7 +54,7 @@
 
 ## Expected Result
 
-- Order ใหม่เข้าหน้า Shopee Realtime โดยไม่ต้องเข้า Seller Center เพื่อดู order
+- Order ใหม่เข้าหน้า `คำสั่งซื้อ Shopee` โดยไม่ต้องเข้า Seller Center เพื่อดู order
 - ถ้า Live Push ทำงาน `last_update_source` ควรเป็น `push`
 - ถ้า Push หลุด scheduled sync ต้องดึง order เข้ามาภายในรอบ sync
 - Notification และ LINE ต้องไม่ส่งซ้ำสำหรับ order เดิม
