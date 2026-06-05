@@ -992,9 +992,32 @@ export default function ShopeeImport() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Shopee"
-        description={`ตรวจรายการก่อนสร้างเอกสาร: เลือก Shopee shop แล้วดึง API หรืออัปโหลด Excel เพื่อสร้าง${destination.documentName} (${destination.shortName}) ไว้ตรวจก่อนส่งเข้า SML`}
+        title="นำเข้า Shopee ย้อนหลัง"
+        description={`ใช้เมื่อ order ไม่เข้า realtime, ต้องดึงช่วงวันที่ย้อนหลัง, หรือใช้ไฟล์ Excel จาก Seller Center เพื่อสร้าง${destination.documentName} (${destination.shortName}) ไว้ตรวจก่อนส่งเข้า SML`}
       />
+
+      <div className="rounded-lg border border-info/30 bg-info/5 px-3 py-2">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+              <Info className="h-4 w-4 text-info" />
+              <span>เมนูนี้ใช้สำหรับงานย้อนหลังและซ่อมข้อมูล</span>
+              <Badge variant="outline" className="h-5 bg-background text-[11px]">ดึงย้อนหลัง</Badge>
+              <Badge variant="outline" className="h-5 bg-background text-[11px]">ซ่อมรายการตกหล่น</Badge>
+              <Badge variant="outline" className="h-5 bg-background text-[11px]">Excel fallback</Badge>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              ถ้าเป็น order ใหม่ที่เข้าตามปกติ ให้เริ่มจากคำสั่งซื้อ Shopee เพื่อดูสถานะ, Timeline และสร้างเอกสารจากคิวประจำวัน
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm" className="h-8 shrink-0 bg-background">
+            <Link to="/shopee-operations">
+              ไปคำสั่งซื้อ Shopee
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+        </div>
+      </div>
 
       <Card className="border-border/80 bg-card/95 shadow-sm">
         <CardContent className="grid gap-3 p-4 sm:grid-cols-3">
@@ -1026,7 +1049,7 @@ export default function ShopeeImport() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Store className="h-5 w-5 text-accent-strong" />
-                  ดึงออเดอร์จาก Shopee
+                  ดึงออเดอร์ย้อนหลังจาก Shopee
                 </CardTitle>
                 <Badge variant="outline">{destination.shortName}</Badge>
               </div>
@@ -1146,8 +1169,8 @@ export default function ShopeeImport() {
                   </div>
 
                   <ActionSafetyPanel
-                    title="ตรวจขอบเขตก่อนดึงออเดอร์ Shopee"
-                    description="ขั้นตอนนี้เป็นการตรวจรายการก่อนสร้างเอกสาร ยังไม่สร้างบิลจนกว่าจะกดยืนยันในขั้นตอนถัดไป"
+                    title="ตรวจขอบเขตการนำเข้า Shopee ย้อนหลัง"
+                    description="ขั้นตอนนี้ใช้สำหรับดึงย้อนหลังหรือซ่อมรายการตกหล่น ยังไม่สร้างบิลจนกว่าจะกดยืนยันในขั้นตอนถัดไป"
                     tone="info"
                     items={[
                       {

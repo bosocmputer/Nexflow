@@ -129,7 +129,7 @@ export function OrderTimelineDrawer({
   documentPath,
 }: OrderTimelineDrawerProps) {
   const [systemOpen, setSystemOpen] = useState(false)
-  const createDisabledReason = createDocumentDisabledReason || (!canCreateDocument ? 'ยังไม่ได้ตั้งค่า route Shopee Realtime' : '')
+  const createDisabledReason = createDocumentDisabledReason || (!canCreateDocument ? 'ยังไม่ได้ตั้งค่า route คำสั่งซื้อ Shopee' : '')
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

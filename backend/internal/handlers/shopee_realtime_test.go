@@ -251,6 +251,86 @@ func TestShouldNotifyShopeeNewOrderCoversCODUnpaidToReady(t *testing.T) {
 	}
 }
 
+func TestNormalizeShopeeRealtimeOrderRefsDedupeAndLimit(t *testing.T) {
+	refs, err := normalizeShopeeRealtimeOrderRefs([]shopeeRealtimeOrderRef{
+		{ShopID: 264993963, OrderSN: "ORDER1"},
+		{ShopID: 264993963, OrderSN: " ORDER1 "},
+		{ShopID: 264993963, OrderSN: "ORDER2"},
+	})
+	if err != nil {
+		t.Fatalf("normalizeShopeeRealtimeOrderRefs() error = %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("len(refs) = %d, want 2", len(refs))
+	}
+
+	tooMany := make([]shopeeRealtimeOrderRef, shopeeRealtimeBulkCreateLimit+1)
+	for i := range tooMany {
+		tooMany[i] = shopeeRealtimeOrderRef{ShopID: 264993963, OrderSN: fmt.Sprintf("ORDER-%d", i)}
+	}
+	if _, err := normalizeShopeeRealtimeOrderRefs(tooMany); err == nil {
+		t.Fatal("expected limit error")
+	}
+}
+
+func TestBulkCreateDisabledReason(t *testing.T) {
+	billID := "5c776587-36af-43bb-9643-fd56ffe1f77c"
+	tests := []struct {
+		name       string
+		snap       *models.ShopeeOrderSnapshot
+		routeReady bool
+		want       string
+	}{
+		{
+			name:       "ready pending",
+			routeReady: true,
+			snap:       &models.ShopeeOrderSnapshot{OrderStatus: "READY_TO_SHIP", ERPStatus: "pending"},
+			want:       "",
+		},
+		{
+			name:       "failed without bill can retry create",
+			routeReady: true,
+			snap:       &models.ShopeeOrderSnapshot{OrderStatus: "READY_TO_SHIP", ERPStatus: "failed"},
+			want:       "",
+		},
+		{
+			name:       "route missing",
+			routeReady: false,
+			snap:       &models.ShopeeOrderSnapshot{OrderStatus: "READY_TO_SHIP", ERPStatus: "pending"},
+			want:       "ตั้งค่า",
+		},
+		{
+			name:       "existing bill skipped",
+			routeReady: true,
+			snap:       &models.ShopeeOrderSnapshot{OrderStatus: "READY_TO_SHIP", ERPStatus: "pending_erp", BillID: &billID},
+			want:       "สร้างเอกสารแล้ว",
+		},
+		{
+			name:       "unpaid skipped",
+			routeReady: true,
+			snap:       &models.ShopeeOrderSnapshot{OrderStatus: "UNPAID", ERPStatus: "blocked"},
+			want:       "ยังไม่ชำระเงิน",
+		},
+		{
+			name:       "cancelled skipped",
+			routeReady: true,
+			snap:       &models.ShopeeOrderSnapshot{OrderStatus: "CANCELLED", ERPStatus: "cancelled"},
+			want:       "ยกเลิก",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := bulkCreateDisabledReason(tt.snap, tt.routeReady, "กรุณาตั้งค่า route")
+			if tt.want == "" && got != "" {
+				t.Fatalf("got %q, want empty", got)
+			}
+			if tt.want != "" && !strings.Contains(got, tt.want) {
+				t.Fatalf("got %q, want contains %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateShippingSelectionAcceptsNumericPickupIDs(t *testing.T) {
 	params := shippingParameterFixture(t)
 	err := validateShippingSelection(params, shippingOrderRequest{

@@ -568,6 +568,8 @@ func main() {
 		api.GET("/shopee-operations/orders", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ListOrders)
 		api.GET("/shopee-operations/counts", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Counts)
 		api.POST("/shopee-operations/sync", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SyncNow)
+		api.POST("/shopee-operations/create-documents/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocumentsPreview)
+		api.POST("/shopee-operations/create-documents", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocuments)
 		api.POST("/shopee-operations/:shop_id/:order_sn/create-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CreateDocument)
 		api.POST("/shopee-operations/:shop_id/:order_sn/save-erp", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SaveERP)
 		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-parameters", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingParameters)

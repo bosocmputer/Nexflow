@@ -182,7 +182,7 @@ export default function LineNotifications() {
     <div className="space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ส่งเฉพาะออเดอร์ใหม่จาก Shopee Realtime ที่รอสร้างเอกสาร ไม่ส่ง event ซ้ำจาก sync และไม่เปิดระบบแชทลูกค้า"
+        description="ส่งเฉพาะออเดอร์ใหม่จากคำสั่งซื้อ Shopee ที่รอสร้างเอกสาร ไม่ส่ง event ซ้ำจาก sync และไม่เปิดระบบแชทลูกค้า"
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
@@ -218,14 +218,14 @@ export default function LineNotifications() {
                 {ready ? 'พร้อมส่ง LINE เมื่อมีออเดอร์ใหม่' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                ต้องมี LINE OA ที่เปิดใช้งาน, ผู้รับอย่างน้อย 1 คน และ Shopee Realtime เปิดอยู่ ระบบจะส่งเฉพาะ new order จริงที่ผ่าน dedupe แล้ว
+                ต้องมี LINE OA ที่เปิดใช้งาน, ผู้รับอย่างน้อย 1 คน และคำสั่งซื้อ Shopee เปิดอยู่ ระบบจะส่งเฉพาะ new order จริงที่ผ่าน dedupe แล้ว
               </p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
             <ReadinessChip label="LINE OA" value={`${readiness?.enabled_sender_count ?? 0}/${readiness?.sender_count ?? 0}`} ok={!!readiness?.enabled_sender_count} />
             <ReadinessChip label="ผู้รับ" value={`${enabledRecipients}`} ok={enabledRecipients > 0} />
-            <ReadinessChip label="Shopee Realtime" value={readiness?.shopee_realtime_enabled ? 'เปิด' : 'ปิด'} ok={!!readiness?.shopee_realtime_enabled} />
+            <ReadinessChip label="คำสั่งซื้อ Shopee" value={readiness?.shopee_realtime_enabled ? 'เปิด' : 'ปิด'} ok={!!readiness?.shopee_realtime_enabled} />
             <ReadinessChip label="ล่าสุด" value={data?.deliveries[0]?.status ? deliveryStatusLabel(data.deliveries[0].status) : 'ยังไม่มี'} ok={data?.deliveries[0]?.status === 'sent'} />
           </div>
         </div>
@@ -366,7 +366,7 @@ export default function LineNotifications() {
         <aside className="space-y-5">
           <div className="rounded-lg border border-border/80 bg-card/95 p-4">
             <h2 className="text-base font-semibold">ตัวอย่างข้อความ</h2>
-            <p className="mt-1 text-sm text-muted-foreground">ข้อความจริงจะใช้ข้อมูล order จาก Shopee Realtime และไม่ใส่ข้อมูลลูกค้า</p>
+            <p className="mt-1 text-sm text-muted-foreground">ข้อความจริงจะใช้ข้อมูล order จากคำสั่งซื้อ Shopee และไม่ใส่ข้อมูลลูกค้า</p>
             <pre className="mt-3 whitespace-pre-wrap rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-foreground">
               {data?.sample_text || 'กำลังโหลดตัวอย่างข้อความ'}
             </pre>
@@ -376,7 +376,7 @@ export default function LineNotifications() {
             <h2 className="text-base font-semibold">ประวัติการส่งล่าสุด</h2>
             <div className="mt-3 space-y-2">
               {(data?.deliveries ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground">ยังไม่มีการส่ง LINE จาก Shopee Realtime</p>
+                <p className="text-sm text-muted-foreground">ยังไม่มีการส่ง LINE จากคำสั่งซื้อ Shopee</p>
               ) : (
                 data!.deliveries.slice(0, 8).map((d) => (
                   <div key={d.id} className="rounded-md border border-border/70 bg-background/60 p-3">
@@ -507,7 +507,7 @@ function SenderDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'แก้ไข LINE OA sender' : 'เพิ่ม LINE OA sender'}</DialogTitle>
           <DialogDescription>
-            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์ Shopee Realtime เท่านั้น ไม่เปิดระบบแชทลูกค้า
+            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์จากคำสั่งซื้อ Shopee เท่านั้น ไม่เปิดระบบแชทลูกค้า
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

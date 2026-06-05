@@ -83,7 +83,7 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
     return { label: 'รับชำระหนี้', to: '/shopee-settlements' }
   }
   if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
-    return { label: 'Shopee Realtime', to: '/shopee-operations' }
+    return { label: 'คำสั่งซื้อ Shopee', to: '/shopee-operations' }
   }
   if (ENABLE_SALES_ORDERS && (row.channel === 'shopee' || row.channel === 'lazada' || row.channel === 'tiktok') && row.bill_type === 'sale') {
     const route = `${row.endpoint ?? ''} ${row.doc_format_code ?? ''}`.toLowerCase()

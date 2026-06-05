@@ -10,7 +10,7 @@ import LearningProgress from '@/components/LearningProgress'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { useAuthStore } from '@/store/auth'
-import { ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
 import type { DailyInsight, DashboardStats, MappingStats } from '@/types'
 import { ActionCards } from './Dashboard/ActionCards'
 
@@ -129,7 +129,9 @@ export default function Dashboard() {
             <div className="flex flex-wrap gap-2">
               {ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS && (
                 <Button asChild size="sm">
-                  <Link to="/import/shopee">เปิด Shopee</Link>
+                  <Link to={ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee'}>
+                    {ENABLE_SHOPEE_REALTIME_OPS ? 'คำสั่งซื้อ Shopee' : 'นำเข้า Shopee ย้อนหลัง'}
+                  </Link>
                 </Button>
               )}
               {ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS && (
@@ -258,7 +260,9 @@ function ProductionStatusCard({
         </div>
         <div className="grid gap-2">
           <Button asChild size="sm">
-            <Link to="/import/shopee">ตรวจรายการ Shopee</Link>
+            <Link to={ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee'}>
+              {ENABLE_SHOPEE_REALTIME_OPS ? 'คำสั่งซื้อ Shopee' : 'นำเข้า Shopee ย้อนหลัง'}
+            </Link>
           </Button>
           <Button asChild size="sm" variant="outline">
             <Link to="/sale-invoices">ดูขายสินค้าและบริการ</Link>
@@ -403,8 +407,16 @@ function OperationsConsoleBoard({
       label: 'Intake',
       value: (stats?.today_bills ?? 0),
       desc: 'เอกสารที่เข้ามาวันนี้',
-      to: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? '/import/shopee' : '/settings/email',
-      cta: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? 'ตรวจรายการ Shopee' : 'เปิด Email intake',
+      to: ENABLE_SHOPEE_REALTIME_OPS
+        ? '/shopee-operations'
+        : ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
+          ? '/import/shopee'
+          : '/settings/email',
+      cta: ENABLE_SHOPEE_REALTIME_OPS
+        ? 'คำสั่งซื้อ Shopee'
+        : ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
+          ? 'นำเข้า Shopee ย้อนหลัง'
+          : 'เปิด Email intake',
       tone: 'primary' as const,
     },
     {

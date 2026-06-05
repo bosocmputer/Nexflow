@@ -460,7 +460,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
             >
               <Link to={config.emptyActionTo}>
                 {mode === 'purchase-order' ? <Settings className="h-4 w-4" /> : <UploadCloud className="h-4 w-4" />}
-                {mode === 'sale-invoice' ? 'ตรวจรายการ Shopee' : config.emptyActionLabel}
+                {config.emptyActionLabel}
               </Link>
             </Button>
             <Button asChild size="sm" variant="outline" className="h-8 w-full justify-center sm:w-auto">

@@ -29,6 +29,7 @@ import (
 const (
 	shopeeRealtimeDefaultPageSize = 20
 	shopeeRealtimeMaxSyncPages    = 20
+	shopeeRealtimeBulkCreateLimit = 50
 )
 
 var shopeeRealtimeSyncStatuses = []string{
@@ -65,6 +66,53 @@ type shippingOrderRequest struct {
 	Pickup        map[string]interface{} `json:"pickup"`
 	Dropoff       map[string]interface{} `json:"dropoff"`
 	NonIntegrated map[string]interface{} `json:"non_integrated"`
+}
+
+type shopeeRealtimeOrderRef struct {
+	ShopID  int64  `json:"shop_id"`
+	OrderSN string `json:"order_sn"`
+}
+
+type shopeeRealtimeBulkCreatePreviewRequest struct {
+	Orders []shopeeRealtimeOrderRef `json:"orders"`
+}
+
+type shopeeRealtimeBulkCreateRequest struct {
+	Confirm        string                   `json:"confirm"`
+	RouteSignature string                   `json:"route_signature"`
+	Orders         []shopeeRealtimeOrderRef `json:"orders"`
+}
+
+type shopeeRealtimeBulkOrderResult struct {
+	ShopID        int64   `json:"shop_id"`
+	OrderSN       string  `json:"order_sn"`
+	BuyerUsername string  `json:"buyer_username,omitempty"`
+	OrderStatus   string  `json:"order_status,omitempty"`
+	ERPStatus     string  `json:"erp_status,omitempty"`
+	TotalAmount   float64 `json:"total_amount,omitempty"`
+	ItemCount     int     `json:"item_count,omitempty"`
+	BillID        string  `json:"bill_id,omitempty"`
+	BillURL       string  `json:"bill_url,omitempty"`
+	DocumentRoute string  `json:"document_route,omitempty"`
+	DocNo         string  `json:"doc_no,omitempty"`
+	Status        string  `json:"status"`
+	Reason        string  `json:"reason,omitempty"`
+	Message       string  `json:"message,omitempty"`
+}
+
+type shopeeCreateDocumentOutcome struct {
+	ShopID        int64
+	OrderSN       string
+	Status        string
+	ERPStatus     string
+	BillID        string
+	BillURL       string
+	DocumentRoute string
+	DocNo         string
+	Message       string
+	Reason        string
+	Route         gin.H
+	HTTPStatus    int
 }
 
 func (h *ShopeeRealtimeHandler) SetLineNotifier(notifier lineOrderNotifier) {
@@ -242,6 +290,96 @@ func (h *ShopeeRealtimeHandler) Counts(c *gin.Context) {
 	c.JSON(http.StatusOK, counts)
 }
 
+func (h *ShopeeRealtimeHandler) BulkCreateDocumentsPreview(c *gin.Context) {
+	if !h.enabled(c) {
+		return
+	}
+	var req shopeeRealtimeBulkCreatePreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "payload ไม่ถูกต้อง"})
+		return
+	}
+	refs, err := normalizeShopeeRealtimeOrderRefs(req.Orders)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ready, skipped, route, signature := h.previewBulkCreateDocuments(c.Request.Context(), refs)
+	c.JSON(http.StatusOK, gin.H{
+		"route":           route,
+		"route_signature": signature,
+		"ready":           ready,
+		"skipped":         skipped,
+		"ready_count":     len(ready),
+		"skipped_count":   len(skipped),
+		"max_batch":       shopeeRealtimeBulkCreateLimit,
+	})
+}
+
+func (h *ShopeeRealtimeHandler) BulkCreateDocuments(c *gin.Context) {
+	if !h.enabled(c) {
+		return
+	}
+	var req shopeeRealtimeBulkCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "payload ไม่ถูกต้อง"})
+		return
+	}
+	if req.Confirm != "CREATE_DOCUMENTS" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณายืนยันด้วย CREATE_DOCUMENTS"})
+		return
+	}
+	refs, err := normalizeShopeeRealtimeOrderRefs(req.Orders)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	_, _, routeErr := h.realtimeSaleConfig(c.Request.Context())
+	if routeErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": routeErr.Error()})
+		return
+	}
+	currentSignature := h.realtimeRouteSignature(c.Request.Context())
+	if strings.TrimSpace(req.RouteSignature) == "" || strings.TrimSpace(req.RouteSignature) != currentSignature {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":           "เส้นทาง Shopee Realtime เปลี่ยนไป กรุณาเปิด preview ใหม่ก่อนสร้างเอกสาร",
+			"code":            "route_changed",
+			"route_signature": currentSignature,
+		})
+		return
+	}
+
+	requestRaw, _ := json.Marshal(gin.H{"confirm": "CREATE_DOCUMENTS"})
+	created := []shopeeRealtimeBulkOrderResult{}
+	reused := []shopeeRealtimeBulkOrderResult{}
+	skipped := []shopeeRealtimeBulkOrderResult{}
+	failed := []shopeeRealtimeBulkOrderResult{}
+	for _, ref := range refs {
+		outcome := h.createDocumentForOrder(c.Request.Context(), ref.ShopID, ref.OrderSN, c.GetString("user_id"), c.GetString("trace_id"), requestRaw)
+		row := outcome.toBulkResult()
+		switch outcome.Status {
+		case "created":
+			created = append(created, row)
+		case "reused":
+			reused = append(reused, row)
+		case "skipped":
+			skipped = append(skipped, row)
+		default:
+			failed = append(failed, row)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"created":       created,
+		"reused":        reused,
+		"skipped":       skipped,
+		"failed":        failed,
+		"created_count": len(created),
+		"reused_count":  len(reused),
+		"skipped_count": len(skipped),
+		"failed_count":  len(failed),
+	})
+}
+
 type shopeeRealtimeSyncRequest struct {
 	ConnectionID string `json:"connection_id"`
 	Days         int    `json:"days"`
@@ -396,11 +534,21 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 	}
 
 	requestRaw, _ := json.Marshal(req)
-	action, actionState, err := h.repo.StartAction(c.Request.Context(), shopID, orderSN, "create_document", c.GetString("user_id"), requestRaw)
+	outcome := h.createDocumentForOrder(c.Request.Context(), shopID, orderSN, c.GetString("user_id"), c.GetString("trace_id"), requestRaw)
+	c.JSON(outcome.HTTPStatus, outcome.toSinglePayload())
+}
+
+func (h *ShopeeRealtimeHandler) createDocumentForOrder(ctx context.Context, shopID int64, orderSN, userID, traceID string, requestRaw json.RawMessage) shopeeCreateDocumentOutcome {
+	orderSN = strings.TrimSpace(orderSN)
+	out := shopeeCreateDocumentOutcome{ShopID: shopID, OrderSN: orderSN, HTTPStatus: http.StatusOK}
+	action, actionState, err := h.repo.StartAction(ctx, shopID, orderSN, "create_document", userID, requestRaw)
 	if err != nil {
 		h.logger.Warn("shopee_realtime: start create-document action failed", zap.Int64("shop_id", shopID), zap.String("order_sn", orderSN), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "เริ่ม action สร้างเอกสารไม่สำเร็จ"})
-		return
+		out.Status = "failed"
+		out.Reason = "เริ่ม action สร้างเอกสารไม่สำเร็จ"
+		out.Message = out.Reason
+		out.HTTPStatus = http.StatusInternalServerError
+		return out
 	}
 	if actionState == "done" {
 		billID := stringPtrValue(action.BillID)
@@ -418,60 +566,84 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 				}
 			}
 		}
-		billURL := billURLFromRoute(route, billID)
-		c.JSON(http.StatusOK, gin.H{
-			"status":         status,
-			"bill_id":        billID,
-			"bill_url":       billURL,
-			"document_route": route,
-			"doc_no":         docNo,
-			"message":        "order นี้สร้างเอกสารใน Nexflow แล้ว",
-		})
-		return
+		out.Status = "reused"
+		out.ERPStatus = status
+		out.BillID = billID
+		out.BillURL = billURLFromRoute(route, billID)
+		out.DocumentRoute = route
+		out.DocNo = docNo
+		out.Message = "order นี้สร้างเอกสารใน Nexflow แล้ว"
+		return out
 	}
 	if actionState != "started" {
-		c.JSON(http.StatusConflict, gin.H{"error": "order นี้กำลังสร้างเอกสารอยู่ กรุณารอสักครู่แล้ว refresh", "status": actionState})
-		return
+		out.Status = "skipped"
+		out.ERPStatus = actionState
+		out.Reason = "order นี้กำลังสร้างเอกสารอยู่ กรุณารอสักครู่แล้ว refresh"
+		out.Message = out.Reason
+		out.HTTPStatus = http.StatusConflict
+		return out
 	}
 	completeAction := func(status, billID, docNo string, payload any, errMsg string) {
 		resp, _ := json.Marshal(payload)
-		_ = h.repo.CompleteAction(c.Request.Context(), action.IdempotencyKey, status, billID, docNo, resp, errMsg)
+		_ = h.repo.CompleteAction(ctx, action.IdempotencyKey, status, billID, docNo, resp, errMsg)
 	}
 
-	snap, err := h.reconcileOrder(c.Request.Context(), shopID, orderSN, "erp_action", false)
+	snap, err := h.reconcileOrder(ctx, shopID, orderSN, "erp_action", false)
 	if err != nil {
 		msg := shopeeAPIErrorMessage(err, "ดึงรายละเอียดล่าสุดจาก Shopee ไม่สำเร็จ").Message
 		completeAction("failed", "", "", gin.H{"error": msg}, msg)
-		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
-		return
+		out.Status = "failed"
+		out.Reason = msg
+		out.Message = msg
+		out.HTTPStatus = http.StatusBadGateway
+		return out
 	}
 	switch strings.ToUpper(snap.OrderStatus) {
 	case "UNPAID":
 		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "unpaid"}, "order ยังไม่ชำระเงิน")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "order ยังไม่ชำระเงิน จึงยังสร้างเอกสารไม่ได้"})
-		return
+		out.Status = "skipped"
+		out.OrderSN = snap.OrderSN
+		out.ERPStatus = snap.ERPStatus
+		out.Reason = "order ยังไม่ชำระเงิน จึงยังสร้างเอกสารไม่ได้"
+		out.Message = out.Reason
+		out.HTTPStatus = http.StatusBadRequest
+		return out
 	case "CANCELLED", "IN_CANCEL":
 		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "cancelled"}, "order ถูกยกเลิกแล้ว")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "order ถูกยกเลิกแล้ว จึงไม่ควรสร้างเอกสาร"})
-		return
+		out.Status = "skipped"
+		out.OrderSN = snap.OrderSN
+		out.ERPStatus = snap.ERPStatus
+		out.Reason = "order ถูกยกเลิกแล้ว จึงไม่ควรสร้างเอกสาร"
+		out.Message = out.Reason
+		out.HTTPStatus = http.StatusBadRequest
+		return out
 	}
-	cfg, routeDef, err := h.realtimeSaleConfig(c.Request.Context())
+	cfg, routeDef, err := h.realtimeSaleConfig(ctx)
 	if err != nil {
 		msg := err.Error()
 		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "route_missing"}, msg)
-		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
-		return
+		out.Status = "skipped"
+		out.OrderSN = snap.OrderSN
+		out.ERPStatus = snap.ERPStatus
+		out.Reason = msg
+		out.Message = msg
+		out.HTTPStatus = http.StatusBadRequest
+		return out
 	}
 	if snap.BillID == nil || strings.TrimSpace(*snap.BillID) == "" {
-		result, err := h.createBillFromRealtimeSnapshot(c.Request.Context(), snap, cfg, c.GetString("user_id"), c.GetString("trace_id"))
+		result, err := h.createBillFromRealtimeSnapshot(ctx, snap, cfg, userID, traceID)
 		if err != nil {
 			msg := result.Message
 			if strings.TrimSpace(msg) == "" {
 				msg = err.Error()
 			}
 			completeAction("failed", result.BillID, "", gin.H{"status": "failed", "message": msg}, msg)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msg, "bill_id": result.BillID})
-			return
+			out.Status = "failed"
+			out.BillID = result.BillID
+			out.Reason = msg
+			out.Message = msg
+			out.HTTPStatus = http.StatusInternalServerError
+			return out
 		}
 		if strings.TrimSpace(result.BillID) != "" {
 			status := "pending_erp"
@@ -485,7 +657,7 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 					}
 				}
 			}
-			_ = h.repo.LinkSnapshotBill(c.Request.Context(), shopID, orderSN, result.BillID, "", status)
+			_ = h.repo.LinkSnapshotBill(ctx, shopID, orderSN, result.BillID, "", status)
 			snap.BillID = &result.BillID
 			snap.ERPStatus = status
 			snap.DocumentRoute = shopeeImportRoute(cfg)
@@ -494,8 +666,11 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 	if snap.BillID == nil || strings.TrimSpace(*snap.BillID) == "" {
 		msg := "สร้างหรือผูก bill จาก Shopee Realtime ไม่สำเร็จ"
 		completeAction("failed", "", "", gin.H{"status": "failed", "message": msg}, msg)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
-		return
+		out.Status = "failed"
+		out.Reason = msg
+		out.Message = msg
+		out.HTTPStatus = http.StatusInternalServerError
+		return out
 	}
 	billID := strings.TrimSpace(*snap.BillID)
 	if snap.DocumentRoute == "" {
@@ -505,22 +680,233 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 	if status == "" || status == "pending" {
 		status = "pending_erp"
 	}
-	_ = h.repo.LinkSnapshotBill(c.Request.Context(), shopID, orderSN, billID, "", status)
+	_ = h.repo.LinkSnapshotBill(ctx, shopID, orderSN, billID, "", status)
 	completeAction("done", billID, "", gin.H{"status": status, "bill_id": billID, "message": "created_document"}, "")
-	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "document_created")
-	c.JSON(http.StatusOK, gin.H{
+	h.publishShopeeRealtimeChanged(ctx, shopID, orderSN, "document_created")
+	out.Status = "created"
+	out.ERPStatus = status
+	out.BillID = billID
+	out.BillURL = billURLFromRoute(snap.DocumentRoute, billID)
+	out.DocumentRoute = snap.DocumentRoute
+	out.Message = "สร้างเอกสารใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML"
+	out.DocNo = ""
+	out.Route = shopeeRealtimeRoutePayload(cfg, routeDef)
+	return out
+}
+
+func normalizeShopeeRealtimeOrderRefs(in []shopeeRealtimeOrderRef) ([]shopeeRealtimeOrderRef, error) {
+	if len(in) == 0 {
+		return nil, fmt.Errorf("กรุณาเลือก order อย่างน้อย 1 รายการ")
+	}
+	if len(in) > shopeeRealtimeBulkCreateLimit {
+		return nil, fmt.Errorf("สร้างเอกสารแบบกลุ่มจำกัดที่ %d order ต่อรอบ", shopeeRealtimeBulkCreateLimit)
+	}
+	out := make([]shopeeRealtimeOrderRef, 0, len(in))
+	seen := map[string]bool{}
+	for _, ref := range in {
+		orderSN := strings.TrimSpace(ref.OrderSN)
+		if ref.ShopID <= 0 || orderSN == "" {
+			return nil, fmt.Errorf("orders ต้องมี shop_id และ order_sn ครบ")
+		}
+		key := fmt.Sprintf("%d:%s", ref.ShopID, orderSN)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, shopeeRealtimeOrderRef{ShopID: ref.ShopID, OrderSN: orderSN})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("กรุณาเลือก order อย่างน้อย 1 รายการ")
+	}
+	return out, nil
+}
+
+func (h *ShopeeRealtimeHandler) previewBulkCreateDocuments(ctx context.Context, refs []shopeeRealtimeOrderRef) ([]shopeeRealtimeBulkOrderResult, []shopeeRealtimeBulkOrderResult, gin.H, string) {
+	cfg, routeDef, routeErr := h.realtimeSaleConfig(ctx)
+	routeReady := routeErr == nil
+	routeMessage := ""
+	if routeErr != nil {
+		routeMessage = routeErr.Error()
+	}
+	route := shopeeRealtimeRoutePayload(cfg, routeDef)
+	if !routeReady {
+		route["ready"] = false
+		route["message"] = routeMessage
+	} else {
+		route["ready"] = true
+	}
+	signature := ""
+	if routeReady {
+		signature = shopeeRealtimeRouteSignature(cfg, routeDef)
+	}
+
+	ready := []shopeeRealtimeBulkOrderResult{}
+	skipped := []shopeeRealtimeBulkOrderResult{}
+	for _, ref := range refs {
+		snap, err := h.repo.FindSnapshot(ctx, ref.ShopID, ref.OrderSN)
+		if err != nil {
+			reason := "โหลด order ไม่สำเร็จ"
+			if err == sql.ErrNoRows {
+				reason = "ไม่พบ order ใน Shopee Realtime"
+			}
+			skipped = append(skipped, shopeeRealtimeBulkOrderResult{
+				ShopID: ref.ShopID, OrderSN: ref.OrderSN, Status: "skipped", Reason: reason, Message: reason,
+			})
+			continue
+		}
+		row := bulkRowFromSnapshot(snap)
+		if reason := bulkCreateDisabledReason(snap, routeReady, routeMessage); reason != "" {
+			row.Status = "skipped"
+			row.Reason = reason
+			row.Message = reason
+			skipped = append(skipped, row)
+			continue
+		}
+		row.Status = "ready"
+		row.Message = "พร้อมสร้างเอกสาร"
+		ready = append(ready, row)
+	}
+	return ready, skipped, route, signature
+}
+
+func bulkRowFromSnapshot(snap *models.ShopeeOrderSnapshot) shopeeRealtimeBulkOrderResult {
+	if snap == nil {
+		return shopeeRealtimeBulkOrderResult{}
+	}
+	billID := stringPtrValue(snap.BillID)
+	return shopeeRealtimeBulkOrderResult{
+		ShopID:        snap.ShopID,
+		OrderSN:       snap.OrderSN,
+		BuyerUsername: snap.BuyerUsername,
+		OrderStatus:   snap.OrderStatus,
+		ERPStatus:     snap.ERPStatus,
+		TotalAmount:   snap.TotalAmount,
+		ItemCount:     snap.ItemCount,
+		BillID:        billID,
+		BillURL:       billURLFromRoute(snap.DocumentRoute, billID),
+		DocumentRoute: snap.DocumentRoute,
+		DocNo:         snap.SMLDocNo,
+	}
+}
+
+func bulkCreateDisabledReason(snap *models.ShopeeOrderSnapshot, routeReady bool, routeMessage string) string {
+	if snap == nil {
+		return "ไม่พบ order ใน Shopee Realtime"
+	}
+	if !routeReady {
+		if strings.TrimSpace(routeMessage) != "" {
+			return routeMessage
+		}
+		return "ยังไม่ได้ตั้งค่าเส้นทาง Shopee Realtime"
+	}
+	if snap.BillID != nil && strings.TrimSpace(*snap.BillID) != "" {
+		return "สร้างเอกสารแล้ว"
+	}
+	switch strings.ToUpper(strings.TrimSpace(snap.OrderStatus)) {
+	case "UNPAID":
+		return "order ยังไม่ชำระเงิน"
+	case "CANCELLED", "IN_CANCEL":
+		return "order ถูกยกเลิกแล้ว"
+	}
+	switch strings.TrimSpace(snap.ERPStatus) {
+	case "", "pending", "failed":
+		return ""
+	default:
+		return "สถานะ ERP ไม่พร้อมสร้างเอกสาร"
+	}
+}
+
+func (h *ShopeeRealtimeHandler) realtimeRouteSignature(ctx context.Context) string {
+	cfg, def, err := h.realtimeSaleConfig(ctx)
+	if err != nil {
+		return ""
+	}
+	return shopeeRealtimeRouteSignature(cfg, def)
+}
+
+func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDefault) string {
+	parts := []string{
+		"shopee_realtime",
+		"sale",
+		shopeeImportRoute(cfg),
+		strings.TrimSpace(cfg.Endpoint),
+		strings.TrimSpace(cfg.DocFormat),
+		strings.TrimSpace(cfg.CustCode),
+		strings.TrimSpace(cfg.SaleCode),
+		strings.TrimSpace(cfg.BranchCode),
+		strings.TrimSpace(cfg.WHCode),
+		strings.TrimSpace(cfg.ShelfCode),
+		strings.TrimSpace(cfg.UnitCode),
+		strconv.Itoa(cfg.VATType),
+		fmt.Sprintf("%.4f", cfg.VATRate),
+		strings.TrimSpace(cfg.DocTime),
+	}
+	if def != nil {
+		parts = append(parts,
+			strings.TrimSpace(def.Endpoint),
+			strings.TrimSpace(def.DocFormatCode),
+			strings.TrimSpace(def.PartyCode),
+		)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])
+}
+
+func shopeeRealtimeRoutePayload(cfg ShopeeConfigRequest, def *models.ChannelDefault) gin.H {
+	out := gin.H{
+		"channel":         "shopee_realtime",
+		"bill_type":       "sale",
+		"document_route":  shopeeImportRoute(cfg),
+		"endpoint":        strings.TrimSpace(cfg.Endpoint),
+		"doc_format_code": strings.TrimSpace(cfg.DocFormat),
+		"destination":     shopeeImportDocumentName(cfg),
+	}
+	if def != nil {
+		out["endpoint"] = strings.TrimSpace(def.Endpoint)
+		out["doc_format_code"] = strings.TrimSpace(def.DocFormatCode)
+	}
+	return out
+}
+
+func (o shopeeCreateDocumentOutcome) toSinglePayload() gin.H {
+	status := o.ERPStatus
+	if strings.TrimSpace(status) == "" {
+		status = o.Status
+	}
+	payload := gin.H{
 		"status":         status,
-		"bill_id":        billID,
-		"bill_url":       billURLFromRoute(snap.DocumentRoute, billID),
-		"document_route": snap.DocumentRoute,
-		"route": gin.H{
-			"channel":         "shopee_realtime",
-			"endpoint":        routeDef.Endpoint,
-			"doc_format_code": routeDef.DocFormatCode,
-			"destination":     shopeeImportDocumentName(cfg),
-		},
-		"message": "สร้างเอกสารใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML",
-	})
+		"bill_id":        o.BillID,
+		"bill_url":       o.BillURL,
+		"document_route": o.DocumentRoute,
+		"doc_no":         o.DocNo,
+		"message":        o.Message,
+	}
+	if strings.TrimSpace(o.Reason) != "" && o.HTTPStatus >= 400 {
+		payload["error"] = o.Reason
+	}
+	if o.Route != nil {
+		payload["route"] = o.Route
+	}
+	return payload
+}
+
+func (o shopeeCreateDocumentOutcome) toBulkResult() shopeeRealtimeBulkOrderResult {
+	reason := o.Reason
+	if reason == "" && o.HTTPStatus >= 400 {
+		reason = o.Message
+	}
+	return shopeeRealtimeBulkOrderResult{
+		ShopID:        o.ShopID,
+		OrderSN:       o.OrderSN,
+		ERPStatus:     o.ERPStatus,
+		BillID:        o.BillID,
+		BillURL:       o.BillURL,
+		DocumentRoute: o.DocumentRoute,
+		DocNo:         o.DocNo,
+		Status:        o.Status,
+		Reason:        reason,
+		Message:       o.Message,
+	}
 }
 
 func (h *ShopeeRealtimeHandler) createBillFromRealtimeSnapshot(ctx context.Context, snap *models.ShopeeOrderSnapshot, cfg ShopeeConfigRequest, userID, traceID string) (ConfirmResult, error) {

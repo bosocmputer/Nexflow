@@ -150,7 +150,7 @@ export function NotificationBell() {
           <div>
             <div className="text-sm font-semibold text-foreground">การแจ้งเตือน</div>
             <div className="text-xs text-muted-foreground">
-              Shopee Realtime และงานที่ต้องตรวจ
+              คำสั่งซื้อ Shopee และงานที่ต้องตรวจ
             </div>
           </div>
           <Button

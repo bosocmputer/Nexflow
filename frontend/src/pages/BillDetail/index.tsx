@@ -238,7 +238,7 @@ export default function BillDetail() {
         { confirm: 'RECREATE_DOCUMENT_WITH_CURRENT_ROUTE' },
       )
       toast.success('พร้อมสร้างเอกสารใหม่แล้ว', {
-        description: res.data.message || 'กลับไป Shopee Realtime แล้วกดสร้างเอกสารอีกครั้ง',
+        description: res.data.message || 'กลับไปคำสั่งซื้อ Shopee แล้วกดสร้างเอกสารอีกครั้ง',
       })
       notifyWorkQueueChanged()
       navigate(res.data.redirect_url || '/shopee-operations')
@@ -301,7 +301,7 @@ export default function BillDetail() {
           <div className="min-w-0 space-y-1">
             <div className="font-medium text-foreground">ต้องการเปลี่ยนเส้นทางเอกสาร?</div>
             <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-              เอกสารนี้ยังไม่ส่งเข้า SML สามารถปลดออกจาก Shopee Realtime แล้วกลับไปสร้างใหม่ตามเส้นทางล่าสุดในหน้าเส้นทางเอกสาร SML ได้
+              เอกสารนี้ยังไม่ส่งเข้า SML สามารถปลดออกจากคำสั่งซื้อ Shopee แล้วกลับไปสร้างใหม่ตามเส้นทางล่าสุดในหน้าเส้นทางเอกสาร SML ได้
             </p>
           </div>
           <Button
@@ -408,9 +408,9 @@ export default function BillDetail() {
         onOpenChange={setRecreateRouteConfirmOpen}
         title="สร้างเอกสารใหม่ตามเส้นทางปัจจุบัน?"
         description={[
-          'ระบบจะเก็บเอกสารเดิมไว้ใน Nexflow และปลด order นี้กลับไปที่ Shopee Realtime',
+          'ระบบจะเก็บเอกสารเดิมไว้ใน Nexflow และปลด order นี้กลับไปที่คำสั่งซื้อ Shopee',
           'ยังไม่ส่งเข้า SML และไม่ลบเอกสารใน SML เพราะเอกสารนี้ยังไม่มีเลข SML',
-          'หลังยืนยัน ให้กด “สร้างเอกสาร” ใน Shopee Realtime อีกครั้ง ระบบจะใช้เส้นทางล่าสุดจากหน้าเส้นทางเอกสาร SML',
+          'หลังยืนยัน ให้กด “สร้างเอกสาร” ในคำสั่งซื้อ Shopee อีกครั้ง ระบบจะใช้เส้นทางล่าสุดจากหน้าเส้นทางเอกสาร SML',
         ].join('\n')}
         confirmLabel="ปลดเอกสารเดิม"
         variant="destructive"

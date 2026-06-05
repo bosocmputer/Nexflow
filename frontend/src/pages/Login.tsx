@@ -59,7 +59,7 @@ export default function Login() {
               เข้าสู่งานเอกสารขายและ SML ของ Nexflow
             </h1>
             <p className="mt-4 max-w-md text-sm leading-6 text-sidebar-foreground/68">
-              สำหรับทีมบัญชีและทีมปฏิบัติการที่ตรวจรายการ Shopee, จัดการเอกสารขาย และติดตามผลส่งเข้า SML ทุกวัน
+              สำหรับทีมบัญชีและทีมปฏิบัติการที่ติดตามคำสั่งซื้อ Shopee, จัดการเอกสารขาย และติดตามผลส่งเข้า SML ทุกวัน
             </p>
           </div>
 

@@ -200,7 +200,7 @@ export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   line: 'LINE OA',
   email: 'Email',
   shopee: 'Shopee',
-  shopee_realtime: 'Shopee Realtime',
+  shopee_realtime: 'คำสั่งซื้อ Shopee',
   shopee_email: 'Shopee Order',
   shopee_shipped: 'Email บิลซื้อ Shopee',
   lazada: 'Lazada Excel',

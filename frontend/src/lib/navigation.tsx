@@ -75,8 +75,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ช่องทางรับข้อมูล',
     items: [
-      { to: '/import/shopee', label: 'ตรวจรายการ Shopee', icon: Upload, hint: 'ตรวจรายการก่อนสร้างเอกสาร', enabled: ENABLE_SHOPEE_EXCEL },
-      { to: '/shopee-operations', label: 'Shopee Realtime', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'ติดตาม order สดและสร้างเอกสาร', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { to: '/import/shopee', label: 'นำเข้า Shopee ย้อนหลัง', icon: Upload, hint: 'ดึงย้อนหลัง, ซ่อมรายการตกหล่น, หรือใช้ Excel fallback', enabled: ENABLE_SHOPEE_EXCEL },
       { to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
       { to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
       { to: '/settings/email', label: 'กล่องอีเมลรับบิล', icon: Mail, hint: 'ตั้งค่ากล่องเมลสำหรับใบสั่งซื้อ' },
@@ -119,7 +119,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'Document Routing' },
       { to: '/settings/instance', label: 'การเชื่อมต่อระบบ', icon: Settings2, hint: 'SML / OpenRouter / ร้านนี้' },
-      { to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ Shopee Realtime', adminOnly: true },
+      { to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จากคำสั่งซื้อ Shopee', adminOnly: true },
       { to: '/settings/users', label: 'ผู้ใช้ระบบ', icon: UsersRound, hint: 'Roles and access', adminOnly: true },
       { to: '/logs', label: 'ประวัติการทำงาน', icon: ScrollText, hint: 'ใครทำอะไรและผลลัพธ์' },
       { to: '/settings/ai-usage', label: 'การใช้งาน AI', icon: Bot, hint: 'ค่าใช้จ่าย / รุ่น AI' },

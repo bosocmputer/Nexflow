@@ -23,6 +23,7 @@ import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -192,6 +193,58 @@ type TimelineResponse = {
   status_timeline?: TimelineStep[]
   erp_milestones?: ERPMilestone[]
   events: TimelineEvent[]
+}
+
+type BulkCreateOrderRef = {
+  shop_id: number
+  order_sn: string
+}
+
+type BulkCreateRow = {
+  shop_id: number
+  order_sn: string
+  buyer_username?: string
+  order_status?: string
+  erp_status?: string
+  total_amount?: number
+  item_count?: number
+  bill_id?: string
+  bill_url?: string
+  document_route?: string
+  doc_no?: string
+  status: string
+  reason?: string
+  message?: string
+}
+
+type BulkCreatePreview = {
+  route?: {
+    ready?: boolean
+    message?: string
+    channel?: string
+    bill_type?: string
+    document_route?: string
+    endpoint?: string
+    doc_format_code?: string
+    destination?: string
+  }
+  route_signature: string
+  ready: BulkCreateRow[]
+  skipped: BulkCreateRow[]
+  ready_count: number
+  skipped_count: number
+  max_batch: number
+}
+
+type BulkCreateResult = {
+  created: BulkCreateRow[]
+  reused: BulkCreateRow[]
+  skipped: BulkCreateRow[]
+  failed: BulkCreateRow[]
+  created_count: number
+  reused_count: number
+  skipped_count: number
+  failed_count: number
 }
 
 type ListResponse = {
@@ -373,6 +426,12 @@ export default function ShopeeOperations() {
   const [timelineSteps, setTimelineSteps] = useState<TimelineStep[]>([])
   const [erpMilestones, setERPMilestones] = useState<ERPMilestone[]>([])
   const [pendingListRefresh, setPendingListRefresh] = useState(false)
+  const [selectedOrderKeys, setSelectedOrderKeys] = useState<Set<string>>(new Set())
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
+  const [bulkPreviewLoading, setBulkPreviewLoading] = useState(false)
+  const [bulkCreating, setBulkCreating] = useState(false)
+  const [bulkPreview, setBulkPreview] = useState<BulkCreatePreview | null>(null)
+  const [bulkResult, setBulkResult] = useState<BulkCreateResult | null>(null)
   const subscribeEvents = useEventsStore((s) => s.subscribe)
   const page = readPage(params)
   const perPage = readPerPage(params)
@@ -385,7 +444,7 @@ export default function ShopeeOperations() {
   const erpStatus = params.get('erp_status') ?? ALL
   const search = params.get('search') ?? ''
   const focusedOrderSN = params.get('order') ?? ''
-  const effectiveSearch = (focusedOrderSN || search).trim()
+  const effectiveSearch = search.trim()
 
   const queryString = useMemo(() => {
     const q = new URLSearchParams()
@@ -423,6 +482,17 @@ export default function ShopeeOperations() {
     () => pushEvents.filter((event) => diagnosticsEventVisible(event, diagnosticsFilter)),
     [diagnosticsFilter, pushEvents],
   )
+  const visibleBulkEligibleOrders = useMemo(
+    () => orders.filter((order) => !bulkCreateDisabledReason(order, readiness)),
+    [orders, readiness],
+  )
+  const selectedOrders = useMemo(
+    () => orders.filter((order) => selectedOrderKeys.has(orderKey(order))),
+    [orders, selectedOrderKeys],
+  )
+  const allVisibleEligibleSelected = visibleBulkEligibleOrders.length > 0
+    && visibleBulkEligibleOrders.every((order) => selectedOrderKeys.has(orderKey(order)))
+  const selectedCreateCount = selectedOrders.length
 
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params)
@@ -491,7 +561,7 @@ export default function ShopeeOperations() {
       setTotal(Number(listRes.data.total ?? 0))
       setCounts(countRes.data ?? emptyCounts)
     } catch (e) {
-      toast.error('โหลด Shopee Realtime ไม่สำเร็จ: ' + apiError(e))
+      toast.error('โหลดคำสั่งซื้อ Shopee ไม่สำเร็จ: ' + apiError(e))
       setOrders([])
       setTotal(0)
       setCounts(emptyCounts)
@@ -501,7 +571,7 @@ export default function ShopeeOperations() {
   }
 
   useEffect(() => {
-    loadReadiness().catch((e) => toast.error('โหลดความพร้อม Shopee Realtime ไม่สำเร็จ: ' + apiError(e)))
+    loadReadiness().catch((e) => toast.error('โหลดความพร้อมคำสั่งซื้อ Shopee ไม่สำเร็จ: ' + apiError(e)))
   }, [])
 
   useEffect(() => {
@@ -514,10 +584,15 @@ export default function ShopeeOperations() {
   }, [queryString, shopID])
 
   useEffect(() => {
+    setSelectedOrderKeys(new Set())
+  }, [queryString, shopID])
+
+  useEffect(() => {
     const orderSN = focusedOrderSN.trim()
     if (!orderSN || timelineOpen) return
     const matched = orders.find((order) => order.order_sn === orderSN)
     if (matched) void openTimeline(matched, false)
+    else void openTimelineFromDeepLink(orderSN)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedOrderSN, orders, timelineOpen])
 
@@ -547,7 +622,7 @@ export default function ShopeeOperations() {
       toast.success(`ซิงก์สำเร็จ ${Number(res.data.synced_orders ?? 0).toLocaleString()} order`)
       await Promise.all([loadReadiness(), loadOrders()])
     } catch (e) {
-      toast.error('ซิงก์ Shopee Realtime ไม่สำเร็จ: ' + apiError(e))
+      toast.error('ซิงก์คำสั่งซื้อ Shopee ไม่สำเร็จ: ' + apiError(e))
     } finally {
       setSyncing(false)
     }
@@ -572,6 +647,89 @@ export default function ShopeeOperations() {
       toast.error('สร้างเอกสารไม่สำเร็จ: ' + apiError(e))
     } finally {
       setSavingERP(false)
+    }
+  }
+
+  const toggleOrderSelection = (order: OrderSnapshot, checked: boolean) => {
+    const disabledReason = bulkCreateDisabledReason(order, readiness)
+    if (disabledReason) {
+      toast.error(disabledReason)
+      return
+    }
+    setSelectedOrderKeys((current) => {
+      const next = new Set(current)
+      const key = orderKey(order)
+      if (checked) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
+
+  const toggleAllVisibleEligible = (checked: boolean) => {
+    setSelectedOrderKeys((current) => {
+      const next = new Set(current)
+      for (const order of visibleBulkEligibleOrders) {
+        const key = orderKey(order)
+        if (checked) next.add(key)
+        else next.delete(key)
+      }
+      return next
+    })
+  }
+
+  const selectedOrderRefs = (): BulkCreateOrderRef[] => selectedOrders.map((order) => ({
+    shop_id: order.shop_id,
+    order_sn: order.order_sn,
+  }))
+
+  const openBulkCreatePreview = async () => {
+    const refs = selectedOrderRefs()
+    if (refs.length === 0) {
+      toast.error('กรุณาเลือก order ที่ต้องการสร้างเอกสาร')
+      return
+    }
+    setBulkDialogOpen(true)
+    setBulkPreview(null)
+    setBulkResult(null)
+    setBulkPreviewLoading(true)
+    try {
+      const res = await client.post<BulkCreatePreview>('/api/shopee-operations/create-documents/preview', { orders: refs })
+      setBulkPreview(res.data)
+    } catch (e) {
+      toast.error('เปิด preview สร้างเอกสารไม่สำเร็จ: ' + apiError(e))
+      setBulkDialogOpen(false)
+    } finally {
+      setBulkPreviewLoading(false)
+    }
+  }
+
+  const submitBulkCreate = async () => {
+    if (!bulkPreview || bulkPreview.ready_count === 0) return
+    setBulkCreating(true)
+    try {
+      const res = await client.post<BulkCreateResult>('/api/shopee-operations/create-documents', {
+        confirm: 'CREATE_DOCUMENTS',
+        route_signature: bulkPreview.route_signature,
+        orders: selectedOrderRefs(),
+      })
+      setBulkResult(res.data)
+      setSelectedOrderKeys(new Set())
+      await loadOrders()
+      const created = Number(res.data.created_count ?? 0)
+      const reused = Number(res.data.reused_count ?? 0)
+      const failed = Number(res.data.failed_count ?? 0)
+      if (failed > 0) toast.warning(`สร้างเอกสารสำเร็จ ${created + reused} รายการ และมีผิดพลาด ${failed} รายการ`)
+      else toast.success(`สร้างเอกสารสำเร็จ ${created + reused} รายการ`)
+    } catch (e) {
+      const code = axios.isAxiosError(e) ? e.response?.data?.code : ''
+      if (code === 'route_changed') {
+        toast.error('เส้นทางคำสั่งซื้อ Shopee เปลี่ยนไป กรุณาเปิด preview ใหม่')
+        setBulkPreview(null)
+      } else {
+        toast.error('สร้างเอกสารแบบกลุ่มไม่สำเร็จ: ' + apiError(e))
+      }
+    } finally {
+      setBulkCreating(false)
     }
   }
 
@@ -671,6 +829,22 @@ export default function ShopeeOperations() {
       toast.error('โหลด timeline ไม่สำเร็จ: ' + message)
     } finally {
       setTimelineLoading(false)
+    }
+  }
+
+  const openTimelineFromDeepLink = async (orderSN: string) => {
+    const trimmed = orderSN.trim()
+    if (!trimmed) return
+    try {
+      const q = new URLSearchParams()
+      q.set('page', '1')
+      q.set('per_page', '1')
+      q.set('search', trimmed)
+      const res = await client.get<ListResponse>(`/api/shopee-operations/orders?${q.toString()}`)
+      const order = (res.data.data ?? []).find((row) => row.order_sn === trimmed) ?? res.data.data?.[0]
+      if (order) await openTimeline(order, false)
+    } catch (e) {
+      toast.error('เปิด Timeline จากลิงก์ไม่สำเร็จ: ' + apiError(e))
     }
   }
 
@@ -829,7 +1003,7 @@ export default function ShopeeOperations() {
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <h1 className="text-lg font-semibold tracking-normal">คำสั่งซื้อ Shopee</h1>
-                <Badge className="h-6 bg-primary px-2 text-[11px] text-primary-foreground">Realtime</Badge>
+                <Badge className="h-6 bg-primary px-2 text-[11px] text-primary-foreground">Push/Sync</Badge>
                 <span
                   className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground"
                   title="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
@@ -837,6 +1011,12 @@ export default function ShopeeOperations() {
                   {readiness?.sml.doc_format_code || 'route'} · {readiness?.sml.route || 'ยังไม่ตั้งค่า'}
                 </span>
               </div>
+              <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
+                งานประจำวัน: ติดตาม order สดจาก Shopee, สร้างเอกสารใน Nexflow แล้วส่ง SML จากคิวเอกสารเดิม{' '}
+                <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
+                  <Link to="/import/shopee">ต้องดึงย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee ย้อนหลัง</Link>
+                </Button>
+              </p>
               <OperationsHealthLine readiness={readiness} />
             </div>
             <div className="flex flex-col gap-2 sm:flex-row xl:shrink-0">
@@ -977,12 +1157,41 @@ export default function ShopeeOperations() {
           </div>
         )}
 
+        {selectedCreateCount > 0 && (
+          <div className="sticky top-2 z-20 flex flex-col gap-2 rounded-lg border border-primary/30 bg-background/95 px-3 py-2 text-sm shadow-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="font-medium">เลือกแล้ว {selectedCreateCount.toLocaleString()} order</div>
+              <div className="text-xs text-muted-foreground">สร้างเอกสารใน Nexflow เท่านั้น ยังไม่ส่งเข้า SML</div>
+            </div>
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <Button variant="outline" size="sm" className="h-8 bg-background" onClick={() => setSelectedOrderKeys(new Set())}>
+                ล้างที่เลือก
+              </Button>
+              <Button size="sm" className="h-8 gap-2" onClick={() => void openBulkCreatePreview()}>
+                <FilePlus2 className="h-3.5 w-3.5" />
+                สร้างเอกสาร {selectedCreateCount.toLocaleString()} รายการ
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1040px] text-sm">
               <thead className="bg-muted/50 text-xs text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2 text-left">Order</th>
+                  <th className="px-3 py-2 text-left">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={allVisibleEligibleSelected ? true : selectedCreateCount > 0 ? 'indeterminate' : false}
+                        disabled={visibleBulkEligibleOrders.length === 0}
+                        onClick={(event) => event.stopPropagation()}
+                        onCheckedChange={(checked) => toggleAllVisibleEligible(checked === true)}
+                        aria-label="เลือก order ที่สร้างเอกสารได้ทั้งหมดในหน้านี้"
+                      />
+                      <span>Order</span>
+                    </div>
+                  </th>
                   <th className="px-3 py-2 text-left">ลูกค้า / ร้าน</th>
                   <th className="px-3 py-2 text-right">ยอดเงิน</th>
                   <th className="px-3 py-2 text-left">Shopee</th>
@@ -1003,21 +1212,46 @@ export default function ShopeeOperations() {
                       <div className="mx-auto max-w-lg text-center">
                         <RadioTower className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
                         <div className="font-medium">ยังไม่มี order ในคิวนี้</div>
-                        <div className="mt-1 text-sm text-muted-foreground">กดซิงก์ล่าสุดเพื่อดึง snapshot จาก Shopee หรือปรับ filter</div>
+                        <div className="mt-1 text-sm text-muted-foreground">กดซิงก์เพื่อดึง snapshot จาก Shopee หรือปรับ filter</div>
+                        <Button asChild variant="link" size="sm" className="mt-1 h-auto px-0 text-xs">
+                          <Link to="/import/shopee">ถ้าเป็นข้อมูลย้อนหลังหรือรายการตกหล่น ให้ไปนำเข้า Shopee ย้อนหลัง</Link>
+                        </Button>
                       </div>
                     </td>
                   </tr>
                 )}
-                {!loading && orders.map((order) => (
-                  <tr
-                    key={order.id}
-                    className={cn('cursor-pointer border-t border-border hover:bg-muted/30', focusedOrderSN === order.order_sn && 'bg-primary/5')}
-                    onClick={() => void openTimeline(order)}
-                  >
+                {!loading && orders.map((order) => {
+                  const selectableReason = bulkCreateDisabledReason(order, readiness)
+                  const checked = selectedOrderKeys.has(orderKey(order))
+                  return (
+                    <tr
+                      key={order.id}
+                      className={cn('border-t border-border hover:bg-muted/30', focusedOrderSN === order.order_sn && 'bg-primary/5', checked && 'bg-primary/5')}
+                    >
                     <td className="px-3 py-2">
-                      <div className="font-mono text-xs font-medium text-foreground">{order.order_sn}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {order.last_order_update_at ? dayjs(order.last_order_update_at).format('DD/MM/YY HH:mm') : 'ยังไม่มี update_time'}
+                      <div className="flex items-start gap-3">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className="mt-0.5 inline-flex"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <Checkbox
+                                checked={checked}
+                                disabled={Boolean(selectableReason)}
+                                onCheckedChange={(value) => toggleOrderSelection(order, value === true)}
+                                aria-label={`เลือก order ${order.order_sn}`}
+                              />
+                            </span>
+                          </TooltipTrigger>
+                          {selectableReason && <TooltipContent>{selectableReason}</TooltipContent>}
+                        </Tooltip>
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs font-medium text-foreground">{order.order_sn}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {order.last_order_update_at ? dayjs(order.last_order_update_at).format('DD/MM/YY HH:mm') : 'ยังไม่มี update_time'}
+                          </div>
+                        </div>
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -1078,8 +1312,9 @@ export default function ShopeeOperations() {
                         </Button>
                       </div>
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -1128,6 +1363,79 @@ export default function ShopeeOperations() {
           </div>
         </div>
 
+        <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+          <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>สร้างเอกสารหลายรายการ</DialogTitle>
+              <DialogDescription>
+                สร้างเอกสารใน Nexflow เท่านั้น ยังไม่ส่งเข้า SML และไม่จัดส่ง Shopee
+              </DialogDescription>
+            </DialogHeader>
+
+            {bulkPreviewLoading ? (
+              <div className="rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+                กำลังตรวจรายการที่เลือก...
+              </div>
+            ) : bulkResult ? (
+              <div className="space-y-3">
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <BulkMetric label="สร้างใหม่" value={bulkResult.created_count} tone="success" />
+                  <BulkMetric label="มีอยู่แล้ว" value={bulkResult.reused_count} tone="info" />
+                  <BulkMetric label="ถูกข้าม" value={bulkResult.skipped_count} tone="warning" />
+                  <BulkMetric label="ผิดพลาด" value={bulkResult.failed_count} tone="danger" />
+                </div>
+                <BulkResultSection title="เอกสารที่สร้างใหม่" rows={bulkResult.created} />
+                <BulkResultSection title="เอกสารที่มีอยู่แล้ว" rows={bulkResult.reused} />
+                <BulkResultSection title="รายการที่ถูกข้าม" rows={bulkResult.skipped} />
+                <BulkResultSection title="รายการที่ผิดพลาด" rows={bulkResult.failed} danger />
+              </div>
+            ) : bulkPreview ? (
+              <div className="space-y-3">
+                <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+                  <div className="font-medium">ปลายทางเอกสาร</div>
+                  <div className="mt-1 text-muted-foreground">
+                    {bulkPreview.route?.destination || 'ยังไม่ตั้งค่า'} · {bulkPreview.route?.doc_format_code || '-'} · {bulkPreview.route?.document_route || '-'}
+                  </div>
+                  {bulkPreview.route?.message && (
+                    <div className="mt-2 text-warning">{bulkPreview.route.message}</div>
+                  )}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <BulkMetric label="พร้อมสร้าง" value={bulkPreview.ready_count} tone="success" />
+                  <BulkMetric label="ถูกข้าม" value={bulkPreview.skipped_count} tone={bulkPreview.skipped_count > 0 ? 'warning' : 'info'} />
+                </div>
+                <Alert>
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>ยังไม่ส่งเข้า SML</AlertTitle>
+                  <AlertDescription>
+                    หลังสร้างเอกสารแล้ว ให้ผู้ใช้ไปตรวจและส่งเข้า SML จาก `/sales-orders` หรือ `/sale-invoices` ตาม route ที่ตั้งไว้
+                  </AlertDescription>
+                </Alert>
+                <BulkPreviewSection title="พร้อมสร้างเอกสาร" rows={bulkPreview.ready} />
+                <BulkPreviewSection title="รายการที่จะถูกข้าม" rows={bulkPreview.skipped} muted />
+              </div>
+            ) : (
+              <div className="rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                ยังไม่มี preview
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setBulkDialogOpen(false)}>ปิด</Button>
+              {!bulkResult && (
+                <Button
+                  onClick={() => void submitBulkCreate()}
+                  disabled={bulkPreviewLoading || bulkCreating || !bulkPreview || bulkPreview.ready_count === 0}
+                >
+                  {bulkCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  สร้างเอกสาร {bulkPreview?.ready_count.toLocaleString() ?? 0} รายการ
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={erpDialogOpen} onOpenChange={setERPDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -1155,7 +1463,7 @@ export default function ShopeeOperations() {
             </Alert>
             <DialogFooter>
               <Button variant="outline" onClick={() => setERPDialogOpen(false)}>ยกเลิก</Button>
-              <Button onClick={createDocument} disabled={savingERP || !readiness?.sml.can_create_document} title={!readiness?.sml.can_create_document ? 'ยังไม่ได้ตั้งค่า route Shopee Realtime' : undefined}>
+              <Button onClick={createDocument} disabled={savingERP || !readiness?.sml.can_create_document} title={!readiness?.sml.can_create_document ? 'ยังไม่ได้ตั้งค่า route คำสั่งซื้อ Shopee' : undefined}>
                 {savingERP && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 สร้างเอกสาร
               </Button>
@@ -1186,12 +1494,83 @@ export default function ShopeeOperations() {
   )
 }
 
+function BulkMetric({ label, value, tone }: { label: string; value: number; tone?: 'success' | 'info' | 'warning' | 'danger' }) {
+  return (
+    <div className={cn(
+      'rounded-md border bg-background p-3',
+      tone === 'success' && 'border-success/30 bg-success/10',
+      tone === 'info' && 'border-info/30 bg-info/10',
+      tone === 'warning' && 'border-warning/30 bg-warning/10',
+      tone === 'danger' && 'border-destructive/30 bg-destructive/10',
+    )}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums">{Number(value ?? 0).toLocaleString()}</div>
+    </div>
+  )
+}
+
+function BulkPreviewSection({ title, rows, muted }: { title: string; rows: BulkCreateRow[]; muted?: boolean }) {
+  if (!rows.length) return null
+  return (
+    <div className="rounded-md border border-border bg-background">
+      <div className="border-b border-border px-3 py-2 text-sm font-medium">{title}</div>
+      <div className="max-h-56 overflow-y-auto">
+        {rows.map((row) => (
+          <div key={`${row.shop_id}:${row.order_sn}`} className="grid gap-2 border-b border-border px-3 py-2 text-sm last:border-0 sm:grid-cols-[minmax(0,1fr)_130px]">
+            <div className="min-w-0">
+              <div className="truncate font-mono text-xs font-medium">{row.order_sn}</div>
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                {row.buyer_username || '-'} · {money(row.total_amount)} · {row.item_count ?? 0} รายการ
+              </div>
+              {row.reason && <div className={cn('mt-1 text-xs', muted ? 'text-warning' : 'text-muted-foreground')}>{row.reason}</div>}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+              {row.order_status && <OrderStatusBadge status={row.order_status} />}
+              {row.erp_status && <ERPStatusBadge status={row.erp_status} />}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function BulkResultSection({ title, rows, danger }: { title: string; rows: BulkCreateRow[]; danger?: boolean }) {
+  if (!rows.length) return null
+  return (
+    <div className="rounded-md border border-border bg-background">
+      <div className="border-b border-border px-3 py-2 text-sm font-medium">{title}</div>
+      <div className="max-h-56 overflow-y-auto">
+        {rows.map((row) => (
+          <div key={`${row.shop_id}:${row.order_sn}`} className="grid gap-2 border-b border-border px-3 py-2 text-sm last:border-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0">
+              <div className="truncate font-mono text-xs font-medium">{row.order_sn}</div>
+              {(row.message || row.reason) && (
+                <div className={cn('mt-0.5 text-xs', danger ? 'text-destructive' : 'text-muted-foreground')}>
+                  {row.reason || row.message}
+                </div>
+              )}
+            </div>
+            {row.bill_url ? (
+              <Button asChild variant="outline" size="sm" className="h-8">
+                <Link to={row.bill_url}>เปิดเอกสาร</Link>
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">{row.status}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function OperationsHealthLine({ readiness }: { readiness: Readiness | null }) {
   if (!readiness) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        กำลังตรวจสถานะ Shopee Realtime...
+        กำลังตรวจสถานะคำสั่งซื้อ Shopee...
       </div>
     )
   }
@@ -1202,7 +1581,7 @@ function OperationsHealthLine({ readiness }: { readiness: Readiness | null }) {
   const issues = [
     !apiOk ? readiness.api.blocking_reason || 'Shopee API ยังไม่พร้อมใช้งาน' : '',
     !pushOk ? readiness.push.message || `Push callback ยังไม่พร้อม, ตรวจ Deployment Service Area ${readiness.push.deployment_service_area_hint || 'Singapore'}` : '',
-    !documentOk ? readiness.sml.message || 'ยังไม่ได้ตั้งค่าเส้นทาง Shopee Realtime สำหรับสร้างเอกสาร' : '',
+    !documentOk ? readiness.sml.message || 'ยังไม่ได้ตั้งค่าเส้นทางคำสั่งซื้อ Shopee สำหรับสร้างเอกสาร' : '',
     !tokenOk ? 'Shopee token ใช้งานไม่ได้หรือหมดอายุ' : '',
   ].filter(Boolean)
   const pushLabel = readiness.push.last_event_name
@@ -1429,10 +1808,23 @@ function documentPath(order: OrderSnapshot) {
   }
 }
 
+function orderKey(order: OrderSnapshot) {
+  return `${order.shop_id}:${order.order_sn}`
+}
+
 function erpDisabledReason(order: OrderSnapshot) {
   if (order.order_status === 'UNPAID') return 'order ยังไม่ชำระเงิน'
   if (order.order_status === 'CANCELLED' || order.order_status === 'IN_CANCEL') return 'order ถูกยกเลิกแล้ว'
   if (order.bill_id || order.erp_status === 'pending_erp' || order.erp_status === 'sent') return 'สร้างเอกสารแล้ว เปิดเอกสารเพื่อส่ง SML หรือแก้ไข'
+  return ''
+}
+
+function bulkCreateDisabledReason(order: OrderSnapshot, readiness: Readiness | null) {
+  if (!readiness?.sml.can_create_document) return readiness?.sml.message || 'ยังไม่ได้ตั้งค่า route คำสั่งซื้อ Shopee'
+  if (order.bill_id) return 'สร้างเอกสารแล้ว'
+  if (order.order_status === 'UNPAID') return 'order ยังไม่ชำระเงิน'
+  if (order.order_status === 'CANCELLED' || order.order_status === 'IN_CANCEL') return 'order ถูกยกเลิกแล้ว'
+  if (!['', 'pending', 'failed'].includes(order.erp_status || '')) return 'สถานะ ERP ไม่พร้อมสร้างเอกสาร'
   return ''
 }
 

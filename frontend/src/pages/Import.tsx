@@ -223,7 +223,7 @@ export default function Import() {
               <Badge variant="outline">ขายสินค้าและบริการ / SI</Badge>
             </div>
             <h2 className="mt-3 text-base font-semibold text-foreground">
-              Marketplace → ตรวจรายการ → สร้างเอกสาร → ส่ง SML
+              Marketplace → นำเข้าย้อนหลัง → สร้างเอกสาร → ส่ง SML
             </h2>
             <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
               หน้านี้เป็นจุดเลือกช่องทางนำเข้า ไม่ใช่หน้าส่ง SML โดยตรง เพื่อให้คนทำงานเห็นชัดว่าต้องตรวจข้อมูลก่อนสร้างเอกสารจริง
@@ -231,7 +231,7 @@ export default function Import() {
           </div>
           <Button asChild className="w-full lg:w-auto">
             <Link to="/import/shopee">
-              ตรวจรายการ Shopee
+              นำเข้า Shopee ย้อนหลัง
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>

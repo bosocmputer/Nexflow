@@ -258,7 +258,7 @@ export default function SetupCenter() {
       ? { to: '/sale-invoices?status=needs_review', label: 'ตรวจเอกสาร' }
       : (docs?.pending ?? 0) > 0
         ? { to: '/sale-invoices?status=pending', label: 'ดูคิวพร้อมส่ง' }
-        : { to: '/import/shopee', label: 'ตรวจรายการ Shopee' }
+        : { to: '/import/shopee', label: 'นำเข้า Shopee ย้อนหลัง' }
   const optionalSteps = (status?.steps ?? []).filter((step) => step.key !== 'instance' && step.key !== 'catalog' && step.key !== 'operations')
 
   const resetTestData = async () => {

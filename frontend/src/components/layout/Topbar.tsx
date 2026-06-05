@@ -27,9 +27,9 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
     location.pathname.startsWith('/sale-invoices')
       ? 'ขายสินค้าและบริการ'
       : location.pathname.startsWith('/import/shopee')
-        ? 'ตรวจรายการ Shopee'
+        ? 'นำเข้า Shopee ย้อนหลัง'
         : location.pathname.startsWith('/shopee-operations')
-          ? 'Shopee Realtime'
+          ? 'คำสั่งซื้อ Shopee'
           : location.pathname.startsWith('/dashboard')
             ? 'Operations Console'
             : location.pathname.startsWith('/setup')
