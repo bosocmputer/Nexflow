@@ -112,6 +112,32 @@ docker logs nexflow-backend --tail=50
 
 ---
 
+## 6b. Graphify Auto-Lite
+
+Use Graphify as a context map for cross-subsystem work, not as source of truth.
+
+Use Graphify before broad raw searches when work spans Shopee Open API, settlement, logistics, SML routing, email, LINE, backend/frontend behavior, and deployment docs.
+
+Skip Graphify for small single-file edits, exact symbol lookups, logs, or test failure triage where `rg` and source reads are faster.
+
+Commands:
+
+```bash
+bash scripts/graphify-update.sh
+bash scripts/graphify-query.sh "Shopee order sync"
+bash scripts/graphify-preflight.sh
+```
+
+Rules:
+
+- Always open source files before editing.
+- If Graphify disagrees with code or docs, code/docs win.
+- `graphify-out/` is local-only and must remain untracked.
+- Update Graphify manually after flow or architecture changes.
+- Do not install Graphify hooks until the manual workflow has proven stable.
+
+---
+
 ## 7. API Routes (key)
 
 ```

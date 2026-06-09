@@ -61,7 +61,7 @@ curl http://localhost:8110/health
 # → {"status":"ok","env":"production"}
 ```
 
-Default admin: `admin@nexflow.local` / `admin1234`
+Default admin credentials: retrieve from the local/deploy secret source. Do not store real passwords in tracked docs.
 
 ---
 
