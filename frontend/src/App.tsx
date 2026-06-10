@@ -7,6 +7,7 @@ import Bills from './pages/Bills'
 import BillDetail from './pages/BillDetail'
 import Import from './pages/Import'
 import ShopeeImport from './pages/ShopeeImport'
+import ShopeeConnections from './pages/ShopeeConnections'
 import ShopeeOperations from './pages/ShopeeOperations'
 import ShopeeSettlement from './pages/ShopeeSettlement'
 import LazadaImport from './pages/LazadaImport'
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="bulk-send-jobs" element={<BulkSendJobs />} />
           <Route path="settings/catalog" element={<CatalogSettings />} />
           <Route path="settings/email" element={<EmailAccounts />} />
+          <Route path="settings/shopee-connections" element={<RequireAdmin><ShopeeConnections /></RequireAdmin>} />
           <Route path="settings/channels" element={<ChannelDefaults />} />
           <Route path="settings/instance" element={<InstanceSettings />} />
           <Route path="settings/ai-usage" element={<AIUsage />} />

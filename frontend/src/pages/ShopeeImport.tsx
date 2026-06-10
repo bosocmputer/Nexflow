@@ -108,6 +108,10 @@ interface ShopeeOrder {
   shopee_connection_id?: string
   shopee_shop_label?: string
   duplicate: boolean
+  blocked_reason?: 'realtime_managed' | string
+  realtime_status?: string
+  realtime_bill_id?: string
+  action_url?: string
 }
 interface ImportPreflight {
   new_orders: number
@@ -117,6 +121,7 @@ interface ImportPreflight {
   no_sku_items: number
   multi_item_orders: number
   amount_mismatch_orders: number
+  realtime_managed_orders?: number
 }
 interface PreviewResponse {
   orders: ShopeeOrder[]
@@ -137,6 +142,10 @@ interface ConfirmResult {
   bill_id?: string
   doc_no?: string
   message?: string
+  blocked_reason?: 'realtime_managed' | string
+  action_url?: string
+  realtime_status?: string
+  realtime_bill_id?: string
 }
 interface ImportRunSummary {
   id: string
@@ -418,6 +427,10 @@ const shopeeImportPresets: DateRangePreset[] = [
 
 const CANONICAL_PUBLIC_URL = 'https://animal-galvanize-tameness.ngrok-free.dev'
 
+function isOrderBlocked(order: Pick<ShopeeOrder, 'duplicate' | 'blocked_reason'>) {
+  return Boolean(order.duplicate || order.blocked_reason)
+}
+
 function hostFromURL(value?: string) {
   if (!value) return ''
   try {
@@ -660,7 +673,7 @@ export default function ShopeeImport() {
       setPreviewSource('excel')
       setPreview(res.data)
       setSelectedIDs(
-        new Set(res.data.orders.filter((o) => !o.duplicate).map((o) => o.order_id)),
+        new Set(res.data.orders.filter((o) => !isOrderBlocked(o)).map((o) => o.order_id)),
       )
       setStep('preview')
     } catch (err: unknown) {
@@ -807,7 +820,7 @@ export default function ShopeeImport() {
       setPreviewSource('api')
       setPreview(res.data)
       setSelectedIDs(
-        new Set(res.data.orders.filter((o) => !o.duplicate).map((o) => o.order_id)),
+        new Set(res.data.orders.filter((o) => !isOrderBlocked(o)).map((o) => o.order_id)),
       )
       setStep('preview')
       void refreshAPIStatus()
@@ -856,7 +869,7 @@ export default function ShopeeImport() {
     })
   const toggleAll = () => {
     if (!preview) return
-    const nonDup = preview.orders.filter((o) => !o.duplicate).map((o) => o.order_id)
+    const nonDup = preview.orders.filter((o) => !isOrderBlocked(o)).map((o) => o.order_id)
     setSelectedIDs(selectedIDs.size === nonDup.length ? new Set() : new Set(nonDup))
   }
   const toggleExpand = (id: string) =>
@@ -1022,7 +1035,11 @@ export default function ShopeeImport() {
       <Card className="border-border/80 bg-card/95 shadow-sm">
         <CardContent className="grid gap-3 p-4 sm:grid-cols-3">
           <SummaryCard label="พร้อมสร้างใหม่" value={preview?.new_count ?? 0} variant="primary" />
-          <SummaryCard label="ซ้ำ/ข้าม" value={(preview?.duplicate_count ?? 0) + (preview?.skipped_count ?? 0)} variant="muted" />
+          <SummaryCard
+            label="ซ้ำ/คิว realtime/ข้าม"
+            value={(preview?.duplicate_count ?? 0) + (preview?.preflight?.realtime_managed_orders ?? 0) + (preview?.skipped_count ?? 0)}
+            variant="muted"
+          />
           <SummaryCard label="ต้องตรวจ" value={previewIssueCount} variant={previewIssueCount > 0 ? 'danger' : 'success'} />
         </CardContent>
       </Card>
@@ -1062,18 +1079,11 @@ export default function ShopeeImport() {
                     <p className="mt-0.5 text-xs text-muted-foreground">{apiSummary.description}</p>
                   </div>
                   {apiStatus && (
-                    <Button
-                      variant={activeConnections.length > 0 ? 'outline' : 'default'}
-                      size="sm"
-                      onClick={() => setConfirmConnectOpen(true)}
-                      disabled={apiConnectDisabled}
-                      title={
-                        apiStatus.blocking_reason ||
-                        (connectHostWarning ? 'ควรเปิดผ่าน ngrok canonical domain ก่อนเชื่อมร้าน' : undefined)
-                      }
-                    >
-                      {apiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
-                      {apiConnectLabel}
+                    <Button asChild variant="outline" size="sm" className="bg-background">
+                      <Link to="/settings/shopee-connections">
+                        <Store className="h-4 w-4" />
+                        จัดการร้าน Shopee
+                      </Link>
                     </Button>
                   )}
                 </div>
@@ -1589,6 +1599,16 @@ export default function ShopeeImport() {
             </Alert>
           )}
 
+          {(preview.preflight?.realtime_managed_orders ?? 0) > 0 && (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>มี order ที่อยู่ในคำสั่งซื้อ Shopee แล้ว</AlertTitle>
+              <AlertDescription>
+                {preview.preflight.realtime_managed_orders} order จะไม่ถูกสร้างจากเมนูนำเข้าย้อนหลังเพื่อกันบิลซ้ำ ให้เปิดจากเมนูคำสั่งซื้อ Shopee แทน
+              </AlertDescription>
+            </Alert>
+          )}
+
           {(preview.warnings ?? []).length > 0 && (
             <Alert>
               <AlertTriangle className="h-4 w-4" />
@@ -1607,7 +1627,7 @@ export default function ShopeeImport() {
             <>
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" onClick={toggleAll}>
-                  {selectedIDs.size === preview.orders.filter((o) => !o.duplicate).length
+                  {selectedIDs.size > 0 && selectedIDs.size === preview.orders.filter((o) => !isOrderBlocked(o)).length
                     ? 'ยกเลิกทั้งหมด'
                     : 'เลือกทั้งหมด'}
                 </Button>
@@ -1638,8 +1658,9 @@ export default function ShopeeImport() {
                       <TableHead className="w-10">
                         <Checkbox
                           checked={
+                            preview.orders.filter((o) => !isOrderBlocked(o)).length > 0 &&
                             selectedIDs.size ===
-                            preview.orders.filter((o) => !o.duplicate).length
+                            preview.orders.filter((o) => !isOrderBlocked(o)).length
                           }
                           onCheckedChange={toggleAll}
                           aria-label="เลือกทั้งหมด"
@@ -1662,13 +1683,13 @@ export default function ShopeeImport() {
                     <Fragment key={order.order_id}>
                       <TableRow
                         className={cn(
-                          order.duplicate && 'bg-muted/30 text-muted-foreground',
+                          isOrderBlocked(order) && 'bg-muted/30 text-muted-foreground',
                         )}
                       >
                         <TableCell>
                           <Checkbox
                             checked={selectedIDs.has(order.order_id)}
-                            disabled={order.duplicate}
+                            disabled={isOrderBlocked(order)}
                             onCheckedChange={() => toggleOrder(order.order_id)}
                             aria-label={`เลือก order ${order.order_id}`}
                           />
@@ -1724,10 +1745,19 @@ export default function ShopeeImport() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
-                          {order.duplicate && (
+                          {order.blocked_reason === 'realtime_managed' ? (
+                            <Badge variant="secondary" className="bg-info/10 text-info hover:bg-info/15">
+                              อยู่ในคำสั่งซื้อ Shopee
+                            </Badge>
+                          ) : order.duplicate ? (
                             <Badge variant="secondary" className="bg-warning/15 text-warning hover:bg-warning/20">
                               มีในระบบแล้ว
                             </Badge>
+                          ) : null}
+                          {order.blocked_reason === 'realtime_managed' && order.action_url && (
+                            <Button asChild variant="link" className="h-auto px-0 py-0 text-xs text-link">
+                              <Link to={order.action_url}>เปิดในคำสั่งซื้อ Shopee</Link>
+                            </Button>
                           )}
                           {order.has_no_sku && (
                             <Badge variant="outline" className="border-warning/40 text-warning">
@@ -1960,6 +1990,14 @@ export default function ShopeeImport() {
                               className="inline-flex items-center gap-1 font-medium text-warning hover:underline"
                             >
                               เปิดรายการเดิม
+                              <ArrowRight className="h-3 w-3" />
+                            </Link>
+                          ) : r.blocked_reason === 'realtime_managed' && r.action_url ? (
+                            <Link
+                              to={r.action_url}
+                              className="inline-flex items-center gap-1 font-medium text-info hover:underline"
+                            >
+                              เปิดคำสั่งซื้อ Shopee
                               <ArrowRight className="h-3 w-3" />
                             </Link>
                           ) : (

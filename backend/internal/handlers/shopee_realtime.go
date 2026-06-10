@@ -405,13 +405,13 @@ func (h *ShopeeRealtimeHandler) SyncNow(c *gin.Context) {
 	summary, err := h.syncConnection(c.Request.Context(), conn, from, to)
 	if err != nil {
 		msg := shopeeAPIErrorMessage(err, "ซิงก์ Shopee Realtime ไม่สำเร็จ").Message
-		h.repo.MarkConnectionSync(c.Request.Context(), conn.ShopID, "error", msg)
+		h.markConnectionSync(c.Request.Context(), conn.ShopID, "error", msg)
 		h.notifyShopeeIssue(c.Request.Context(), conn.ShopID, conn.DisplayLabel(), "error", "ซิงก์ Shopee Realtime ไม่สำเร็จ", msg, fmt.Sprintf("sync_error:%d:%s", conn.ShopID, time.Now().Format("2006010215")))
 		h.logger.Warn("shopee_realtime: sync failed", zap.Int64("shop_id", conn.ShopID), zap.Error(err))
 		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
 		return
 	}
-	h.repo.MarkConnectionSync(c.Request.Context(), conn.ShopID, "ok", "")
+	h.markConnectionSync(c.Request.Context(), conn.ShopID, "ok", "")
 	c.JSON(http.StatusOK, summary)
 }
 
@@ -432,18 +432,18 @@ func (h *ShopeeRealtimeHandler) SyncAllActive(ctx context.Context, days int) (in
 	for i := range conns {
 		conn, err := h.importH.ensureShopeeAPIAccessToken(ctx, conns[i].ID)
 		if err != nil {
-			h.repo.MarkConnectionSync(ctx, conns[i].ShopID, "error", err.Error())
+			h.markConnectionSync(ctx, conns[i].ShopID, "error", err.Error())
 			h.notifyShopeeIssue(ctx, conns[i].ShopID, conns[i].DisplayLabel(), "error", "เชื่อมต่อร้าน Shopee ไม่สำเร็จ", err.Error(), fmt.Sprintf("token_error:%d:%s", conns[i].ShopID, time.Now().Format("2006010215")))
 			continue
 		}
 		summary, err := h.syncConnection(ctx, conn, from, to)
 		if err != nil {
 			msg := shopeeAPIErrorMessage(err, "ซิงก์ Shopee Realtime ไม่สำเร็จ").Message
-			h.repo.MarkConnectionSync(ctx, conn.ShopID, "error", msg)
+			h.markConnectionSync(ctx, conn.ShopID, "error", msg)
 			h.notifyShopeeIssue(ctx, conn.ShopID, conn.DisplayLabel(), "error", "ซิงก์ Shopee Realtime ไม่สำเร็จ", msg, fmt.Sprintf("sync_error:%d:%s", conn.ShopID, time.Now().Format("2006010215")))
 			continue
 		}
-		h.repo.MarkConnectionSync(ctx, conn.ShopID, "ok", "")
+		h.markConnectionSync(ctx, conn.ShopID, "ok", "")
 		if n, ok := summary["synced_orders"].(int); ok {
 			total += n
 		}
@@ -2186,6 +2186,18 @@ func (h *ShopeeRealtimeHandler) reconcilePushedOrder(event parsedShopeePushEvent
 		h.notifyShopeeIssue(ctx, event.ShopID, "", "error", "รับ push Shopee แล้วแต่ดึงรายละเอียดไม่สำเร็จ", shopeeAPIErrorMessage(err, "get_order_detail ไม่สำเร็จ").Message, fmt.Sprintf("push_detail_error:%d:%s:%s", event.ShopID, event.OrderSN, time.Now().Format("2006010215")))
 		h.logger.Warn("shopee_realtime: push get_order_detail failed", zap.Int64("shop_id", event.ShopID), zap.String("order_sn", event.OrderSN), zap.Error(err))
 		return
+	}
+}
+
+func (h *ShopeeRealtimeHandler) markConnectionSync(ctx context.Context, shopID int64, status, msg string) {
+	if h == nil || h.repo == nil || shopID <= 0 {
+		return
+	}
+	h.repo.MarkConnectionSync(ctx, shopID, status, msg)
+	if status == "ok" && strings.TrimSpace(msg) == "" && h.notificationRepo != nil {
+		if _, err := h.notificationRepo.ResolveShopeeShopIssues(ctx, shopID, "shop sync recovered"); err != nil && h.logger != nil {
+			h.logger.Warn("shopee_realtime: resolve shop notifications failed", zap.Int64("shop_id", shopID), zap.Error(err))
+		}
 	}
 }
 

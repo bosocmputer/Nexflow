@@ -117,6 +117,7 @@ type OrderSnapshot = {
   bill_id?: string
   sml_doc_no?: string
   document_route?: string
+  bill_source_flow?: string
   buyer_username?: string
   total_amount: number
   currency?: string
@@ -620,7 +621,12 @@ export default function ShopeeOperations() {
         days: 14,
       })
       toast.success(`ซิงก์สำเร็จ ${Number(res.data.synced_orders ?? 0).toLocaleString()} order`)
-      await Promise.all([loadReadiness(), loadOrders()])
+      try {
+        await Promise.all([loadReadiness(), loadOrders()])
+      } catch (refreshError) {
+        toast.warning('ซิงก์สำเร็จแล้ว แต่รีเฟรชหน้าจอไม่สำเร็จ ให้กดรีเฟรชรายการอีกครั้ง')
+        console.warn('shopee operations refresh after sync failed', refreshError)
+      }
     } catch (e) {
       toast.error('ซิงก์คำสั่งซื้อ Shopee ไม่สำเร็จ: ' + apiError(e))
     } finally {
@@ -1268,6 +1274,11 @@ export default function ShopeeOperations() {
                       <div className="mt-1 text-xs text-muted-foreground">
                         {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
                       </div>
+                      {isImportFallbackBill(order) && (
+                        <Badge variant="outline" className="mt-1 h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
+                          สร้างจากนำเข้าย้อนหลัง
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -1806,6 +1817,11 @@ function documentPath(order: OrderSnapshot) {
     default:
       return `/bills/${billID}`
   }
+}
+
+function isImportFallbackBill(order: OrderSnapshot) {
+  const flow = (order.bill_source_flow || '').toLowerCase()
+  return flow === 'shopee_api' || flow === 'shopee_excel'
 }
 
 function orderKey(order: OrderSnapshot) {

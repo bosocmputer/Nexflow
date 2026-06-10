@@ -34,8 +34,9 @@ func (h *NotificationHandler) List(c *gin.Context) {
 		}
 	}
 	rows, unread, err := h.repo.ListForUser(c.Request.Context(), userID, models.NotificationFilter{
-		UnreadOnly: c.Query("unread") == "true",
-		Limit:      limit,
+		UnreadOnly:      c.Query("unread") == "true",
+		IncludeResolved: c.Query("include_resolved") == "true",
+		Limit:           limit,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลด notification ไม่สำเร็จ"})

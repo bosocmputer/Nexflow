@@ -36,7 +36,8 @@ func (r *NotificationRepo) CreateForRoles(ctx context.Context, roles []string, i
 		  WHERE role = ANY($9)
 		 ON CONFLICT (recipient_id, dedupe_key) DO NOTHING
 		 RETURNING id::text, recipient_id::text, source, severity, title, body, action_url,
-		           entity_type, entity_id, dedupe_key, read_at, created_at, updated_at`,
+		           entity_type, entity_id, dedupe_key, read_at, resolved_at, resolved_reason,
+		           created_at, updated_at`,
 		in.Source, in.Severity, in.Title, in.Body, in.ActionURL, in.EntityType, in.EntityID,
 		in.DedupeKey, pq.Array(roles),
 	)
@@ -62,12 +63,15 @@ func (r *NotificationRepo) ListForUser(ctx context.Context, userID string, f mod
 	}
 	where := "recipient_id = $1"
 	args := []interface{}{userID}
+	if !f.IncludeResolved {
+		where += " AND resolved_at IS NULL"
+	}
 	if f.UnreadOnly {
 		where += " AND read_at IS NULL"
 	}
 	var unread int
 	if err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*)::int FROM notifications WHERE recipient_id = $1 AND read_at IS NULL`,
+		`SELECT COUNT(*)::int FROM notifications WHERE recipient_id = $1 AND read_at IS NULL AND resolved_at IS NULL`,
 		userID,
 	).Scan(&unread); err != nil {
 		return nil, 0, err
@@ -75,7 +79,8 @@ func (r *NotificationRepo) ListForUser(ctx context.Context, userID string, f mod
 	args = append(args, limit)
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id::text, recipient_id::text, source, severity, title, body, action_url,
-		        entity_type, entity_id, dedupe_key, read_at, created_at, updated_at
+		        entity_type, entity_id, dedupe_key, read_at, resolved_at, resolved_reason,
+		        created_at, updated_at
 		   FROM notifications
 		  WHERE `+where+`
 		  ORDER BY created_at DESC
@@ -100,7 +105,7 @@ func (r *NotificationRepo) ListForUser(ctx context.Context, userID string, f mod
 func (r *NotificationRepo) UnreadCount(ctx context.Context, userID string) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*)::int FROM notifications WHERE recipient_id = $1 AND read_at IS NULL`,
+		`SELECT COUNT(*)::int FROM notifications WHERE recipient_id = $1 AND read_at IS NULL AND resolved_at IS NULL`,
 		userID,
 	).Scan(&n)
 	return n, err
@@ -126,8 +131,44 @@ func (r *NotificationRepo) MarkAllRead(ctx context.Context, userID string) (int,
 		`UPDATE notifications
 		    SET read_at = COALESCE(read_at, NOW()),
 		        updated_at = NOW()
-		  WHERE recipient_id = $1 AND read_at IS NULL`,
+		  WHERE recipient_id = $1 AND read_at IS NULL AND resolved_at IS NULL`,
 		userID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+func (r *NotificationRepo) ResolveShopeeShopIssues(ctx context.Context, shopID int64, reason string) (int, error) {
+	if shopID <= 0 {
+		return 0, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "shop sync recovered"
+	}
+	shop := fmt.Sprint(shopID)
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE notifications
+		    SET resolved_at = COALESCE(resolved_at, NOW()),
+		        resolved_reason = CASE
+		          WHEN COALESCE(resolved_reason, '') = '' THEN $2
+		          ELSE resolved_reason
+		        END,
+		        updated_at = NOW()
+		  WHERE resolved_at IS NULL
+		    AND entity_type = 'shopee_shop'
+		    AND entity_id = $1
+		    AND (
+		      dedupe_key LIKE $3
+		      OR dedupe_key LIKE $4
+		    )`,
+		shop,
+		reason,
+		fmt.Sprintf("shopee:sync_error:%d:%%", shopID),
+		fmt.Sprintf("shopee:token_error:%d:%%", shopID),
 	)
 	if err != nil {
 		return 0, err
@@ -142,16 +183,20 @@ type notificationScanner interface {
 
 func scanNotification(rows notificationScanner) (models.Notification, error) {
 	var out models.Notification
-	var readAt sql.NullTime
+	var readAt, resolvedAt sql.NullTime
 	if err := rows.Scan(
 		&out.ID, &out.RecipientID, &out.Source, &out.Severity, &out.Title, &out.Body,
-		&out.ActionURL, &out.EntityType, &out.EntityID, &out.DedupeKey, &readAt,
+		&out.ActionURL, &out.EntityType, &out.EntityID, &out.DedupeKey, &readAt, &resolvedAt,
+		&out.ResolvedReason,
 		&out.CreatedAt, &out.UpdatedAt,
 	); err != nil {
 		return out, err
 	}
 	if readAt.Valid {
 		out.ReadAt = &readAt.Time
+	}
+	if resolvedAt.Valid {
+		out.ResolvedAt = &resolvedAt.Time
 	}
 	return out, nil
 }

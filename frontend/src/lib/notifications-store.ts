@@ -12,6 +12,8 @@ export interface AppNotification {
   entity_type: string
   entity_id: string
   read_at?: string | null
+  resolved_at?: string | null
+  resolved_reason?: string | null
   created_at: string
 }
 
@@ -29,14 +31,16 @@ export const useNotificationsStore = create<NotificationsState>((set) => ({
   unread: 0,
   items: [],
   setUnread: (n) => set({ unread: Math.max(0, Number(n) || 0) }),
-  setItems: (items) => set({ items }),
+  setItems: (items) => set({ items: items.filter((item) => !item.resolved_at) }),
   upsertFromEvent: (notification, unread) =>
     set((state) => ({
       unread: Math.max(0, Number(unread) || 0),
-      items: [
-        notification,
-        ...state.items.filter((item) => item.id !== notification.id),
-      ].slice(0, 50),
+      items: notification.resolved_at
+        ? state.items.filter((item) => item.id !== notification.id)
+        : [
+            notification,
+            ...state.items.filter((item) => item.id !== notification.id),
+          ].slice(0, 50),
     })),
   markReadLocal: (id, unread) =>
     set((state) => ({

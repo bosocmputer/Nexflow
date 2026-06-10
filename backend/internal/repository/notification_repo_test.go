@@ -26,11 +26,11 @@ func TestNotificationRepoCreateForRolesReturnsInsertedRows(t *testing.T) {
 		).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "recipient_id", "source", "severity", "title", "body", "action_url",
-			"entity_type", "entity_id", "dedupe_key", "read_at", "created_at", "updated_at",
+			"entity_type", "entity_id", "dedupe_key", "read_at", "resolved_at", "resolved_reason", "created_at", "updated_at",
 		}).AddRow(
 			"notif-1", "user-1", "shopee_realtime", "info", "มีออเดอร์ Shopee ใหม่", "body",
 			"/shopee-operations", "shopee_order", "264993963:ORDER1", "shopee:new:264993963:ORDER1",
-			nil, now, now,
+			nil, nil, "", now, now,
 		))
 
 	repo := NewNotificationRepo(db)
@@ -66,7 +66,7 @@ func TestNotificationRepoCreateForRolesDuplicateReturnsNoRows(t *testing.T) {
 		WithArgs("system", "warning", "ซ้ำ", "", "", "", "", "dedupe", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "recipient_id", "source", "severity", "title", "body", "action_url",
-			"entity_type", "entity_id", "dedupe_key", "read_at", "created_at", "updated_at",
+			"entity_type", "entity_id", "dedupe_key", "read_at", "resolved_at", "resolved_reason", "created_at", "updated_at",
 		}))
 
 	repo := NewNotificationRepo(db)
@@ -80,6 +80,54 @@ func TestNotificationRepoCreateForRolesDuplicateReturnsNoRows(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("duplicate returned rows: %#v", rows)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestNotificationRepoUnreadCountExcludesResolved(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT COUNT").
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+	repo := NewNotificationRepo(db)
+	n, err := repo.UnreadCount(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("UnreadCount: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("n = %d, want 2", n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestNotificationRepoResolveShopeeShopIssues(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectExec("UPDATE notifications").
+		WithArgs("264993963", "shop sync recovered", "shopee:sync_error:264993963:%", "shopee:token_error:264993963:%").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	repo := NewNotificationRepo(db)
+	changed, err := repo.ResolveShopeeShopIssues(context.Background(), 264993963, "shop sync recovered")
+	if err != nil {
+		t.Fatalf("ResolveShopeeShopIssues: %v", err)
+	}
+	if changed != 3 {
+		t.Fatalf("changed = %d, want 3", changed)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet mock expectations: %v", err)

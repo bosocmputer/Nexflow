@@ -11,12 +11,14 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	"github.com/xuri/excelize/v2"
 	"go.uber.org/zap"
 
@@ -213,17 +215,22 @@ type ShopeeOrder struct {
 	ShopeeConnectionID string            `json:"shopee_connection_id,omitempty"`
 	ShopeeShopLabel    string            `json:"shopee_shop_label,omitempty"`
 	// preview-only
-	Duplicate bool `json:"duplicate"`
+	Duplicate      bool   `json:"duplicate"`
+	BlockedReason  string `json:"blocked_reason,omitempty"`
+	RealtimeStatus string `json:"realtime_status,omitempty"`
+	RealtimeBillID string `json:"realtime_bill_id,omitempty"`
+	ActionURL      string `json:"action_url,omitempty"`
 }
 
 type ShopeeImportPreflight struct {
-	NewOrders            int `json:"new_orders"`
-	DuplicateOrders      int `json:"duplicate_orders"`
-	SkippedRows          int `json:"skipped_rows"`
-	NoSKUOrders          int `json:"no_sku_orders"`
-	NoSKUItems           int `json:"no_sku_items"`
-	MultiItemOrders      int `json:"multi_item_orders"`
-	AmountMismatchOrders int `json:"amount_mismatch_orders"`
+	NewOrders             int `json:"new_orders"`
+	DuplicateOrders       int `json:"duplicate_orders"`
+	SkippedRows           int `json:"skipped_rows"`
+	NoSKUOrders           int `json:"no_sku_orders"`
+	NoSKUItems            int `json:"no_sku_items"`
+	MultiItemOrders       int `json:"multi_item_orders"`
+	AmountMismatchOrders  int `json:"amount_mismatch_orders"`
+	RealtimeManagedOrders int `json:"realtime_managed_orders"`
 }
 
 // PreviewResponse is returned from POST /api/import/shopee/preview
@@ -255,11 +262,15 @@ type ConfirmRequest struct {
 
 // ConfirmResult is one processed order result.
 type ConfirmResult struct {
-	OrderID string `json:"order_id"`
-	Success bool   `json:"success"`
-	DocNo   string `json:"doc_no,omitempty"`
-	Message string `json:"message,omitempty"`
-	BillID  string `json:"bill_id,omitempty"`
+	OrderID        string `json:"order_id"`
+	Success        bool   `json:"success"`
+	DocNo          string `json:"doc_no,omitempty"`
+	Message        string `json:"message,omitempty"`
+	BillID         string `json:"bill_id,omitempty"`
+	BlockedReason  string `json:"blocked_reason,omitempty"`
+	ActionURL      string `json:"action_url,omitempty"`
+	RealtimeStatus string `json:"realtime_status,omitempty"`
+	RealtimeBillID string `json:"realtime_bill_id,omitempty"`
 }
 
 type ImportRunSummary struct {
@@ -501,6 +512,9 @@ func (h *ShopeeImportHandler) Preview(c *gin.Context) {
 			dupCount++
 		}
 	}
+	if err := h.markRealtimeManagedOrders(c.Request.Context(), orders, shopID); err != nil {
+		h.logger.Warn("shopee_import: mark realtime managed orders failed", zap.Error(err))
+	}
 	preflight := buildShopeePreflight(orders, skippedCount, dupCount)
 	importRunID := h.createShopeeImportRun(c, fileHeader.Filename, fileToken, orders, warnings, preflight)
 
@@ -531,7 +545,7 @@ func (h *ShopeeImportHandler) Preview(c *gin.Context) {
 		Orders:         orders,
 		Warnings:       warnings,
 		TotalOrders:    len(orders),
-		NewCount:       len(orders) - dupCount,
+		NewCount:       preflight.NewOrders,
 		DuplicateCount: dupCount,
 		SkippedCount:   skippedCount,
 		ImportRunID:    importRunID,
@@ -615,6 +629,25 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 		}
 	}
 
+	selectedOrderIDs := make([]string, 0, len(req.OrderIDs))
+	if len(req.OrderIDs) > 0 {
+		selectedOrderIDs = append(selectedOrderIDs, req.OrderIDs...)
+	} else {
+		for _, order := range req.Orders {
+			selectedOrderIDs = append(selectedOrderIDs, order.OrderID)
+		}
+	}
+	selectedShopID := ""
+	if selectedConn != nil {
+		selectedShopID = strconv.FormatInt(selectedConn.ShopID, 10)
+	}
+	realtimeStates, err := h.loadRealtimeImportStates(c.Request.Context(), selectedOrderIDs, selectedShopID)
+	if err != nil {
+		h.logger.Warn("shopee_import: load realtime managed orders failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจ order ที่อยู่ในคำสั่งซื้อ Shopee ไม่สำเร็จ"})
+		return
+	}
+
 	results := []ConfirmResult{}
 
 	for _, order := range req.Orders {
@@ -628,6 +661,19 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 			shopID = strconv.FormatInt(selectedConn.ShopID, 10)
 			shopLabel = selectedConn.DisplayLabel()
 			connectionID = selectedConn.ID
+		}
+		if state, ok := realtimeStates[strings.TrimSpace(order.OrderID)]; ok {
+			results = append(results, ConfirmResult{
+				OrderID:        order.OrderID,
+				Success:        false,
+				BillID:         state.BillID,
+				Message:        "order นี้อยู่ในเมนูคำสั่งซื้อ Shopee แล้ว ให้เปิดจากคิวงานประจำวันแทนการนำเข้าย้อนหลัง",
+				BlockedReason:  "realtime_managed",
+				ActionURL:      shopeeRealtimeOrderURL(order.OrderID),
+				RealtimeStatus: state.OrderStatus,
+				RealtimeBillID: state.BillID,
+			})
+			continue
 		}
 		if billID, exists, _ := h.findShopeeOrderBillIDForShop(order.OrderID, shopID); exists {
 			results = append(results, ConfirmResult{
@@ -1159,13 +1205,106 @@ func (h *ShopeeImportHandler) findShopeeOrderBillIDForShop(orderID, shopID strin
 	return id, true, nil
 }
 
+type shopeeRealtimeImportState struct {
+	ShopID      string
+	OrderStatus string
+	ERPStatus   string
+	BillID      string
+}
+
+func (h *ShopeeImportHandler) loadRealtimeImportStates(ctx context.Context, orderIDs []string, shopID string) (map[string]shopeeRealtimeImportState, error) {
+	out := map[string]shopeeRealtimeImportState{}
+	if h == nil || h.billRepo == nil {
+		return out, nil
+	}
+	seen := map[string]bool{}
+	ids := make([]string, 0, len(orderIDs))
+	for _, id := range orderIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	shopID = strings.TrimSpace(shopID)
+	rows, err := h.billRepo.DB().QueryContext(ctx,
+		`SELECT shop_id::text, order_sn, order_status, erp_status, bill_id::text
+		   FROM shopee_order_snapshots
+		  WHERE order_sn = ANY($1)
+		    AND ($2 = '' OR shop_id::text = $2)`,
+		pq.Array(ids), shopID,
+	)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var orderSN string
+		var state shopeeRealtimeImportState
+		var billID sql.NullString
+		if err := rows.Scan(&state.ShopID, &orderSN, &state.OrderStatus, &state.ERPStatus, &billID); err != nil {
+			return out, err
+		}
+		if billID.Valid {
+			state.BillID = billID.String
+		}
+		if strings.TrimSpace(orderSN) != "" {
+			out[strings.TrimSpace(orderSN)] = state
+		}
+	}
+	return out, rows.Err()
+}
+
+func (h *ShopeeImportHandler) markRealtimeManagedOrders(ctx context.Context, orders []ShopeeOrder, shopID string) error {
+	ids := make([]string, 0, len(orders))
+	for _, order := range orders {
+		ids = append(ids, order.OrderID)
+	}
+	states, err := h.loadRealtimeImportStates(ctx, ids, shopID)
+	if err != nil {
+		return err
+	}
+	for i := range orders {
+		state, ok := states[strings.TrimSpace(orders[i].OrderID)]
+		if !ok {
+			continue
+		}
+		orders[i].BlockedReason = "realtime_managed"
+		orders[i].RealtimeStatus = state.OrderStatus
+		orders[i].RealtimeBillID = state.BillID
+		orders[i].ActionURL = shopeeRealtimeOrderURL(orders[i].OrderID)
+		if orders[i].ExistingBillID == "" && state.BillID != "" {
+			orders[i].ExistingBillID = state.BillID
+		}
+	}
+	return nil
+}
+
+func shopeeRealtimeOrderURL(orderID string) string {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return "/shopee-operations"
+	}
+	return "/shopee-operations?order=" + url.QueryEscape(orderID)
+}
+
 func buildShopeePreflight(orders []ShopeeOrder, skippedCount, duplicateCount int) ShopeeImportPreflight {
 	p := ShopeeImportPreflight{
-		NewOrders:       len(orders) - duplicateCount,
 		DuplicateOrders: duplicateCount,
 		SkippedRows:     skippedCount,
 	}
+	excluded := 0
 	for _, o := range orders {
+		if o.Duplicate || strings.TrimSpace(o.BlockedReason) != "" {
+			excluded++
+		}
+		if o.BlockedReason == "realtime_managed" {
+			p.RealtimeManagedOrders++
+		}
 		if o.HasNoSKU {
 			p.NoSKUOrders++
 			p.NoSKUItems += o.NoSKUItemCount
@@ -1177,6 +1316,7 @@ func buildShopeePreflight(orders []ShopeeOrder, skippedCount, duplicateCount int
 			p.AmountMismatchOrders++
 		}
 	}
+	p.NewOrders = len(orders) - excluded
 	if p.NewOrders < 0 {
 		p.NewOrders = 0
 	}

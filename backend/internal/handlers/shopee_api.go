@@ -516,6 +516,9 @@ func (h *ShopeeImportHandler) PreviewFromAPI(c *gin.Context) {
 			dupCount++
 		}
 	}
+	if err := h.markRealtimeManagedOrders(c.Request.Context(), orders, shopID); err != nil {
+		h.logger.Warn("shopee_api: mark realtime managed orders failed", zap.Error(err))
+	}
 	preflight := buildShopeePreflight(orders, 0, dupCount)
 	importRunID := h.createShopeeImportRun(c, "Shopee API "+time.Now().Format("20060102-150405"), "", orders, warnings, preflight)
 	h.markShopeeAPISync(c.Request.Context(), &conn.ShopID, "ok", "")
@@ -535,7 +538,7 @@ func (h *ShopeeImportHandler) PreviewFromAPI(c *gin.Context) {
 		"orders":          orders,
 		"warnings":        warnings,
 		"total_orders":    len(orders),
-		"new_count":       len(orders) - dupCount,
+		"new_count":       preflight.NewOrders,
 		"duplicate_count": dupCount,
 		"skipped_count":   0,
 		"import_run_id":   importRunID,
@@ -1273,6 +1276,30 @@ func (h *ShopeeImportHandler) markShopeeAPISync(ctx context.Context, shopID *int
 	)
 	if err != nil {
 		h.logger.Warn("shopee_api: mark sync failed", zap.Error(err))
+	}
+	if strings.TrimSpace(status) == "ok" && strings.TrimSpace(msg) == "" {
+		shop := fmt.Sprint(*shopID)
+		if _, err := h.billRepo.DB().ExecContext(ctx,
+			`UPDATE notifications
+			    SET resolved_at = COALESCE(resolved_at, NOW()),
+			        resolved_reason = CASE
+			          WHEN COALESCE(resolved_reason, '') = '' THEN 'shop sync recovered'
+			          ELSE resolved_reason
+			        END,
+			        updated_at = NOW()
+			  WHERE resolved_at IS NULL
+			    AND entity_type = 'shopee_shop'
+			    AND entity_id = $1
+			    AND (
+			      dedupe_key LIKE $2
+			      OR dedupe_key LIKE $3
+			    )`,
+			shop,
+			fmt.Sprintf("shopee:sync_error:%d:%%", *shopID),
+			fmt.Sprintf("shopee:token_error:%d:%%", *shopID),
+		); err != nil {
+			h.logger.Warn("shopee_api: resolve shop notifications failed", zap.Int64("shop_id", *shopID), zap.Error(err))
+		}
 	}
 }
 

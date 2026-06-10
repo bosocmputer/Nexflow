@@ -16,6 +16,7 @@ import {
   Send,
   Settings2,
   ShoppingBag,
+  Store,
   Tag,
   Tags,
   Upload,
@@ -118,6 +119,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'ตั้งค่าระบบ',
     items: [
       { to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'Document Routing' },
+      { to: '/settings/shopee-connections', label: 'ร้าน Shopee', icon: Store, hint: 'OAuth / token / shop connection', adminOnly: true, enabled: ENABLE_SHOPEE_EXCEL },
       { to: '/settings/instance', label: 'การเชื่อมต่อระบบ', icon: Settings2, hint: 'SML / OpenRouter / ร้านนี้' },
       { to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จากคำสั่งซื้อ Shopee', adminOnly: true },
       { to: '/settings/users', label: 'ผู้ใช้ระบบ', icon: UsersRound, hint: 'Roles and access', adminOnly: true },

@@ -17,6 +17,7 @@ type ShopeeOrderSnapshot struct {
 	BillID            *string                       `json:"bill_id,omitempty"`
 	SMLDocNo          string                        `json:"sml_doc_no,omitempty"`
 	DocumentRoute     string                        `json:"document_route,omitempty"`
+	BillSourceFlow    string                        `json:"bill_source_flow,omitempty"`
 	BuyerUsername     string                        `json:"buyer_username,omitempty"`
 	TotalAmount       float64                       `json:"total_amount"`
 	Currency          string                        `json:"currency,omitempty"`

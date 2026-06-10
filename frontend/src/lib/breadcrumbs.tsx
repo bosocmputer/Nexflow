@@ -69,6 +69,10 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'เส้นทางเอกสาร SML' }],
   },
   {
+    pattern: '/settings/shopee-connections',
+    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'ร้าน Shopee' }],
+  },
+  {
     pattern: '/settings/ai-usage',
     crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'การใช้งาน AI' }],
   },

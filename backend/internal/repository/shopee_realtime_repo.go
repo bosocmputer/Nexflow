@@ -164,6 +164,7 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT s.id::text, s.connection_id::text, s.shop_id, s.shop_label, s.order_sn, s.order_status,
 		        s.erp_status, s.bill_id::text, s.sml_doc_no, COALESCE(b.document_route, '') AS document_route,
+		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
 		        s.package_number, s.logistics_status, s.tracking_number, s.shipping_carrier,
 		        s.payment_method, s.raw_detail, s.last_order_update_at,
@@ -242,6 +243,7 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT s.id::text, s.connection_id::text, s.shop_id, s.shop_label, s.order_sn, s.order_status,
 		        s.erp_status, s.bill_id::text, s.sml_doc_no, COALESCE(b.document_route, '') AS document_route,
+		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
 		        s.package_number, s.logistics_status, s.tracking_number, s.shipping_carrier,
 		        s.payment_method, s.raw_detail, s.last_order_update_at,
@@ -1491,7 +1493,7 @@ func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error
 	var lastOrderUpdate sql.NullTime
 	if err := rows.Scan(
 		&out.ID, &connID, &out.ShopID, &out.ShopLabel, &out.OrderSN, &out.OrderStatus,
-		&out.ERPStatus, &billID, &out.SMLDocNo, &out.DocumentRoute, &out.BuyerUsername, &out.TotalAmount,
+		&out.ERPStatus, &billID, &out.SMLDocNo, &out.DocumentRoute, &out.BillSourceFlow, &out.BuyerUsername, &out.TotalAmount,
 		&out.Currency, &out.ItemCount, &out.PackageNumber, &out.LogisticsStatus,
 		&out.TrackingNumber, &out.ShippingCarrier, &out.PaymentMethod, &out.RawDetail,
 		&lastOrderUpdate, &out.LastUpdateSource, &out.LastSyncedAt, &out.LastError, &out.CreatedAt, &out.UpdatedAt,
