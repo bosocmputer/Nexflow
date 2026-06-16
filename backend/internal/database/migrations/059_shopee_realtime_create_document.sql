@@ -12,6 +12,7 @@ ALTER TABLE channel_defaults
     'email',
     'shopee',
     'shopee_realtime',
+    'shopee_realtime_cancel',
     'shopee_email',
     'shopee_shipped',
     'lazada',

@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-05-31
+Updated: 2026-06-16
 
 ---
 
@@ -22,7 +22,7 @@ so deploy checks must compare files explicitly before replacing sources.
 
 ## DB Schema
 
-Migrations applied: **001–055** (all idempotent)
+Migrations applied: **001–064** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -38,6 +38,8 @@ Key recent migrations:
 | 053 | cleanup sml_db settings |
 | 054 | channel_defaults.inquiry_type |
 | 055 | channel_defaults.remark_2 |
+| 056–063 | Shopee Realtime operations, notifications, create-document, shipping actions |
+| 064 | Shopee cancelled-after-SML tracking + `shopee_realtime_cancel` credit note route |
 
 ---
 
@@ -50,6 +52,9 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
 VITE_ENABLE_CHAT=false
+
+ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
+ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
 ```
 
 ---
@@ -66,6 +71,9 @@ SML #2 (Shopee REST):    http://192.168.2.248:8080
   provider=SMLGOH  db=SML1_2026  cust_code=AR00004  wh=WH-01  shelf=SH-01
 
 sml-api-bybos:  http://172.24.0.1:8200  x-tenant=aoy
+  sale invoice cancel preview/create:
+    POST /api/v1/ic/sale-invoices/:doc_no/cancel/preview
+    POST /api/v1/ic/sale-invoices/:doc_no/cancel
 ```
 
 ---
@@ -82,24 +90,27 @@ sml-api-bybos:  http://172.24.0.1:8200  x-tenant=aoy
 
 ## Production Data Snapshot
 
-Verified on server: 2026-05-31
+Verified on server: 2026-06-16
 
 | Area | Count / state |
 | --- | --- |
-| `bills` | 84 |
-| `bill_items` | 89 |
-| `channel_defaults` | 4 |
+| `bills` | 93 |
+| `bill_items` | 98 |
+| `channel_defaults` | 6 |
 | `imap_accounts` | 0 |
 | `shopee_api_connections` | 1 active live connection |
 | `sml_bulk_jobs` | 8 |
-| `audit_logs` | 326 |
+| `shopee_sml_cancellations` | 0 |
+| `audit_logs` | 365 |
 
-All 84 production bills are `sent` sale documents with SML payload/response
-recorded. Marketplace sales route to **saleinvoice / SI**:
+Most production marketplace sale documents are `sent` saleinvoice documents with
+SML payload/response recorded. Shopee Realtime also has pending saleorder
+documents awaiting the user-driven SML send flow:
 
 | source | bill_type | document_route | status | count |
 | --- | --- | --- | --- | --- |
-| shopee | sale | saleinvoice | sent | 46 |
+| shopee | sale | saleinvoice | sent | 49 |
+| shopee | sale | saleorder | pending | 6 |
 | lazada | sale | saleinvoice | sent | 14 |
 | tiktok | sale | saleinvoice | sent | 24 |
 
@@ -107,6 +118,16 @@ Current `channel_defaults` for marketplace sale routes point to
 `/api/v1/ic/sale-invoices` with `doc_format_code=SI`. This is why the production
 workflow should use `/sale-invoices` / `ขายสินค้าและบริการ` as the primary
 marketplace path. `/sales-orders` remains enabled and must stay functional.
+
+Shopee cancelled-after-SML uses a separate route:
+
+| channel | bill_type | endpoint | doc_format_code | doc_prefix | doc_running_format |
+| --- | --- | --- | --- | --- | --- |
+| shopee_realtime_cancel | sale | creditnote | CN | CN | YYMM#### |
+
+The create-CN feature flag is enabled in production. The action still checks SML
+readiness before creating a credit note; if tenant `aoy` cannot reach SML, the UI
+will block creation with the SML readiness error rather than writing a partial CN.
 
 ---
 
@@ -134,3 +155,6 @@ email → configured sales route; general email → AI pipeline.
 - **IMAP Gmail** — requires App Password, not real password. Min poll 5 min.
 - **LINE chat** — disabled (`VITE_ENABLE_CHAT=false`). Backend code is present but UI is hidden.
 - **sml-api-bybos** — must use `--force-recreate` (not `restart`) when changing `.env`.
+- **Shopee cancelled after SML** — alerts and create-CN are enabled. CN creation
+  uses `shopee_realtime_cancel / sale` and writes through `sml-api-bybos`; SML
+  readiness must be OK before the create action is allowed.

@@ -166,7 +166,14 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
 VITE_ENABLE_CHAT=false          # LINE chat disabled
+
+ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
+ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
 ```
+
+`ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true` allows users to confirm creation of
+Shopee cancelled-after-SML credit notes. The backend still blocks the action when
+SML readiness for tenant `aoy` is not OK.
 
 ---
 
@@ -183,4 +190,4 @@ VITE_ENABLE_CHAT=false          # LINE chat disabled
 
 ---
 
-Last updated: 2026-05-31
+Last updated: 2026-06-16

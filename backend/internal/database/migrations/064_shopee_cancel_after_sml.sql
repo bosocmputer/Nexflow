@@ -1,6 +1,7 @@
 -- 064_shopee_cancel_after_sml.sql
 -- Track Shopee orders cancelled after a sale invoice was sent to SML.
--- Create-CN remains feature-flagged off until the production SML domain is ready.
+-- Create-CN is controlled by ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS and still
+-- requires SML readiness before writing any cancellation document.
 
 ALTER TABLE channel_defaults
   DROP CONSTRAINT IF EXISTS channel_defaults_channel_check;
