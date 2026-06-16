@@ -31,6 +31,10 @@ type Bill struct {
 	EmailGroup    *BillEmailGroup    `json:"email_group,omitempty"`
 	ShopeeStatus  *ShopeeOrderEvent  `json:"shopee_status,omitempty"`
 	ShopeeEvents  []ShopeeOrderEvent `json:"shopee_events,omitempty"`
+	// True when a Shopee Realtime snapshot currently points at this bill.
+	// The UI uses this to hide destructive delete actions and direct users to
+	// the route-change flow instead.
+	ShopeeRealtimeLinked bool `json:"shopee_realtime_linked,omitempty"`
 }
 
 type BillEmailGroup struct {

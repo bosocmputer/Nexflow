@@ -112,13 +112,19 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		`SELECT id, bill_type, source, status, document_route, raw_data, sml_doc_no,
 		        sml_payload, sml_response, ai_confidence, anomalies,
 		        error_msg, created_by, created_at, sent_at, archived_at, archived_by,
-		        archive_reason, remark
+		        archive_reason, remark,
+		        EXISTS (
+		          SELECT 1
+		            FROM shopee_order_snapshots sos
+		           WHERE sos.bill_id = bills.id
+		        ) AS shopee_realtime_linked
 		 FROM bills WHERE id = $1`, id,
 	).Scan(
 		&b.ID, &b.BillType, &b.Source, &b.Status, &b.DocumentRoute, &b.RawData,
 		&b.SMLDocNo, &smlPayloadRaw, &smlResponseRaw, &b.AIConfidence,
 		&anomaliesRaw, &b.ErrorMsg, &b.CreatedBy, &b.CreatedAt, &b.SentAt,
 		&b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason, &b.Remark,
+		&b.ShopeeRealtimeLinked,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -203,7 +209,12 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 	                 b.anomalies, b.error_msg, b.created_at, b.sent_at,
 	                 b.archived_at, b.archived_by, b.archive_reason,
 	                 COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0) AS total_amount,
-	                 COUNT(bi.id) AS item_count
+	                 COUNT(bi.id) AS item_count,
+	                 EXISTS (
+	                   SELECT 1
+	                     FROM shopee_order_snapshots sos
+	                    WHERE sos.bill_id = b.id
+	                 ) AS shopee_realtime_linked
 	          FROM bills b
 	          LEFT JOIN bill_items bi ON bi.bill_id = b.id
 	          ` + where + `
@@ -231,7 +242,7 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 		if err := rows.Scan(
 			&b.ID, &b.BillType, &b.Source, &b.Status, &b.DocumentRoute, &b.RawData, &b.SMLDocNo, &b.AIConfidence,
 			&anomaliesRaw, &b.ErrorMsg, &b.CreatedAt, &b.SentAt, &b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason,
-			&b.TotalAmount, &itemCount,
+			&b.TotalAmount, &itemCount, &b.ShopeeRealtimeLinked,
 		); err != nil {
 			return nil, err
 		}

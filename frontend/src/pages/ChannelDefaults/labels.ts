@@ -7,6 +7,7 @@ export type ChannelKey =
   | 'email'
   | 'shopee'
   | 'shopee_realtime'
+  | 'shopee_realtime_cancel'
   | 'shopee_email'
   | 'shopee_shipped'
   | 'lazada'
@@ -87,6 +88,7 @@ export type EndpointKind =
   | 'saleinvoice'
   | 'purchaseorder'
   | 'arreceipt'
+  | 'creditnote'
 
 export interface SmlDestinationOption {
   value: EndpointKind
@@ -153,6 +155,18 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     description: 'ส่งรายการ Shopee payout เข้าเมนู ลูกหนี้ -> รับชำระหนี้ ใน SML',
     phase1Enabled: true,
   },
+  {
+    value: 'creditnote',
+    billType: 'sale',
+    label: 'ขาย -> ยกเลิกขายสินค้าและบริการ',
+    apiPath: '/api/v1/ic/sale-invoices/:doc_no/cancel',
+    docFormatCode: 'CN',
+    docPrefix: 'CN',
+    docRunningFormat: 'YYMM####',
+    statusLabel: 'ทดสอบกับ SML test DB แล้ว',
+    description: 'สร้างเอกสารยกเลิกขายสินค้าและบริการ อ้างใบขายเดิมหลัง Shopee ยกเลิก order',
+    phase1Enabled: true,
+  },
 ]
 
 export function destinationFor(
@@ -187,6 +201,7 @@ export function destinationKindFor(
 ): EndpointKind {
   const lower = (override || '').toLowerCase()
   if (channel === 'shopee_settlement' || billType === 'ar_receipt' || lower.includes('ar/receipts')) return 'arreceipt'
+  if (channel === 'shopee_realtime_cancel' || lower.includes('creditnote') || lower.includes('cancel')) return 'creditnote'
   if (lower.includes('purchaseorder') || lower.includes('purchase-orders')) return 'purchaseorder'
   if (lower.includes('saleinvoice') || lower.includes('sale-invoices')) return 'saleinvoice'
   if (lower.includes('saleorder') || lower.includes('sale-orders')) return 'saleorder'
@@ -199,8 +214,9 @@ export function destinationKindFor(
 export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   line: 'LINE OA',
   email: 'Email',
-  shopee: 'Shopee',
+  shopee: 'นำเข้า Shopee ย้อนหลัง',
   shopee_realtime: 'คำสั่งซื้อ Shopee',
+  shopee_realtime_cancel: 'Shopee ยกเลิกหลังส่ง SML',
   shopee_email: 'Shopee Order',
   shopee_shipped: 'Email บิลซื้อ Shopee',
   lazada: 'Lazada Excel',

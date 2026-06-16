@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,12 +43,17 @@ type settingDef struct {
 	Description  string `json:"description,omitempty"`
 }
 
+const (
+	instanceConnectionTimeout = 4 * time.Second
+	instanceResponseBodyLimit = 768
+)
+
 var instanceSettingDefs = []settingDef{
 	{Key: "instance.name", Label: "ชื่อร้าน", Group: "instance", Type: "text", DefaultValue: "Nexflow", Description: "ไม่บังคับ ใช้ให้ทีมดูแลรู้ว่า Nexflow ชุดนี้เป็นของร้านไหน"},
 	{Key: "instance.slug", Label: "รหัสร้าน", Group: "instance", Type: "text", DefaultValue: "default", Description: "ไม่บังคับ ใช้เป็นชื่อสั้นสำหรับแยกเอกสาร backup และ deploy"},
 	{Key: "instance.support_contact", Label: "ผู้ดูแลระบบ", Group: "instance", Type: "text", DefaultValue: "", Description: "ไม่บังคับ เบอร์หรือชื่อคนที่ดูแลระบบชุดนี้"},
 
-	{Key: "sml.rest_base_url", Label: "SML REST URL", Group: "sml", Type: "url", Restart: true, Required: true, Description: "URL ของ sml-api-byboss เช่น http://172.24.0.1:8200 (ใช้ร่วมกันทุกร้าน)"},
+	{Key: "sml.rest_base_url", Label: "sml-api-byboss URL", Group: "sml", Type: "url", Restart: true, Required: true, Description: "URL internal proxy จาก Nexflow backend ไป sml-api-byboss เช่น http://172.24.0.1:8200 ไม่ใช่ SML domain ปลายทางของ tenant"},
 	{Key: "sml.provider", Label: "Provider", Group: "sml", Type: "text", Restart: true, Required: true, Description: "รหัส provider ของ SML instance นี้ เช่น DATA ใช้กับ SML REST และ stock process"},
 	{Key: "sml.config_file", Label: "Config file", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อไฟล์ config ของ SML instance นี้ เช่น SMLConfigDATA.xml"},
 	{Key: "sml.database", Label: "Database (tenant)", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อ database SML ของร้านนี้ ต้องเป็น lowercase เช่น sml1_2026 (sml-api-byboss แปลงเป็น lowercase เสมอ ห้ามใช้ตัวพิมพ์ใหญ่)"},
@@ -304,58 +310,14 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 		return strings.TrimSpace(cfgFallback[key])
 	}
 
-	httpClient := &http.Client{Timeout: 8 * time.Second}
-
-	type checkResult struct {
-		OK     bool   `json:"ok"`
-		Error  string `json:"error,omitempty"`
-		Detail string `json:"detail,omitempty"`
-	}
-
-	doGET := func(url string, headers map[string]string) (int, []byte, error) {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return 0, nil, err
-		}
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			return 0, nil, err
-		}
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, body, nil
-	}
+	httpClient := &http.Client{Timeout: instanceConnectionTimeout}
 
 	// ── SML ──────────────────────────────────────────────────────────────────
-	smlResult := checkResult{}
 	baseURL := get("sml.rest_base_url")
 	guid := h.cfg.ShopeeSMLGUID // ค่าตายตัวจาก .env ใช้ร่วมกันทุก instance
 	database := get("sml.database")
-	if baseURL == "" || guid == "" || database == "" {
-		smlResult.Error = "ยังไม่ได้ตั้งค่า SML REST URL หรือ database"
-	} else {
-		// Use product list — returns 403 on wrong tenant, 401 on bad guid.
-		smlURL := strings.TrimRight(baseURL, "/") + "/api/v1/ic/products?page=1"
-		code, body, err := doGET(smlURL, map[string]string{
-			"guid":     guid,
-			"X-Tenant": database,
-		})
-		if err != nil {
-			smlResult.Error = fmt.Sprintf("เชื่อมต่อไม่ได้: %v", err)
-		} else if code == http.StatusOK {
-			smlResult.OK = true
-			smlResult.Detail = strings.TrimRight(baseURL, "/")
-		} else if code == http.StatusForbidden {
-			smlResult.Error = fmt.Sprintf("database '%s' ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึง", database)
-		} else if code == http.StatusUnauthorized {
-			smlResult.Error = "guid (API key) ไม่ถูกต้อง"
-		} else {
-			smlResult.Error = fmt.Sprintf("server ตอบ %d: %s", code, strings.TrimSpace(string(body)))
-		}
-	}
+	stockURL := get("sml.stock_request_url")
+	var smlProxyResult, smlTenantResult, smlStockResult checkResult
 
 	// ── LINE ─────────────────────────────────────────────────────────────────
 	lineResult := checkResult{}
@@ -363,8 +325,10 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 	if lineToken == "" {
 		lineResult.Error = "ยังไม่ได้ตั้งค่า LINE Channel access token"
 	} else {
-		code, body, err := doGET("https://api.line.me/v2/bot/info",
+		code, body, latencyMS, err := doInstanceGET(httpClient, "https://api.line.me/v2/bot/info",
 			map[string]string{"Authorization": "Bearer " + lineToken})
+		lineResult.HTTPStatus = code
+		lineResult.LatencyMS = latencyMS
 		if err != nil {
 			lineResult.Error = fmt.Sprintf("เชื่อมต่อ LINE API ไม่ได้: %v", err)
 		} else if code == http.StatusOK {
@@ -388,8 +352,10 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 	if orKey == "" {
 		orResult.Error = "ยังไม่ได้ตั้งค่า OpenRouter API key"
 	} else {
-		code, body, err := doGET("https://openrouter.ai/api/v1/auth/key",
+		code, body, latencyMS, err := doInstanceGET(httpClient, "https://openrouter.ai/api/v1/auth/key",
 			map[string]string{"Authorization": "Bearer " + orKey})
+		orResult.HTTPStatus = code
+		orResult.LatencyMS = latencyMS
 		if err != nil {
 			orResult.Error = fmt.Sprintf("เชื่อมต่อ OpenRouter ไม่ได้: %v", err)
 		} else if code == http.StatusOK {
@@ -408,13 +374,228 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 		}
 	}
 
-	allOK := smlResult.OK && lineResult.OK && orResult.OK
-	c.JSON(http.StatusOK, gin.H{
-		"ok":         allOK,
-		"sml":        smlResult,
-		"line":       lineResult,
-		"openrouter": orResult,
+	var wg sync.WaitGroup
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+
+	run(func() {
+		smlProxyResult = checkSMLProxyReachable(httpClient, baseURL)
 	})
+	run(func() {
+		smlTenantResult = checkSMLTenantLookup(httpClient, baseURL, guid, database)
+	})
+	run(func() {
+		smlStockResult = checkSMLStockURL(httpClient, stockURL)
+	})
+	wg.Wait()
+
+	smlResult := combineSMLDiagnostics(smlProxyResult, smlTenantResult, smlStockResult)
+	logFailedInstanceCheck(h.log, "sml_proxy", smlProxyResult)
+	logFailedInstanceCheck(h.log, "sml_tenant", smlTenantResult)
+	logFailedInstanceCheck(h.log, "sml_stock_request", smlStockResult)
+
+	allOK := checkPassed(smlResult) && checkPassed(lineResult) && checkPassed(orResult)
+	c.JSON(http.StatusOK, gin.H{
+		"ok":                allOK,
+		"sml":               smlResult,
+		"sml_proxy":         smlProxyResult,
+		"sml_tenant":        smlTenantResult,
+		"sml_stock_request": smlStockResult,
+		"line":              lineResult,
+		"openrouter":        orResult,
+	})
+}
+
+type checkResult struct {
+	OK         bool   `json:"ok"`
+	Error      string `json:"error,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	Layer      string `json:"layer,omitempty"`
+	Skipped    bool   `json:"skipped,omitempty"`
+	HTTPStatus int    `json:"http_status,omitempty"`
+	LatencyMS  int64  `json:"latency_ms,omitempty"`
+}
+
+func checkPassed(r checkResult) bool {
+	return r.OK || r.Skipped
+}
+
+func doInstanceGET(client *http.Client, rawURL string, headers map[string]string) (int, []byte, int64, error) {
+	start := time.Now()
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := client.Do(req)
+	latencyMS := time.Since(start).Milliseconds()
+	if err != nil {
+		return 0, nil, latencyMS, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, instanceResponseBodyLimit))
+	return resp.StatusCode, body, latencyMS, nil
+}
+
+func checkSMLProxyReachable(client *http.Client, baseURL string) checkResult {
+	result := checkResult{Layer: "sml_proxy"}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		result.Error = "ยังไม่ได้ตั้งค่า sml-api-byboss URL"
+		return result
+	}
+
+	code, body, latencyMS, err := doInstanceGET(client, baseURL+"/health", nil)
+	result.HTTPStatus = code
+	result.LatencyMS = latencyMS
+	if err != nil {
+		result.Error = "ติดต่อ sml-api-byboss ไม่ได้ภายในเวลาที่กำหนด ตรวจ container/port 8200 และ network ระหว่าง Nexflow กับ sml-api-byboss"
+		result.Detail = summarizeConnectionError(err)
+		return result
+	}
+	if code >= 500 {
+		result.Error = fmt.Sprintf("sml-api-byboss ตอบ HTTP %d ระหว่างตรวจ proxy", code)
+		result.Detail = summarizeBody(body)
+		return result
+	}
+	result.OK = true
+	if code == http.StatusOK {
+		result.Detail = "sml-api-byboss ตอบ /health ได้"
+	} else {
+		result.Detail = fmt.Sprintf("sml-api-byboss ตอบ HTTP %d แปลว่า proxy reachable แต่ endpoint /health อาจไม่มีใน service นี้", code)
+	}
+	return result
+}
+
+func checkSMLTenantLookup(client *http.Client, baseURL, guid, database string) checkResult {
+	result := checkResult{Layer: "sml_tenant"}
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	database = strings.TrimSpace(database)
+	if baseURL == "" || guid == "" || database == "" {
+		result.Error = "ยังไม่ได้ตั้งค่า sml-api-byboss URL, guid หรือ database tenant"
+		return result
+	}
+
+	smlURL := baseURL + "/api/v1/ic/products?page=1"
+	code, body, latencyMS, err := doInstanceGET(client, smlURL, map[string]string{
+		"guid":     guid,
+		"X-Tenant": database,
+	})
+	result.HTTPStatus = code
+	result.LatencyMS = latencyMS
+	if err != nil {
+		result.Error = fmt.Sprintf("sml-api-byboss ไม่ตอบ หรือ downstream SML domain ของ tenant '%s' มีปัญหา", database)
+		result.Detail = summarizeConnectionError(err)
+		return result
+	}
+	switch code {
+	case http.StatusOK:
+		result.OK = true
+		result.Detail = fmt.Sprintf("product lookup ผ่าน tenant %s", database)
+	case http.StatusUnauthorized:
+		result.Error = "guid (API key) ไม่ถูกต้อง"
+	case http.StatusForbidden:
+		result.Error = fmt.Sprintf("database tenant '%s' ไม่ถูกต้องหรือไม่มีสิทธิ์เข้าถึงใน sml-api-byboss", database)
+	default:
+		result.Error = fmt.Sprintf("sml-api-byboss ตอบ HTTP %d ระหว่าง product lookup tenant %s", code, database)
+		result.Detail = summarizeBody(body)
+	}
+	return result
+}
+
+func checkSMLStockURL(client *http.Client, stockURL string) checkResult {
+	result := checkResult{Layer: "sml_stock_request"}
+	stockURL = strings.TrimRight(strings.TrimSpace(stockURL), "/")
+	if stockURL == "" {
+		result.OK = true
+		result.Skipped = true
+		result.Detail = "ไม่ได้ตั้งค่า Stock Request URL ระบบจะข้ามการคำนวณต้นทุนสต๊อกหลังส่ง SML"
+		return result
+	}
+
+	code, body, latencyMS, err := doInstanceGET(client, stockURL, nil)
+	result.HTTPStatus = code
+	result.LatencyMS = latencyMS
+	if err != nil {
+		result.Error = "endpoint คำนวณต้นทุนสต๊อกติดต่อไม่ได้ ตรวจ Stock Request URL หรือ network ไป SML Java server"
+		result.Detail = summarizeConnectionError(err)
+		return result
+	}
+	if code >= 500 {
+		result.Error = fmt.Sprintf("Stock Request URL ตอบ HTTP %d ระหว่าง read-only reachability check", code)
+		result.Detail = summarizeBody(body)
+		return result
+	}
+	result.OK = true
+	result.Detail = fmt.Sprintf("Stock Request URL reachable (HTTP %d); ยังไม่ได้ POST processstockrequest", code)
+	return result
+}
+
+func combineSMLDiagnostics(proxy, tenant, stock checkResult) checkResult {
+	result := checkResult{Layer: "sml"}
+	if !checkPassed(proxy) {
+		result.Error = proxy.Error
+		result.Detail = proxy.Detail
+		return result
+	}
+	if !checkPassed(tenant) {
+		result.Error = tenant.Error
+		result.Detail = tenant.Detail
+		return result
+	}
+	if !checkPassed(stock) {
+		result.Error = stock.Error
+		result.Detail = stock.Detail
+		return result
+	}
+	result.OK = true
+	if stock.Skipped {
+		result.Detail = "SML product lookup ผ่าน; Stock Request URL ยังไม่ได้ตั้งค่า"
+	} else {
+		result.Detail = "SML product lookup และ Stock Request URL ผ่าน"
+	}
+	return result
+}
+
+func summarizeConnectionError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(err.Error())
+	if len(msg) > instanceResponseBodyLimit {
+		return msg[:instanceResponseBodyLimit] + "..."
+	}
+	return msg
+}
+
+func summarizeBody(body []byte) string {
+	msg := strings.TrimSpace(string(body))
+	if msg == "" {
+		return ""
+	}
+	if len(msg) > instanceResponseBodyLimit {
+		return msg[:instanceResponseBodyLimit] + "..."
+	}
+	return msg
+}
+
+func logFailedInstanceCheck(log *zap.Logger, layer string, result checkResult) {
+	if log == nil || checkPassed(result) {
+		return
+	}
+	log.Warn("instance_connection_check_failed",
+		zap.String("layer", layer),
+		zap.Int("http_status", result.HTTPStatus),
+		zap.Int64("latency_ms", result.LatencyMS),
+		zap.String("error", result.Error),
+	)
 }
 
 func maskSecret(v string) string {

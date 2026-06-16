@@ -41,8 +41,24 @@ type Response = {
   pending_restart_settings?: string[]
 }
 
-type TestResult = { ok: boolean; error?: string; detail?: string }
-type TestResults = { sml?: TestResult; line?: TestResult; openrouter?: TestResult; db?: TestResult }
+type TestResult = {
+  ok: boolean
+  skipped?: boolean
+  error?: string
+  detail?: string
+  layer?: string
+  http_status?: number
+  latency_ms?: number
+}
+type TestResults = {
+  sml?: TestResult
+  sml_proxy?: TestResult
+  sml_tenant?: TestResult
+  sml_stock_request?: TestResult
+  line?: TestResult
+  openrouter?: TestResult
+  db?: TestResult
+}
 type ShopeeAPIStatus = {
   enabled: boolean
   connected: boolean
@@ -73,7 +89,7 @@ const GROUP_META: Record<SettingGroup, { title: string; description: string; ico
   },
   sml: {
     title: 'SML ERP',
-    description: 'ข้อมูลเชื่อมต่อ SML REST API — SML REST URL คือ sml-api-byboss ใช้ร่วมกันทุกร้าน',
+    description: 'ข้อมูลเชื่อมต่อ SML ผ่าน sml-api-byboss และ endpoint คำนวณต้นทุนสต๊อก',
     icon: Database,
   },
   sml_db: {
@@ -108,10 +124,34 @@ const PHASE1_HIDDEN_KEYS = new Set([
 ])
 
 const TEST_SERVICE_LABEL: Record<string, string> = {
-  sml: 'SML ERP',
+  sml: 'SML ERP ภาพรวม',
+  sml_proxy: 'sml-api-byboss proxy',
+  sml_tenant: 'Tenant/Product lookup',
+  sml_stock_request: 'Stock Request URL',
   line: 'LINE แจ้งเตือน',
   openrouter: 'OpenRouter AI',
   db: 'SML Database',
+}
+const TEST_RESULT_ORDER: Array<keyof TestResults> = [
+  'sml_proxy',
+  'sml_tenant',
+  'sml_stock_request',
+  'line',
+  'openrouter',
+  'db',
+]
+
+function testResultTone(result: TestResult): 'ok' | 'warn' | 'danger' {
+  if (result.ok && result.skipped) return 'warn'
+  if (result.ok) return 'ok'
+  return 'danger'
+}
+
+function testResultMeta(result: TestResult) {
+  const parts: string[] = []
+  if (result.http_status) parts.push(`HTTP ${result.http_status}`)
+  if (typeof result.latency_ms === 'number' && result.latency_ms > 0) parts.push(`${result.latency_ms}ms`)
+  return parts.join(' · ')
 }
 
 function sourceLabel(s: InstanceSetting) {
@@ -372,7 +412,7 @@ export default function InstanceSettings() {
       <PageHeader
         title="การเชื่อมต่อระบบ"
         description={PHASE < 2
-          ? 'ตั้งค่าเฉพาะที่ใช้ใน Phase 1: SML REST, LINE แจ้งเตือนระบบ และ OpenRouter'
+          ? 'ตั้งค่าเฉพาะที่ใช้ใน Phase 1: SML ผ่าน sml-api-byboss, LINE แจ้งเตือนระบบ และ OpenRouter'
           : 'ตั้งค่า SML ERP, OpenRouter และข้อมูลร้านที่ใช้กับ Nexflow ชุดนี้'}
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -501,21 +541,41 @@ export default function InstanceSettings() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              {(['sml', 'line', 'openrouter', 'db'] as const).map((svc) => {
+            {testResults.sml && !testResults.sml.ok && (
+              <div className="mb-3 rounded-md border border-destructive/25 bg-destructive/[0.04] px-3 py-2 text-xs leading-relaxed">
+                <div className="font-medium text-destructive">SML ERP ยังไม่พร้อม</div>
+                <div className="mt-0.5 text-muted-foreground">
+                  {testResults.sml.error || testResults.sml.detail || 'ตรวจรายละเอียดแยกชั้นด้านล่าง'}
+                </div>
+              </div>
+            )}
+            <div className="grid gap-2 lg:grid-cols-2">
+              {TEST_RESULT_ORDER.map((svc) => {
                 const r = testResults[svc]
                 if (!r) return null
+                const tone = testResultTone(r)
+                const meta = testResultMeta(r)
                 return (
                   <div key={svc} className={cn(
                     'flex items-start gap-3 rounded-md border px-3 py-2 text-sm',
-                    r.ok ? 'border-success/25 bg-success/[0.04]' : 'border-destructive/25 bg-destructive/[0.04]',
+                    tone === 'ok' && 'border-success/25 bg-success/[0.04]',
+                    tone === 'warn' && 'border-warning/30 bg-warning/[0.06]',
+                    tone === 'danger' && 'border-destructive/25 bg-destructive/[0.04]',
                   )}>
-                    {r.ok
-                      ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                      : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
+                    {tone === 'ok' && <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />}
+                    {tone === 'warn' && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />}
+                    {tone === 'danger' && <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
                     <div className="min-w-0">
-                      <span className="font-medium">{TEST_SERVICE_LABEL[svc]}</span>
-                      {r.detail && <span className="ml-2 text-xs text-muted-foreground">{r.detail}</span>}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-medium">{TEST_SERVICE_LABEL[svc]}</span>
+                        {r.skipped && (
+                          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                            optional
+                          </Badge>
+                        )}
+                        {meta && <span className="text-[11px] text-muted-foreground">{meta}</span>}
+                      </div>
+                      {r.detail && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{r.detail}</p>}
                       {r.error && <p className="mt-0.5 text-xs text-destructive">{r.error}</p>}
                     </div>
                   </div>
@@ -567,7 +627,9 @@ export default function InstanceSettings() {
             <CardContent>
               {group === 'sml' && (
                 <div className="mb-4 rounded-lg border border-primary/20 bg-primary/[0.04] px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-                  เปลี่ยน SML REST URL หรือ Database แล้วให้กดทดสอบก่อนบันทึก หลังระบบ restart แล้วให้ Sync สินค้าใหม่อีกครั้ง รูปสินค้าจะอ่านจากฐานรูปคู่กันตาม pattern <span className="font-mono text-foreground">{'{database}_images'}</span>
+                  <span className="font-medium text-foreground">sml-api-byboss URL</span> คือ proxy ภายใน Docker เช่น <span className="font-mono text-foreground">http://172.24.0.1:8200</span> ไม่ใช่ domain SML ปลายทางของลูกค้า
+                  ถ้า domain ของ tenant เปลี่ยน ให้แก้ที่ <span className="font-mono text-foreground">~/sml-api-bybos</span> แล้วใช้ <span className="font-mono text-foreground">docker compose up -d --force-recreate</span>.
+                  Stock Request URL เป็น endpoint แยกสำหรับคำนวณต้นทุนสต๊อก และการทดสอบในหน้านี้ไม่สั่งคำนวณต้นทุนจริง
                 </div>
               )}
               <div className="grid gap-4 lg:grid-cols-2">

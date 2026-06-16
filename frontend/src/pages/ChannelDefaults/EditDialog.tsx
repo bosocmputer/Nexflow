@@ -141,6 +141,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
       saleinvoice: 'SI',
       purchaseorder: 'PO',
       arreceipt: 'EE',
+      creditnote: 'CN',
     }
     const screenCode = screenCodeMap[selectedDestination]
     if (!screenCode) return

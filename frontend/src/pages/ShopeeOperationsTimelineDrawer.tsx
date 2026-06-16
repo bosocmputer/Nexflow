@@ -415,18 +415,22 @@ function DocumentMilestones({ milestones, loading }: { milestones: ShopeeERPMile
 function DocumentMilestoneItem({ milestone }: { milestone: ShopeeERPMilestone }) {
   const done = milestone.state === 'done'
   const failed = milestone.state === 'failed'
+  const current = milestone.state === 'current'
   return (
     <div className={cn(
       'rounded-md border px-3 py-2 text-sm transition-colors duration-200 motion-reduce:transition-none',
       done && 'border-accentStrong/30 bg-primary/10',
       failed && 'border-destructive/40 bg-destructive/10',
-      !done && !failed && 'border-border bg-muted/20',
+      current && 'border-warning/40 bg-warning/10',
+      !done && !failed && !current && 'border-border bg-muted/20',
     )}>
       <div className="flex items-center gap-2">
         {done ? (
           <CheckCircle2 className="h-4 w-4 text-accentStrong" />
         ) : failed ? (
           <AlertTriangle className="h-4 w-4 text-destructive" />
+        ) : current ? (
+          <AlertTriangle className="h-4 w-4 text-warning" />
         ) : (
           <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground/50" />
         )}

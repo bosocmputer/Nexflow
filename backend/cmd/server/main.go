@@ -216,6 +216,13 @@ func main() {
 		GUID:     cfg.ShopeeSMLGUID,
 		Database: cfg.ShopeeSMLDatabase,
 	}, logger)
+	saleInvoiceCancelClient := sml.NewSaleInvoiceCancelClient(sml.PartyConfig{
+		BaseURL:    cfg.ShopeeSMLURL,
+		GUID:       cfg.ShopeeSMLGUID,
+		Provider:   cfg.ShopeeSMLProvider,
+		ConfigFile: cfg.ShopeeSMLConfigFile,
+		Database:   cfg.ShopeeSMLDatabase,
+	}, logger)
 
 	// SML warehouse cache — powers the Bill Detail send dialog warehouse/shelf
 	// pickers. If the SML v4 warehouse service is not deployed yet, startup
@@ -409,6 +416,7 @@ func main() {
 	shopeeH.SetArtifactService(artifactSvc)
 	shopeeRealtimeH := handlers.NewShopeeRealtimeHandler(shopeeRealtimeRepo, notificationRepo, eventBroker, shopeeH, billH, cfg, logger)
 	shopeeRealtimeH.SetLineNotifier(lineNotificationSvc)
+	shopeeRealtimeH.SetSMLCancelClient(saleInvoiceCancelClient)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogSvc, embSvc, catalogIdx, catalogRepo, logger)
 	lazadaH.SetArtifactService(artifactSvc)
@@ -571,6 +579,8 @@ func main() {
 		api.POST("/shopee-operations/create-documents/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocumentsPreview)
 		api.POST("/shopee-operations/create-documents", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocuments)
 		api.POST("/shopee-operations/:shop_id/:order_sn/create-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CreateDocument)
+		api.GET("/shopee-operations/:shop_id/:order_sn/cancel-sml-document/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocumentPreview)
+		api.POST("/shopee-operations/:shop_id/:order_sn/cancel-sml-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocument)
 		api.POST("/shopee-operations/:shop_id/:order_sn/save-erp", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SaveERP)
 		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-parameters", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingParameters)
 		api.POST("/shopee-operations/:shop_id/:order_sn/reconcile-shipping", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ReconcileShipping)

@@ -163,7 +163,11 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT s.id::text, s.connection_id::text, s.shop_id, s.shop_label, s.order_sn, s.order_status,
-		        s.erp_status, s.bill_id::text, s.sml_doc_no, COALESCE(b.document_route, '') AS document_route,
+		        s.erp_status, s.bill_id::text, s.sml_doc_no,
+		        COALESCE(c.cancel_sml_doc_no, '') AS sml_cancel_doc_no,
+		        COALESCE(c.status, '') AS sml_cancel_status,
+		        COALESCE(c.error, '') AS sml_cancel_error,
+		        COALESCE(b.document_route, '') AS document_route,
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
 		        s.package_number, s.logistics_status, s.tracking_number, s.shipping_carrier,
@@ -179,7 +183,15 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		           LIMIT 1
 		        ), '') AS ship_action_status
 		   FROM shopee_order_snapshots s
-		   LEFT JOIN bills b ON b.id = s.bill_id `+where+`
+		   LEFT JOIN bills b ON b.id = s.bill_id
+		   LEFT JOIN LATERAL (
+		     SELECT cancel_sml_doc_no, status, error
+		       FROM shopee_sml_cancellations c
+		      WHERE c.shop_id = s.shop_id
+		        AND c.order_sn = s.order_sn
+		      ORDER BY c.updated_at DESC
+		      LIMIT 1
+		   ) c ON TRUE `+where+`
 		  ORDER BY COALESCE(s.last_order_update_at, s.updated_at) DESC, s.updated_at DESC
 		  LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)),
 		args...,
@@ -242,7 +254,11 @@ func (r *ShopeeRealtimeRepo) Counts(ctx context.Context, shopID int64) (models.S
 func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, orderSN string) (*models.ShopeeOrderSnapshot, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT s.id::text, s.connection_id::text, s.shop_id, s.shop_label, s.order_sn, s.order_status,
-		        s.erp_status, s.bill_id::text, s.sml_doc_no, COALESCE(b.document_route, '') AS document_route,
+		        s.erp_status, s.bill_id::text, s.sml_doc_no,
+		        COALESCE(c.cancel_sml_doc_no, '') AS sml_cancel_doc_no,
+		        COALESCE(c.status, '') AS sml_cancel_status,
+		        COALESCE(c.error, '') AS sml_cancel_error,
+		        COALESCE(b.document_route, '') AS document_route,
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
 		        s.package_number, s.logistics_status, s.tracking_number, s.shipping_carrier,
@@ -259,6 +275,14 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		        ), '') AS ship_action_status
 		   FROM shopee_order_snapshots s
 		   LEFT JOIN bills b ON b.id = s.bill_id
+		   LEFT JOIN LATERAL (
+		     SELECT cancel_sml_doc_no, status, error
+		       FROM shopee_sml_cancellations c
+		      WHERE c.shop_id = s.shop_id
+		        AND c.order_sn = s.order_sn
+		      ORDER BY c.updated_at DESC
+		      LIMIT 1
+		   ) c ON TRUE
 		  WHERE s.shop_id = $1 AND s.order_sn = $2
 		  LIMIT 1`,
 		shopID, strings.TrimSpace(orderSN),
@@ -493,6 +517,23 @@ func (r *ShopeeRealtimeRepo) UpdateSnapshotForBillSendResult(ctx context.Context
 		out = append(out, ref)
 	}
 	return out, rows.Err()
+}
+
+func (r *ShopeeRealtimeRepo) HasSnapshotForBill(ctx context.Context, billID string) (bool, error) {
+	billID = strings.TrimSpace(billID)
+	if billID == "" {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (
+		   SELECT 1
+		     FROM shopee_order_snapshots
+		    WHERE bill_id = $1::uuid
+		)`,
+		billID,
+	).Scan(&exists)
+	return exists, err
 }
 
 func (r *ShopeeRealtimeRepo) ArchiveBillAndUnlinkSnapshotForRecreate(ctx context.Context, billID, userID, reason string) ([]ShopeeSnapshotRef, error) {
@@ -759,6 +800,193 @@ func (r *ShopeeRealtimeRepo) RecordAction(ctx context.Context, shopID int64, ord
 	return err
 }
 
+type ShopeeSMLCancellationInput struct {
+	ShopID         int64
+	OrderSN        string
+	BillID         string
+	SaleSMLDocNo   string
+	CancelSMLDocNo string
+	Status         string
+	Error          string
+	Response       json.RawMessage
+	CreatedBy      string
+}
+
+func (r *ShopeeRealtimeRepo) LatestSMLCancellation(ctx context.Context, shopID int64, orderSN, saleSMLDocNo string) (*models.ShopeeSMLCancellation, error) {
+	orderSN = strings.TrimSpace(orderSN)
+	saleSMLDocNo = strings.TrimSpace(saleSMLDocNo)
+	if shopID <= 0 || orderSN == "" {
+		return nil, nil
+	}
+	args := []any{shopID, orderSN}
+	whereSale := ""
+	if saleSMLDocNo != "" {
+		args = append(args, saleSMLDocNo)
+		whereSale = fmt.Sprintf(" AND sale_sml_doc_no = $%d", len(args))
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
+		        cancel_sml_doc_no, status, error, response, created_by::text,
+		        created_at, updated_at, completed_at
+		   FROM shopee_sml_cancellations
+		  WHERE shop_id = $1
+		    AND order_sn = $2`+whereSale+`
+		  ORDER BY updated_at DESC
+		  LIMIT 1`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, nil
+	}
+	row, err := scanShopeeSMLCancellation(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &row, rows.Err()
+}
+
+func (r *ShopeeRealtimeRepo) RecordSMLCancellationPreview(ctx context.Context, in ShopeeSMLCancellationInput) (*models.ShopeeSMLCancellation, error) {
+	in = normalizeShopeeSMLCancellationInput(in)
+	if in.ShopID <= 0 || in.OrderSN == "" || in.SaleSMLDocNo == "" {
+		return nil, fmt.Errorf("shop_id, order_sn, and sale_sml_doc_no are required")
+	}
+	resp := jsonForDB(in.Response)
+	var out models.ShopeeSMLCancellation
+	var billID, createdBy sql.NullString
+	var completedAt sql.NullTime
+	err := r.db.QueryRowContext(ctx,
+		`INSERT INTO shopee_sml_cancellations
+		  (shop_id, order_sn, bill_id, sale_sml_doc_no, cancel_sml_doc_no,
+		   status, error, response, created_by)
+		 VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5,
+		         'previewed', $6, COALESCE(NULLIF($7, '')::jsonb, '{}'::jsonb),
+		         NULLIF($8, '')::uuid)
+		 RETURNING id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
+		           cancel_sml_doc_no, status, error, response, created_by::text,
+		           created_at, updated_at, completed_at`,
+		in.ShopID, in.OrderSN, in.BillID, in.SaleSMLDocNo, in.CancelSMLDocNo,
+		truncateDBText(in.Error, 800), resp, in.CreatedBy,
+	).Scan(
+		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
+		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
+		&out.CreatedAt, &out.UpdatedAt, &completedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	return &out, nil
+}
+
+func (r *ShopeeRealtimeRepo) StartSMLCancellationCreate(ctx context.Context, in ShopeeSMLCancellationInput) (*models.ShopeeSMLCancellation, string, error) {
+	in = normalizeShopeeSMLCancellationInput(in)
+	if in.ShopID <= 0 || in.OrderSN == "" || in.SaleSMLDocNo == "" {
+		return nil, "", fmt.Errorf("shop_id, order_sn, and sale_sml_doc_no are required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	rollback := true
+	defer func() {
+		if rollback {
+			_ = tx.Rollback()
+		}
+	}()
+
+	lockKey := fmt.Sprintf("shopee_sml_cancel:%d:%s:%s", in.ShopID, in.OrderSN, in.SaleSMLDocNo)
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+		return nil, "", err
+	}
+	if existing, err := latestSMLCancellationTx(ctx, tx, in.ShopID, in.OrderSN, in.SaleSMLDocNo, "created", "already_exists"); err != nil {
+		return nil, "", err
+	} else if existing != nil {
+		if err := tx.Commit(); err != nil {
+			return nil, "", err
+		}
+		rollback = false
+		return existing, "done", nil
+	}
+	if running, err := latestRunningSMLCancellationTx(ctx, tx, in.ShopID, in.OrderSN, in.SaleSMLDocNo); err != nil {
+		return nil, "", err
+	} else if running != nil {
+		if err := tx.Commit(); err != nil {
+			return nil, "", err
+		}
+		rollback = false
+		return running, "running", nil
+	}
+
+	resp := jsonForDB(in.Response)
+	var out models.ShopeeSMLCancellation
+	var billID, createdBy sql.NullString
+	var completedAt sql.NullTime
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO shopee_sml_cancellations
+		  (shop_id, order_sn, bill_id, sale_sml_doc_no, cancel_sml_doc_no,
+		   status, error, response, created_by)
+		 VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5,
+		         'creating', '', COALESCE(NULLIF($6, '')::jsonb, '{}'::jsonb),
+		         NULLIF($7, '')::uuid)
+		 RETURNING id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
+		           cancel_sml_doc_no, status, error, response, created_by::text,
+		           created_at, updated_at, completed_at`,
+		in.ShopID, in.OrderSN, in.BillID, in.SaleSMLDocNo, in.CancelSMLDocNo,
+		resp, in.CreatedBy,
+	).Scan(
+		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
+		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
+		&out.CreatedAt, &out.UpdatedAt, &completedAt,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", err
+	}
+	rollback = false
+	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	return &out, "started", nil
+}
+
+func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, status, cancelSMLDocNo string, response json.RawMessage, errMsg string) (*models.ShopeeSMLCancellation, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, nil
+	}
+	resp := jsonForDB(response)
+	var out models.ShopeeSMLCancellation
+	var billID, createdBy sql.NullString
+	var completedAt sql.NullTime
+	err := r.db.QueryRowContext(ctx,
+		`UPDATE shopee_sml_cancellations
+		    SET status = $2,
+		        cancel_sml_doc_no = COALESCE(NULLIF($3, ''), cancel_sml_doc_no),
+		        response = COALESCE(NULLIF($4, '')::jsonb, response),
+		        error = $5,
+		        updated_at = NOW(),
+		        completed_at = CASE WHEN $2 IN ('created','already_exists','failed','blocked') THEN NOW() ELSE completed_at END
+		  WHERE id = $1::uuid
+		  RETURNING id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
+		            cancel_sml_doc_no, status, error, response, created_by::text,
+		            created_at, updated_at, completed_at`,
+		id, strings.TrimSpace(status), strings.TrimSpace(cancelSMLDocNo), resp, truncateDBText(errMsg, 800),
+	).Scan(
+		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
+		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
+		&out.CreatedAt, &out.UpdatedAt, &completedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	return &out, nil
+}
+
 func (r *ShopeeRealtimeRepo) MergeSnapshotShippingMetadata(ctx context.Context, shopID int64, orderSN string, tracking *shopeeapi.TrackingNumberResponse, info *shopeeapi.TrackingInfoResponse) (*models.ShopeeOrderSnapshot, error) {
 	orderSN = strings.TrimSpace(orderSN)
 	if shopID <= 0 || orderSN == "" {
@@ -912,6 +1140,15 @@ func (r *ShopeeRealtimeRepo) OrderTimeline(ctx context.Context, shopID int64, or
 		            COALESCE(status, '') AS status,
 		            updated_at AS created_at
 		       FROM shopee_action_outbox
+		      WHERE shop_id = $1 AND order_sn = $2
+		     UNION ALL
+		     SELECT 'Nexflow' AS source,
+		            'cancel_sml_document' AS kind,
+		            'cancel_sml_document' AS title,
+		            COALESCE(CONCAT_WS(' · ', NULLIF(sale_sml_doc_no, ''), NULLIF(cancel_sml_doc_no, ''), NULLIF(error, '')), '') AS detail,
+		            COALESCE(status, '') AS status,
+		            updated_at AS created_at
+		       FROM shopee_sml_cancellations
 		      WHERE shop_id = $1 AND order_sn = $2
 		   ) x
 		  WHERE created_at IS NOT NULL
@@ -1099,6 +1336,49 @@ func (r *ShopeeRealtimeRepo) orderERPMilestones(ctx context.Context, snap *model
 		}
 	}
 
+	cancelState := "upcoming"
+	cancelDetail := "ยังไม่ต้องสร้างเอกสารยกเลิก SML"
+	cancelConfidence := "missing"
+	var cancelAt *time.Time
+	cancelRow, err := r.LatestSMLCancellation(ctx, snap.ShopID, snap.OrderSN, smlDocNo)
+	if err != nil {
+		return nil, err
+	}
+	if cancelRow != nil {
+		cancelConfidence = "confirmed"
+		switch cancelRow.Status {
+		case "created", "already_exists":
+			cancelState = "done"
+			cancelDetail = strings.TrimSpace("สร้างเอกสารยกเลิก SML แล้ว " + cancelRow.CancelSMLDocNo)
+			if cancelRow.CompletedAt != nil {
+				t := *cancelRow.CompletedAt
+				cancelAt = &t
+			} else {
+				t := cancelRow.UpdatedAt
+				cancelAt = &t
+			}
+		case "failed", "blocked":
+			cancelState = "failed"
+			cancelDetail = firstNonEmpty(cancelRow.Error, "สร้างเอกสารยกเลิก SML ไม่สำเร็จ")
+			t := cancelRow.UpdatedAt
+			cancelAt = &t
+		case "creating":
+			cancelState = "current"
+			cancelDetail = "กำลังสร้างเอกสารยกเลิก SML"
+			t := cancelRow.UpdatedAt
+			cancelAt = &t
+		default:
+			cancelState = "current"
+			cancelDetail = "เปิด preview เอกสารยกเลิก SML แล้ว"
+			t := cancelRow.UpdatedAt
+			cancelAt = &t
+		}
+	} else if shopeeCancelledAfterSML(snap, smlDocNo) {
+		cancelState = "current"
+		cancelDetail = "ต้องสร้างเอกสารยกเลิก SML"
+		cancelConfidence = "confirmed"
+	}
+
 	return []models.ShopeeOrderERPMilestone{
 		{
 			Key:        "document",
@@ -1117,6 +1397,15 @@ func (r *ShopeeRealtimeRepo) orderERPMilestones(ctx context.Context, snap *model
 			Source:     "nexflow",
 			Confidence: smlConfidence,
 			OccurredAt: smlAt,
+		},
+		{
+			Key:        "sml_cancel",
+			Label:      "เอกสารยกเลิก SML",
+			Detail:     cancelDetail,
+			State:      cancelState,
+			Source:     "nexflow",
+			Confidence: cancelConfidence,
+			OccurredAt: cancelAt,
 		},
 	}, nil
 }
@@ -1225,6 +1514,18 @@ func shopeeLifecycleGroup(status string) string {
 	default:
 		return ""
 	}
+}
+
+func shopeeCancelledAfterSML(snap *models.ShopeeOrderSnapshot, smlDocNo string) bool {
+	if snap == nil {
+		return false
+	}
+	switch models.NormalizeShopeeOrderStatus(snap.OrderStatus) {
+	case "CANCELLED", "IN_CANCEL":
+	default:
+		return false
+	}
+	return strings.TrimSpace(firstNonEmpty(smlDocNo, snap.SMLDocNo)) != ""
 }
 
 func shopeeLifecycleLabel(key string) (string, string) {
@@ -1442,6 +1743,19 @@ func shopeeTimelineTitle(kind, title, status string) string {
 		return "คำสั่งจัดส่ง Shopee"
 	case "shipping_document_create", "shipping_document_result", "shipping_document_download":
 		return "ตรวจใบปะหน้าพัสดุ"
+	case "cancel_sml_document":
+		switch strings.TrimSpace(status) {
+		case "created", "already_exists", "done":
+			return "สร้างเอกสารยกเลิก SML แล้ว"
+		case "failed":
+			return "สร้างเอกสารยกเลิก SML ไม่สำเร็จ"
+		case "blocked":
+			return "สร้างเอกสารยกเลิก SML ถูกบล็อก"
+		case "previewed":
+			return "เปิด preview เอกสารยกเลิก SML"
+		default:
+			return "เอกสารยกเลิก SML"
+		}
 	default:
 		if strings.TrimSpace(title) != "" {
 			return strings.TrimSpace(title)
@@ -1458,7 +1772,7 @@ func shopeeTimelineSource(source, kind string) string {
 		return "Push"
 	case "snapshot":
 		return "Sync"
-	case "reconcile", "reconcile_shipping", "create_document", "ship_order", "shipping_document_create", "shipping_document_result", "shipping_document_download":
+	case "reconcile", "reconcile_shipping", "create_document", "ship_order", "shipping_document_create", "shipping_document_result", "shipping_document_download", "cancel_sml_document":
 		return "Nexflow"
 	default:
 		if strings.TrimSpace(source) != "" {
@@ -1483,8 +1797,141 @@ func sortShopeeTimelineEvents(events []models.ShopeeOrderTimelineEvent) {
 	})
 }
 
+type txQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 type snapshotScanner interface {
 	Scan(dest ...interface{}) error
+}
+
+func latestSMLCancellationTx(ctx context.Context, tx txQueryer, shopID int64, orderSN, saleSMLDocNo string, statuses ...string) (*models.ShopeeSMLCancellation, error) {
+	orderSN = strings.TrimSpace(orderSN)
+	saleSMLDocNo = strings.TrimSpace(saleSMLDocNo)
+	if shopID <= 0 || orderSN == "" || saleSMLDocNo == "" || len(statuses) == 0 {
+		return nil, nil
+	}
+	args := []any{shopID, orderSN, saleSMLDocNo}
+	placeholders := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		args = append(args, strings.TrimSpace(status))
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
+		        cancel_sml_doc_no, status, error, response, created_by::text,
+		        created_at, updated_at, completed_at
+		   FROM shopee_sml_cancellations
+		  WHERE shop_id = $1
+		    AND order_sn = $2
+		    AND sale_sml_doc_no = $3
+		    AND status IN (`+strings.Join(placeholders, ",")+`)
+		  ORDER BY updated_at DESC
+		  LIMIT 1`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	row, err := scanShopeeSMLCancellation(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &row, rows.Err()
+}
+
+func latestRunningSMLCancellationTx(ctx context.Context, tx txQueryer, shopID int64, orderSN, saleSMLDocNo string) (*models.ShopeeSMLCancellation, error) {
+	orderSN = strings.TrimSpace(orderSN)
+	saleSMLDocNo = strings.TrimSpace(saleSMLDocNo)
+	if shopID <= 0 || orderSN == "" || saleSMLDocNo == "" {
+		return nil, nil
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
+		        cancel_sml_doc_no, status, error, response, created_by::text,
+		        created_at, updated_at, completed_at
+		   FROM shopee_sml_cancellations
+		  WHERE shop_id = $1
+		    AND order_sn = $2
+		    AND sale_sml_doc_no = $3
+		    AND status = 'creating'
+		    AND updated_at > NOW() - INTERVAL '5 minutes'
+		  ORDER BY updated_at DESC
+		  LIMIT 1`,
+		shopID, orderSN, saleSMLDocNo,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	row, err := scanShopeeSMLCancellation(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &row, rows.Err()
+}
+
+func scanShopeeSMLCancellation(rows snapshotScanner) (models.ShopeeSMLCancellation, error) {
+	var out models.ShopeeSMLCancellation
+	var billID, createdBy sql.NullString
+	var completedAt sql.NullTime
+	if err := rows.Scan(
+		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
+		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
+		&out.CreatedAt, &out.UpdatedAt, &completedAt,
+	); err != nil {
+		return out, err
+	}
+	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	return out, nil
+}
+
+func attachShopeeSMLCancellationNulls(out *models.ShopeeSMLCancellation, billID, createdBy sql.NullString, completedAt sql.NullTime) {
+	if out == nil {
+		return
+	}
+	if billID.Valid {
+		out.BillID = &billID.String
+	}
+	if createdBy.Valid {
+		out.CreatedBy = &createdBy.String
+	}
+	if completedAt.Valid {
+		out.CompletedAt = &completedAt.Time
+	}
+}
+
+func normalizeShopeeSMLCancellationInput(in ShopeeSMLCancellationInput) ShopeeSMLCancellationInput {
+	in.OrderSN = strings.TrimSpace(in.OrderSN)
+	in.BillID = strings.TrimSpace(in.BillID)
+	in.SaleSMLDocNo = strings.TrimSpace(in.SaleSMLDocNo)
+	in.CancelSMLDocNo = strings.TrimSpace(in.CancelSMLDocNo)
+	in.Status = strings.TrimSpace(in.Status)
+	in.Error = strings.TrimSpace(in.Error)
+	in.CreatedBy = strings.TrimSpace(in.CreatedBy)
+	return in
+}
+
+func jsonForDB(raw json.RawMessage) string {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func truncateDBText(v string, limit int) string {
+	v = strings.TrimSpace(v)
+	if limit > 0 && len(v) > limit {
+		return v[:limit]
+	}
+	return v
 }
 
 func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error) {
@@ -1493,7 +1940,8 @@ func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error
 	var lastOrderUpdate sql.NullTime
 	if err := rows.Scan(
 		&out.ID, &connID, &out.ShopID, &out.ShopLabel, &out.OrderSN, &out.OrderStatus,
-		&out.ERPStatus, &billID, &out.SMLDocNo, &out.DocumentRoute, &out.BillSourceFlow, &out.BuyerUsername, &out.TotalAmount,
+		&out.ERPStatus, &billID, &out.SMLDocNo, &out.SMLCancelDocNo, &out.SMLCancelStatus, &out.SMLCancelError,
+		&out.DocumentRoute, &out.BillSourceFlow, &out.BuyerUsername, &out.TotalAmount,
 		&out.Currency, &out.ItemCount, &out.PackageNumber, &out.LogisticsStatus,
 		&out.TrackingNumber, &out.ShippingCarrier, &out.PaymentMethod, &out.RawDetail,
 		&lastOrderUpdate, &out.LastUpdateSource, &out.LastSyncedAt, &out.LastError, &out.CreatedAt, &out.UpdatedAt,

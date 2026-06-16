@@ -56,6 +56,9 @@ const PHASE_PLUS_CHANNEL_SLOTS: Array<{
   ...(ENABLE_SHOPEE_REALTIME_OPS && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee_realtime' as ChannelKey, bill_type: 'sale' as const }]
     : []),
+  ...(ENABLE_SHOPEE_REALTIME_OPS && ENABLE_SALES_ORDERS
+    ? [{ channel: 'shopee_realtime_cancel' as ChannelKey, bill_type: 'sale' as const }]
+    : []),
   ...(ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'lazada' as ChannelKey, bill_type: 'sale' as const }]
     : []),
@@ -85,6 +88,12 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
   if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
     return { label: 'คำสั่งซื้อ Shopee', to: '/shopee-operations' }
   }
+  if (row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale') {
+    return { label: 'คำสั่งซื้อ Shopee ที่ยกเลิก', to: '/shopee-operations?status_group=cancelled' }
+  }
+  if (row.channel === 'shopee' && row.bill_type === 'sale') {
+    return { label: 'นำเข้า Shopee ย้อนหลัง', to: '/import/shopee' }
+  }
   if (ENABLE_SALES_ORDERS && (row.channel === 'shopee' || row.channel === 'lazada' || row.channel === 'tiktok') && row.bill_type === 'sale') {
     const route = `${row.endpoint ?? ''} ${row.doc_format_code ?? ''}`.toLowerCase()
     if (route.includes('saleinvoice') || route.includes('sale-invoices') || row.doc_format_code?.toUpperCase() === 'SI') {
@@ -98,6 +107,38 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
   return null
 }
 
+function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
+  if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
+    return 'งานหลักสำหรับ order ใหม่: รับจาก Push/Sync แล้วกดสร้างเอกสารใน Nexflow'
+  }
+  if (row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale') {
+    return 'งานยกเลิกหลังส่ง SML: สร้างเอกสารขาย -> ยกเลิกขายสินค้าและบริการ'
+  }
+  if (row.channel === 'shopee' && row.bill_type === 'sale') {
+    return 'งานสำรองเท่านั้น: ดึงย้อนหลัง ซ่อม order ตกหล่น หรือ Excel/API fallback'
+  }
+  if (row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt') {
+    return 'รอบถอนเงิน Shopee สำหรับรับชำระหนี้'
+  }
+  if (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') {
+    return 'อีเมล Shopee Shipped สำหรับสร้างใบสั่งซื้อ'
+  }
+  return ''
+}
+
+function channelModeBadge(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
+  if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
+    return { label: 'งานหลัก', className: 'border-success/30 bg-success/10 text-success' }
+  }
+  if (row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale') {
+    return { label: 'หลังยกเลิก', className: 'border-destructive/30 bg-destructive/10 text-destructive' }
+  }
+  if (row.channel === 'shopee' && row.bill_type === 'sale') {
+    return { label: 'สำรอง/ย้อนหลัง', className: 'border-warning/30 bg-warning/10 text-warning' }
+  }
+  return null
+}
+
 function EndpointCell({ row }: { row: ChannelDefaultRow }) {
   const [open, setOpen] = useState(false)
   const destination = destinationFor(
@@ -106,6 +147,14 @@ function EndpointCell({ row }: { row: ChannelDefaultRow }) {
     row.endpoint ?? '',
     row.doc_format_code ?? '',
   )
+  const context =
+    row.channel === 'shopee_realtime'
+      ? 'ใช้เมื่อกดสร้างเอกสารจากคำสั่งซื้อ Shopee'
+      : row.channel === 'shopee_realtime_cancel'
+        ? 'ใช้เมื่อ Shopee ยกเลิก order หลังส่งใบขายเข้า SML แล้ว'
+      : row.channel === 'shopee'
+        ? 'ใช้เฉพาะเมื่อนำเข้าย้อนหลังหรือซ่อม order ตกหล่น'
+        : ''
 
   return (
     <div className="min-w-[220px] space-y-1">
@@ -114,6 +163,11 @@ function EndpointCell({ row }: { row: ChannelDefaultRow }) {
           {destination?.label ?? 'ยังไม่ตั้งปลายทาง'}
         </span>
       </div>
+      {context && (
+        <div className="max-w-[260px] text-[11px] leading-4 text-muted-foreground">
+          {context}
+        </div>
+      )}
       <button
         type="button"
         onClick={(e) => {
@@ -359,9 +413,11 @@ export default function ChannelDefaults() {
         columns={[
           {
             key: 'channel',
-            header: 'เส้นทาง',
+            header: 'ช่องทาง / เมนูที่ใช้',
             cell: (r) => {
               const menu = workMenuFor(r)
+              const purpose = channelPurpose(r)
+              const mode = channelModeBadge(r)
               return (
                 <div className="min-w-[190px] space-y-1">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -376,15 +432,25 @@ export default function ChannelDefaults() {
                           ? 'bg-warning/15 text-warning hover:bg-warning/20'
                           : r.bill_type === 'ar_receipt'
                             ? 'bg-success/15 text-success hover:bg-success/20'
-                            : 'bg-info/15 text-info hover:bg-info/20',
+                        : 'bg-info/15 text-info hover:bg-info/20',
                       )}
                     >
                       {r.bill_type === 'purchase' ? 'บิลซื้อ' : r.bill_type === 'ar_receipt' ? 'รับชำระ' : 'บิลขาย'}
                     </Badge>
+                    {mode && (
+                      <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px] font-medium', mode.className)}>
+                        {mode.label}
+                      </Badge>
+                    )}
                   </div>
+                  {purpose && (
+                    <div className="max-w-[260px] text-xs leading-5 text-muted-foreground">
+                      {purpose}
+                    </div>
+                  )}
                   {menu ? (
                     <Link to={menu.to} className="text-xs font-medium text-link hover:underline">
-                      เปิดคิวงาน: {menu.label}
+                      ไปหน้า {menu.label}
                     </Link>
                   ) : (
                     <span className="text-xs text-muted-foreground">ไม่มีคิวงานประจำ</span>
@@ -395,7 +461,7 @@ export default function ChannelDefaults() {
           },
           {
             key: 'endpoint',
-            header: 'ปลายทาง SML',
+            header: 'เอกสารที่จะสร้างใน SML',
             cell: (r) => (
               <div className="min-w-[240px] space-y-2">
                 <EndpointCell row={r} />

@@ -55,6 +55,17 @@ func TestShopeeShippingActionsGuardAllowsWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestShopeeOrderIsCancelledIncludesInCancel(t *testing.T) {
+	for _, status := range []string{"CANCELLED", "IN_CANCEL"} {
+		if !shopeeOrderIsCancelled(status) {
+			t.Fatalf("expected %s to be treated as cancelled", status)
+		}
+	}
+	if shopeeOrderIsCancelled("READY_TO_SHIP") {
+		t.Fatal("READY_TO_SHIP should not be treated as cancelled")
+	}
+}
+
 func TestShopeePushCodeMappingMatchesConsole(t *testing.T) {
 	cases := []struct {
 		code            int

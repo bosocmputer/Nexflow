@@ -116,6 +116,9 @@ type OrderSnapshot = {
   erp_status: string
   bill_id?: string
   sml_doc_no?: string
+  sml_cancel_doc_no?: string
+  sml_cancel_status?: string
+  sml_cancel_error?: string
   document_route?: string
   bill_source_flow?: string
   buyer_username?: string
@@ -282,6 +285,29 @@ type ShippingDocumentCreateResponse = {
   tracking?: TrackingData
 }
 
+type CancelSMLDocumentPreview = {
+  status: string
+  message?: string
+  shop_id: number
+  order_sn: string
+  bill_id: string
+  sale_sml_doc_no: string
+  cancel_sml_doc_no?: string
+  create_enabled: boolean
+  can_create: boolean
+  route?: {
+    destination?: string
+    doc_format_code?: string
+    endpoint?: string
+    message?: string
+    ready?: boolean
+  }
+  total_amount: number
+  item_count: number
+  rollback_reality?: string
+  error?: string
+}
+
 type LogisticsID = string | number
 
 type ShippingParameterData = {
@@ -433,6 +459,11 @@ export default function ShopeeOperations() {
   const [bulkCreating, setBulkCreating] = useState(false)
   const [bulkPreview, setBulkPreview] = useState<BulkCreatePreview | null>(null)
   const [bulkResult, setBulkResult] = useState<BulkCreateResult | null>(null)
+  const [cancelSMLDialogOpen, setCancelSMLDialogOpen] = useState(false)
+  const [cancelSMLPreviewLoading, setCancelSMLPreviewLoading] = useState(false)
+  const [cancelSMLCreating, setCancelSMLCreating] = useState(false)
+  const [cancelSMLPreview, setCancelSMLPreview] = useState<CancelSMLDocumentPreview | null>(null)
+  const [cancelSMLConfirmed, setCancelSMLConfirmed] = useState(false)
   const subscribeEvents = useEventsStore((s) => s.subscribe)
   const page = readPage(params)
   const perPage = readPerPage(params)
@@ -653,6 +684,51 @@ export default function ShopeeOperations() {
       toast.error('สร้างเอกสารไม่สำเร็จ: ' + apiError(e))
     } finally {
       setSavingERP(false)
+    }
+  }
+
+  const openCancelSMLPreview = async (order: OrderSnapshot) => {
+    setSelected(order)
+    setCancelSMLDialogOpen(true)
+    setCancelSMLPreview(null)
+    setCancelSMLConfirmed(false)
+    setCancelSMLPreviewLoading(true)
+    try {
+      const res = await client.get<CancelSMLDocumentPreview>(
+        `/api/shopee-operations/${order.shop_id}/${encodeURIComponent(order.order_sn)}/cancel-sml-document/preview`,
+      )
+      setCancelSMLPreview(res.data)
+    } catch (e) {
+      toast.error('เปิด preview เอกสารยกเลิก SML ไม่สำเร็จ: ' + apiError(e))
+      setCancelSMLDialogOpen(false)
+    } finally {
+      setCancelSMLPreviewLoading(false)
+    }
+  }
+
+  const createCancelSMLDocument = async () => {
+    if (!selected || !cancelSMLPreview) return
+    if (!cancelSMLConfirmed) {
+      toast.error('กรุณาติ๊กยืนยันก่อนสร้างเอกสารยกเลิก SML')
+      return
+    }
+    setCancelSMLCreating(true)
+    try {
+      const res = await client.post<CancelSMLDocumentPreview>(
+        `/api/shopee-operations/${selected.shop_id}/${encodeURIComponent(selected.order_sn)}/cancel-sml-document`,
+        { confirm: 'CREATE_SML_CANCEL_DOCUMENT' },
+      )
+      setCancelSMLPreview(res.data)
+      setCancelSMLConfirmed(false)
+      toast.success(res.data.message || 'สร้างเอกสารยกเลิก SML แล้ว')
+      await loadOrders()
+      if (timelineOpen) {
+        await loadTimeline(selected)
+      }
+    } catch (e) {
+      toast.error('สร้างเอกสารยกเลิก SML ไม่สำเร็จ: ' + apiError(e))
+    } finally {
+      setCancelSMLCreating(false)
     }
   }
 
@@ -1274,6 +1350,7 @@ export default function ShopeeOperations() {
                       <div className="mt-1 text-xs text-muted-foreground">
                         {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
                       </div>
+                      {cancelSMLBadge(order)}
                       {isImportFallbackBill(order) && (
                         <Badge variant="outline" className="mt-1 h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
                           สร้างจากนำเข้าย้อนหลัง
@@ -1303,12 +1380,28 @@ export default function ShopeeOperations() {
                             </Link>
                           </Button>
                         )}
+                        {canChangeDocumentRoute(order) && (
+                          <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
+                            <Link to={documentPath(order)} onClick={(event) => event.stopPropagation()} title="เปิดเอกสารเดิมเพื่อเก็บไว้และสร้างใหม่ตามเส้นทาง SML ล่าสุด">
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              เปลี่ยนเส้นทาง
+                            </Link>
+                          </Button>
+                        )}
                         <GuardedButton
                           icon={<FilePlus2 className="h-3.5 w-3.5" />}
                           label="สร้างเอกสาร"
                           disabledReason={erpDisabledReason(order)}
                           onClick={() => { setSelected(order); setERPDialogOpen(true) }}
                         />
+                        {shouldShowCancelSMLAction(order) && (
+                          <GuardedButton
+                            icon={<AlertTriangle className="h-3.5 w-3.5" />}
+                            label="สร้างเอกสารยกเลิก"
+                            disabledReason={cancelSMLDisabledReason(order)}
+                            onClick={() => void openCancelSMLPreview(order)}
+                          />
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -1482,6 +1575,107 @@ export default function ShopeeOperations() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={cancelSMLDialogOpen} onOpenChange={(open) => {
+          setCancelSMLDialogOpen(open)
+          if (!open) setCancelSMLConfirmed(false)
+        }}>
+          <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>สร้างเอกสารยกเลิก SML</DialogTitle>
+              <DialogDescription>
+                สำหรับ Shopee order ที่ถูกยกเลิกหลังส่งใบขายเข้า SML แล้ว
+              </DialogDescription>
+            </DialogHeader>
+
+            {cancelSMLPreviewLoading ? (
+              <div className="rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+                กำลังตรวจ preview จาก SML...
+              </div>
+            ) : cancelSMLPreview ? (
+              <div className="space-y-3">
+                {cancelSMLPreview.error && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>ยังสร้างไม่ได้</AlertTitle>
+                    <AlertDescription>{cancelSMLPreview.error}</AlertDescription>
+                  </Alert>
+                )}
+                {!cancelSMLPreview.create_enabled && !cancelSMLStatusDone(cancelSMLPreview.status) && (
+                  <Alert className="border-warning/40 bg-warning/10">
+                    <AlertTriangle className="h-4 w-4 text-warning" />
+                    <AlertTitle>ปิดการสร้าง CN อยู่</AlertTitle>
+                    <AlertDescription>
+                      เปิด notification และ preview ได้แล้ว แต่ปุ่มสร้างจริงยังถูกปิดด้วย feature flag จนกว่า SML domain จะพร้อม
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {cancelSMLStatusDone(cancelSMLPreview.status) && (
+                  <Alert className="border-success/30 bg-success/10">
+                    <CheckCircle2 className="h-4 w-4 text-success" />
+                    <AlertTitle>มีเอกสารยกเลิก SML แล้ว</AlertTitle>
+                    <AlertDescription>
+                      {cancelSMLPreview.cancel_sml_doc_no ? `เลขเอกสาร ${cancelSMLPreview.cancel_sml_doc_no}` : cancelSMLPreview.message || 'ตรวจพบเอกสารเดิมใน SML'}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <PreviewKV label="ใบขายเดิม" value={cancelSMLPreview.sale_sml_doc_no || '-'} mono />
+                    <PreviewKV label="เลขเอกสารยกเลิก" value={cancelSMLPreview.cancel_sml_doc_no || 'รอ SML preview'} mono />
+                    <PreviewKV label="ยอด" value={money(cancelSMLPreview.total_amount)} />
+                    <PreviewKV label="จำนวนรายการ" value={`${Number(cancelSMLPreview.item_count ?? 0).toLocaleString()} รายการ`} />
+                  </div>
+                  <div className="mt-3 border-t border-border pt-3">
+                    <PreviewKV
+                      label="เส้นทางเอกสาร"
+                      value={`${cancelSMLPreview.route?.destination || 'ขาย -> ยกเลิกขายสินค้าและบริการ'}${cancelSMLPreview.route?.doc_format_code ? ` (${cancelSMLPreview.route.doc_format_code})` : ''}`}
+                    />
+                  </div>
+                </div>
+                <Alert className="border-destructive/30 bg-destructive/10">
+                  <AlertTriangle className="h-4 w-4 text-destructive" />
+                  <AlertTitle>Rollback reality</AlertTitle>
+                  <AlertDescription>
+                    {cancelSMLPreview.rollback_reality || 'หลังสร้าง CN แล้ว การย้อนกลับต้องตรวจใน SML ด้วยคนทำงาน'}
+                  </AlertDescription>
+                </Alert>
+                {!cancelSMLStatusDone(cancelSMLPreview.status) && (
+                  <label className="flex items-start gap-3 rounded-md border border-border bg-background p-3 text-sm">
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={cancelSMLConfirmed}
+                      onCheckedChange={(value) => setCancelSMLConfirmed(value === true)}
+                    />
+                    <span className="leading-5">
+                      ยืนยันว่า Shopee order นี้ยกเลิกแล้ว และต้องสร้างเอกสาร “ขาย - ยกเลิกขายสินค้าและบริการ” เพื่ออ้างใบขายเดิมใน SML
+                    </span>
+                  </label>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                ยังไม่มี preview
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCancelSMLDialogOpen(false)}>ปิด</Button>
+              {cancelSMLPreview && !cancelSMLStatusDone(cancelSMLPreview.status) && (
+                <Button
+                  variant="destructive"
+                  onClick={() => void createCancelSMLDocument()}
+                  disabled={cancelSMLCreating || !cancelSMLPreview.can_create || !cancelSMLConfirmed}
+                  title={cancelSMLCreateDisabledTitle(cancelSMLPreview, cancelSMLConfirmed)}
+                >
+                  {cancelSMLCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  สร้างเอกสารยกเลิก SML
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <OrderTimelineDrawer
           open={timelineOpen}
           order={selected}
@@ -1516,6 +1710,17 @@ function BulkMetric({ label, value, tone }: { label: string; value: number; tone
     )}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 text-lg font-semibold tabular-nums">{Number(value ?? 0).toLocaleString()}</div>
+    </div>
+  )
+}
+
+function PreviewKV({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cn('mt-0.5 truncate text-sm font-medium text-foreground', mono && 'font-mono text-xs')}>
+        {value || '-'}
+      </div>
     </div>
   )
 }
@@ -1824,6 +2029,64 @@ function isImportFallbackBill(order: OrderSnapshot) {
   return flow === 'shopee_api' || flow === 'shopee_excel'
 }
 
+function canChangeDocumentRoute(order: OrderSnapshot) {
+  return Boolean(order.bill_id && !order.sml_doc_no && order.erp_status !== 'sent')
+}
+
+function cancelSMLStatusDone(status?: string) {
+  return status === 'created' || status === 'already_exists'
+}
+
+function orderCancelledAfterSML(order: OrderSnapshot) {
+  return Boolean(
+    order.bill_id
+    && order.sml_doc_no
+    && order.erp_status === 'sent'
+    && (order.order_status === 'CANCELLED' || order.order_status === 'IN_CANCEL'),
+  )
+}
+
+function shouldShowCancelSMLAction(order: OrderSnapshot) {
+  return orderCancelledAfterSML(order)
+}
+
+function cancelSMLDisabledReason(order: OrderSnapshot) {
+  if (!orderCancelledAfterSML(order)) return 'ใช้ได้เฉพาะ order ที่ยกเลิกหลังส่ง SML แล้ว'
+  if (cancelSMLStatusDone(order.sml_cancel_status)) return 'มีเอกสารยกเลิก SML แล้ว'
+  if (order.sml_cancel_status === 'creating') return 'กำลังสร้างเอกสารยกเลิก SML อยู่'
+  return ''
+}
+
+function cancelSMLBadge(order: OrderSnapshot) {
+  if (!orderCancelledAfterSML(order) && !order.sml_cancel_status) return null
+  if (cancelSMLStatusDone(order.sml_cancel_status)) {
+    return (
+      <Badge variant="outline" className="mt-1 h-5 border-success/30 bg-success/10 px-1.5 text-[10px] text-success">
+        CN {order.sml_cancel_doc_no || 'สร้างแล้ว'}
+      </Badge>
+    )
+  }
+  if (order.sml_cancel_status === 'failed') {
+    return (
+      <Badge variant="outline" className="mt-1 h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_error || undefined}>
+        CN ล้มเหลว
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" className="mt-1 h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive">
+      ต้องสร้างเอกสารยกเลิก SML
+    </Badge>
+  )
+}
+
+function cancelSMLCreateDisabledTitle(preview: CancelSMLDocumentPreview, confirmed: boolean) {
+  if (!preview.create_enabled) return 'ยังปิดด้วย ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS'
+  if (!preview.can_create) return preview.message || preview.error || 'ยังสร้างไม่ได้'
+  if (!confirmed) return 'กรุณาติ๊กยืนยันก่อนสร้าง'
+  return undefined
+}
+
 function orderKey(order: OrderSnapshot) {
   return `${order.shop_id}:${order.order_sn}`
 }
@@ -1831,7 +2094,11 @@ function orderKey(order: OrderSnapshot) {
 function erpDisabledReason(order: OrderSnapshot) {
   if (order.order_status === 'UNPAID') return 'order ยังไม่ชำระเงิน'
   if (order.order_status === 'CANCELLED' || order.order_status === 'IN_CANCEL') return 'order ถูกยกเลิกแล้ว'
-  if (order.bill_id || order.erp_status === 'pending_erp' || order.erp_status === 'sent') return 'สร้างเอกสารแล้ว เปิดเอกสารเพื่อส่ง SML หรือแก้ไข'
+  if (order.bill_id || order.erp_status === 'pending_erp' || order.erp_status === 'sent') {
+    return canChangeDocumentRoute(order)
+      ? 'สร้างเอกสารแล้ว ถ้า route ผิดให้กดเปลี่ยนเส้นทาง'
+      : 'สร้างเอกสารแล้ว เปิดเอกสารเพื่อส่ง SML หรือแก้ไข'
+  }
   return ''
 }
 

@@ -200,7 +200,7 @@ export default function BillDetail() {
     bill.status === 'needs_review'
   const canEdit = canSend
   const isShopeeRealtimeBill =
-    bill.source === 'shopee' && bill.raw_data?.flow === 'shopee_realtime'
+    bill.source === 'shopee' && (bill.raw_data?.flow === 'shopee_realtime' || bill.shopee_realtime_linked)
   const canRecreateDocumentRoute =
     isShopeeRealtimeBill &&
     bill.status !== 'sent' &&
@@ -299,9 +299,10 @@ export default function BillDetail() {
       {canRecreateDocumentRoute && (
         <div className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 space-y-1">
-            <div className="font-medium text-foreground">ต้องการเปลี่ยนเส้นทางเอกสาร?</div>
+            <div className="font-medium text-foreground">สร้างผิดเส้นทาง SML?</div>
             <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-              เอกสารนี้ยังไม่ส่งเข้า SML สามารถปลดออกจากคำสั่งซื้อ Shopee แล้วกลับไปสร้างใหม่ตามเส้นทางล่าสุดในหน้าเส้นทางเอกสาร SML ได้
+              ใช้เมื่อเลือก route ผิด เช่น สร้างเป็นใบสั่งขายแล้วต้องการเปลี่ยนเป็นขายสินค้าและบริการ.
+              ระบบจะเก็บเอกสารเดิมไว้เป็นประวัติ ปลด order กลับไปที่คำสั่งซื้อ Shopee แล้วให้สร้างใหม่ด้วยเส้นทางล่าสุด
             </p>
           </div>
           <Button
@@ -313,7 +314,7 @@ export default function BillDetail() {
             disabled={recreatingRoute}
           >
             <RefreshCw className={recreatingRoute ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-            สร้างใหม่ตามเส้นทางปัจจุบัน
+            เปลี่ยนเส้นทางเอกสาร
           </Button>
         </div>
       )}
@@ -406,13 +407,13 @@ export default function BillDetail() {
       <ConfirmDialog
         open={recreateRouteConfirmOpen}
         onOpenChange={setRecreateRouteConfirmOpen}
-        title="สร้างเอกสารใหม่ตามเส้นทางปัจจุบัน?"
+        title="เปลี่ยนเส้นทางเอกสารนี้?"
         description={[
-          'ระบบจะเก็บเอกสารเดิมไว้ใน Nexflow และปลด order นี้กลับไปที่คำสั่งซื้อ Shopee',
-          'ยังไม่ส่งเข้า SML และไม่ลบเอกสารใน SML เพราะเอกสารนี้ยังไม่มีเลข SML',
+          'ระบบจะไม่ลบถาวร แต่จะเก็บเอกสารเดิมไว้ใน Nexflow และปลด order นี้กลับไปที่คำสั่งซื้อ Shopee',
+          'ทำได้เฉพาะเอกสารที่ยังไม่ส่งเข้า SML และยังไม่มีเลข SML',
           'หลังยืนยัน ให้กด “สร้างเอกสาร” ในคำสั่งซื้อ Shopee อีกครั้ง ระบบจะใช้เส้นทางล่าสุดจากหน้าเส้นทางเอกสาร SML',
         ].join('\n')}
-        confirmLabel="ปลดเอกสารเดิม"
+        confirmLabel="เก็บเอกสารเดิมและสร้างใหม่"
         variant="destructive"
         onConfirm={handleRecreateRouteConfirm}
       />

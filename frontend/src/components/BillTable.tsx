@@ -375,6 +375,7 @@ function BillRowActions({
     e.stopPropagation()
     fn?.(bill)
   }
+  const shopeeRealtimeLinked = isShopeeRealtimeLinkedBill(bill)
 
   if (!canManage) return null
 
@@ -411,19 +412,24 @@ function BillRowActions({
     )
   }
 
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-      onClick={stop(onDelete)}
-      title="ลบบิลที่ยังไม่ได้ส่ง ต้องยืนยันใน dialog ถัดไป"
-    >
-      <Trash2 className="mr-1 h-3.5 w-3.5" />
-      ลบ
-    </Button>
-  )
+  if (shopeeRealtimeLinked) {
+    return (
+      <span
+        className="inline-flex max-w-[170px] items-center justify-end text-right text-[11px] leading-4 text-muted-foreground"
+        title="เอกสารนี้ผูกกับคำสั่งซื้อ Shopee ถ้าสร้างผิดเส้นทาง ให้เปิดเอกสารแล้วใช้ปุ่มเปลี่ยนเส้นทางเอกสาร"
+      >
+        เปิดเอกสารเพื่อเปลี่ยนเส้นทาง
+      </span>
+    )
+  }
+
+  return null
+}
+
+function isShopeeRealtimeLinkedBill(bill: Bill) {
+  if (bill.shopee_realtime_linked) return true
+  if (bill.source !== 'shopee') return false
+  return rawString(bill.raw_data, 'flow') === 'shopee_realtime'
 }
 
 export function ShopeeOrderStatusBadge({

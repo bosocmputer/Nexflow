@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -10,6 +11,7 @@ import (
 	"nexflow/internal/config"
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
+	"nexflow/internal/services/sml"
 )
 
 func TestResolveEndpointUsesExplicitEndpointKeyword(t *testing.T) {
@@ -121,6 +123,37 @@ func TestResolveStockRecalcConfigUsesInstanceSettings(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestBillDetailPeekDocNoDoesNotCallSMLDocNoClient(t *testing.T) {
+	called := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+
+	h := &BillHandler{
+		docNoClient: sml.NewDocNoClient(sml.PartyConfig{
+			BaseURL:  upstream.URL,
+			GUID:     "guid",
+			Database: "aoy",
+		}, nil),
+	}
+
+	docNo, err := h.peekDocNo(&models.ChannelDefault{
+		DocPrefix:        "BF-SO",
+		DocRunningFormat: "YYMM####",
+	}, "NX-SO", "saleorder")
+	if err != nil {
+		t.Fatalf("peekDocNo: %v", err)
+	}
+	if docNo != "" {
+		t.Fatalf("docNo = %q, want empty when local counter is unavailable", docNo)
+	}
+	if called {
+		t.Fatal("peekDocNo should not call external SML doc-no service during Bill Detail GET")
 	}
 }
 

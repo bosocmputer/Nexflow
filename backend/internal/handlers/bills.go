@@ -384,20 +384,6 @@ func (h *BillHandler) localDocNoExists(docNo, currentBillID string) (bool, error
 
 func (h *BillHandler) peekDocNo(def *models.ChannelDefault, fallbackPrefix, route string) (string, error) {
 	prefix, format := resolveDocCounterPattern(def, fallbackPrefix)
-	if h.docNoClient != nil && h.docNoClient.IsConfigured() {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		next, err := h.docNoClient.Next(ctx, sml.NextDocNoRequest{
-			Route:   route,
-			Prefix:  prefix,
-			Format:  format,
-			DocDate: time.Now().Format("2006-01-02"),
-		})
-		if err != nil {
-			return "", err
-		}
-		return next.NextDocNo, nil
-	}
 	if h.docCounters == nil {
 		return "", nil
 	}
@@ -704,6 +690,7 @@ func (h *BillHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
 		return
 	}
+	shopeeRealtimeLinked := h.hasShopeeRealtimeSnapshot(c.Request.Context(), bill.ID)
 
 	// Resolve which SML route + endpoint + doc_format this bill would use
 	// today. Mirror the channel lookup that retry would do — same key
@@ -752,6 +739,7 @@ func (h *BillHandler) Get(c *gin.Context) {
 	out := gin.H{}
 	if err := json.Unmarshal(billJSON, &out); err == nil {
 		out["preview"] = preview
+		out["shopee_realtime_linked"] = shopeeRealtimeLinked
 		c.JSON(http.StatusOK, out)
 		return
 	}
@@ -822,8 +810,8 @@ func (h *BillHandler) RecreateShopeeRealtimeDocumentRoute(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบเอกสาร"})
 		return
 	}
-	if !isShopeeRealtimeBill(bill) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ใช้ได้เฉพาะเอกสารที่สร้างจาก Shopee Realtime"})
+	if bill.Source != "shopee" || (!isShopeeRealtimeBill(bill) && !h.hasShopeeRealtimeSnapshot(c.Request.Context(), bill.ID)) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ใช้ได้เฉพาะเอกสาร Shopee ที่ผูกกับคำสั่งซื้อ Shopee"})
 		return
 	}
 	if bill.ArchivedAt != nil {
@@ -934,6 +922,20 @@ func (h *BillHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "confirm must be DELETE"})
 		return
 	}
+	if h.shopeeRealtimeRepo != nil {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		defer cancel()
+		linked, err := h.shopeeRealtimeRepo.HasSnapshotForBill(ctx, id)
+		if err != nil {
+			h.log.Error("Check Shopee Realtime snapshot before delete", zap.String("bill", id), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจความเชื่อมโยง Shopee Realtime ไม่สำเร็จ"})
+			return
+		}
+		if linked {
+			c.JSON(http.StatusConflict, gin.H{"error": "เอกสารนี้ผูกกับคำสั่งซื้อ Shopee อยู่ หากสร้างผิดเส้นทางให้เปิดเอกสารแล้วใช้ปุ่ม “เปลี่ยนเส้นทางเอกสาร” แทนการลบถาวร"})
+			return
+		}
+	}
 	if err := h.billRepo.Delete(id); err != nil {
 		h.log.Error("Delete bill", zap.String("bill", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
@@ -983,6 +985,22 @@ func isShopeeRealtimeBill(bill *models.Bill) bool {
 		return false
 	}
 	return strings.TrimSpace(raw.Flow) == "shopee_realtime"
+}
+
+func (h *BillHandler) hasShopeeRealtimeSnapshot(ctx context.Context, billID string) bool {
+	if h == nil || h.shopeeRealtimeRepo == nil || strings.TrimSpace(billID) == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	linked, err := h.shopeeRealtimeRepo.HasSnapshotForBill(ctx, billID)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("check shopee realtime snapshot linked failed", zap.String("bill_id", billID), zap.Error(err))
+		}
+		return false
+	}
+	return linked
 }
 
 // GET /api/bills/:id/timeline

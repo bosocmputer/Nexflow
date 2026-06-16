@@ -209,8 +209,10 @@ export interface Bill {
   archive_reason?: string
   // computed in list view
   total_amount?: number | null
-  // Only present in single-bill GET (not in list response).
   preview?: BillRoutePreview
+  // Present when this bill is linked to a Shopee Realtime order snapshot.
+  // Used to hide destructive delete and guide users to route-change flow.
+  shopee_realtime_linked?: boolean
   remark?: string
   shopee_status?: ShopeeOrderEvent | null
   shopee_events?: ShopeeOrderEvent[]

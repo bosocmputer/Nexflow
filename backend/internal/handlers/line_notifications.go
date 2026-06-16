@@ -229,7 +229,20 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	}
 	svc, err := lineservice.New(a.ChannelSecret, a.ChannelAccessToken, "")
 	if err == nil {
-		err = svc.PushText(recipient.DestinationID, h.sampleMessage())
+		message := h.sampleMessage()
+		altText, contents := linenotify.BuildShopeeNewOrderLineFlex(models.LineNotificationDeliveryJob{
+			LineNotificationDelivery: models.LineNotificationDelivery{
+				Source:      "shopee_realtime",
+				EntityType:  "shopee_order",
+				EntityID:    "264993963:26060232BJHG4E",
+				ActionURL:   linenotify.ShopeeOrderActionURL(h.publicBaseURL(), "26060232BJHG4E"),
+				MessageText: message,
+			},
+		})
+		err = svc.PushFlex(recipient.DestinationID, altText, contents)
+		if err != nil {
+			err = svc.PushText(recipient.DestinationID, message)
+		}
 	}
 	if err != nil {
 		_ = h.repo.MarkRecipientTest(c.Request.Context(), id, "failed", err.Error())
@@ -243,11 +256,22 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 
 func (h *LineNotificationHandler) sampleMessage() string {
 	return linenotify.BuildShopeeNewOrderLineText(&models.ShopeeOrderSnapshot{
-		ShopLabel:   "Henna.milkford",
-		OrderSN:     "26060232BJHG4E",
-		OrderStatus: "READY_TO_SHIP",
-		ERPStatus:   "pending_erp",
-		TotalAmount: 165,
+		ShopLabel:     "Henna.milkford",
+		OrderSN:       "26060232BJHG4E",
+		PaymentMethod: "COD",
+		TotalAmount:   165,
+		ItemCount:     1,
+		RawDetail: []byte(`{
+		  "payment_method":"COD",
+		  "cod":true,
+		  "item_list":[
+		    {
+		      "item_name":"สีเฟ้นคิ้วเฮนน่า สีเฟ้นท์คิ้วมิวฟอร์ด ทั้งชุดพร้อมแปรงและบล็อคคิ้ว 15 คู่",
+		      "model_name":"2.น้ำตาลเข้ม",
+		      "model_quantity_purchased":1
+		    }
+		  ]
+		}`),
 	}, h.publicBaseURL())
 }
 

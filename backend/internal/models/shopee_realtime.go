@@ -16,6 +16,9 @@ type ShopeeOrderSnapshot struct {
 	ERPStatus         string                        `json:"erp_status"`
 	BillID            *string                       `json:"bill_id,omitempty"`
 	SMLDocNo          string                        `json:"sml_doc_no,omitempty"`
+	SMLCancelDocNo    string                        `json:"sml_cancel_doc_no,omitempty"`
+	SMLCancelStatus   string                        `json:"sml_cancel_status,omitempty"`
+	SMLCancelError    string                        `json:"sml_cancel_error,omitempty"`
 	DocumentRoute     string                        `json:"document_route,omitempty"`
 	BillSourceFlow    string                        `json:"bill_source_flow,omitempty"`
 	BuyerUsername     string                        `json:"buyer_username,omitempty"`
@@ -105,6 +108,22 @@ type ShopeeActionOutbox struct {
 	CreatedAt      time.Time  `json:"created_at"`
 	CreatedBy      *string    `json:"created_by,omitempty"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+}
+
+type ShopeeSMLCancellation struct {
+	ID             string          `json:"id"`
+	ShopID         int64           `json:"shop_id"`
+	OrderSN        string          `json:"order_sn"`
+	BillID         *string         `json:"bill_id,omitempty"`
+	SaleSMLDocNo   string          `json:"sale_sml_doc_no"`
+	CancelSMLDocNo string          `json:"cancel_sml_doc_no,omitempty"`
+	Status         string          `json:"status"`
+	Error          string          `json:"error,omitempty"`
+	Response       json.RawMessage `json:"response,omitempty"`
+	CreatedBy      *string         `json:"created_by,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 }
 
 type ShopeeShippingTrackingEvent struct {

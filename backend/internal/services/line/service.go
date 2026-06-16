@@ -1,11 +1,13 @@
 package lineservice
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/line/line-bot-sdk-go/v8/linebot"
 	"github.com/line/line-bot-sdk-go/v8/linebot/messaging_api"
@@ -29,7 +31,7 @@ func New(channelSecret, accessToken, adminUserID string) (*Service, error) {
 		channelSecret: channelSecret,
 		adminUserID:   adminUserID,
 		accessToken:   accessToken,
-		httpClient:    &http.Client{},
+		httpClient:    &http.Client{Timeout: 10 * time.Second},
 	}, nil
 }
 
@@ -124,6 +126,56 @@ func (s *Service) PushText(userID, text string) error {
 	return err
 }
 
+// PushFlex sends a Flex Message using a pre-built LINE Flex contents payload.
+// The notification worker uses this for compact order cards and falls back to
+// PushText when LINE rejects the flex payload, so external notifications are
+// not lost because of presentation issues.
+func (s *Service) PushFlex(userID, altText string, contents map[string]any) error {
+	if userID == "" {
+		return fmt.Errorf("userID required")
+	}
+	altText = strings.TrimSpace(altText)
+	if altText == "" {
+		return fmt.Errorf("altText required")
+	}
+	if len([]rune(altText)) > 400 {
+		altText = string([]rune(altText)[:400])
+	}
+	if len(contents) == 0 {
+		return fmt.Errorf("flex contents required")
+	}
+	body := map[string]any{
+		"to": userID,
+		"messages": []map[string]any{
+			{
+				"type":     "flex",
+				"altText":  altText,
+				"contents": contents,
+			},
+		},
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal flex push: %w", err)
+	}
+	req, err := http.NewRequest("POST", "https://api.line.me/v2/bot/message/push", bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("push flex: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("push flex status %d: %s", resp.StatusCode, bodyBytes)
+	}
+	return nil
+}
+
 // PushImage sends an image Push. Both URLs MUST be HTTPS and reachable from
 // LINE's servers (they fetch the bytes when delivering to the customer).
 // originalContentUrl: ≤10MB JPEG/PNG/WebP, ≤4096×4096
@@ -208,7 +260,8 @@ func (s *Service) GetBotInfo() (*BotInfo, error) {
 // upgraded; we return the error so the caller can log/swallow it.
 //
 // Body shape per LINE docs:
-//   { "chat": { "type": "user", "userId": "Uxxxxxxx" } }
+//
+//	{ "chat": { "type": "user", "userId": "Uxxxxxxx" } }
 func (s *Service) MarkMessagesAsRead(userID string) error {
 	if userID == "" {
 		return fmt.Errorf("userID required")

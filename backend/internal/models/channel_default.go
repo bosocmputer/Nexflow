@@ -49,7 +49,7 @@ type ChannelDefault struct {
 // save time) so the table can render code+name without a second SML lookup.
 // Endpoint blank = auto-resolve by (channel, bill_type) in bills.go.
 type ChannelDefaultUpsert struct {
-	Channel              string `json:"channel" binding:"required,oneof=line email shopee shopee_realtime shopee_email shopee_shipped lazada tiktok manual shopee_settlement"`
+	Channel              string `json:"channel" binding:"required,oneof=line email shopee shopee_realtime shopee_realtime_cancel shopee_email shopee_shipped lazada tiktok manual shopee_settlement"`
 	BillType             string `json:"bill_type" binding:"required,oneof=sale purchase ar_receipt"`
 	PartyCode            string `json:"party_code"`
 	PartyName            string `json:"party_name"`
