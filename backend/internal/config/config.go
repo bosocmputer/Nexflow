@@ -98,6 +98,8 @@ type Config struct {
 	ShopeeShippingActionsEnabled      bool
 	ShopeeCancelAfterSMLAlertsEnabled bool
 	ShopeeSMLCancelDocumentsEnabled   bool
+	ShopeeRichLineFlexEnabled         bool
+	ShopeeSettlementLineAlertsEnabled bool
 	ShopeeRealtimeWebhookSecret       string
 	ShopeeRealtimeSyncIntervalSeconds int
 
@@ -173,6 +175,8 @@ func Load() *Config {
 		ShopeeShippingActionsEnabled:      getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
 		ShopeeCancelAfterSMLAlertsEnabled: getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
 		ShopeeSMLCancelDocumentsEnabled:   getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
+		ShopeeRichLineFlexEnabled:         getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
+		ShopeeSettlementLineAlertsEnabled: getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
 		ShopeeRealtimeWebhookSecret:       getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
 		ShopeeRealtimeSyncIntervalSeconds: getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
 		AutoConfirmThreshold:              getEnvFloat("AUTO_CONFIRM_THRESHOLD", 0.85),

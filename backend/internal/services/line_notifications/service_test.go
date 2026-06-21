@@ -2,6 +2,7 @@ package linenotify
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -175,5 +176,172 @@ func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 	}
 	if strings.Contains(body, "buyer-secret") || strings.Contains(body, "สถานะ Shopee") || strings.Contains(body, "สถานะ ERP") {
 		t.Fatalf("flex leaked PII or noisy status:\n%s", body)
+	}
+}
+
+func TestBuildShopeeNewOrderRichLineFlexShowsPaymentShippingAndOmitsPII(t *testing.T) {
+	altText, flex := BuildShopeeNewOrderRichLineFlex(&models.ShopeeOrderSnapshot{
+		ShopID:        264993963,
+		ShopLabel:     "Henna.milkford",
+		OrderSN:       "260621NDVGSKMA",
+		BuyerUsername: "buyer-secret",
+		TotalAmount:   245,
+		PaymentMethod: "Credit Card/Debit Card",
+		ItemCount:     1,
+		RawDetail: []byte(`{
+		  "order_sn":"260621NDVGSKMA",
+		  "payment_method":"Credit Card/Debit Card",
+		  "cod":false,
+		  "total_amount":245,
+		  "estimated_shipping_fee":35,
+		  "pay_time":1782036000,
+		  "buyer_username":"buyer-secret",
+		  "recipient_address":{"name":"secret-name","phone":"0999999999","full_address":"secret-address"},
+		  "package_list":[{"package_number":"OFG235736492235190","logistics_status":"LOGISTICS_READY","shipping_carrier":"EMS - Thailand Post"}],
+		  "item_list":[{"item_name":"ชุดใหญ่ 10 กรัม สีเพ้นคิ้วเฮนน่า","model_name":"B.น้ำตาลเข้ม","model_quantity_purchased":1,"model_original_price":300,"model_discounted_price":245}]
+		}`),
+	}, "https://animal-galvanize-tameness.ngrok-free.dev")
+
+	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "฿245.00") {
+		t.Fatalf("alt text not useful: %q", altText)
+	}
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal flex: %v", err)
+	}
+	body := string(buf)
+	for _, want := range []string{
+		"ยอดลูกค้าชำระ",
+		"Credit Card/Debit Card",
+		"ค่าส่งประมาณการ",
+		"EMS - Thailand Post",
+		"OFG235736492235190",
+		"ชุดใหญ่ 10 กรัม",
+		"เปิดใน Nexflow",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rich flex missing %q:\n%s", want, body)
+		}
+	}
+	for _, leak := range []string{"buyer-secret", "secret-name", "0999999999", "secret-address"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("rich flex leaked %q:\n%s", leak, body)
+		}
+	}
+}
+
+func TestBuildShopeeSettlementLineFlexShowsNetDeductionsAndEscrowFees(t *testing.T) {
+	rawEscrow := json.RawMessage(`{
+	  "order_sn":"260426RC617UT2",
+	  "order_income":{
+	    "commission_fee":12,
+	    "service_fee":5,
+	    "seller_transaction_fee":3,
+	    "actual_shipping_fee":35
+	  }
+	}`)
+	run := models.ShopeeSettlementLineRun{
+		ID:              "run-1",
+		ShopID:          264993963,
+		ShopLabel:       "Henna.milkford",
+		ReleaseDateFrom: "2026-05-01",
+		ReleaseDateTo:   "2026-05-15",
+		TotalCount:      1,
+		BlockedCount:    1,
+		Items: []models.ShopeeSettlementLineItem{
+			{
+				OrderSN:          "260426RC617UT2",
+				BuyerTotalAmount: 284,
+				PayoutAmount:     204,
+				DeductionAmount:  80,
+				Status:           "blocked",
+				RawEscrow:        rawEscrow,
+			},
+		},
+	}
+
+	altText, flex := BuildShopeeSettlementLineFlex(run, "https://animal-galvanize-tameness.ngrok-free.dev")
+	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "฿204.00") {
+		t.Fatalf("alt text not useful: %q", altText)
+	}
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal flex: %v", err)
+	}
+	body := string(buf)
+	for _, want := range []string{
+		"ยอดสุทธิร้านได้",
+		"ยอดลูกค้าชำระ",
+		"ยอดหัก/ส่วนต่าง",
+		"฿284.00",
+		"฿204.00",
+		"฿80.00",
+		"Commission",
+		"Service fee",
+		"Transaction",
+		"260426RC617UT2",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("settlement flex missing %q:\n%s", want, body)
+		}
+	}
+}
+
+type fakeLinePusher struct {
+	flexErr   error
+	flexCalls int
+	textCalls int
+	lastText  string
+}
+
+func (f *fakeLinePusher) PushFlex(to, altText string, contents map[string]any) error {
+	f.flexCalls++
+	return f.flexErr
+}
+
+func (f *fakeLinePusher) PushText(to, text string) error {
+	f.textCalls++
+	f.lastText = text
+	return nil
+}
+
+func TestServicePushDeliveryUsesPayloadAndFallsBackToText(t *testing.T) {
+	job := models.LineNotificationDeliveryJob{
+		LineNotificationDelivery: models.LineNotificationDelivery{
+			ID:             "delivery-1",
+			Source:         "shopee_realtime",
+			EntityType:     "shopee_order",
+			EntityID:       "264993963:ORDER1",
+			MessageText:    "fallback text",
+			AltText:        "alt text",
+			PayloadVersion: 1,
+			FlexPayload:    json.RawMessage(`{"type":"bubble","body":{"type":"box","layout":"vertical","contents":[]}}`),
+		},
+		DestinationID: "Uxxxx",
+	}
+	svc := &Service{richFlexEnabled: true}
+	pusher := &fakeLinePusher{}
+	if err := svc.pushDelivery(t.Context(), pusher, job); err != nil {
+		t.Fatalf("pushDelivery rich: %v", err)
+	}
+	if pusher.flexCalls != 1 || pusher.textCalls != 0 {
+		t.Fatalf("rich push calls flex=%d text=%d, want flex only", pusher.flexCalls, pusher.textCalls)
+	}
+
+	pusher = &fakeLinePusher{flexErr: errors.New("line flex failed")}
+	if err := svc.pushDelivery(t.Context(), pusher, job); err != nil {
+		t.Fatalf("pushDelivery fallback: %v", err)
+	}
+	if pusher.flexCalls != 1 || pusher.textCalls != 1 || pusher.lastText != "fallback text" {
+		t.Fatalf("fallback calls flex=%d text=%d text=%q", pusher.flexCalls, pusher.textCalls, pusher.lastText)
+	}
+
+	pusher = &fakeLinePusher{}
+	svc = &Service{richFlexEnabled: false}
+	if err := svc.pushDelivery(t.Context(), pusher, job); err != nil {
+		t.Fatalf("pushDelivery flag off: %v", err)
+	}
+	if pusher.flexCalls != 0 || pusher.textCalls != 1 || pusher.lastText != "fallback text" {
+		t.Fatalf("flag-off calls flex=%d text=%d text=%q", pusher.flexCalls, pusher.textCalls, pusher.lastText)
 	}
 }

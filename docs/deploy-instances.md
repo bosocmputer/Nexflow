@@ -169,11 +169,17 @@ VITE_ENABLE_CHAT=false          # LINE chat disabled
 
 ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
 ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
+ENABLE_SHOPEE_RICH_LINE_FLEX=true
+ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ```
 
 `ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true` allows users to confirm creation of
 Shopee cancelled-after-SML credit notes. The backend still blocks the action when
 SML readiness for tenant `aoy` is not OK.
+
+`ENABLE_SHOPEE_RICH_LINE_FLEX=true` sends structured LINE Flex messages from the
+notification outbox for Shopee order alerts. `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true`
+sends one deduped LINE alert per Shopee settlement run when escrow/payout data is ready.
 
 ---
 

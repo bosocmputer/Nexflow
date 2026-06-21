@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-06-16
+Updated: 2026-06-21
 
 ---
 
@@ -22,7 +22,7 @@ so deploy checks must compare files explicitly before replacing sources.
 
 ## DB Schema
 
-Migrations applied: **001–064** (all idempotent/re-runnable)
+Migrations applied: **001–065** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -40,6 +40,7 @@ Key recent migrations:
 | 055 | channel_defaults.remark_2 |
 | 056–063 | Shopee Realtime operations, notifications, create-document, shipping actions |
 | 064 | Shopee cancelled-after-SML tracking + `shopee_realtime_cancel` credit note route |
+| 065 | structured LINE Flex payload outbox for Shopee order/settlement alerts |
 
 ---
 
@@ -55,6 +56,8 @@ VITE_ENABLE_CHAT=false
 
 ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
 ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
+ENABLE_SHOPEE_RICH_LINE_FLEX=true
+ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ```
 
 ---

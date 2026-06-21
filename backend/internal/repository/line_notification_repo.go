@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -168,8 +169,8 @@ func (r *LineNotificationRepo) Enqueue(ctx context.Context, in models.LineNotifi
 	rows, err := r.db.QueryContext(ctx, `
 		INSERT INTO line_notification_deliveries
 		  (recipient_id, line_oa_id, source, severity, title, body, action_url,
-		   entity_type, entity_id, dedupe_key, message_text)
-		SELECT r.id, r.line_oa_id, $1, $2, $3, $4, $5, $6, $7, $8, $9
+		   entity_type, entity_id, dedupe_key, message_text, alt_text, flex_payload, payload_version)
+		SELECT r.id, r.line_oa_id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12
 		  FROM line_notification_recipients r
 		  JOIN line_oa_accounts oa ON oa.id = r.line_oa_id
 		 WHERE r.enabled = TRUE
@@ -178,6 +179,7 @@ func (r *LineNotificationRepo) Enqueue(ctx context.Context, in models.LineNotifi
 		 RETURNING id`,
 		in.Source, in.Severity, in.Title, in.Body, in.ActionURL,
 		in.EntityType, in.EntityID, in.DedupeKey, in.MessageText,
+		in.AltText, string(in.FlexPayload), in.PayloadVersion,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue line notification: %w", err)
@@ -226,7 +228,8 @@ func (r *LineNotificationRepo) LeaseDeliveries(ctx context.Context, limit, maxAt
 		   AND oa.id = d.line_oa_id
 		 RETURNING d.id::text, d.recipient_id::text, r.name, d.line_oa_id::text, oa.name,
 		           d.source, d.severity, d.title, d.body, d.action_url, d.entity_type,
-		           d.entity_id, d.dedupe_key, d.message_text, d.status, d.attempts,
+		           d.entity_id, d.dedupe_key, d.message_text, d.alt_text, d.flex_payload, d.payload_version,
+		           d.status, d.attempts,
 		           d.last_error, d.next_run_at, d.sent_at, d.created_at, d.updated_at,
 		           r.destination_type, r.destination_id, oa.channel_secret, oa.channel_access_token`,
 		maxAttempts, limit,
@@ -243,6 +246,7 @@ func (r *LineNotificationRepo) LeaseDeliveries(ctx context.Context, limit, maxAt
 			&job.ID, &job.RecipientID, &job.Recipient, &job.LineOAID, &job.LineOAName,
 			&job.Source, &job.Severity, &job.Title, &job.Body, &job.ActionURL,
 			&job.EntityType, &job.EntityID, &job.DedupeKey, &job.MessageText,
+			&job.AltText, &job.FlexPayload, &job.PayloadVersion,
 			&job.Status, &job.Attempts, &job.LastError, &job.NextRunAt, &sentAt,
 			&job.CreatedAt, &job.UpdatedAt, &job.DestinationType, &job.DestinationID,
 			&job.ChannelSecret, &job.ChannelAccessToken,
@@ -319,7 +323,8 @@ func (r *LineNotificationRepo) RecentDeliveries(ctx context.Context, limit int) 
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT d.id::text, d.recipient_id::text, COALESCE(r.name, ''), d.line_oa_id::text,
 		       COALESCE(oa.name, ''), d.source, d.severity, d.title, d.body, d.action_url,
-		       d.entity_type, d.entity_id, d.dedupe_key, d.message_text, d.status,
+		       d.entity_type, d.entity_id, d.dedupe_key, d.message_text,
+		       d.alt_text, d.flex_payload, d.payload_version, d.status,
 		       d.attempts, d.last_error, d.next_run_at, d.sent_at, d.created_at, d.updated_at
 		  FROM line_notification_deliveries d
 		  LEFT JOIN line_notification_recipients r ON r.id = d.recipient_id
@@ -338,6 +343,7 @@ func (r *LineNotificationRepo) RecentDeliveries(ctx context.Context, limit int) 
 			&row.ID, &row.RecipientID, &row.Recipient, &row.LineOAID, &row.LineOAName,
 			&row.Source, &row.Severity, &row.Title, &row.Body, &row.ActionURL,
 			&row.EntityType, &row.EntityID, &row.DedupeKey, &row.MessageText,
+			&row.AltText, &row.FlexPayload, &row.PayloadVersion,
 			&row.Status, &row.Attempts, &row.LastError, &row.NextRunAt, &sentAt,
 			&row.CreatedAt, &row.UpdatedAt,
 		); err != nil {
@@ -369,5 +375,15 @@ func normalizeLineNotificationMessageInput(in models.LineNotificationMessageInpu
 	in.EntityID = strings.TrimSpace(in.EntityID)
 	in.DedupeKey = strings.TrimSpace(in.DedupeKey)
 	in.MessageText = strings.TrimSpace(in.MessageText)
+	in.AltText = strings.TrimSpace(in.AltText)
+	if len(in.FlexPayload) == 0 || !json.Valid(in.FlexPayload) {
+		in.FlexPayload = json.RawMessage(`{}`)
+		in.PayloadVersion = 0
+	}
+	if string(in.FlexPayload) == "{}" {
+		in.PayloadVersion = 0
+	} else if in.PayloadVersion <= 0 {
+		in.PayloadVersion = 1
+	}
 	return in
 }

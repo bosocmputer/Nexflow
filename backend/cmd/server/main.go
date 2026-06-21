@@ -394,7 +394,13 @@ func main() {
 	publicMediaH := handlers.NewPublicMediaHandler(chatMediaRepo, mediaSigner, logger)
 	sseH := handlers.NewSSEHandler(eventBroker, mediaSigner)
 	notificationH := handlers.NewNotificationHandler(notificationRepo, eventBroker)
-	lineNotificationSvc := linenotify.NewService(lineNotificationRepo, cfg.PublicBaseURL, logger)
+	lineNotificationSvc := linenotify.NewService(
+		lineNotificationRepo,
+		cfg.PublicBaseURL,
+		cfg.ShopeeRichLineFlexEnabled,
+		cfg.ShopeeSettlementLineAlertsEnabled,
+		logger,
+	)
 	emailH := handlers.NewEmailHandler(aiClient, ocrClient, mapperSvc, anomalySvc, billRepo, auditLogRepo, lineSvc, cfg.AutoConfirmThreshold, logger)
 	emailH.SetCatalogServices(catalogSvc, embSvc, catalogIdx, catalogRepo)
 	emailH.SetChannelDefaults(channelDefaultRepo)
@@ -414,6 +420,7 @@ func main() {
 	importH := handlers.NewImportHandler(platformRepo, mapperSvc, anomalySvc, saleOrderClient, billRepo, channelDefaultRepo, docCounterRepo, cfg, cfg.AutoConfirmThreshold, logger)
 	shopeeH := handlers.NewShopeeImportHandler(db, billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogSvc, embSvc, catalogIdx, catalogRepo, logger)
 	shopeeH.SetArtifactService(artifactSvc)
+	shopeeH.SetSettlementLineNotifier(lineNotificationSvc)
 	shopeeRealtimeH := handlers.NewShopeeRealtimeHandler(shopeeRealtimeRepo, notificationRepo, eventBroker, shopeeH, billH, cfg, logger)
 	shopeeRealtimeH.SetLineNotifier(lineNotificationSvc)
 	shopeeRealtimeH.SetSMLCancelClient(saleInvoiceCancelClient)

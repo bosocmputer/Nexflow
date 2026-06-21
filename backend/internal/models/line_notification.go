@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type LineNotificationRecipient struct {
 	ID              string     `json:"id"`
@@ -28,39 +31,45 @@ type LineNotificationRecipientUpsert struct {
 }
 
 type LineNotificationDelivery struct {
-	ID          string     `json:"id"`
-	RecipientID string     `json:"recipient_id"`
-	Recipient   string     `json:"recipient,omitempty"`
-	LineOAID    string     `json:"line_oa_id"`
-	LineOAName  string     `json:"line_oa_name,omitempty"`
-	Source      string     `json:"source"`
-	Severity    string     `json:"severity"`
-	Title       string     `json:"title"`
-	Body        string     `json:"body"`
-	ActionURL   string     `json:"action_url"`
-	EntityType  string     `json:"entity_type"`
-	EntityID    string     `json:"entity_id"`
-	DedupeKey   string     `json:"dedupe_key,omitempty"`
-	MessageText string     `json:"message_text,omitempty"`
-	Status      string     `json:"status"`
-	Attempts    int        `json:"attempts"`
-	LastError   string     `json:"last_error"`
-	NextRunAt   time.Time  `json:"next_run_at"`
-	SentAt      *time.Time `json:"sent_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID             string          `json:"id"`
+	RecipientID    string          `json:"recipient_id"`
+	Recipient      string          `json:"recipient,omitempty"`
+	LineOAID       string          `json:"line_oa_id"`
+	LineOAName     string          `json:"line_oa_name,omitempty"`
+	Source         string          `json:"source"`
+	Severity       string          `json:"severity"`
+	Title          string          `json:"title"`
+	Body           string          `json:"body"`
+	ActionURL      string          `json:"action_url"`
+	EntityType     string          `json:"entity_type"`
+	EntityID       string          `json:"entity_id"`
+	DedupeKey      string          `json:"dedupe_key,omitempty"`
+	MessageText    string          `json:"message_text,omitempty"`
+	AltText        string          `json:"alt_text,omitempty"`
+	FlexPayload    json.RawMessage `json:"flex_payload,omitempty"`
+	PayloadVersion int             `json:"payload_version,omitempty"`
+	Status         string          `json:"status"`
+	Attempts       int             `json:"attempts"`
+	LastError      string          `json:"last_error"`
+	NextRunAt      time.Time       `json:"next_run_at"`
+	SentAt         *time.Time      `json:"sent_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type LineNotificationMessageInput struct {
-	Source      string
-	Severity    string
-	Title       string
-	Body        string
-	ActionURL   string
-	EntityType  string
-	EntityID    string
-	DedupeKey   string
-	MessageText string
+	Source         string
+	Severity       string
+	Title          string
+	Body           string
+	ActionURL      string
+	EntityType     string
+	EntityID       string
+	DedupeKey      string
+	MessageText    string
+	AltText        string
+	FlexPayload    json.RawMessage
+	PayloadVersion int
 }
 
 type LineNotificationDeliveryJob struct {

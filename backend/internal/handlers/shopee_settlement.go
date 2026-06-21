@@ -377,6 +377,7 @@ func (h *ShopeeImportHandler) ReconcileSettlementRun(c *gin.Context) {
 		"blocked_doc_nos": result.BlockedDocNos,
 		"message":         settlementReconcileAuditMessage(result),
 	})
+	h.notifySettlementLine(c.Request.Context(), runID, "reconcile")
 	c.JSON(http.StatusOK, gin.H{"data": run, "reconcile": result})
 }
 
@@ -581,6 +582,7 @@ func (h *ShopeeImportHandler) runSettlementPreview(runID, connectionID string, f
 		return
 	}
 	h.auditSettlementRun(ctx, "shopee_settlement_preview_completed", runID, userID, "info", nil)
+	h.notifySettlementLine(ctx, runID, "preview")
 }
 
 type settlementEscrow struct {
@@ -1581,6 +1583,88 @@ func (h *ShopeeImportHandler) loadSettlementRun(ctx context.Context, runID strin
 		run.Items = append(run.Items, item)
 	}
 	return &run, rows.Err()
+}
+
+func (h *ShopeeImportHandler) notifySettlementLine(ctx context.Context, runID, reason string) {
+	if h == nil || h.settlementLineNotifier == nil || h.cfg == nil || !h.cfg.ShopeeSettlementLineAlertsEnabled {
+		return
+	}
+	run, err := h.loadSettlementLineRun(ctx, runID)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("shopee_settlement_line_load_failed",
+				zap.String("run_id", runID),
+				zap.String("reason", reason),
+				zap.Error(err),
+			)
+		}
+		return
+	}
+	if run.TotalCount <= 0 {
+		return
+	}
+	key := "shopee:settlement:" + strings.TrimSpace(runID)
+	if _, err := h.settlementLineNotifier.EnqueueShopeeSettlementReady(ctx, run, key); err != nil && h.logger != nil {
+		h.logger.Warn("shopee_settlement_line_enqueue_failed",
+			zap.String("run_id", runID),
+			zap.String("reason", reason),
+			zap.Int64("shop_id", run.ShopID),
+			zap.Error(err),
+		)
+	}
+}
+
+func (h *ShopeeImportHandler) loadSettlementLineRun(ctx context.Context, runID string) (models.ShopeeSettlementLineRun, error) {
+	var run models.ShopeeSettlementLineRun
+	var releaseFrom, releaseTo time.Time
+	if err := h.sqlDB().QueryRowContext(ctx, `
+		SELECT id::text, shop_id, shop_label, release_time_from, release_time_to,
+		       status, total_count, ready_count, blocked_count, sent_count
+		  FROM shopee_settlement_runs
+		 WHERE id=$1::uuid`, strings.TrimSpace(runID)).
+		Scan(&run.ID, &run.ShopID, &run.ShopLabel, &releaseFrom, &releaseTo,
+			&run.Status, &run.TotalCount, &run.ReadyCount, &run.BlockedCount, &run.SentCount); err != nil {
+		return run, err
+	}
+	run.ReleaseDateFrom = releaseFrom.Format("2006-01-02")
+	run.ReleaseDateTo = releaseTo.Format("2006-01-02")
+	rows, err := h.sqlDB().QueryContext(ctx, `
+		SELECT order_sn, escrow_release_time, COALESCE(payout_amount,0), COALESCE(escrow_amount,0),
+		       COALESCE(buyer_total_amount,0), COALESCE(invoice_amount,0), COALESCE(difference_amount,0),
+		       status, block_reason, raw_escrow
+		  FROM shopee_settlement_items
+		 WHERE run_id=$1::uuid
+		 ORDER BY escrow_release_time NULLS LAST, order_sn`, strings.TrimSpace(runID))
+	if err != nil {
+		return run, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item models.ShopeeSettlementLineItem
+		var releaseAt sql.NullTime
+		var raw []byte
+		if err := rows.Scan(&item.OrderSN, &releaseAt, &item.PayoutAmount, &item.EscrowAmount,
+			&item.BuyerTotalAmount, &item.InvoiceAmount, &item.DifferenceAmount,
+			&item.Status, &item.BlockReason, &raw); err != nil {
+			return run, err
+		}
+		if releaseAt.Valid {
+			item.EscrowReleaseTime = releaseAt.Time.Format(time.RFC3339)
+		}
+		if len(raw) > 0 {
+			item.RawEscrow = json.RawMessage(raw)
+		} else {
+			item.RawEscrow = json.RawMessage(`{}`)
+		}
+		if item.BuyerTotalAmount > 0 {
+			item.DeductionAmount = roundSettlement(item.BuyerTotalAmount - item.PayoutAmount)
+		}
+		run.BuyerTotalAmountTotal = roundSettlement(run.BuyerTotalAmountTotal + item.BuyerTotalAmount)
+		run.PayoutAmountTotal = roundSettlement(run.PayoutAmountTotal + item.PayoutAmount)
+		run.DeductionAmountTotal = roundSettlement(run.DeductionAmountTotal + item.DeductionAmount)
+		run.Items = append(run.Items, item)
+	}
+	return run, rows.Err()
 }
 
 func parseShopeeSettlementReleaseRange(fromRaw, toRaw string) (time.Time, time.Time, error) {

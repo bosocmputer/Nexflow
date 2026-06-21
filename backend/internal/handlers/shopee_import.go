@@ -37,24 +37,29 @@ import (
 // which routes through bills.go retrySaleInvoice (same path as Shopee
 // email orders). This unifies all manual-confirm flows.
 type ShopeeImportHandler struct {
-	db              *sql.DB
-	billRepo        *repository.BillRepo
-	mappingRepo     *repository.MappingRepo
-	auditRepo       *repository.AuditLogRepo
-	cfg             *config.Config
-	channelDefaults *repository.ChannelDefaultRepo
-	catalogSvc      *catalog.SMLCatalogService
-	embSvc          *catalog.EmbeddingService
-	catalogIdx      *catalog.CatalogIndex
-	catalogRepo     *repository.SMLCatalogRepo
-	artifactSvc     *artifact.Service
-	logger          *zap.Logger
+	db                     *sql.DB
+	billRepo               *repository.BillRepo
+	mappingRepo            *repository.MappingRepo
+	auditRepo              *repository.AuditLogRepo
+	cfg                    *config.Config
+	channelDefaults        *repository.ChannelDefaultRepo
+	catalogSvc             *catalog.SMLCatalogService
+	embSvc                 *catalog.EmbeddingService
+	catalogIdx             *catalog.CatalogIndex
+	catalogRepo            *repository.SMLCatalogRepo
+	artifactSvc            *artifact.Service
+	settlementLineNotifier shopeeSettlementLineNotifier
+	logger                 *zap.Logger
 
 	// Pending uploads keyed by SHA-256 — Preview stashes the raw .xlsx so
 	// Confirm (a separate JSON request) can attach it as an artifact to
 	// every bill it creates. Entries are removed after Confirm or by the
 	// cleanup goroutine when older than 30 minutes.
 	pendingUploads sync.Map
+}
+
+type shopeeSettlementLineNotifier interface {
+	EnqueueShopeeSettlementReady(ctx context.Context, run models.ShopeeSettlementLineRun, dedupeKey string) (int, error)
 }
 
 type pendingUpload struct {
@@ -99,6 +104,12 @@ func NewShopeeImportHandler(
 // gets archived next to every bill the import creates.
 func (h *ShopeeImportHandler) SetArtifactService(svc *artifact.Service) {
 	h.artifactSvc = svc
+}
+
+func (h *ShopeeImportHandler) SetSettlementLineNotifier(notifier shopeeSettlementLineNotifier) {
+	if h != nil {
+		h.settlementLineNotifier = notifier
+	}
 }
 
 // gcPendingUploads runs forever, evicting cached uploads older than the TTL.

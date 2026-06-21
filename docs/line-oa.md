@@ -117,6 +117,8 @@ Legacy single LINE service from `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKE
 | LINE token expiry | weekly reminder |
 | Daily insight | F4 daily summary |
 | Tunnel drift | `PUBLIC_BASE_URL/health` ใช้งานไม่ได้ |
+| Shopee order alert | rich Flex จาก `shopee_order_snapshots.raw_detail`, ไม่ใส่ชื่อ/เบอร์/ที่อยู่ผู้รับ |
+| Shopee settlement alert | rich Flex หนึ่งข้อความต่อ settlement run พร้อมยอดลูกค้าชำระ/ยอดสุทธิ/ยอดหักจริง |
 
 ---
 
@@ -128,6 +130,8 @@ LINE_CHANNEL_SECRET=
 LINE_CHANNEL_ACCESS_TOKEN=
 LINE_ADMIN_USER_ID=
 LINE_GREETING=
+ENABLE_SHOPEE_RICH_LINE_FLEX=true
+ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 
 # Public media URLs for LINE image delivery
 PUBLIC_BASE_URL=https://<cloudflare-quick-tunnel>.trycloudflare.com
