@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"nexflow/internal/models"
 )
@@ -78,6 +79,13 @@ func TestBuildShopeeNewOrderLineTextFallsBackToItemCount(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message missing %q:\n%s", want, msg)
 		}
+	}
+}
+
+func TestFormatShopeeUnixTimeUsesBangkokTime(t *testing.T) {
+	unixTime := time.Date(2026, 6, 21, 10, 21, 32, 0, time.UTC).Unix()
+	if got := formatShopeeUnixTime(unixTime); got != "21/06/2026 17:21" {
+		t.Fatalf("expected Bangkok time, got %q", got)
 	}
 }
 

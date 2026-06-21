@@ -21,6 +21,16 @@ const (
 	defaultWorkerEvery  = 15 * time.Second
 )
 
+var shopeeLineTimeLocation = mustLoadShopeeLineTimeLocation()
+
+func mustLoadShopeeLineTimeLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Bangkok")
+	if err == nil {
+		return loc
+	}
+	return time.FixedZone("Asia/Bangkok", 7*60*60)
+}
+
 type Service struct {
 	repo                        *repository.LineNotificationRepo
 	publicBaseURL               string
@@ -1476,7 +1486,7 @@ func formatShopeeUnixTime(v int64) string {
 	if v <= 0 {
 		return ""
 	}
-	return time.Unix(v, 0).Format("02/01/2006 15:04")
+	return time.Unix(v, 0).In(shopeeLineTimeLocation).Format("02/01/2006 15:04")
 }
 
 func isAbsoluteHTTPURL(v string) bool {
