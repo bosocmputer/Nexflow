@@ -26,6 +26,19 @@ const shopeePaymentSnapshotCols = `
   created_at, updated_at
 `
 
+const shopeePaymentSnapshotColsS = `
+  s.id::text, s.shop_id, s.order_sn, s.status,
+  s.buyer_total_amount::float8, s.escrow_amount::float8, s.original_price::float8,
+  s.seller_discount::float8, s.shopee_discount::float8, s.commission_fee::float8,
+  s.service_fee::float8, s.seller_transaction_fee::float8, s.final_shipping_fee::float8,
+  s.actual_shipping_fee::float8, s.escrow_tax::float8, s.withholding_tax::float8,
+  s.voucher_from_seller::float8, s.voucher_from_shopee::float8, s.reverse_shipping_fee::float8,
+  s.buyer_paid_shipping_fee::float8, s.shopee_shipping_rebate::float8,
+  s.seller_shipping_discount::float8, s.coin::float8, s.raw_escrow,
+  s.attempts, s.next_run_at, s.last_error, s.last_request_id, s.last_synced_at,
+  s.created_at, s.updated_at
+`
+
 func (r *ShopeeRealtimeRepo) QueuePaymentBreakdown(ctx context.Context, shopID int64, orderSN string) error {
 	orderSN = strings.TrimSpace(orderSN)
 	if r == nil || r.db == nil || shopID <= 0 || orderSN == "" {
@@ -89,7 +102,7 @@ func (r *ShopeeRealtimeRepo) LeasePaymentBreakdownJobs(ctx context.Context, limi
 		       updated_at = NOW()
 		  FROM picked p
 		 WHERE s.id = p.id
-		 RETURNING `+shopeePaymentSnapshotCols,
+		 RETURNING `+shopeePaymentSnapshotColsS,
 		maxAttempts, limit,
 	)
 	if err != nil {
