@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -259,6 +260,41 @@ func TestShouldNotifyShopeeNewOrderCoversCODUnpaidToReady(t *testing.T) {
 				t.Fatalf("shouldNotifyShopeeNewOrder() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShopeePaymentBreakdownEligibility(t *testing.T) {
+	if shopeeDetailEligibleForPaymentBreakdown(shopeeapi.OrderDetail{PayTime: 1782037297}, &models.ShopeeOrderSnapshot{OrderStatus: "UNPAID"}) != true {
+		t.Fatal("paid order detail should be eligible even if status still unpaid")
+	}
+	if shopeeDetailEligibleForPaymentBreakdown(shopeeapi.OrderDetail{}, &models.ShopeeOrderSnapshot{OrderStatus: "UNPAID"}) {
+		t.Fatal("unpaid order without pay_time should not be eligible")
+	}
+	if !shopeeSnapshotEligibleForPaymentBreakdown(&models.ShopeeOrderSnapshot{
+		OrderStatus: "UNPAID",
+		RawDetail:   []byte(`{"pay_time":1782037297}`),
+	}) {
+		t.Fatal("snapshot with pay_time should be eligible")
+	}
+}
+
+func TestPaymentBreakdownCacheAndBackoff(t *testing.T) {
+	now := time.Now()
+	if !paymentBreakdownCacheFresh(&models.ShopeeOrderPaymentSnapshot{Status: "ready", LastSyncedAt: &now}) {
+		t.Fatal("fresh ready snapshot should be cache hit")
+	}
+	old := now.Add(-10 * time.Minute)
+	if paymentBreakdownCacheFresh(&models.ShopeeOrderPaymentSnapshot{Status: "ready", LastSyncedAt: &old}) {
+		t.Fatal("old snapshot should not be cache hit")
+	}
+	if got := paymentBreakdownRetryBackoff(1); got != time.Minute {
+		t.Fatalf("first backoff = %s", got)
+	}
+	if got := paymentBreakdownRetryBackoff(2); got != 5*time.Minute {
+		t.Fatalf("second backoff = %s", got)
+	}
+	if got := paymentBreakdownRetryBackoff(3); got != 30*time.Minute {
+		t.Fatalf("third backoff = %s", got)
 	}
 }
 

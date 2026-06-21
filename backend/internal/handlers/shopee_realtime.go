@@ -28,9 +28,14 @@ import (
 )
 
 const (
-	shopeeRealtimeDefaultPageSize = 20
-	shopeeRealtimeMaxSyncPages    = 20
-	shopeeRealtimeBulkCreateLimit = 50
+	shopeeRealtimeDefaultPageSize     = 20
+	shopeeRealtimeMaxSyncPages        = 20
+	shopeeRealtimeBulkCreateLimit     = 50
+	shopeePaymentBreakdownBatchSize   = 5
+	shopeePaymentBreakdownMaxAttempts = 3
+	shopeePaymentBreakdownWorkerEvery = 10 * time.Second
+	shopeePaymentBreakdownAPITimeout  = 8 * time.Second
+	shopeePaymentBreakdownCacheTTL    = 2 * time.Minute
 )
 
 var shopeeRealtimeSyncStatuses = []string{
@@ -59,7 +64,7 @@ func NewShopeeRealtimeHandler(repo *repository.ShopeeRealtimeRepo, notificationR
 }
 
 type lineOrderNotifier interface {
-	EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error)
+	EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, dedupeKey string) (int, error)
 	EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error)
 }
 
@@ -512,6 +517,75 @@ func (h *ShopeeRealtimeHandler) ProcessReconcileBatch(ctx context.Context, batch
 		}
 		_ = h.repo.MarkReconcileJobDone(ctx, job.ID)
 		_ = h.repo.MarkPushEventsForOrder(ctx, job.ShopID, job.OrderSN, "processed", "")
+		processed++
+	}
+	return processed, nil
+}
+
+func (h *ShopeeRealtimeHandler) StartPaymentBreakdownWorker(ctx context.Context, interval time.Duration, batchSize int) {
+	if h == nil || h.repo == nil || h.importH == nil || h.cfg == nil ||
+		!h.cfg.ShopeeRealtimeOpsEnabled || !h.cfg.ShopeeOrderEscrowEnrichmentEnabled {
+		return
+	}
+	if interval <= 0 {
+		interval = shopeePaymentBreakdownWorkerEvery
+	}
+	if batchSize <= 0 || batchSize > 20 {
+		batchSize = shopeePaymentBreakdownBatchSize
+	}
+	if n, err := h.repo.RecoverStalePaymentBreakdownJobs(ctx, 2*time.Minute); err != nil {
+		if h.logger != nil {
+			h.logger.Warn("shopee_realtime: recover stale payment breakdown jobs failed", zap.Error(err))
+		}
+	} else if n > 0 {
+		if h.logger != nil {
+			h.logger.Info("shopee_realtime: recovered stale payment breakdown jobs", zap.Int64("jobs", n))
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if _, err := h.ProcessPaymentBreakdownBatch(ctx, batchSize); err != nil && ctx.Err() == nil {
+			if h.logger != nil {
+				h.logger.Warn("shopee_realtime: payment breakdown batch failed", zap.Error(err))
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (h *ShopeeRealtimeHandler) ProcessPaymentBreakdownBatch(ctx context.Context, batchSize int) (int, error) {
+	if h == nil || h.repo == nil || h.importH == nil || h.cfg == nil ||
+		!h.cfg.ShopeeRealtimeOpsEnabled || !h.cfg.ShopeeOrderEscrowEnrichmentEnabled {
+		return 0, nil
+	}
+	jobs, err := h.repo.LeasePaymentBreakdownJobs(ctx, batchSize, shopeePaymentBreakdownMaxAttempts)
+	if err != nil {
+		return 0, err
+	}
+	processed := 0
+	for _, job := range jobs {
+		if ctx.Err() != nil {
+			return processed, ctx.Err()
+		}
+		conn, err := h.connectionForShop(ctx, job.ShopID)
+		if err != nil {
+			_ = h.repo.MarkPaymentBreakdownFailed(ctx, job.ShopID, job.OrderSN, shopeeAPIErrorMessage(err, "เชื่อมต่อ Shopee ไม่สำเร็จ").Message, time.Now().Add(paymentBreakdownRetryBackoff(job.Attempts)))
+			continue
+		}
+		if _, err := h.refreshPaymentBreakdownFromShopee(ctx, conn, job.OrderSN); err != nil {
+			nextRun := time.Now().Add(paymentBreakdownRetryBackoff(job.Attempts))
+			if isShopeePaymentUnavailableError(err) {
+				_, _ = h.repo.MarkPaymentBreakdownUnavailable(ctx, job.ShopID, job.OrderSN, shopeeAPIErrorMessage(err, "Shopee ยังไม่มีข้อมูลชำระเงิน").Message, "")
+			} else {
+				_ = h.repo.MarkPaymentBreakdownFailed(ctx, job.ShopID, job.OrderSN, shopeeAPIErrorMessage(err, "ดึงข้อมูลชำระเงิน Shopee ไม่สำเร็จ").Message, nextRun)
+			}
+			continue
+		}
 		processed++
 	}
 	return processed, nil
@@ -1637,7 +1711,7 @@ func (h *ShopeeRealtimeHandler) ShipOrder(c *gin.Context) {
 	if err != nil {
 		msg := shopeeAPIErrorMessage(err, "สั่งจัดส่ง Shopee ไม่สำเร็จ").Message
 		completeAction("failed", gin.H{"error": msg}, msg)
-		h.notifySnapshotIssue(c.Request.Context(), snap, "error", "จัดส่ง Shopee ไม่สำเร็จ", msg, "ship_failed")
+		h.notifySnapshotIssue(c.Request.Context(), snap, nil, "error", "จัดส่ง Shopee ไม่สำเร็จ", msg, "ship_failed")
 		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
 		return
 	}
@@ -1747,12 +1821,93 @@ func (h *ShopeeRealtimeHandler) Timeline(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลด order timeline ไม่สำเร็จ"})
 		return
 	}
+	payment, err := h.repo.FindPaymentBreakdown(c.Request.Context(), shopID, orderSN)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("shopee_realtime: payment breakdown load failed", zap.Int64("shop_id", shopID), zap.String("order_sn", orderSN), zap.Error(err))
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดข้อมูลชำระเงิน Shopee ไม่สำเร็จ"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"snapshot":        snap,
-		"status_timeline": statusTimeline,
-		"erp_milestones":  erpMilestones,
-		"events":          events,
+		"snapshot":          snap,
+		"status_timeline":   statusTimeline,
+		"erp_milestones":    erpMilestones,
+		"events":            events,
+		"payment_breakdown": payment,
 	})
+}
+
+func (h *ShopeeRealtimeHandler) PaymentBreakdownRefresh(c *gin.Context) {
+	if !h.enabled(c) {
+		return
+	}
+	if h.cfg == nil || !h.cfg.ShopeeOrderEscrowEnrichmentEnabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "payment_breakdown_disabled"})
+		return
+	}
+	shopID, orderSN, ok := parseShopOrderParams(c)
+	if !ok {
+		return
+	}
+	snap, err := h.repo.FindSnapshot(c.Request.Context(), shopID, orderSN)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบ order ใน Shopee Realtime"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลด order ไม่สำเร็จ"})
+		return
+	}
+	startedAt := time.Now()
+	if existing, err := h.repo.FindPaymentBreakdown(c.Request.Context(), shopID, orderSN); err == nil && paymentBreakdownCacheFresh(existing) {
+		resp, _ := json.Marshal(gin.H{"status": existing.Status, "cache_hit": true})
+		_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "payment_breakdown_refresh", c.GetString("user_id"), "done", nil, resp, "")
+		c.JSON(http.StatusOK, gin.H{"data": existing, "cache_hit": true})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดข้อมูลชำระเงิน Shopee ไม่สำเร็จ"})
+		return
+	}
+	if !shopeeSnapshotEligibleForPaymentBreakdown(snap) {
+		payment, markErr := h.repo.MarkPaymentBreakdownUnavailable(c.Request.Context(), shopID, orderSN, "order ยังไม่พร้อมสำหรับข้อมูล Shopee escrow", "")
+		if markErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกสถานะข้อมูลชำระเงินไม่สำเร็จ"})
+			return
+		}
+		resp, _ := json.Marshal(gin.H{"status": payment.Status, "duration_ms": time.Since(startedAt).Milliseconds()})
+		_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "payment_breakdown_refresh", c.GetString("user_id"), "done", nil, resp, "")
+		h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "payment_breakdown_updated")
+		c.JSON(http.StatusOK, gin.H{"data": payment, "cache_hit": false})
+		return
+	}
+	conn, err := h.connectionForShop(c.Request.Context(), shopID)
+	if err != nil {
+		msg := shopeeAPIErrorMessage(err, "เชื่อมต่อ Shopee ไม่สำเร็จ").Message
+		_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "payment_breakdown_refresh", c.GetString("user_id"), "failed", nil, nil, msg)
+		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
+		return
+	}
+	payment, err := h.refreshPaymentBreakdownFromShopee(c.Request.Context(), conn, orderSN)
+	if err != nil {
+		msg := shopeeAPIErrorMessage(err, "ดึงข้อมูลชำระเงิน Shopee ไม่สำเร็จ").Message
+		if isShopeePaymentUnavailableError(err) {
+			payment, _ = h.repo.MarkPaymentBreakdownUnavailable(c.Request.Context(), shopID, orderSN, msg, "")
+			resp, _ := json.Marshal(gin.H{"status": "unavailable", "duration_ms": time.Since(startedAt).Milliseconds()})
+			_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "payment_breakdown_refresh", c.GetString("user_id"), "done", nil, resp, msg)
+			h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "payment_breakdown_updated")
+			c.JSON(http.StatusOK, gin.H{"data": payment, "cache_hit": false})
+			return
+		}
+		_ = h.repo.MarkPaymentBreakdownFailed(c.Request.Context(), shopID, orderSN, msg, time.Now().Add(paymentBreakdownRetryBackoff(1)))
+		_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "payment_breakdown_refresh", c.GetString("user_id"), "failed", nil, nil, msg)
+		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
+		return
+	}
+	resp, _ := json.Marshal(gin.H{"status": payment.Status, "request_id": payment.LastRequestID, "duration_ms": time.Since(startedAt).Milliseconds()})
+	_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "payment_breakdown_refresh", c.GetString("user_id"), "done", nil, resp, "")
+	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "payment_breakdown_updated")
+	c.JSON(http.StatusOK, gin.H{"data": payment, "cache_hit": false})
 }
 
 func (h *ShopeeRealtimeHandler) ShippingDocumentCreate(c *gin.Context) {
@@ -2027,8 +2182,9 @@ func (h *ShopeeRealtimeHandler) reconcileShippingFromShopee(ctx context.Context,
 	if beforeErr == sql.ErrNoRows {
 		before = nil
 	}
+	h.queuePaymentBreakdownIfEligible(ctx, order, after)
 	if !silent {
-		h.notifySnapshotChange(ctx, before, after, suppressNewOrderNotifications)
+		h.notifySnapshotChange(ctx, before, after, nil, suppressNewOrderNotifications)
 	}
 	if after != nil && len(trackingErrs) > 0 {
 		after.LastError = strings.Join(trackingErrs, "; ")
@@ -2044,6 +2200,66 @@ func parseBoolQuery(value string) bool {
 	default:
 		return false
 	}
+}
+
+func shopeeDetailEligibleForPaymentBreakdown(detail shopeeapi.OrderDetail, snap *models.ShopeeOrderSnapshot) bool {
+	if snap == nil {
+		return false
+	}
+	if detail.PayTime > 0 {
+		return true
+	}
+	status := strings.ToUpper(strings.TrimSpace(snap.OrderStatus))
+	if status == "" {
+		status = models.NormalizeShopeeOrderStatus(detail.OrderStatus)
+	}
+	return status != "" && status != "UNPAID"
+}
+
+func shopeeSnapshotEligibleForPaymentBreakdown(snap *models.ShopeeOrderSnapshot) bool {
+	if snap == nil {
+		return false
+	}
+	var raw struct {
+		PayTime int64 `json:"pay_time"`
+	}
+	if len(snap.RawDetail) > 0 && json.Unmarshal(snap.RawDetail, &raw) == nil && raw.PayTime > 0 {
+		return true
+	}
+	status := strings.ToUpper(strings.TrimSpace(snap.OrderStatus))
+	return status != "" && status != "UNPAID"
+}
+
+func paymentBreakdownCacheFresh(payment *models.ShopeeOrderPaymentSnapshot) bool {
+	return payment != nil &&
+		payment.Status == "ready" &&
+		payment.LastSyncedAt != nil &&
+		time.Since(*payment.LastSyncedAt) >= 0 &&
+		time.Since(*payment.LastSyncedAt) < shopeePaymentBreakdownCacheTTL
+}
+
+func paymentBreakdownRetryBackoff(attempts int) time.Duration {
+	switch {
+	case attempts <= 1:
+		return time.Minute
+	case attempts == 2:
+		return 5 * time.Minute
+	default:
+		return 30 * time.Minute
+	}
+}
+
+func isShopeePaymentUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"not found", "not_found", "not exist", "no data", "no escrow", "escrow not"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCriticalShopeeAccessError(err error) bool {
@@ -2617,7 +2833,8 @@ func (h *ShopeeRealtimeHandler) syncConnection(ctx context.Context, conn *Shopee
 			if err != nil {
 				return nil, err
 			}
-			h.notifySnapshotChange(ctx, before, after, suppressNewOrderNotifications)
+			h.queuePaymentBreakdownIfEligible(ctx, d, after)
+			h.notifySnapshotChange(ctx, before, after, nil, suppressNewOrderNotifications)
 			synced++
 		}
 	}
@@ -2668,7 +2885,8 @@ func (h *ShopeeRealtimeHandler) reconcileOrder(ctx context.Context, shopID int64
 		if err != nil {
 			return nil, err
 		}
-		h.notifySnapshotChange(ctx, before, after, suppressNewOrderNotifications)
+		payment := h.paymentBreakdownForNewOrderNotification(ctx, conn, d, before, after, suppressNewOrderNotifications)
+		h.notifySnapshotChange(ctx, before, after, payment, suppressNewOrderNotifications)
 		latest = after
 	}
 	if latest == nil {
@@ -2680,6 +2898,73 @@ func (h *ShopeeRealtimeHandler) reconcileOrder(ctx context.Context, shopID int64
 		zap.String("reason", reason),
 	)
 	return latest, nil
+}
+
+func (h *ShopeeRealtimeHandler) queuePaymentBreakdownIfEligible(ctx context.Context, detail shopeeapi.OrderDetail, snap *models.ShopeeOrderSnapshot) {
+	if h == nil || h.repo == nil || h.cfg == nil || !h.cfg.ShopeeOrderEscrowEnrichmentEnabled || snap == nil {
+		return
+	}
+	if !shopeeDetailEligibleForPaymentBreakdown(detail, snap) {
+		return
+	}
+	if err := h.repo.QueuePaymentBreakdown(ctx, snap.ShopID, snap.OrderSN); err != nil && h.logger != nil {
+		h.logger.Warn("shopee_realtime: queue payment breakdown failed",
+			zap.Int64("shop_id", snap.ShopID),
+			zap.String("order_sn", snap.OrderSN),
+			zap.Error(err),
+		)
+	}
+}
+
+func (h *ShopeeRealtimeHandler) paymentBreakdownForNewOrderNotification(ctx context.Context, conn *ShopeeAPIConnection, detail shopeeapi.OrderDetail, before, after *models.ShopeeOrderSnapshot, suppressNewOrder bool) *models.ShopeeOrderPaymentSnapshot {
+	if after == nil || h == nil || h.cfg == nil || !h.cfg.ShopeeOrderEscrowEnrichmentEnabled {
+		return nil
+	}
+	if !shopeeDetailEligibleForPaymentBreakdown(detail, after) {
+		return nil
+	}
+	h.queuePaymentBreakdownIfEligible(ctx, detail, after)
+	if !shouldNotifyShopeeNewOrder(before, after, suppressNewOrder) {
+		return nil
+	}
+	payment, err := h.refreshPaymentBreakdownFromShopee(ctx, conn, after.OrderSN)
+	if err == nil {
+		return payment
+	}
+	msg := shopeeAPIErrorMessage(err, "ดึงข้อมูลชำระเงิน Shopee ไม่สำเร็จ").Message
+	if isShopeePaymentUnavailableError(err) {
+		if payment, markErr := h.repo.MarkPaymentBreakdownUnavailable(ctx, after.ShopID, after.OrderSN, msg, ""); markErr == nil {
+			return payment
+		}
+	} else {
+		_ = h.repo.MarkPaymentBreakdownFailed(ctx, after.ShopID, after.OrderSN, msg, time.Now().Add(paymentBreakdownRetryBackoff(1)))
+	}
+	if h.logger != nil {
+		h.logger.Warn("shopee_realtime: new-order payment breakdown best effort failed",
+			zap.Int64("shop_id", after.ShopID),
+			zap.String("order_sn", after.OrderSN),
+			zap.Error(err),
+		)
+	}
+	return nil
+}
+
+func (h *ShopeeRealtimeHandler) refreshPaymentBreakdownFromShopee(ctx context.Context, conn *ShopeeAPIConnection, orderSN string) (*models.ShopeeOrderPaymentSnapshot, error) {
+	if h == nil || h.repo == nil || h.importH == nil || conn == nil {
+		return nil, fmt.Errorf("Shopee connection ไม่พร้อม")
+	}
+	orderSN = strings.TrimSpace(orderSN)
+	if conn.ShopID <= 0 || orderSN == "" {
+		return nil, fmt.Errorf("shop_id/order_sn ไม่ถูกต้อง")
+	}
+	callCtx, cancel := context.WithTimeout(ctx, shopeePaymentBreakdownAPITimeout)
+	defer cancel()
+	out, err := h.importH.shopeeAPIClient().GetEscrowDetail(callCtx, conn.AccessToken, conn.ShopID, orderSN)
+	if err != nil {
+		return nil, err
+	}
+	raw, _ := json.Marshal(out.Response)
+	return h.repo.MarkPaymentBreakdownReady(ctx, conn.ShopID, orderSN, out.Response.OrderIncome, raw, out.RequestID)
 }
 
 func (h *ShopeeRealtimeHandler) reconcilePushedOrder(event parsedShopeePushEvent) {
@@ -2721,7 +3006,7 @@ func (h *ShopeeRealtimeHandler) connectionForShop(ctx context.Context, shopID in
 	return nil, fmt.Errorf("ไม่พบร้าน Shopee shop_id=%d ใน Nexflow", shopID)
 }
 
-func (h *ShopeeRealtimeHandler) notifySnapshotChange(ctx context.Context, before, after *models.ShopeeOrderSnapshot, suppressNewOrder bool) {
+func (h *ShopeeRealtimeHandler) notifySnapshotChange(ctx context.Context, before, after *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, suppressNewOrder bool) {
 	if after == nil {
 		return
 	}
@@ -2730,18 +3015,18 @@ func (h *ShopeeRealtimeHandler) notifySnapshotChange(ctx context.Context, before
 		h.publishShopeeRealtimeChanged(ctx, after.ShopID, after.OrderSN, "snapshot_changed")
 	}
 	if shouldNotifyShopeeNewOrder(before, after, suppressNewOrder) {
-		h.notifySnapshotIssue(ctx, after, "info", "มีออเดอร์ Shopee ใหม่รอสร้างเอกสาร", shopeeNotificationBody(after), "new_order")
+		h.notifySnapshotIssue(ctx, after, payment, "info", "มีออเดอร์ Shopee ใหม่รอสร้างเอกสาร", shopeeNotificationBody(after), "new_order")
 	}
 	if after.ERPStatus == "needs_review" && (before == nil || before.ERPStatus != "needs_review") {
-		h.notifySnapshotIssue(ctx, after, "warning", "ออเดอร์ Shopee ต้องตรวจสอบ", shopeeNotificationBody(after), "needs_review")
+		h.notifySnapshotIssue(ctx, after, nil, "warning", "ออเดอร์ Shopee ต้องตรวจสอบ", shopeeNotificationBody(after), "needs_review")
 	}
 	if after.ERPStatus == "failed" && (before == nil || before.ERPStatus != "failed") {
-		h.notifySnapshotIssue(ctx, after, "error", "บันทึก Shopee เข้า ERP ไม่สำเร็จ", shopeeNotificationBody(after), "erp_failed")
+		h.notifySnapshotIssue(ctx, after, nil, "error", "บันทึก Shopee เข้า ERP ไม่สำเร็จ", shopeeNotificationBody(after), "erp_failed")
 	}
 	if h.cfg != nil && h.cfg.ShopeeCancelAfterSMLAlertsEnabled &&
 		shopeeOrderIsCancelled(after.OrderStatus) && strings.TrimSpace(after.SMLDocNo) != "" &&
 		(before == nil || !shopeeOrderIsCancelled(before.OrderStatus) || before.SMLDocNo != after.SMLDocNo) {
-		h.notifySnapshotIssue(ctx, after, "error", "ออเดอร์ Shopee ถูกยกเลิกหลังส่ง SML", "ต้องสร้างเอกสารยกเลิก SML สำหรับใบขาย "+strings.TrimSpace(after.SMLDocNo), "cancelled_after_sml")
+		h.notifySnapshotIssue(ctx, after, nil, "error", "ออเดอร์ Shopee ถูกยกเลิกหลังส่ง SML", "ต้องสร้างเอกสารยกเลิก SML สำหรับใบขาย "+strings.TrimSpace(after.SMLDocNo), "cancelled_after_sml")
 	}
 }
 
@@ -2767,7 +3052,7 @@ func shopeeSnapshotReadyForDocumentNotification(snap *models.ShopeeOrderSnapshot
 	}
 }
 
-func (h *ShopeeRealtimeHandler) notifySnapshotIssue(ctx context.Context, snap *models.ShopeeOrderSnapshot, severity, title, body, kind string) {
+func (h *ShopeeRealtimeHandler) notifySnapshotIssue(ctx context.Context, snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, severity, title, body, kind string) {
 	if snap == nil {
 		return
 	}
@@ -2786,7 +3071,7 @@ func (h *ShopeeRealtimeHandler) notifySnapshotIssue(ctx context.Context, snap *m
 		var err error
 		switch kind {
 		case "new_order":
-			_, err = h.lineNotifier.EnqueueShopeeNewOrder(ctx, snap, key)
+			_, err = h.lineNotifier.EnqueueShopeeNewOrder(ctx, snap, payment, key)
 		case "cancelled_after_sml":
 			_, err = h.lineNotifier.EnqueueShopeeCancelledAfterSML(ctx, snap, key)
 		}

@@ -593,6 +593,7 @@ func main() {
 		api.POST("/shopee-operations/:shop_id/:order_sn/reconcile-shipping", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ReconcileShipping)
 		api.GET("/shopee-operations/:shop_id/:order_sn/tracking", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Tracking)
 		api.GET("/shopee-operations/:shop_id/:order_sn/timeline", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Timeline)
+		api.POST("/shopee-operations/:shop_id/:order_sn/payment-breakdown/refresh", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.PaymentBreakdownRefresh)
 		api.POST("/shopee-operations/:shop_id/:order_sn/ship", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShipOrder)
 		api.POST("/shopee-operations/:shop_id/:order_sn/shipping-document/create", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingDocumentCreate)
 		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-document/result", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingDocumentResult)
@@ -755,6 +756,9 @@ func main() {
 	go lineNotificationSvc.StartWorker(appCtx, 15*time.Second, 10)
 	if cfg.ShopeeRealtimeOpsEnabled {
 		go shopeeRealtimeH.StartReconcileWorker(appCtx, 5*time.Second, 10)
+	}
+	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeOrderEscrowEnrichmentEnabled {
+		go shopeeRealtimeH.StartPaymentBreakdownWorker(appCtx, 10*time.Second, 5)
 	}
 	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeRealtimeSyncIntervalSeconds > 0 {
 		interval := time.Duration(cfg.ShopeeRealtimeSyncIntervalSeconds) * time.Second

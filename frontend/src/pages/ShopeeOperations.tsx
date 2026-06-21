@@ -49,7 +49,7 @@ import {
 } from '@/components/ui/tooltip'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { cn } from '@/lib/utils'
-import { OrderTimelineDrawer } from './ShopeeOperationsTimelineDrawer'
+import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
 
 type Connection = {
   id: string
@@ -134,6 +134,7 @@ type OrderSnapshot = {
   ship_action_status?: string
   last_update_source?: string
   payment_method?: string
+  payment_breakdown_status?: string
   last_order_update_at?: string
   last_synced_at: string
 }
@@ -196,6 +197,7 @@ type TimelineResponse = {
   snapshot: OrderSnapshot
   status_timeline?: TimelineStep[]
   erp_milestones?: ERPMilestone[]
+  payment_breakdown?: ShopeeOrderPaymentBreakdown | null
   events: TimelineEvent[]
 }
 
@@ -452,6 +454,8 @@ export default function ShopeeOperations() {
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
   const [timelineSteps, setTimelineSteps] = useState<TimelineStep[]>([])
   const [erpMilestones, setERPMilestones] = useState<ERPMilestone[]>([])
+  const [paymentBreakdown, setPaymentBreakdown] = useState<ShopeeOrderPaymentBreakdown | null>(null)
+  const [paymentRefreshing, setPaymentRefreshing] = useState(false)
   const [pendingListRefresh, setPendingListRefresh] = useState(false)
   const [selectedOrderKeys, setSelectedOrderKeys] = useState<Set<string>>(new Set())
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
@@ -629,8 +633,18 @@ export default function ShopeeOperations() {
   }, [focusedOrderSN, orders, timelineOpen])
 
   useEffect(() => {
-    return subscribeEvents((type: ServerEventType) => {
+    return subscribeEvents((type: ServerEventType, payload: any) => {
       if (type !== 'shopee_realtime_changed') return
+      if (
+        timelineOpen &&
+        selected &&
+        payload?.reason === 'payment_breakdown_updated' &&
+        Number(payload?.shop_id) === selected.shop_id &&
+        String(payload?.order_sn ?? '') === selected.order_sn
+      ) {
+        void loadTimeline(selected)
+        return
+      }
       if (timelineOpen || trackingDialogOpen || shippingDialogOpen) {
         setPendingListRefresh(true)
         return
@@ -638,7 +652,7 @@ export default function ShopeeOperations() {
       void loadOrders()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscribeEvents, queryString, shopID, trackingDialogOpen, shippingDialogOpen, timelineOpen])
+  }, [subscribeEvents, queryString, shopID, trackingDialogOpen, shippingDialogOpen, timelineOpen, selected])
 
   const syncNow = async () => {
     if (!selectedConnectionID) {
@@ -901,12 +915,14 @@ export default function ShopeeOperations() {
       setSelected(res.data.snapshot ?? order)
       setTimelineSteps(res.data.status_timeline ?? [])
       setERPMilestones(res.data.erp_milestones ?? [])
+      setPaymentBreakdown(res.data.payment_breakdown ?? null)
       setTimelineEvents(res.data.events ?? [])
     } catch (e) {
       const message = apiError(e)
       setTimelineError(message)
       setTimelineSteps([])
       setERPMilestones([])
+      setPaymentBreakdown(null)
       setTimelineEvents([])
       toast.error('โหลด timeline ไม่สำเร็จ: ' + message)
     } finally {
@@ -947,6 +963,7 @@ export default function ShopeeOperations() {
       const next = new URLSearchParams(params)
       next.delete('order')
       setParams(next, { replace: true })
+      setPaymentBreakdown(null)
     }
   }
 
@@ -968,6 +985,23 @@ export default function ShopeeOperations() {
       toast.error('ตรวจจาก Shopee ไม่สำเร็จ: ' + message)
     } finally {
       setTimelineRefreshing(false)
+    }
+  }
+
+  const refreshPaymentBreakdown = async () => {
+    if (!selected) return
+    setPaymentRefreshing(true)
+    try {
+      const res = await client.post<{ data?: ShopeeOrderPaymentBreakdown }>(
+        `/api/shopee-operations/${selected.shop_id}/${encodeURIComponent(selected.order_sn)}/payment-breakdown/refresh`,
+      )
+      setPaymentBreakdown(res.data?.data ?? null)
+      await loadTimeline(selected)
+      toast.success('รีเฟรชข้อมูลชำระเงิน Shopee แล้ว')
+    } catch (e) {
+      toast.error('รีเฟรชข้อมูลชำระเงินไม่สำเร็จ: ' + apiError(e))
+    } finally {
+      setPaymentRefreshing(false)
     }
   }
 
@@ -1343,6 +1377,7 @@ export default function ShopeeOperations() {
                     <td className="px-3 py-2 text-right tabular-nums">
                       <div>{money(order.total_amount)}</div>
                       <div className="text-xs text-muted-foreground">{order.item_count.toLocaleString()} รายการ</div>
+                      <PaymentBreakdownBadge status={order.payment_breakdown_status} />
                     </td>
                     <td className="px-3 py-2"><OrderStatusBadge status={order.order_status} /></td>
                     <td className="px-3 py-2">
@@ -1684,6 +1719,8 @@ export default function ShopeeOperations() {
           events={timelineEvents}
           loading={timelineLoading}
           refreshing={timelineRefreshing}
+          paymentBreakdown={paymentBreakdown}
+          paymentRefreshing={paymentRefreshing}
           error={timelineError}
           canCreateDocument={Boolean(readiness?.sml.can_create_document)}
           createDocumentDisabledReason={selected ? erpDisabledReason(selected) : ''}
@@ -1692,6 +1729,7 @@ export default function ShopeeOperations() {
           onCreateDocument={() => setERPDialogOpen(true)}
           onCopyOrder={() => selected && void copyText(selected.order_sn, 'คัดลอก Order SN แล้ว')}
           onRefresh={() => void refreshTimelineFromShopee()}
+          onRefreshPayment={() => void refreshPaymentBreakdown()}
           documentPath={documentPath}
         />
       </div>
@@ -1934,6 +1972,29 @@ function UpdateSourceBadge({ source }: { source?: string }) {
       normalized === 'shipping' && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
     )}>
       {sourceLabel(normalized)}
+    </Badge>
+  )
+}
+
+function PaymentBreakdownBadge({ status }: { status?: string }) {
+  const normalized = String(status ?? '').trim()
+  if (!normalized) return null
+  const label = normalized === 'ready'
+    ? 'Payment ready'
+    : normalized === 'failed'
+      ? 'Payment error'
+      : normalized === 'unavailable'
+        ? 'ยังไม่มี escrow'
+        : 'รอข้อมูลชำระเงิน'
+  return (
+    <Badge variant="outline" className={cn(
+      'mt-1 h-5 px-1.5 text-[10px]',
+      normalized === 'ready' && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+      normalized === 'failed' && 'border-destructive/40 bg-destructive/10 text-destructive',
+      normalized === 'unavailable' && 'border-warning/40 bg-warning/10 text-warning',
+      (normalized === 'queued' || normalized === 'running') && 'border-info/40 bg-info/10 text-info',
+    )}>
+      {label}
     </Badge>
   )
 }

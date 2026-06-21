@@ -171,7 +171,8 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
 		        s.package_number, s.logistics_status, s.tracking_number, s.shipping_carrier,
-		        s.payment_method, s.raw_detail, s.last_order_update_at,
+		        s.payment_method, COALESCE(p.status, '') AS payment_breakdown_status,
+		        s.raw_detail, s.last_order_update_at,
 		        s.last_update_source, s.last_synced_at, s.last_error, s.created_at, s.updated_at,
 		        COALESCE((
 		          SELECT a.status
@@ -184,6 +185,9 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		        ), '') AS ship_action_status
 		   FROM shopee_order_snapshots s
 		   LEFT JOIN bills b ON b.id = s.bill_id
+		   LEFT JOIN shopee_order_payment_snapshots p
+		          ON p.shop_id = s.shop_id
+		         AND p.order_sn = s.order_sn
 		   LEFT JOIN LATERAL (
 		     SELECT cancel_sml_doc_no, status, error
 		       FROM shopee_sml_cancellations c
@@ -262,7 +266,8 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
 		        s.package_number, s.logistics_status, s.tracking_number, s.shipping_carrier,
-		        s.payment_method, s.raw_detail, s.last_order_update_at,
+		        s.payment_method, COALESCE(p.status, '') AS payment_breakdown_status,
+		        s.raw_detail, s.last_order_update_at,
 		        s.last_update_source, s.last_synced_at, s.last_error, s.created_at, s.updated_at,
 		        COALESCE((
 		          SELECT a.status
@@ -275,6 +280,9 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		        ), '') AS ship_action_status
 		   FROM shopee_order_snapshots s
 		   LEFT JOIN bills b ON b.id = s.bill_id
+		   LEFT JOIN shopee_order_payment_snapshots p
+		          ON p.shop_id = s.shop_id
+		         AND p.order_sn = s.order_sn
 		   LEFT JOIN LATERAL (
 		     SELECT cancel_sml_doc_no, status, error
 		       FROM shopee_sml_cancellations c
@@ -1943,7 +1951,7 @@ func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error
 		&out.ERPStatus, &billID, &out.SMLDocNo, &out.SMLCancelDocNo, &out.SMLCancelStatus, &out.SMLCancelError,
 		&out.DocumentRoute, &out.BillSourceFlow, &out.BuyerUsername, &out.TotalAmount,
 		&out.Currency, &out.ItemCount, &out.PackageNumber, &out.LogisticsStatus,
-		&out.TrackingNumber, &out.ShippingCarrier, &out.PaymentMethod, &out.RawDetail,
+		&out.TrackingNumber, &out.ShippingCarrier, &out.PaymentMethod, &out.PaymentBreakdownStatus, &out.RawDetail,
 		&lastOrderUpdate, &out.LastUpdateSource, &out.LastSyncedAt, &out.LastError, &out.CreatedAt, &out.UpdatedAt,
 		&out.ShipActionStatus,
 	); err != nil {

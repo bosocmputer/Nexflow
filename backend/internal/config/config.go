@@ -87,21 +87,22 @@ type Config struct {
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
-	ShopeeOpenAPIEnabled              bool
-	ShopeeOpenAPIEnv                  string
-	ShopeeOpenAPIBaseURL              string
-	ShopeeOpenAPIPartnerID            int64
-	ShopeeOpenAPIPartnerKey           string
-	ShopeeOpenAPIRedirect             string
-	ShopeeRealtimeOpsEnabled          bool
-	ShopeeAdvancedDropoffEnabled      bool
-	ShopeeShippingActionsEnabled      bool
-	ShopeeCancelAfterSMLAlertsEnabled bool
-	ShopeeSMLCancelDocumentsEnabled   bool
-	ShopeeRichLineFlexEnabled         bool
-	ShopeeSettlementLineAlertsEnabled bool
-	ShopeeRealtimeWebhookSecret       string
-	ShopeeRealtimeSyncIntervalSeconds int
+	ShopeeOpenAPIEnabled               bool
+	ShopeeOpenAPIEnv                   string
+	ShopeeOpenAPIBaseURL               string
+	ShopeeOpenAPIPartnerID             int64
+	ShopeeOpenAPIPartnerKey            string
+	ShopeeOpenAPIRedirect              string
+	ShopeeRealtimeOpsEnabled           bool
+	ShopeeAdvancedDropoffEnabled       bool
+	ShopeeShippingActionsEnabled       bool
+	ShopeeCancelAfterSMLAlertsEnabled  bool
+	ShopeeSMLCancelDocumentsEnabled    bool
+	ShopeeRichLineFlexEnabled          bool
+	ShopeeSettlementLineAlertsEnabled  bool
+	ShopeeOrderEscrowEnrichmentEnabled bool
+	ShopeeRealtimeWebhookSecret        string
+	ShopeeRealtimeSyncIntervalSeconds  int
 
 	// Auto-confirm
 	AutoConfirmThreshold float64
@@ -128,70 +129,71 @@ func Load() *Config {
 	_ = godotenv.Load()
 
 	c := &Config{
-		Port:                              getEnv("PORT", "8090"),
-		Env:                               getEnv("ENV", "development"),
-		DatabaseURL:                       getEnv("DATABASE_URL", ""),
-		DBUser:                            getEnv("DB_USER", "nexflow"),
-		DBPassword:                        getEnv("DB_PASSWORD", "changeme"),
-		JWTSecret:                         getEnv("JWT_SECRET", ""),
-		JWTExpireHours:                    getEnvInt("JWT_EXPIRE_HOURS", 24),
-		LineChannelSecret:                 getEnv("LINE_CHANNEL_SECRET", ""),
-		LineChannelAccessToken:            getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
-		LineAdminUserID:                   getEnv("LINE_ADMIN_USER_ID", ""),
-		LineGreeting:                      getEnv("LINE_GREETING", ""),
-		PublicBaseURL:                     getEnv("PUBLIC_BASE_URL", ""),
-		MediaSigningKey:                   getEnv("MEDIA_SIGNING_KEY", ""),
-		OpenRouterAPIKey:                  getEnv("OPENROUTER_API_KEY", ""),
-		OpenRouterModel:                   getEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
-		OpenRouterFallback:                getEnv("OPENROUTER_FALLBACK_MODEL", "google/gemini-flash-1.5"),
-		OpenRouterAudioModel:              getEnv("OPENROUTER_AUDIO_MODEL", "openai/whisper-1"),
-		OpenRouterAppTitle:                getEnv("OPENROUTER_APP_TITLE", "Nexflow"),
-		OpenRouterAppReferer:              getEnv("OPENROUTER_APP_REFERER", getEnv("PUBLIC_BASE_URL", "")),
-		MistralAPIKey:                     getEnv("MISTRAL_API_KEY", ""),
-		ShopeeSMLURL:                      getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
-		ShopeeSMLGUID:                     getEnv("SHOPEE_SML_GUID", "SMLX"),
-		ShopeeSMLProvider:                 getEnv("SHOPEE_SML_PROVIDER", "SML1"),
-		ShopeeSMLConfigFile:               getEnv("SHOPEE_SML_CONFIG_FILE", "SMLConfigSML1.xml"),
-		ShopeeSMLDatabase:                 getEnv("SHOPEE_SML_DATABASE", "SMLPLOY"),
-		ShopeeSMLDocFormat:                getEnv("SHOPEE_SML_DOC_FORMAT", ""),
-		ShopeeSMLSaleCode:                 getEnv("SHOPEE_SML_SALE_CODE", ""),
-		ShopeeSMLBranchCode:               getEnv("SHOPEE_SML_BRANCH_CODE", ""),
-		ShopeeSMLWHCode:                   getEnv("SHOPEE_SML_WH_CODE", ""),
-		ShopeeSMLShelfCode:                getEnv("SHOPEE_SML_SHELF_CODE", ""),
-		ShopeeSMLUnitCode:                 getEnv("SHOPEE_SML_UNIT_CODE", ""),
-		ShopeeSMLVATType:                  getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
-		ShopeeSMLVATRate:                  getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
-		ShopeeSMLDocTime:                  getEnv("SHOPEE_SML_DOC_TIME", ""),
-		ShippedSMLDocFormat:               getEnv("SHIPPED_SML_DOC_FORMAT", ""),
-		GeminiAPIKey:                      getEnv("GEMINI_API_KEY", ""),
-		ShopeeOpenAPIEnabled:              getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
-		ShopeeOpenAPIEnv:                  getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
-		ShopeeOpenAPIBaseURL:              getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
-		ShopeeOpenAPIPartnerID:            getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
-		ShopeeOpenAPIPartnerKey:           getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
-		ShopeeOpenAPIRedirect:             getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
-		ShopeeRealtimeOpsEnabled:          getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
-		ShopeeAdvancedDropoffEnabled:      getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
-		ShopeeShippingActionsEnabled:      getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
-		ShopeeCancelAfterSMLAlertsEnabled: getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
-		ShopeeSMLCancelDocumentsEnabled:   getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
-		ShopeeRichLineFlexEnabled:         getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
-		ShopeeSettlementLineAlertsEnabled: getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
-		ShopeeRealtimeWebhookSecret:       getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
-		ShopeeRealtimeSyncIntervalSeconds: getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
-		AutoConfirmThreshold:              getEnvFloat("AUTO_CONFIRM_THRESHOLD", 0.85),
-		InsightCronHour:                   getEnvInt("INSIGHT_CRON_HOUR", 8),
-		BackupCronHour:                    getEnvInt("BACKUP_CRON_HOUR", 0),
-		InsightLineNotify:                 getEnvBool("INSIGHT_LINE_NOTIFY", true),
-		DiskWarnPercent:                   getEnvInt("DISK_WARN_PERCENT", 90),
-		DataLifecycleEnabled:              getEnvBool("DATA_LIFECYCLE_ENABLED", true),
-		DataLifecycleCronHour:             getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
-		HotLogDays:                        getEnvInt("HOT_LOG_DAYS", 90),
-		AutoArchiveDays:                   getEnvInt("AUTO_ARCHIVE_DAYS", 180),
-		SummaryRetentionDays:              getEnvInt("SUMMARY_RETENTION_DAYS", 730),
-		PurgeBatchSize:                    getEnvInt("PURGE_BATCH_SIZE", 1000),
-		ArtifactsDir:                      getEnv("ARTIFACTS_DIR", "/app/artifacts"),
-		ArtifactsMaxBytes:                 int64(getEnvInt("ARTIFACTS_MAX_BYTES", 10*1024*1024)), // 10 MB
+		Port:                               getEnv("PORT", "8090"),
+		Env:                                getEnv("ENV", "development"),
+		DatabaseURL:                        getEnv("DATABASE_URL", ""),
+		DBUser:                             getEnv("DB_USER", "nexflow"),
+		DBPassword:                         getEnv("DB_PASSWORD", "changeme"),
+		JWTSecret:                          getEnv("JWT_SECRET", ""),
+		JWTExpireHours:                     getEnvInt("JWT_EXPIRE_HOURS", 24),
+		LineChannelSecret:                  getEnv("LINE_CHANNEL_SECRET", ""),
+		LineChannelAccessToken:             getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
+		LineAdminUserID:                    getEnv("LINE_ADMIN_USER_ID", ""),
+		LineGreeting:                       getEnv("LINE_GREETING", ""),
+		PublicBaseURL:                      getEnv("PUBLIC_BASE_URL", ""),
+		MediaSigningKey:                    getEnv("MEDIA_SIGNING_KEY", ""),
+		OpenRouterAPIKey:                   getEnv("OPENROUTER_API_KEY", ""),
+		OpenRouterModel:                    getEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
+		OpenRouterFallback:                 getEnv("OPENROUTER_FALLBACK_MODEL", "google/gemini-flash-1.5"),
+		OpenRouterAudioModel:               getEnv("OPENROUTER_AUDIO_MODEL", "openai/whisper-1"),
+		OpenRouterAppTitle:                 getEnv("OPENROUTER_APP_TITLE", "Nexflow"),
+		OpenRouterAppReferer:               getEnv("OPENROUTER_APP_REFERER", getEnv("PUBLIC_BASE_URL", "")),
+		MistralAPIKey:                      getEnv("MISTRAL_API_KEY", ""),
+		ShopeeSMLURL:                       getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
+		ShopeeSMLGUID:                      getEnv("SHOPEE_SML_GUID", "SMLX"),
+		ShopeeSMLProvider:                  getEnv("SHOPEE_SML_PROVIDER", "SML1"),
+		ShopeeSMLConfigFile:                getEnv("SHOPEE_SML_CONFIG_FILE", "SMLConfigSML1.xml"),
+		ShopeeSMLDatabase:                  getEnv("SHOPEE_SML_DATABASE", "SMLPLOY"),
+		ShopeeSMLDocFormat:                 getEnv("SHOPEE_SML_DOC_FORMAT", ""),
+		ShopeeSMLSaleCode:                  getEnv("SHOPEE_SML_SALE_CODE", ""),
+		ShopeeSMLBranchCode:                getEnv("SHOPEE_SML_BRANCH_CODE", ""),
+		ShopeeSMLWHCode:                    getEnv("SHOPEE_SML_WH_CODE", ""),
+		ShopeeSMLShelfCode:                 getEnv("SHOPEE_SML_SHELF_CODE", ""),
+		ShopeeSMLUnitCode:                  getEnv("SHOPEE_SML_UNIT_CODE", ""),
+		ShopeeSMLVATType:                   getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
+		ShopeeSMLVATRate:                   getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
+		ShopeeSMLDocTime:                   getEnv("SHOPEE_SML_DOC_TIME", ""),
+		ShippedSMLDocFormat:                getEnv("SHIPPED_SML_DOC_FORMAT", ""),
+		GeminiAPIKey:                       getEnv("GEMINI_API_KEY", ""),
+		ShopeeOpenAPIEnabled:               getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
+		ShopeeOpenAPIEnv:                   getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
+		ShopeeOpenAPIBaseURL:               getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
+		ShopeeOpenAPIPartnerID:             getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
+		ShopeeOpenAPIPartnerKey:            getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
+		ShopeeOpenAPIRedirect:              getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
+		ShopeeRealtimeOpsEnabled:           getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
+		ShopeeAdvancedDropoffEnabled:       getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
+		ShopeeShippingActionsEnabled:       getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
+		ShopeeCancelAfterSMLAlertsEnabled:  getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
+		ShopeeSMLCancelDocumentsEnabled:    getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
+		ShopeeRichLineFlexEnabled:          getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
+		ShopeeSettlementLineAlertsEnabled:  getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
+		ShopeeOrderEscrowEnrichmentEnabled: getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
+		ShopeeRealtimeWebhookSecret:        getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
+		ShopeeRealtimeSyncIntervalSeconds:  getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
+		AutoConfirmThreshold:               getEnvFloat("AUTO_CONFIRM_THRESHOLD", 0.85),
+		InsightCronHour:                    getEnvInt("INSIGHT_CRON_HOUR", 8),
+		BackupCronHour:                     getEnvInt("BACKUP_CRON_HOUR", 0),
+		InsightLineNotify:                  getEnvBool("INSIGHT_LINE_NOTIFY", true),
+		DiskWarnPercent:                    getEnvInt("DISK_WARN_PERCENT", 90),
+		DataLifecycleEnabled:               getEnvBool("DATA_LIFECYCLE_ENABLED", true),
+		DataLifecycleCronHour:              getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
+		HotLogDays:                         getEnvInt("HOT_LOG_DAYS", 90),
+		AutoArchiveDays:                    getEnvInt("AUTO_ARCHIVE_DAYS", 180),
+		SummaryRetentionDays:               getEnvInt("SUMMARY_RETENTION_DAYS", 730),
+		PurgeBatchSize:                     getEnvInt("PURGE_BATCH_SIZE", 1000),
+		ArtifactsDir:                       getEnv("ARTIFACTS_DIR", "/app/artifacts"),
+		ArtifactsMaxBytes:                  int64(getEnvInt("ARTIFACTS_MAX_BYTES", 10*1024*1024)), // 10 MB
 	}
 
 	if c.JWTSecret == "" {

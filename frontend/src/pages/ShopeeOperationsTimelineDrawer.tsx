@@ -53,9 +53,41 @@ export type ShopeeTimelineOrder = {
   tracking_number?: string
   shipping_carrier?: string
   checkout_shipping_carrier?: string
+  payment_breakdown_status?: string
   last_update_source?: string
   last_order_update_at?: string
   last_synced_at: string
+}
+
+export type ShopeeOrderPaymentBreakdown = {
+  shop_id: number
+  order_sn: string
+  status: string
+  buyer_total_amount: number
+  escrow_amount: number
+  original_price: number
+  seller_discount: number
+  shopee_discount: number
+  commission_fee: number
+  service_fee: number
+  seller_transaction_fee: number
+  final_shipping_fee: number
+  actual_shipping_fee: number
+  escrow_tax: number
+  withholding_tax: number
+  voucher_from_seller: number
+  voucher_from_shopee: number
+  reverse_shipping_fee: number
+  buyer_paid_shipping_fee: number
+  shopee_shipping_rebate: number
+  seller_shipping_discount: number
+  coin: number
+  deduction_amount: number
+  attempts?: number
+  last_error?: string
+  last_request_id?: string
+  last_synced_at?: string
+  next_run_at?: string
 }
 
 export type ShopeeTimelineStep = {
@@ -99,6 +131,8 @@ type OrderTimelineDrawerProps = {
   events: ShopeeTimelineEvent[]
   loading: boolean
   refreshing: boolean
+  paymentBreakdown?: ShopeeOrderPaymentBreakdown | null
+  paymentRefreshing?: boolean
   error: string
   canCreateDocument: boolean
   createDocumentDisabledReason?: string
@@ -107,6 +141,7 @@ type OrderTimelineDrawerProps = {
   onCreateDocument: () => void
   onCopyOrder: () => void
   onRefresh: () => void
+  onRefreshPayment: () => void
   documentPath: (order: ShopeeTimelineOrder) => string
 }
 
@@ -118,6 +153,8 @@ export function OrderTimelineDrawer({
   events,
   loading,
   refreshing,
+  paymentBreakdown,
+  paymentRefreshing = false,
   error,
   canCreateDocument,
   createDocumentDisabledReason,
@@ -126,6 +163,7 @@ export function OrderTimelineDrawer({
   onCreateDocument,
   onCopyOrder,
   onRefresh,
+  onRefreshPayment,
   documentPath,
 }: OrderTimelineDrawerProps) {
   const [systemOpen, setSystemOpen] = useState(false)
@@ -144,6 +182,14 @@ export function OrderTimelineDrawer({
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-3 px-4 py-3">
             {order && <OrderSummaryCard order={order} />}
+
+            {order && (
+              <PaymentBreakdownCard
+                payment={paymentBreakdown}
+                refreshing={paymentRefreshing}
+                onRefresh={onRefreshPayment}
+              />
+            )}
 
             <LifecycleTimeline
               steps={steps}
@@ -262,6 +308,84 @@ export function OrderTimelineDrawer({
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+function PaymentBreakdownCard({
+  payment,
+  refreshing,
+  onRefresh,
+}: {
+  payment?: ShopeeOrderPaymentBreakdown | null
+  refreshing: boolean
+  onRefresh: () => void
+}) {
+  const status = payment?.status || 'queued'
+  const ready = status === 'ready'
+  const rows = ready && payment ? paymentRows(payment) : []
+  return (
+    <Card className="shadow-none">
+      <CardHeader className="flex-row items-start justify-between gap-3 p-3 pb-0">
+        <div>
+          <CardTitle className="text-sm font-semibold tracking-normal">ข้อมูลชำระเงิน Shopee</CardTitle>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            อ่านจาก snapshot ใน Nexflow ไม่ยิง Shopee ตอนเปิดหน้านี้
+          </p>
+        </div>
+        <PaymentStatusBadge status={status} />
+      </CardHeader>
+      <CardContent className="space-y-3 p-3">
+        {ready && payment ? (
+          <>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <PaymentMetric label="ยอดลูกค้าชำระ" value={money(payment.buyer_total_amount)} />
+              <PaymentMetric label="ยอดสุทธิตาม Shopee escrow" value={money(payment.escrow_amount)} tone="success" />
+              <PaymentMetric label="ส่วนต่างจากยอดลูกค้าชำระ" value={signedMoney(payment.deduction_amount)} tone={payment.deduction_amount > 0 ? 'warning' : 'muted'} />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {rows.map((row) => (
+                <SummaryLine key={row.label} label={row.label} value={row.value} />
+              ))}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {payment.last_synced_at ? `ซิงก์ล่าสุด ${formatBangkokDateTime(payment.last_synced_at)} เวลาไทย` : 'ยังไม่มีเวลาซิงก์'}
+            </div>
+          </>
+        ) : (
+          <div className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+            {paymentStatusHelp(payment)}
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-2"
+            onClick={onRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            รีเฟรชข้อมูลชำระเงิน
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PaymentMetric({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'warning' | 'muted' }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/20 px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cn(
+        'mt-1 break-words text-base font-semibold tabular-nums text-foreground',
+        tone === 'success' && 'text-accentStrong',
+        tone === 'warning' && 'text-warning',
+        tone === 'muted' && 'text-muted-foreground',
+      )}>
+        {value}
+      </div>
+    </div>
   )
 }
 
@@ -487,6 +611,63 @@ function SummaryLine({ label, value, mono }: { label: string; value: string; mon
   )
 }
 
+function PaymentStatusBadge({ status }: { status?: string }) {
+  const normalized = String(status ?? '').trim() || 'queued'
+  return (
+    <Badge variant="outline" className={cn(
+      'h-5 bg-background px-1.5 text-[10px]',
+      normalized === 'ready' && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+      normalized === 'failed' && 'border-destructive/40 bg-destructive/10 text-destructive',
+      normalized === 'unavailable' && 'border-warning/40 bg-warning/10 text-warning',
+      (normalized === 'queued' || normalized === 'running') && 'border-info/40 bg-info/10 text-info',
+    )}>
+      {paymentStatusLabel(normalized)}
+    </Badge>
+  )
+}
+
+function paymentStatusLabel(status: string) {
+  switch (status) {
+    case 'ready': return 'พร้อม'
+    case 'running': return 'กำลังดึง'
+    case 'unavailable': return 'Shopee ยังไม่มีข้อมูล'
+    case 'failed': return 'ดึงไม่สำเร็จ'
+    default: return 'รอข้อมูล'
+  }
+}
+
+function paymentStatusHelp(payment?: ShopeeOrderPaymentBreakdown | null) {
+  if (!payment) return 'ยังไม่มี snapshot รายละเอียดชำระเงิน กดรีเฟรชเพื่อดึงจาก Shopee'
+  if (payment.status === 'running') return 'กำลังดึงข้อมูลจาก Shopee โปรดรอสักครู่'
+  if (payment.status === 'unavailable') return payment.last_error || 'Shopee ยังไม่มีข้อมูล escrow สำหรับออเดอร์นี้'
+  if (payment.status === 'failed') return payment.last_error || 'ดึงข้อมูลชำระเงินไม่สำเร็จ ลองรีเฟรชอีกครั้ง'
+  return 'รอ worker ดึงข้อมูลชำระเงินจาก Shopee'
+}
+
+function paymentRows(payment: ShopeeOrderPaymentBreakdown): Array<{ label: string; value: string }> {
+  const rows = [
+    { label: 'ราคาสินค้าก่อนส่วนลด', amount: payment.original_price },
+    { label: 'Commission', amount: payment.commission_fee },
+    { label: 'Transaction fee', amount: payment.seller_transaction_fee },
+    { label: 'Service fee', amount: payment.service_fee },
+    { label: 'Voucher Shopee', amount: payment.voucher_from_shopee },
+    { label: 'Voucher ร้าน', amount: payment.voucher_from_seller },
+    { label: 'ส่วนลด Shopee', amount: payment.shopee_discount },
+    { label: 'ส่วนลดร้าน', amount: payment.seller_discount },
+    { label: 'ค่าส่งลูกค้าจ่าย', amount: payment.buyer_paid_shipping_fee },
+    { label: 'ส่วนลดค่าส่งร้าน', amount: payment.seller_shipping_discount },
+    { label: 'ค่าส่งจริง', amount: payment.actual_shipping_fee },
+    { label: 'ค่าส่งสุทธิ', amount: payment.final_shipping_fee },
+    { label: 'ค่าส่งคืน', amount: payment.reverse_shipping_fee },
+    { label: 'ภาษี escrow', amount: payment.escrow_tax },
+    { label: 'หัก ณ ที่จ่าย', amount: payment.withholding_tax },
+    { label: 'Coin', amount: payment.coin },
+  ]
+  return rows
+    .filter((row) => Number(row.amount || 0) !== 0)
+    .map((row) => ({ label: row.label, value: money(row.amount) }))
+}
+
 function OrderStatusBadge({ status }: { status: string }) {
   const s = status.toUpperCase()
   return (
@@ -696,4 +877,11 @@ function carrierLabel(order: ShopeeTimelineOrder | null | undefined) {
 
 function money(v: number | undefined) {
   return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(Number(v ?? 0))
+}
+
+function signedMoney(v: number | undefined) {
+  const n = Number(v ?? 0)
+  const formatted = money(Math.abs(n))
+  if (n < 0) return `-${formatted}`
+  return formatted
 }

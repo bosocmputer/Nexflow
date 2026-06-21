@@ -230,6 +230,66 @@ func TestBuildShopeeNewOrderRichLineFlexShowsPaymentShippingAndOmitsPII(t *testi
 	}
 }
 
+func TestBuildShopeeNewOrderRichLineFlexWithPaymentShowsEscrowBreakdown(t *testing.T) {
+	payment := &models.ShopeeOrderPaymentSnapshot{
+		Status:                 "ready",
+		BuyerTotalAmount:       245,
+		EscrowAmount:           263,
+		DeductionAmount:        -18,
+		CommissionFee:          42,
+		SellerTransactionFee:   10,
+		VoucherFromShopee:      60,
+		BuyerPaidShippingFee:   15,
+		SellerShippingDiscount: 20,
+	}
+	altText, flex := BuildShopeeNewOrderRichLineFlexWithPayment(&models.ShopeeOrderSnapshot{
+		ShopID:        264993963,
+		ShopLabel:     "Henna.milkford",
+		OrderSN:       "260621NDVGSKMA",
+		BuyerUsername: "buyer-secret",
+		TotalAmount:   245,
+		PaymentMethod: "Credit Card/Debit Card",
+		ItemCount:     1,
+		RawDetail: []byte(`{
+		  "order_sn":"260621NDVGSKMA",
+		  "payment_method":"Credit Card/Debit Card",
+		  "cod":false,
+		  "total_amount":245,
+		  "buyer_username":"buyer-secret",
+		  "recipient_address":{"name":"secret-name","phone":"0999999999"},
+		  "item_list":[{"item_name":"ชุดใหญ่ 10 กรัม","model_name":"B.น้ำตาลเข้ม","model_quantity_purchased":1}]
+		}`),
+	}, payment, "https://animal-galvanize-tameness.ngrok-free.dev")
+
+	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "฿245.00") {
+		t.Fatalf("alt text not useful: %q", altText)
+	}
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal flex: %v", err)
+	}
+	body := string(buf)
+	for _, want := range []string{
+		"ข้อมูลการชำระเงิน Shopee",
+		"ยอดสุทธิตาม Shopee escrow",
+		"ส่วนต่างจากยอดลูกค้าชำระ",
+		"-฿18.00",
+		"Commission",
+		"Transaction fee",
+		"Voucher Shopee",
+		"ค่าส่งลูกค้าจ่าย",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("payment flex missing %q:\n%s", want, body)
+		}
+	}
+	for _, leak := range []string{"buyer-secret", "secret-name", "0999999999"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("payment flex leaked %q:\n%s", leak, body)
+		}
+	}
+}
+
 func TestBuildShopeeSettlementLineFlexShowsNetDeductionsAndEscrowFees(t *testing.T) {
 	rawEscrow := json.RawMessage(`{
 	  "order_sn":"260426RC617UT2",

@@ -39,7 +39,7 @@ func NewService(repo *repository.LineNotificationRepo, publicBaseURL string, ric
 	}
 }
 
-func (s *Service) EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error) {
+func (s *Service) EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, dedupeKey string) (int, error) {
 	if s == nil || s.repo == nil || snap == nil {
 		return 0, nil
 	}
@@ -47,16 +47,19 @@ func (s *Service) EnqueueShopeeNewOrder(ctx context.Context, snap *models.Shopee
 	if dedupeKey == "" {
 		dedupeKey = fmt.Sprintf("shopee:new_order:%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN))
 	}
-	message := BuildShopeeNewOrderLineText(snap, s.publicBaseURL)
+	message := BuildShopeeNewOrderLineTextWithPayment(snap, payment, s.publicBaseURL)
 	altText := ""
 	var flexPayload json.RawMessage
 	payloadVersion := 0
 	if s.richFlexEnabled {
-		if alt, contents := BuildShopeeNewOrderRichLineFlex(snap, s.publicBaseURL); contents != nil {
+		if alt, contents := BuildShopeeNewOrderRichLineFlexWithPayment(snap, payment, s.publicBaseURL); contents != nil {
 			if raw, err := json.Marshal(contents); err == nil {
 				altText = alt
 				flexPayload = raw
 				payloadVersion = 1
+				if shopeePaymentReady(payment) {
+					payloadVersion = 2
+				}
 			} else if s.logger != nil {
 				s.logger.Warn("line notification rich flex marshal failed",
 					zap.Int64("shop_id", snap.ShopID),
@@ -266,6 +269,10 @@ func flexPayloadFromDelivery(job models.LineNotificationDeliveryJob) (string, ma
 }
 
 func BuildShopeeNewOrderLineText(snap *models.ShopeeOrderSnapshot, publicBaseURL string) string {
+	return BuildShopeeNewOrderLineTextWithPayment(snap, nil, publicBaseURL)
+}
+
+func BuildShopeeNewOrderLineTextWithPayment(snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, publicBaseURL string) string {
 	if snap == nil {
 		return "มีออเดอร์ Shopee ใหม่"
 	}
@@ -278,7 +285,7 @@ func BuildShopeeNewOrderLineText(snap *models.ShopeeOrderSnapshot, publicBaseURL
 	if snap.TotalAmount > 0 {
 		amount = fmt.Sprintf("ยอดรวม: ฿%.2f", snap.TotalAmount)
 	}
-	payment := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
+	paymentLabel := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
 	items := shopeeProductLines(detail.Items, snap.ItemCount, 3)
 	parts := []string{
 		"มีออเดอร์ Shopee ใหม่",
@@ -288,8 +295,11 @@ func BuildShopeeNewOrderLineText(snap *models.ShopeeOrderSnapshot, publicBaseURL
 	if amount != "" {
 		parts = append(parts, amount)
 	}
-	if payment != "" {
-		parts = append(parts, "ชำระเงิน: "+payment)
+	if paymentLabel != "" {
+		parts = append(parts, "ชำระเงิน: "+paymentLabel)
+	}
+	if shopeePaymentReady(payment) {
+		parts = append(parts, shopeeOrderPaymentTextLines(payment)...)
 	}
 	if detail.PayTime > 0 {
 		parts = append(parts, "เวลาชำระ: "+formatShopeeUnixTime(detail.PayTime))
@@ -471,6 +481,10 @@ func BuildShopeeNewOrderLineFlex(job models.LineNotificationDeliveryJob) (string
 }
 
 func BuildShopeeNewOrderRichLineFlex(snap *models.ShopeeOrderSnapshot, publicBaseURL string) (string, map[string]any) {
+	return BuildShopeeNewOrderRichLineFlexWithPayment(snap, nil, publicBaseURL)
+}
+
+func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, publicBaseURL string) (string, map[string]any) {
 	if snap == nil {
 		return "มีออเดอร์ Shopee ใหม่", nil
 	}
@@ -484,7 +498,7 @@ func BuildShopeeNewOrderRichLineFlex(snap *models.ShopeeOrderSnapshot, publicBas
 	if total <= 0 {
 		total = detail.TotalAmount
 	}
-	payment := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
+	paymentLabel := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
 	actionURL := ShopeeOrderActionURL(publicBaseURL, orderSN)
 	amountLabel := formatTHB(total)
 	title := "ออเดอร์ Shopee ใหม่"
@@ -503,7 +517,10 @@ func BuildShopeeNewOrderRichLineFlex(snap *models.ShopeeOrderSnapshot, publicBas
 		{"วันที่สั่ง", formatShopeeUnixTime(detail.CreateTime)},
 		{"วันที่ชำระ", formatShopeeUnixTime(detail.PayTime)},
 	})
-	body = appendFlexSection(body, "การชำระเงิน", shopeePaymentRows(payment, detail, total))
+	body = appendFlexSection(body, "การชำระเงิน", shopeePaymentRows(paymentLabel, detail, total))
+	if shopeePaymentReady(payment) {
+		body = appendFlexSection(body, "ข้อมูลการชำระเงิน Shopee", shopeeOrderPaymentRows(payment))
+	}
 	body = appendFlexSection(body, "จัดส่ง", shopeeShippingRows(snap, detail))
 
 	body = append(body,
@@ -1099,6 +1116,74 @@ func shopeePaymentRows(payment string, detail shopeeRawOrderDetail, total float6
 	return rows
 }
 
+func shopeePaymentReady(payment *models.ShopeeOrderPaymentSnapshot) bool {
+	return payment != nil && strings.TrimSpace(payment.Status) == "ready"
+}
+
+func shopeeOrderPaymentTextLines(payment *models.ShopeeOrderPaymentSnapshot) []string {
+	if !shopeePaymentReady(payment) {
+		return nil
+	}
+	lines := []string{
+		"ยอดสุทธิตาม Shopee escrow: " + formatTHBValue(payment.EscrowAmount),
+		"ส่วนต่างจากยอดลูกค้าชำระ: " + formatSignedTHB(payment.DeductionAmount),
+	}
+	for _, row := range shopeeOrderPaymentFeeRows(payment) {
+		lines = append(lines, row.Label+": "+row.Value)
+	}
+	return lines
+}
+
+func shopeeOrderPaymentRows(payment *models.ShopeeOrderPaymentSnapshot) []flexKVRow {
+	if !shopeePaymentReady(payment) {
+		return nil
+	}
+	rows := []flexKVRow{
+		{"ยอดลูกค้าชำระ", formatTHBValue(payment.BuyerTotalAmount)},
+		{"ยอดสุทธิตาม Shopee escrow", formatTHBValue(payment.EscrowAmount)},
+		{"ส่วนต่างจากยอดลูกค้าชำระ", formatSignedTHB(payment.DeductionAmount)},
+	}
+	rows = append(rows, shopeeOrderPaymentFeeRows(payment)...)
+	return rows
+}
+
+func shopeeOrderPaymentFeeRows(payment *models.ShopeeOrderPaymentSnapshot) []flexKVRow {
+	if payment == nil {
+		return nil
+	}
+	candidates := []struct {
+		label string
+		value float64
+	}{
+		{"Commission", payment.CommissionFee},
+		{"Transaction fee", payment.SellerTransactionFee},
+		{"Service fee", payment.ServiceFee},
+		{"Voucher Shopee", payment.VoucherFromShopee},
+		{"Voucher ร้าน", payment.VoucherFromSeller},
+		{"ส่วนลด Shopee", payment.ShopeeDiscount},
+		{"ส่วนลดร้าน", payment.SellerDiscount},
+		{"ค่าส่งลูกค้าจ่าย", payment.BuyerPaidShippingFee},
+		{"ส่วนลดค่าส่งร้าน", payment.SellerShippingDiscount},
+		{"ค่าส่งจริง", payment.ActualShippingFee},
+		{"ค่าส่งสุทธิ", payment.FinalShippingFee},
+		{"ค่าส่งคืน", payment.ReverseShippingFee},
+		{"ภาษี escrow", payment.EscrowTax},
+		{"หัก ณ ที่จ่าย", payment.WithholdingTax},
+		{"Coin", payment.Coin},
+	}
+	rows := make([]flexKVRow, 0, len(candidates))
+	for _, candidate := range candidates {
+		if roundMoney(candidate.value) == 0 {
+			continue
+		}
+		rows = append(rows, flexKVRow{candidate.label, formatTHBValue(candidate.value)})
+		if len(rows) >= 8 {
+			break
+		}
+	}
+	return rows
+}
+
 func shopeeShippingRows(snap *models.ShopeeOrderSnapshot, detail shopeeRawOrderDetail) []flexKVRow {
 	var pkg shopeeRawOrderPackage
 	if len(detail.Packages) > 0 {
@@ -1363,6 +1448,14 @@ func formatTHB(v float64) string {
 
 func formatTHBValue(v float64) string {
 	return fmt.Sprintf("฿%.2f", roundMoney(v))
+}
+
+func formatSignedTHB(v float64) string {
+	v = roundMoney(v)
+	if v < 0 {
+		return fmt.Sprintf("-฿%.2f", math.Abs(v))
+	}
+	return fmt.Sprintf("฿%.2f", v)
 }
 
 func roundMoney(v float64) float64 {

@@ -41,6 +41,7 @@ Key recent migrations:
 | 056–063 | Shopee Realtime operations, notifications, create-document, shipping actions |
 | 064 | Shopee cancelled-after-SML tracking + `shopee_realtime_cancel` credit note route |
 | 065 | structured LINE Flex payload outbox for Shopee order/settlement alerts |
+| 066 | Shopee order payment breakdown snapshot queue from `get_escrow_detail` |
 
 ---
 
@@ -58,6 +59,7 @@ ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
 ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
+ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 ```
 
 ---
