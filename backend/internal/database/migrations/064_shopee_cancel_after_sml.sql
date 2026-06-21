@@ -152,6 +152,7 @@ ALTER TABLE shopee_action_outbox
       'shipping_document_create',
       'shipping_document_result',
       'shipping_document_download',
-      'cancel_sml_document'
+      'cancel_sml_document',
+      'payment_breakdown_refresh'
     )
   );
