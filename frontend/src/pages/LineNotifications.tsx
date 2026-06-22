@@ -182,7 +182,7 @@ export default function LineNotifications() {
     <div className="space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ส่งเฉพาะออเดอร์ใหม่จากคำสั่งซื้อ Shopee ที่รอสร้างเอกสาร ไม่ส่ง event ซ้ำจาก sync และไม่เปิดระบบแชทลูกค้า"
+        description="ส่ง Flex แจ้งเตือนออเดอร์ใหม่จาก Shopee ให้ทีมงาน พร้อมยอดชำระ/escrow เท่าที่ Shopee มีจริง ไม่ใส่ข้อมูลลูกค้าและไม่ส่ง event ซ้ำจาก sync"
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
@@ -290,7 +290,7 @@ export default function LineNotifications() {
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-base font-semibold">ผู้รับแจ้งเตือน</h2>
-                <p className="text-sm text-muted-foreground">กรอก LINE user ID, group ID หรือ room ID ด้วยมือก่อน ปุ่มทดสอบส่งเฉพาะข้อความตัวอย่าง</p>
+                <p className="text-sm text-muted-foreground">กรอก LINE user ID, group ID หรือ room ID ด้วยมือก่อน ปุ่มทดสอบจะส่ง Flex ตัวอย่างของออเดอร์ Shopee ใหม่</p>
               </div>
               <Button size="sm" className="gap-1.5" disabled={!data?.senders.length} onClick={() => setRecipientDialog('new')}>
                 <Plus className="h-3.5 w-3.5" />
@@ -365,8 +365,8 @@ export default function LineNotifications() {
 
         <aside className="space-y-5">
           <div className="rounded-lg border border-border/80 bg-card/95 p-4">
-            <h2 className="text-base font-semibold">ตัวอย่างข้อความ</h2>
-            <p className="mt-1 text-sm text-muted-foreground">ข้อความจริงจะใช้ข้อมูล order จากคำสั่งซื้อ Shopee และไม่ใส่ข้อมูลลูกค้า</p>
+            <h2 className="text-base font-semibold">ตัวอย่างข้อความสำรอง</h2>
+            <p className="mt-1 text-sm text-muted-foreground">ปุ่มทดสอบจะส่ง Flex รูปแบบใหม่ก่อน ข้อความด้านล่างใช้เป็น fallback เมื่อ LINE Flex ส่งไม่สำเร็จ และไม่ใส่ข้อมูลลูกค้า</p>
             <pre className="mt-3 whitespace-pre-wrap rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-foreground">
               {data?.sample_text || 'กำลังโหลดตัวอย่างข้อความ'}
             </pre>
@@ -411,8 +411,8 @@ export default function LineNotifications() {
       <ConfirmDialog
         open={!!testRecipient}
         onOpenChange={(open) => !open && setTestRecipient(null)}
-        title="ส่งข้อความทดสอบ"
-        description={testRecipient ? `ระบบจะส่งข้อความตัวอย่างไปที่ ${testRecipient.name} เพื่อยืนยันว่า destination ID ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
+        title="ส่ง Flex ทดสอบ"
+        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่างของออเดอร์ Shopee ใหม่ไปที่ ${testRecipient.name} เพื่อยืนยันว่า destination ID ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
         confirmLabel="ส่งทดสอบ"
         onConfirm={runRecipientTest}
       />

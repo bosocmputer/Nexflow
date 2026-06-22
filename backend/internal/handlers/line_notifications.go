@@ -230,17 +230,11 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	svc, err := lineservice.New(a.ChannelSecret, a.ChannelAccessToken, "")
 	if err == nil {
 		message := h.sampleMessage()
-		altText, contents := linenotify.BuildShopeeNewOrderLineFlex(models.LineNotificationDeliveryJob{
-			LineNotificationDelivery: models.LineNotificationDelivery{
-				Source:      "shopee_realtime",
-				EntityType:  "shopee_order",
-				EntityID:    "264993963:26060232BJHG4E",
-				ActionURL:   linenotify.ShopeeOrderActionURL(h.publicBaseURL(), "26060232BJHG4E"),
-				MessageText: message,
-			},
-		})
-		err = svc.PushFlex(recipient.DestinationID, altText, contents)
-		if err != nil {
+		altText, contents := linenotify.BuildShopeeNewOrderRichLineFlexWithPayment(sampleShopeeOrderSnapshot(), sampleShopeeOrderPayment(), h.publicBaseURL())
+		if contents != nil {
+			err = svc.PushFlex(recipient.DestinationID, altText, contents)
+		}
+		if err != nil || contents == nil {
 			err = svc.PushText(recipient.DestinationID, message)
 		}
 	}
@@ -255,24 +249,62 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 }
 
 func (h *LineNotificationHandler) sampleMessage() string {
-	return linenotify.BuildShopeeNewOrderLineText(&models.ShopeeOrderSnapshot{
-		ShopLabel:     "Henna.milkford",
-		OrderSN:       "26060232BJHG4E",
-		PaymentMethod: "COD",
-		TotalAmount:   165,
-		ItemCount:     1,
+	return linenotify.BuildShopeeNewOrderLineTextWithPayment(sampleShopeeOrderSnapshot(), sampleShopeeOrderPayment(), h.publicBaseURL())
+}
+
+func sampleShopeeOrderSnapshot() *models.ShopeeOrderSnapshot {
+	return &models.ShopeeOrderSnapshot{
+		ShopID:          264993963,
+		ShopLabel:       "Henna.milkford",
+		OrderSN:         "260621NDVGSKMA",
+		PaymentMethod:   "Credit Card/Debit Card",
+		TotalAmount:     245,
+		ItemCount:       1,
+		PackageNumber:   "OFG235736492235190",
+		LogisticsStatus: "LOGISTICS_READY",
+		ShippingCarrier: "EMS - Thailand Post",
 		RawDetail: []byte(`{
-		  "payment_method":"COD",
-		  "cod":true,
+		  "order_sn":"260621NDVGSKMA",
+		  "payment_method":"Credit Card/Debit Card",
+		  "cod":false,
+		  "total_amount":245,
+		  "create_time":1782037292,
+		  "pay_time":1782037297,
+		  "estimated_shipping_fee":35,
+		  "package_list":[
+		    {
+		      "package_number":"OFG235736492235190",
+		      "logistics_status":"LOGISTICS_READY",
+		      "shipping_carrier":"EMS - Thailand Post"
+		    }
+		  ],
 		  "item_list":[
 		    {
-		      "item_name":"สีเฟ้นคิ้วเฮนน่า สีเฟ้นท์คิ้วมิวฟอร์ด ทั้งชุดพร้อมแปรงและบล็อคคิ้ว 15 คู่",
-		      "model_name":"2.น้ำตาลเข้ม",
-		      "model_quantity_purchased":1
+		      "item_name":"ชุดใหญ่ 10 กรัม สีเพ้นคิ้วเฮนน่า",
+		      "model_name":"B.น้ำตาลเข้ม",
+		      "model_quantity_purchased":1,
+		      "model_original_price":300,
+		      "model_discounted_price":245
 		    }
 		  ]
 		}`),
-	}, h.publicBaseURL())
+	}
+}
+
+func sampleShopeeOrderPayment() *models.ShopeeOrderPaymentSnapshot {
+	return &models.ShopeeOrderPaymentSnapshot{
+		ShopID:                 264993963,
+		OrderSN:                "260621NDVGSKMA",
+		Status:                 "ready",
+		BuyerTotalAmount:       245,
+		EscrowAmount:           263,
+		DeductionAmount:        -18,
+		CommissionFee:          42,
+		SellerTransactionFee:   10,
+		VoucherFromShopee:      60,
+		BuyerPaidShippingFee:   15,
+		SellerShippingDiscount: 20,
+	}
 }
 
 func (h *LineNotificationHandler) publicBaseURL() string {
