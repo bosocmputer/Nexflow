@@ -1,6 +1,6 @@
 # Nexflow Behavior Inventory
 
-Updated: 2026-05-31
+Updated: 2026-06-22
 
 Purpose: this file is the behavior-preservation checklist for the UX redesign.
 Visual changes must keep these routes, API calls, permissions, states, and
@@ -12,9 +12,16 @@ Production flags verified for the current build:
 VITE_PHASE=2
 VITE_ENABLE_SALES_ORDERS=true
 VITE_ENABLE_SHOPEE_EXCEL=true
+VITE_ENABLE_SHOPEE_REALTIME_OPS=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
 VITE_ENABLE_CHAT=false
+ENABLE_SHOPEE_REALTIME_OPS=true
+ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
+ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
+ENABLE_SHOPEE_RICH_LINE_FLEX=true
+ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
+ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 ```
 
 ## Route Inventory
@@ -25,6 +32,7 @@ VITE_ENABLE_CHAT=false
 | `/` | `Navigate` | none | none | redirects | authenticated shell; now should land on `/dashboard` |
 | `/setup` | `SetupCenter` | `GET /api/setup/status`, optional `?refresh_sml=1` | `POST /api/setup/reset-test-data` with typed `RESET`, optional doc counter/email dedup reset; blocked by default when `ENV=production` | readiness cards, loading, toast errors | admin only |
 | `/dashboard` | `Dashboard` | `GET /api/dashboard/stats`, `GET /api/dashboard/insights`, `GET /api/mappings/stats`, `GET /api/setup/status` | `POST /api/dashboard/insights/generate` | setup warning, no-documents CTA, loading skeletons | dashboard read authenticated; setup status and insight generation require admin |
+| `/shopee-operations` | `ShopeeOperations` | `GET /api/shopee-operations/readiness`, `GET /api/shopee-operations/orders`, `GET /api/shopee-operations/counts`, `GET /api/shopee-operations/:shop_id/:order_sn/timeline`, tracking/shipping parameter APIs, SSE updates | sync now, create document, bulk create documents, ship order, create/download shipping document, create SML cancel document, payment refresh read-only but calls Shopee | empty shop/order states, cancelled-after-SML badge, payment card states, timeline loading/error, shipping dialogs | admin/staff for operations; SML cancel/create actions require backend preconditions and feature flags |
 | `/bills` | `Bills mode=purchase-order` | `GET /api/bills`, `GET /api/bills/counts`, `GET /api/settings/imap-accounts`, `GET /api/shopee-api/connections` | archive/restore, delete, permanent delete, bulk SML job | empty purchase queue, filters, pagination, table loading | read authenticated; archive/restore/bulk admin/staff; delete admin |
 | `/sales-orders` | `Bills mode=sales-order` | same bills APIs with `bill_type=sale&document_route=saleorder` | same as `/bills` | empty Sales Order queue must remain usable | route visible when sales flag true; same bill permissions |
 | `/sale-invoices` | `Bills mode=sale-invoice` | same bills APIs with `bill_type=sale&document_route=saleinvoice` | same as `/bills` | primary marketplace production queue; empty state still works | route visible when sales flag true; same bill permissions |
@@ -43,6 +51,7 @@ VITE_ENABLE_CHAT=false
 | `/settings/email` | `EmailAccounts` | `GET/POST/PUT/DELETE /api/settings/imap-accounts`, test/list folders, poll job, reset progress, active poll jobs | create/update/delete inbox, poll now, reset progress/backlog | production currently empty; loading, active poll progress, warning/error states | admin only |
 | `/settings/channels` | `ChannelDefaults` | `GET/PUT /api/settings/channel-defaults`, SML party/master lookups from edit dialog | changes SML routing, doc format, doc counter prefix/running format | unset route warnings, edit dialog validation | admin only |
 | `/settings/instance` | `InstanceSettings` | `GET/PUT /api/settings/instance`, `POST /api/settings/instance/test-connection`, `POST /api/settings/instance/restart`, `GET /health` | config save and backend restart | loading, pending restart, connection test results/errors | admin only |
+| `/settings/line-notifications` | `LineNotifications` | `GET /api/settings/line-notifications`, sender/recipient CRUD, sender test, recipient rich Flex test | create/update/delete LINE sender/recipient; test push consumes LINE push quota | readiness cards, masked IDs, recent delivery states, rich Flex fallback sample, failed test error | admin only |
 | `/settings/ai-usage` | `AIUsage` | `GET /api/ai-usage/summary`, `GET /api/ai-usage/logs` | none | loading, empty usage/log states, filters | admin only |
 | `/settings/users` | `UserSettings` | `GET/POST/PUT/DELETE /api/settings/users` | create/update/delete users, role/password changes | loading, form validation, delete confirmation | admin only; sidebar hides for non-admin |
 | `/settings` | redirect | none | none | redirects to `/settings/instance` | authenticated |
@@ -52,6 +61,8 @@ VITE_ENABLE_CHAT=false
 - `/messages`, `/settings/line-oa`, `/settings/quick-replies`, and
   `/settings/chat-tags` are hidden in production because `VITE_ENABLE_CHAT=false`.
   Source code remains present and should not be broken by shared UI changes.
+- `/settings/line-notifications` is not part of LINE chat; it remains visible to
+  admins while `VITE_ENABLE_CHAT=false` because Shopee alerting is active.
 - `/dev/showcase` is available only in Vite dev mode.
 
 ## Redesign Constraints From Inventory
@@ -64,4 +75,8 @@ VITE_ENABLE_CHAT=false
   SML sends/retries, reset test data, delete/purge, connection disable, catalog
   delete, or settings saves.
 - Primary marketplace production path is `/sale-invoices` because production data is
-  `saleinvoice` / `SI`; `/sales-orders` must still stay visible and functional.
+  mostly `saleinvoice`; Shopee Realtime uses saleinvoice, while legacy Shopee import
+  can still create saleorder documents. `/sales-orders` must stay visible and functional.
+- Page render and LINE worker must not call Shopee live APIs inline. Payment
+  breakdown is cached in `shopee_order_payment_snapshots`; refresh actions are
+  explicit and read-only.

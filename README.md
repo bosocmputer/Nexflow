@@ -13,6 +13,8 @@
 | Lazada Excel | บิลขาย | ✅ deployed |
 | TikTok Excel/CSV | บิลขาย | ✅ deployed |
 | Shopee Open API (OAuth) | บิลขาย | ✅ live |
+| Shopee Realtime Operations | คำสั่งซื้อ/สร้างเอกสาร/Timeline | ✅ live |
+| LINE Shopee Notifications | แจ้งทีมงานด้วย rich Flex | ✅ live |
 | LINE OA (human chat) | บิลขาย | disabled (`VITE_ENABLE_CHAT=false`) |
 
 ---
@@ -84,9 +86,11 @@ curl http://192.168.2.109:8110/health
 | [CLAUDE.md](CLAUDE.md) | Blueprint สำหรับ Claude Code — architecture, gotchas, env vars |
 | [docs/current-state.md](docs/current-state.md) | สถานะ deploy ล่าสุด |
 | [docs/shopee-import.md](docs/shopee-import.md) | Shopee Excel + Open API flow |
+| [docs/shopee-realtime-uat.md](docs/shopee-realtime-uat.md) | Shopee Realtime UAT/checklist |
 | [docs/email.md](docs/email.md) | IMAP multi-account pipeline |
-| [docs/line-oa.md](docs/line-oa.md) | LINE OA multi-OA + Reply/Push |
+| [docs/line-oa.md](docs/line-oa.md) | LINE OA chat + LINE Shopee notifications |
+| [docs/deploy-instances.md](docs/deploy-instances.md) | Production deploy, SML gateway, feature flags |
 
 ---
 
-Last updated: 2026-05-31 | Ports: 8110 / 3030 / 5440
+Last updated: 2026-06-22 | Ports: 8110 / 3030 / 5440

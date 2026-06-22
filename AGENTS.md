@@ -36,9 +36,13 @@ shopee_api_connections   -- Shopee OAuth multi-shop
 doc_counters        -- atomic doc_no per prefix/period
 processed_email_keys -- email dedup by Message-ID
 audit_logs          -- all admin actions
+shopee_order_snapshots         -- Shopee Realtime order state/timeline source
+shopee_order_payment_snapshots -- cached Shopee escrow/payment breakdowns
+shopee_sml_cancellations       -- Shopee cancelled-after-SML CN tracking
+line_notification_deliveries   -- LINE notification outbox with Flex payload fallback
 ```
 
-Migrations: **001–055** (all idempotent). Full schema in `docs/current-state.md`.
+Migrations: **001–066** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -94,9 +98,13 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 9. **`app_settings` vs `.env`** — `SeedFromEnv()` removed. Config via `/settings/instance` UI. Locked fields (guid, etc.) still read from `.env`.
 
-10. **sml-api-bybos** — use `--force-recreate` not `restart` after `.env` change. Docker gateway IP: `http://172.24.0.1:8200`, header `x-tenant: aoy`.
+10. **sml-api-bybos** — use `--force-recreate` not `restart` after `.env` change. Docker gateway IP: `http://172.24.0.1:8200`, header `x-tenant: aoy`. Current Aoy DB is `nextstep.iszai.com:6843/aoy`; old demserver config is no longer current.
 
 11. **Webhook URL per OA** — `/webhook/line/<oa_id>`. Must be set in LINE Developer Console per OA.
+
+12. **Shopee LINE notifications** — `/settings/line-notifications` is active even though LINE chat UI is disabled. It sends rich Flex from `line_notification_deliveries.flex_payload`, falls back to `message_text`, uses Asia/Bangkok time, and must not include buyer name, phone, address, or username.
+
+13. **Shopee payment breakdown** — `shopee_order_payment_snapshots` is populated by worker/manual refresh from `get_escrow_detail`. Page render and LINE worker must read cached snapshots only, never call Shopee live APIs inline.
 
 ---
 
@@ -159,6 +167,7 @@ GET  /api/settings/imap-accounts  | POST ... | POST .../:id/poll
 GET  /api/settings/channel-defaults | PUT ...
 GET  /api/settings/instance | PUT ...
 GET  /api/settings/line-oa  | POST ...
+GET/POST/PUT/DEL /api/settings/line-notifications
 
 POST /api/import/shopee-api/orders/preview | .../confirm
 POST /api/import/shopee/preview | /confirm
@@ -167,6 +176,9 @@ POST /api/import/tiktok/preview | /confirm
 
 GET  /api/sml/customers | /suppliers | POST /api/sml/refresh-parties
 GET  /api/dashboard/stats | /api/logs | /api/bills/:id/timeline
+GET  /api/shopee-operations/:shop_id/:order_sn/timeline
+POST /api/shopee-operations/:shop_id/:order_sn/payment-breakdown/refresh
+GET/POST /api/shopee-operations/:shop_id/:order_sn/cancel-sml-document(/preview)
 
 POST /api/admin/conversations/:user/messages
 POST /api/admin/events/token | GET /api/admin/events  -- SSE
@@ -178,4 +190,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-05-31 | Ports: 8110/3030/5440
+Last updated: 2026-06-22 | Ports: 8110/3030/5440

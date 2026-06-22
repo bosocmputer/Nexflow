@@ -1,7 +1,7 @@
 # Email IMAP — การทำงานของ Email Pipeline
 
-> อัพเดตล่าสุด: 2026-05-06
-> สถานะ: ✅ multi-account IMAP deployed; config อยู่ใน `/settings/email` และ `imap_accounts` table
+> อัพเดตล่าสุด: 2026-06-22
+> สถานะ: ✅ multi-account IMAP deployed; config อยู่ใน `/settings/email` และ `imap_accounts` table. Production ปัจจุบันมี 0 IMAP accounts จึงต้องแสดง empty state และยังเพิ่ม Gmail App Password inbox ได้.
 
 ---
 

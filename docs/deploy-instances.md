@@ -108,9 +108,13 @@ Post-deploy smoke for the UX redesign:
 - Login.
 - `/dashboard` first screen.
 - `/setup` still visible and actionable.
+- `/shopee-operations` loads daily Shopee orders; open one Timeline drawer and
+  verify order summary/payment card renders without calling Shopee during page load.
 - `/import/shopee` shows Open API status and active shop.
 - `/sale-invoices` lists sent SI documents.
 - Open one sent bill detail and verify the route badge says `ขาย -> ขายสินค้าและบริการ`.
+- `/settings/line-notifications` loads senders/recipients, recent deliveries,
+  and the Shopee rich Flex fallback sample.
 - `/logs`, `/settings/instance`, `/settings/channels`, `/settings/email`, `/settings/catalog`.
 - Do not confirm imports, send SML, delete/purge, reset data, or save settings during visual QA unless explicitly approved.
 
@@ -127,7 +131,29 @@ Nexflow backend calls `http://172.24.0.1:8200` (Docker gateway IP) with header `
 
 | Header | Value | DB |
 | --- | --- | --- |
-| `x-tenant` | `aoy` | `demserver.3bbddns.com` |
+| `x-tenant` | `aoy` | `nextstep.iszai.com:6843/aoy` |
+
+Current Aoy tenant config:
+
+```text
+SML_DB_HOST_AOY=nextstep.iszai.com
+SML_DB_PORT_AOY=6843
+sml.provider=NEXT
+sml.config_file=SMLConfigNEXT.xml
+sml.database=aoy
+sml.rest_base_url=http://172.24.0.1:8200
+sml.stock_request_url=http://nextstep.iszai.com:8093
+```
+
+Readiness checks:
+
+```bash
+curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
+# {"database":"aoy","status":"ok"}
+
+curl -s -o /dev/null -w '%{http_code}' http://nextstep.iszai.com:8093/
+# 200
+```
 
 To add a new tenant or restart after `.env` change:
 
@@ -163,10 +189,12 @@ If URL changes: update `PUBLIC_BASE_URL` in `.env` and rebuild frontend.
 VITE_PHASE=2
 VITE_ENABLE_SALES_ORDERS=true
 VITE_ENABLE_SHOPEE_EXCEL=true
+VITE_ENABLE_SHOPEE_REALTIME_OPS=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
 VITE_ENABLE_CHAT=false          # LINE chat disabled
 
+ENABLE_SHOPEE_REALTIME_OPS=true
 ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
 ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
@@ -185,6 +213,8 @@ sends one deduped LINE alert per Shopee settlement run when escrow/payout data i
 `get_escrow_detail` payment breakdowns for `/shopee-operations` and enriches new-order
 LINE Flex messages when the snapshot is ready. Set it to `false` to stop Shopee
 escrow calls; existing order and settlement notifications continue with fallback data.
+These three rich LINE/escrow flags default to `true` in backend config; add
+explicit `false` values only for rollback.
 
 ---
 
@@ -201,4 +231,4 @@ escrow calls; existing order and settlement notifications continue with fallback
 
 ---
 
-Last updated: 2026-06-16
+Last updated: 2026-06-22

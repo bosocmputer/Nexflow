@@ -1,13 +1,17 @@
-# LINE OA — Human Chat Inbox
+# LINE OA — Chat Inbox And Shopee Notifications
 
-> อัพเดตล่าสุด: 2026-05-06
-> สถานะ: ✅ human chat inbox + multi-OA deployed. Chatbot/cart/MCP flow เก่าถูกเอาออกแล้วตั้งแต่ migration/session 13.
+> อัพเดตล่าสุด: 2026-06-22
+> สถานะ: LINE chat inbox + multi-OA deployed แต่ production UI ซ่อนด้วย `VITE_ENABLE_CHAT=false`. LINE แจ้งเตือน Shopee สำหรับทีมงานเปิดใช้งานผ่าน `/settings/line-notifications`.
 
 ---
 
 ## ภาพรวม
 
 LINE OA ใน Nexflow ตอนนี้เป็นระบบแชท 2 ทางระหว่างลูกค้ากับ admin ไม่ใช่ bot สั่งซื้ออัตโนมัติ ลูกค้าส่ง text/image/file/audio เข้ามา → ระบบบันทึกใน `/messages` → admin ตอบกลับผ่าน Reply API หรือ Push API และสามารถเปิดบิลขายจาก conversation ได้
+
+ใน production ปัจจุบันส่วน chat ถูกซ่อนจาก sidebar แต่ backend และ route ยังอยู่
+เพื่อไม่ให้ shared UI/code พัง. ส่วนที่เปิดใช้งานจริงคือ LINE แจ้งเตือนภายใน
+สำหรับออเดอร์ Shopee, cancelled-after-SML, และ settlement.
 
 ---
 
@@ -104,21 +108,33 @@ chat_media file
 
 ---
 
-## Admin Notifications
+## Shopee LINE Notifications
 
-Legacy single LINE service from `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`, `LINE_ADMIN_USER_ID` ยังใช้สำหรับ push แจ้ง admin จาก background jobs เช่น:
+หน้า `/settings/line-notifications` แยกจาก LINE chat และเป็น admin-only route.
+ระบบใช้ `line_oa_accounts` เป็น sender และ `line_notification_recipients` เป็น
+ปลายทางทีมงาน จากนั้น enqueue ลง `line_notification_deliveries` ให้ worker ส่ง
+ข้อความภายหลัง.
 
 | กรณี | ตัวอย่าง |
 |---|---|
-| SML send failed | bill failed after retry |
-| Bill pending | unmapped/anomaly needs review |
-| Email inbox failing | ≥ 3 consecutive failures, throttled |
-| Disk usage high | root fs > threshold |
-| LINE token expiry | weekly reminder |
-| Daily insight | F4 daily summary |
-| Tunnel drift | `PUBLIC_BASE_URL/health` ใช้งานไม่ได้ |
-| Shopee order alert | rich Flex จาก `shopee_order_snapshots.raw_detail` และ payment breakdown snapshot เมื่อพร้อม, ไม่ใส่ชื่อ/เบอร์/ที่อยู่ผู้รับ |
-| Shopee settlement alert | rich Flex หนึ่งข้อความต่อ settlement run พร้อมยอดลูกค้าชำระ/ยอดสุทธิ/ยอดหักจริง |
+| Shopee new order | rich Flex จาก `shopee_order_snapshots.raw_detail`; เติม payment breakdown จาก `shopee_order_payment_snapshots` เมื่อพร้อม |
+| Shopee cancelled after SML | in-app error + LINE alert พร้อม link ไป order |
+| Shopee settlement ready | rich Flex หนึ่งข้อความต่อ settlement/reconcile run พร้อมยอดลูกค้าชำระ/ยอดสุทธิ/ยอดหักจริง |
+
+ข้อกำหนด production:
+
+- LINE worker ส่งจาก payload ที่ enqueue ไว้เท่านั้น ไม่ query DB เพิ่มเพื่อหา
+  order detail และไม่เรียก Shopee/SML API ระหว่าง push.
+- ถ้า `flex_payload` ส่งไม่สำเร็จ จะ fallback เป็น `message_text`; delivery จะ
+  mark sent เฉพาะเมื่อ Flex หรือ fallback ส่งสำเร็จ.
+- New-order Flex ไม่ใส่ PII: ไม่โชว์ชื่อ เบอร์ ที่อยู่ หรือ buyer username.
+- เวลาใน Shopee LINE message แสดงเป็น Asia/Bangkok.
+- ปุ่มทดสอบใน `/settings/line-notifications` ส่ง Shopee new-order rich Flex
+  ตัวอย่างก่อน และแสดง fallback text ในหน้า settings เพื่อใช้เทียบกรณี Flex fail.
+
+Legacy single LINE service from `LINE_CHANNEL_SECRET`, `LINE_CHANNEL_ACCESS_TOKEN`,
+`LINE_ADMIN_USER_ID` ยังใช้กับ PushAdmin paths บางส่วน เช่น insight cron, disk
+monitor, และ email coordinator error notifications.
 
 ---
 
@@ -135,7 +151,7 @@ ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 
 # Public media URLs for LINE image delivery
-PUBLIC_BASE_URL=https://<cloudflare-quick-tunnel>.trycloudflare.com
+PUBLIC_BASE_URL=https://animal-galvanize-tameness.ngrok-free.dev
 MEDIA_SIGNING_KEY=        # optional; fallback JWT_SECRET
 
 # AI extraction from chat media/audio
@@ -153,13 +169,16 @@ MISTRAL_API_KEY=
 | `backend/internal/handlers/line.go` | LINE webhook handler |
 | `backend/internal/handlers/chat_inbox.go` | admin conversation APIs |
 | `backend/internal/handlers/line_oa.go` | LINE OA CRUD/test |
+| `backend/internal/handlers/line_notifications.go` | `/settings/line-notifications` CRUD/test + rich sample |
 | `backend/internal/handlers/chat_quick_reply.go` | quick reply templates |
 | `backend/internal/handlers/chat_notes.go` | internal notes |
 | `backend/internal/handlers/chat_tags.go` | tags |
 | `backend/internal/handlers/public_media.go` | signed public media endpoint |
 | `backend/internal/handlers/sse.go` | admin event stream |
 | `backend/internal/services/line/registry.go` | multi-OA service registry |
+| `backend/internal/services/line_notifications/service.go` | Shopee rich Flex builders, outbox worker, fallback text |
 | `frontend/src/pages/Messages` | chat inbox UI |
 | `frontend/src/pages/LineOA.tsx` | `/settings/line-oa` |
+| `frontend/src/pages/LineNotifications.tsx` | `/settings/line-notifications` |
 | `frontend/src/pages/QuickReplies.tsx` | `/settings/quick-replies` |
 | `frontend/src/pages/ChatTags.tsx` | `/settings/chat-tags` |
