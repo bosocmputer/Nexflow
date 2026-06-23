@@ -233,6 +233,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
   const showShopeeShopFilter = mode !== 'purchase-order'
   const canManageBills = user?.role === 'admin' || user?.role === 'staff'
   const canPermanentDelete = user?.role === 'admin'
+  const effectiveSource = config.source || (searchParams.get('source') ?? '')
 
   const { data, loading, refetch } = useBills({
     page,
@@ -240,7 +241,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
     include_total: true,
     status: status === ALL ? '' : status,
     shopee_status: showShopeeStatusFilter && shopeeStatus !== ALL ? shopeeStatus : '',
-    source: config.source,
+    source: effectiveSource,
     bill_type: config.billType,
     document_route: config.documentRoute,
     email_account_id: emailAccountId === ALL ? '' : emailAccountId,
@@ -304,7 +305,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
 
   const fetchCounts = async () => {
     const params = new URLSearchParams()
-    if (config.source) params.set('source', config.source)
+    if (effectiveSource) params.set('source', effectiveSource)
     params.set('bill_type', config.billType)
     if (config.documentRoute) params.set('document_route', config.documentRoute)
     if (emailAccountId !== ALL) params.set('email_account_id', emailAccountId)
@@ -362,7 +363,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
       setCounts({ needs_review: 0, pending: 0, sent: 0, failed: 0, skipped: 0, total: 0 })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.source, config.billType, config.documentRoute, emailAccountId, archiveMode, shopeeStatus, shopeeShopId, search])
+  }, [effectiveSource, config.billType, config.documentRoute, emailAccountId, archiveMode, shopeeStatus, shopeeShopId, search])
 
   useEffect(() => {
     const onWorkQueueChanged = () => {
@@ -374,7 +375,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
     window.addEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
     return () => window.removeEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refetch, config.source, config.billType, config.documentRoute, emailAccountId, archiveMode, shopeeStatus, shopeeShopId, search])
+  }, [refetch, effectiveSource, config.billType, config.documentRoute, emailAccountId, archiveMode, shopeeStatus, shopeeShopId, search])
 
   useEffect(() => {
     if (!loading && data && page > totalPages) {
@@ -756,7 +757,7 @@ export default function Bills({ mode = 'purchase-order' }: { mode?: BillsMode })
         title={config.title}
         billType={config.billType}
         filters={{
-          source: config.source,
+          source: effectiveSource,
           bill_type: config.billType,
           document_route: config.documentRoute,
           email_account_id: emailAccountId === ALL ? '' : emailAccountId,

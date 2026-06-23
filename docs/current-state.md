@@ -23,7 +23,7 @@ so deploy checks must compare files explicitly before replacing sources.
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–066** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–067** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -43,6 +43,7 @@ Key recent migrations:
 | 064 | Shopee cancelled-after-SML tracking + `shopee_realtime_cancel` credit note route |
 | 065 | structured LINE Flex payload outbox for Shopee order/settlement alerts |
 | 066 | Shopee order payment breakdown snapshot queue from `get_escrow_detail` |
+| 067 | LINE MyShop multi-account connections, snapshots, webhook events, `line_myshop` source/channel |
 
 ---
 
@@ -55,20 +56,25 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
 VITE_ENABLE_SHOPEE_REALTIME_OPS=true
+VITE_ENABLE_LINE_MYSHOP=true
 VITE_ENABLE_CHAT=false
 
 ENABLE_SHOPEE_REALTIME_OPS=true
 ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
-ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
+ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=false
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
+ENABLE_LINE_MYSHOP=true
 ```
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX`, `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS`, and
 `ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT` default to `true` in backend config. They
 may be absent from `.env` while still active; set them explicitly to `false` for
 rollback.
+
+`ENABLE_LINE_MYSHOP` and `VITE_ENABLE_LINE_MYSHOP` also default to enabled. Set
+either to `false` to hide or disable the LINE MyShop integration during rollback.
 
 ---
 
@@ -105,6 +111,34 @@ sml-api-bybos:  http://172.24.0.1:8200  x-tenant=aoy
   `Semicolon Constructions` / `1029622928`.
 - Review-first import flow — confirm writes local bills, SML send via Retry
 
+## LINE MyShop / LINE SHOPPING API
+
+- Source/channel key: `line_myshop`. Do not overload `line`, which remains LINE
+  OA chat/notification source.
+- API reference: OA Plus Open API / LINE SHOPPING API, base
+  `https://developers-oaplus.line.biz`, authenticated by `X-API-KEY`.
+- Multi-account settings live at `/settings/line-myshop`; each account has its
+  own API key, optional webhook secret, metadata, enabled flag, and webhook URL.
+  Admins can clear a saved webhook secret from the edit dialog to return to API
+  key based signature verification.
+- Webhook endpoint: `/webhook/line-myshop/:connection_id`. Verify
+  `x-myshop-signature` using HMAC-SHA256 Base64 before reading the event.
+- Manual reconciliation is available per account from `/settings/line-myshop`
+  via `POST /api/settings/line-myshop/connections/:id/sync`. It pulls a bounded
+  48h updated-time window by default, fetches order detail before bill creation,
+  and records `last_sync_at` / `last_error`.
+- Eligible order webhook events create `source='line_myshop'`, `bill_type='sale'`
+  bills in `needs_review`. SML send remains user-driven through existing Retry.
+- SML route is controlled by `/settings/channels` using
+  `channel_defaults(line_myshop, sale)`. No default route is seeded by migration.
+- Notifications use the existing LINE notification outbox with
+  `Source: line_myshop` and `EntityType: line_myshop_order`. The message builder
+  must remain MyShop-specific and must not include recipient name, phone, email,
+  shipping address, or other buyer/shipping PII.
+- `line_myshop_order_snapshots.raw_webhook` may retain the full signed webhook
+  payload for audit/reconciliation. Do not copy shipping PII into `bills.raw_data`,
+  audit details, logs, or LINE notification text.
+
 ---
 
 ## Production Data Snapshot
@@ -125,6 +159,10 @@ Verified on server: 2026-06-22
 | `line_notification_recipients` | 2 |
 | `line_notification_deliveries` | 52 sent legacy text rows; next new order uses Flex payload v1/v2 |
 | `audit_logs` | 367 |
+
+LINE MyShop tables are new in migration 067 and start empty until an admin adds
+accounts in `/settings/line-myshop` and registers each generated webhook URL in
+OA Plus.
 
 Most production marketplace sale documents are `sent` saleinvoice documents with
 SML payload/response recorded. Shopee Realtime also has pending saleorder
@@ -173,6 +211,10 @@ Existing production deliveries are legacy `payload_version=0`; the next real
 Shopee order with rich Flex enabled should enqueue version 1 or version 2 when
 payment breakdown is ready.
 
+LINE MyShop notifications share this outbox but use `source=line_myshop` and a
+text-only, PII-redacted MyShop builder. Shopee Flex builders and Shopee delivery
+dedupe keys must remain untouched.
+
 ---
 
 ## Active IMAP Inboxes
@@ -213,3 +255,6 @@ email → configured sales route; general email → AI pipeline.
 - **Shopee payment breakdown** — manual refresh is read-only and rate-limited by
   cache freshness. Failures must not block order sync, document creation, SML
   send, settlement, cancellation, or LINE fallback notifications.
+- **LINE MyShop** — webhook signature is mandatory. `line_myshop` must map to
+  its own channel defaults and must never fall back to `line`. MyShop order bills
+  start as `needs_review`; SML route and doc format come from `/settings/channels`.

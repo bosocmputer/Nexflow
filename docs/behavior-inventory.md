@@ -15,13 +15,15 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_SHOPEE_REALTIME_OPS=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
+VITE_ENABLE_LINE_MYSHOP=true
 VITE_ENABLE_CHAT=false
 ENABLE_SHOPEE_REALTIME_OPS=true
 ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
-ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
+ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=false
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
+ENABLE_LINE_MYSHOP=true
 ```
 
 ## Route Inventory
@@ -42,6 +44,7 @@ ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 | `/shopee-settlements` | `ShopeeSettlement` | `GET /api/shopee-api/connections`, `GET /api/settings/shopee-settlement-defaults`, `GET /api/settings/shopee-api/status`, `GET /api/shopee-settlements`, `GET /api/shopee-settlements/counts`, `GET /api/shopee-settlements/:id` | preview, reconcile, send to SML, hide/restore run | empty runs, loading, detail error, send validation | admin/staff; settlement defaults update admin |
 | `/import/lazada` | `LazadaImport` | `GET /api/import/lazada/runs`, `GET /api/settings/lazada-config`, `GET/PUT /api/settings/column-mappings/lazada`, `POST /api/import/lazada/preview`, `POST /api/import/lazada/confirm` | confirm writes bills; admin column mapping update | upload/preview/errors/run history | preview/confirm admin/staff; mapping update admin |
 | `/import/tiktok` | `TikTokImport` | `GET /api/import/tiktok/runs`, `GET /api/settings/tiktok-config`, `GET/PUT /api/settings/column-mappings/tiktok`, `POST /api/import/tiktok/preview`, `POST /api/import/tiktok/confirm` | confirm writes bills; admin column mapping update | upload/preview/errors/run history | preview/confirm admin/staff; mapping update admin |
+| `/settings/line-myshop` | `LineMyShopSettings` | `GET/POST/PUT/DELETE /api/settings/line-myshop/connections`, `POST /api/settings/line-myshop/connections/:id/sync` | create/update/delete LINE MyShop API key and webhook connection; edit can clear saved webhook secret; manual 48h sync calls LINE API and may create local bills/LINE notifications; delete removes linked snapshots/webhook events but not bills | setup guide, field guidance, empty account list, loading, masked-secret state, copy webhook URL, sync summary/errors, save/delete/duplicate Channel ID errors | admin only; visible when `VITE_ENABLE_LINE_MYSHOP` true |
 | `/mappings` | `Mappings` | `GET /api/mappings`, `GET /api/mappings/stats`, `GET /api/bills?status=needs_review`, `GET /api/bills/:id` | create/update/delete mappings | loading, empty mapping table, delete confirmation | read authenticated; create/update admin/staff; delete admin |
 | `/marketplace-aliases` | `MarketplaceAliases` | `GET /api/marketplace-aliases/review-groups`, `POST /api/marketplace-aliases/confirm` | confirms alias and may mark ready bills | loading, empty review queue, confirm modal/errors | admin/staff |
 | `/settings/old-data` | `OldDataSettings` | `GET /api/bills/old-data/summary`, `POST /api/bills/old-data/archive`, `POST /api/bills/old-data/purge` | archive old bills; purge archived bills/audit/AI logs | summary loading/errors, purge confirmation | admin only |
@@ -49,7 +52,7 @@ ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 | `/bulk-send-jobs` | `BulkSendJobs` | `GET /api/bills/bulk-send-jobs`, `GET /api/bills/bulk-send-jobs/:id` | retry failed job if exposed by detail controls | empty history, loading, status/detail error | admin/staff |
 | `/settings/catalog` | `CatalogSettings` | `GET /api/catalog`, `GET /api/catalog/stats`, `GET /api/settings/instance`, `GET /api/catalog/hidden-codes`, `POST /api/catalog/sync`, `POST /api/catalog/embed-all`, `POST /api/catalog/reload-index`, `POST /api/catalog/:code/embed`, `POST /api/catalog/:code/refresh`, `POST /api/catalog/refresh-batch`, `DELETE /api/catalog/:code` | full sync, embed-all, reload index, refresh/delete catalog rows | loading, sync running, empty catalog, hidden-code warnings | read authenticated; unit/product create admin/staff; sync/embed/refresh/delete admin |
 | `/settings/email` | `EmailAccounts` | `GET/POST/PUT/DELETE /api/settings/imap-accounts`, test/list folders, poll job, reset progress, active poll jobs | create/update/delete inbox, poll now, reset progress/backlog | production currently empty; loading, active poll progress, warning/error states | admin only |
-| `/settings/channels` | `ChannelDefaults` | `GET/PUT /api/settings/channel-defaults`, SML party/master lookups from edit dialog | changes SML routing, doc format, doc counter prefix/running format | unset route warnings, edit dialog validation | admin only |
+| `/settings/channels` | `ChannelDefaults` | `GET/PUT /api/settings/channel-defaults`, SML party/master lookups from edit dialog | changes SML routing, doc format, doc counter prefix/running format, including `line_myshop/sale` when MyShop is enabled | unset route warnings, edit dialog validation | admin only |
 | `/settings/instance` | `InstanceSettings` | `GET/PUT /api/settings/instance`, `POST /api/settings/instance/test-connection`, `POST /api/settings/instance/restart`, `GET /health` | config save and backend restart | loading, pending restart, connection test results/errors | admin only |
 | `/settings/line-notifications` | `LineNotifications` | `GET /api/settings/line-notifications`, sender/recipient CRUD, sender test, recipient rich Flex test | create/update/delete LINE sender/recipient; test push consumes LINE push quota | readiness cards, masked IDs, recent delivery states, rich Flex fallback sample, failed test error | admin only |
 | `/settings/ai-usage` | `AIUsage` | `GET /api/ai-usage/summary`, `GET /api/ai-usage/logs` | none | loading, empty usage/log states, filters | admin only |
@@ -63,6 +66,12 @@ ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
   Source code remains present and should not be broken by shared UI changes.
 - `/settings/line-notifications` is not part of LINE chat; it remains visible to
   admins while `VITE_ENABLE_CHAT=false` because Shopee alerting is active.
+- `/settings/line-myshop` is not part of LINE chat. It remains controlled by
+  `VITE_ENABLE_LINE_MYSHOP` and must stay independent from `/settings/line-oa`
+  even when `VITE_ENABLE_CHAT=false`.
+- Public webhook route `/webhook/line-myshop/:connection_id` is unauthenticated
+  but must verify `x-myshop-signature` before processing, then write snapshots,
+  webhook event state, optional local bill, and optional LINE notification.
 - `/dev/showcase` is available only in Vite dev mode.
 
 ## Redesign Constraints From Inventory
@@ -80,3 +89,11 @@ ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 - Page render and LINE worker must not call Shopee live APIs inline. Payment
   breakdown is cached in `shopee_order_payment_snapshots`; refresh actions are
   explicit and read-only.
+- LINE MyShop page render must not call LINE live APIs inline. Webhooks and any
+  explicit sync action should update `line_myshop_order_snapshots`; admin UI
+  should read local connection/snapshot state only except when the admin clicks
+  the per-account sync button.
+- MyShop notifications must use `source=line_myshop` and a MyShop-specific
+  builder. They must not include buyer username, recipient name, phone, email,
+  or shipping address, and must not reuse Shopee Flex builders or Shopee dedupe
+  keys.

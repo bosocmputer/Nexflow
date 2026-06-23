@@ -203,6 +203,7 @@ func TestMapSourceToChannelMatchesRetryLookupKey(t *testing.T) {
 		{source: "tiktok", want: "tiktok"},
 		{source: "email", want: "email"},
 		{source: "line", want: "line"},
+		{source: "line_myshop", want: "line_myshop"},
 		{source: "manual", want: "line"},
 	}
 

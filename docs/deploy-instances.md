@@ -115,6 +115,9 @@ Post-deploy smoke for the UX redesign:
 - Open one sent bill detail and verify the route badge says `ขาย -> ขายสินค้าและบริการ`.
 - `/settings/line-notifications` loads senders/recipients, recent deliveries,
   and the Shopee rich Flex fallback sample.
+- `/settings/line-myshop` loads empty/account state, can show/copy generated
+  webhook URLs, and `/settings/channels` shows `LINE MyShop / sale` routing when
+  MyShop is enabled.
 - `/logs`, `/settings/instance`, `/settings/channels`, `/settings/email`, `/settings/catalog`.
 - Do not confirm imports, send SML, delete/purge, reset data, or save settings during visual QA unless explicitly approved.
 
@@ -192,19 +195,21 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_SHOPEE_REALTIME_OPS=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
+VITE_ENABLE_LINE_MYSHOP=true
 VITE_ENABLE_CHAT=false          # LINE chat disabled
 
 ENABLE_SHOPEE_REALTIME_OPS=true
 ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS=true
-ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
+ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=false
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
+ENABLE_LINE_MYSHOP=true
 ```
 
-`ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true` allows users to confirm creation of
-Shopee cancelled-after-SML credit notes. The backend still blocks the action when
-SML readiness for tenant `aoy` is not OK.
+Keep `ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=false` until the tenant `aoy` SML
+domain is ready. Set it to `true` only for a controlled cancellation test; the
+backend still blocks the action when SML readiness is not OK.
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX=true` sends structured LINE Flex messages from the
 notification outbox for Shopee order alerts. `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true`
@@ -215,6 +220,27 @@ LINE Flex messages when the snapshot is ready. Set it to `false` to stop Shopee
 escrow calls; existing order and settlement notifications continue with fallback data.
 These three rich LINE/escrow flags default to `true` in backend config; add
 explicit `false` values only for rollback.
+
+`ENABLE_LINE_MYSHOP=true` enables the backend webhook/settings routes for LINE
+MyShop, and `VITE_ENABLE_LINE_MYSHOP=true` shows the admin UI. Both default to
+enabled in code; set either explicitly to `false` for rollback.
+
+LINE MyShop production setup after deploy:
+
+- Open `/settings/line-myshop`, add one row per OA Plus / MyShop account, and
+  use the field guidance to locate the OA Plus API key/shop identifiers. Edit
+  mode can clear a saved webhook secret to return to API key based signature
+  verification. Copy the generated webhook URL after saving.
+- Register that webhook URL in OA Plus for the matching account. The public route
+  is `/webhook/line-myshop/:connection_id` behind the fixed ngrok domain.
+- Open `/settings/channels` and configure `LINE MyShop / sale` before trying to
+  send a MyShop bill to SML. The migration does not seed a default route.
+- Use the per-account `ซิงก์ย้อนหลัง 48 ชม.` button only as a bounded reconciliation or
+  backfill action after confirming the API key. It calls LINE SHOPPING API,
+  fetches order detail, and may create local bills plus LINE notifications.
+- Existing `/settings/line-notifications` recipients will receive MyShop alerts
+  when enabled by recipient filters. MyShop alerts are PII-redacted and use
+  `source=line_myshop`, separate from Shopee Flex notifications.
 
 ---
 

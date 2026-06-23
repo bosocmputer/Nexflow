@@ -960,6 +960,8 @@ func mapSourceToChannel(source string) string {
 		return "tiktok"
 	case "email":
 		return "email"
+	case "line_myshop":
+		return "line_myshop"
 	}
 	return "line"
 }

@@ -28,6 +28,7 @@ import {
 import {
   ENABLE_CHAT,
   ENABLE_LAZADA_EXCEL,
+  ENABLE_LINE_MYSHOP,
   ENABLE_SALES_ORDERS,
   ENABLE_SHOPEE_EXCEL,
   ENABLE_SHOPEE_REALTIME_OPS,
@@ -80,6 +81,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/import/shopee', label: 'นำเข้า Shopee ย้อนหลัง', icon: Upload, hint: 'ดึงย้อนหลัง, ซ่อมรายการตกหล่น, หรือใช้ Excel fallback', enabled: ENABLE_SHOPEE_EXCEL },
       { to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
       { to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
+      { to: '/settings/line-myshop', label: 'LINE MyShop', icon: ShoppingBag, hint: 'บัญชี OA Plus และ webhook orders', enabled: ENABLE_LINE_MYSHOP, adminOnly: true },
       { to: '/settings/email', label: 'กล่องอีเมลรับบิล', icon: Mail, hint: 'ตั้งค่ากล่องเมลสำหรับใบสั่งซื้อ' },
     ],
   },

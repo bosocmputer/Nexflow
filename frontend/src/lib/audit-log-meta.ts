@@ -64,6 +64,10 @@ export const ACTION_META: Record<string, ActionMeta> = {
   shopee_import_done: { label: 'นำเข้า Shopee สำเร็จ', emoji: '📊', tone: 'success' },
   shopee_duplicate_merged: { label: 'รวมรายการ Shopee ซ้ำ', emoji: '🔁', tone: 'muted' },
   shopee_api_connection_updated: { label: 'แก้ไขการเชื่อมต่อ Shopee API', emoji: '🔌', tone: 'info' },
+  line_myshop_connection_created: { label: 'เพิ่มบัญชี LINE MyShop', emoji: '🔌', tone: 'info' },
+  line_myshop_connection_updated: { label: 'แก้ไขบัญชี LINE MyShop', emoji: '🔌', tone: 'info' },
+  line_myshop_connection_deleted: { label: 'ลบบัญชี LINE MyShop', emoji: '🗑️', tone: 'danger' },
+  line_myshop_connection_synced: { label: 'ซิงก์คำสั่งซื้อ LINE MyShop', emoji: '🔄', tone: 'info' },
   shopee_api_preview_requested: { label: 'พรีวิว Shopee API', emoji: '👁️', tone: 'info' },
   shopee_settlement_preview_started: { label: 'เริ่มดึงรอบถอนเงิน Shopee', emoji: '📥', tone: 'info' },
   shopee_settlement_preview_completed: { label: 'ดึงรอบถอนเงิน Shopee เสร็จ', emoji: '✅', tone: 'success' },
@@ -146,6 +150,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   catalog: 'สินค้า SML',
   shopee_api: 'Shopee API',
   shopee_settlement: 'รับชำระ Shopee',
+  line_myshop: 'LINE MyShop',
 }
 
 export const SOURCE_TONE: Record<string, string> = {
@@ -166,6 +171,7 @@ export const SOURCE_TONE: Record<string, string> = {
   ui: 'bg-primary/10 text-accent-strong',
   shopee_api: 'bg-warning/10 text-warning',
   shopee_settlement: 'bg-success/10 text-success',
+  line_myshop: 'bg-info/10 text-info',
 }
 
 export const TONE_DOT: Record<Tone, string> = {

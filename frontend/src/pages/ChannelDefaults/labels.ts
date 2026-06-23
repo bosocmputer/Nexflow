@@ -14,6 +14,7 @@ export type ChannelKey =
   | 'tiktok'
   | 'manual'
   | 'shopee_settlement'
+  | 'line_myshop'
 
 export type ChannelBillType = 'sale' | 'purchase' | 'ar_receipt'
 
@@ -207,7 +208,7 @@ export function destinationKindFor(
   if (lower.includes('saleorder') || lower.includes('sale-orders')) return 'saleorder'
   // No keyword match → default by channel+bill_type
   if (channel === 'shopee_shipped' || billType === 'purchase') return 'purchaseorder'
-  if (channel === 'shopee' || channel === 'shopee_realtime' || channel === 'shopee_email' || channel === 'lazada' || channel === 'tiktok') return 'saleorder'
+  if (channel === 'shopee' || channel === 'shopee_realtime' || channel === 'shopee_email' || channel === 'lazada' || channel === 'tiktok' || channel === 'line_myshop') return 'saleorder'
   return 'saleorder'
 }
 
@@ -223,4 +224,5 @@ export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   tiktok: 'TikTok Excel',
   manual: 'Manual',
   shopee_settlement: 'Shopee รับชำระหนี้',
+  line_myshop: 'LINE MyShop',
 }

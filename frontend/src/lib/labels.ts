@@ -47,6 +47,7 @@ export const BILL_SOURCE_LABEL: Record<string, string> = {
   shopee_shipped: 'Email บิลซื้อ Shopee',
   lazada:         'Lazada',
   tiktok:         'TikTok Excel',
+  line_myshop:    'LINE MyShop',
   manual:         'Manual',
 }
 
@@ -68,6 +69,7 @@ export const PAGE_TITLE = {
   channelDefaults:  'เส้นทางเอกสาร SML',
   emailInboxes:     'กล่องอีเมลรับบิล',
   lineOA:           'บัญชี LINE OA',
+  lineMyShop:       'LINE MyShop',
   quickReplies:     'ข้อความสำเร็จรูป',
   chatTags:         'ป้ายลูกค้า',
   logs:             'ประวัติการทำงาน',

@@ -24,12 +24,13 @@ import InstanceSettings from './pages/InstanceSettings'
 import AIUsage from './pages/AIUsage'
 import UserSettings from './pages/UserSettings'
 import LineNotifications from './pages/LineNotifications'
+import LineMyShopSettings from './pages/LineMyShopSettings'
 import ChatTags from './pages/ChatTags'
 import LineOA from './pages/LineOA'
 import Messages from './pages/Messages'
 import QuickReplies from './pages/QuickReplies'
 import Showcase from './pages/Showcase'
-import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
+import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
 import SetupCenter from './pages/SetupCenter'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -85,6 +86,7 @@ export default function App() {
           <Route path="settings/catalog" element={<CatalogSettings />} />
           <Route path="settings/email" element={<EmailAccounts />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><ShopeeConnections /></RequireAdmin>} />
+          <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><LineMyShopSettings /></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/channels" element={<ChannelDefaults />} />
           <Route path="settings/instance" element={<InstanceSettings />} />
           <Route path="settings/ai-usage" element={<AIUsage />} />

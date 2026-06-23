@@ -8,6 +8,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   shopee: 'Shopee',
   shopee_email: 'Shopee Email',
   shopee_shipped: 'Email บิลซื้อ Shopee',
+  line_myshop: 'LINE MyShop',
   manual: 'เพิ่มเอง',
 }
 
@@ -42,6 +43,16 @@ export const FLOW_META: Record<
     label: 'TikTok Excel',
     icon: '📊',
     variant: 'bg-muted text-muted-foreground',
+  },
+  line_myshop_webhook: {
+    label: 'LINE MyShop Webhook',
+    icon: '🛍️',
+    variant: 'bg-info/10 text-info',
+  },
+  line_myshop_sync: {
+    label: 'LINE MyShop Sync',
+    icon: '🛍️',
+    variant: 'bg-info/10 text-info',
   },
 }
 

@@ -104,6 +104,7 @@ func main() {
 	chatTagRepo := repository.NewChatTagRepo(db)
 	lineOARepo := repository.NewLineOAAccountRepo(db)
 	lineNotificationRepo := repository.NewLineNotificationRepo(db)
+	lineMyShopRepo := repository.NewLineMyShopRepo(db)
 	appSettingsRepo := repository.NewAppSettingsRepo(db)
 	aiUsageRepo := repository.NewAIUsageRepo(db)
 	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db)
@@ -401,6 +402,7 @@ func main() {
 		cfg.ShopeeSettlementLineAlertsEnabled,
 		logger,
 	)
+	lineMyShopH := handlers.NewLineMyShopHandler(lineMyShopRepo, billRepo, channelDefaultRepo, auditLogRepo, lineNotificationSvc, cfg.PublicBaseURL, logger)
 	emailH := handlers.NewEmailHandler(aiClient, ocrClient, mapperSvc, anomalySvc, billRepo, auditLogRepo, lineSvc, cfg.AutoConfirmThreshold, logger)
 	emailH.SetCatalogServices(catalogSvc, embSvc, catalogIdx, catalogRepo)
 	emailH.SetChannelDefaults(channelDefaultRepo)
@@ -448,6 +450,9 @@ func main() {
 	r.POST("/webhook/line/:oaId", lineH.Webhook)
 	r.POST("/webhook/line", lineH.Webhook)
 	r.POST("/webhook/shopee", shopeeRealtimeH.Webhook)
+	if cfg.LineMyShopEnabled {
+		r.POST("/webhook/line-myshop/:connection_id", lineMyShopH.Webhook)
+	}
 
 	// Public media endpoint — NO JWT, the HMAC token IS the auth.
 	// LINE servers fetch this URL to deliver image messages to customers.
@@ -494,6 +499,18 @@ func main() {
 			lineNotificationGroup.PUT("/recipients/:id", lineNotificationH.UpdateRecipient)
 			lineNotificationGroup.DELETE("/recipients/:id", lineNotificationH.DeleteRecipient)
 			lineNotificationGroup.POST("/recipients/:id/test", lineNotificationH.TestRecipient)
+		}
+
+		if cfg.LineMyShopEnabled {
+			lineMyShopGroup := api.Group("/settings/line-myshop")
+			lineMyShopGroup.Use(middleware.RequireRole("admin"))
+			{
+				lineMyShopGroup.GET("/connections", lineMyShopH.ListConnections)
+				lineMyShopGroup.POST("/connections", lineMyShopH.CreateConnection)
+				lineMyShopGroup.PUT("/connections/:id", lineMyShopH.UpdateConnection)
+				lineMyShopGroup.DELETE("/connections/:id", lineMyShopH.DeleteConnection)
+				lineMyShopGroup.POST("/connections/:id/sync", lineMyShopH.SyncConnection)
+			}
 		}
 
 		// Old Data (archive / purge) — admin only

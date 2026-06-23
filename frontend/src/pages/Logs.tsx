@@ -1435,8 +1435,9 @@ export default function Logs() {
                   <SelectItem value="shopee_email">Shopee Email</SelectItem>
 	                  <SelectItem value="shopee_shipped">Shopee Shipped</SelectItem>
 	                  {PHASE >= 2 && <SelectItem value="shopee_excel">Shopee Excel</SelectItem>}
-                  <SelectItem value="shopee_settlement">รับชำระ Shopee</SelectItem>
-	                  {PHASE >= 2 && <SelectItem value="lazada">Lazada</SelectItem>}
+	                  <SelectItem value="shopee_settlement">รับชำระ Shopee</SelectItem>
+	                  <SelectItem value="line_myshop">LINE MyShop</SelectItem>
+		                  {PHASE >= 2 && <SelectItem value="lazada">Lazada</SelectItem>}
 	                  {PHASE >= 2 && <SelectItem value="tiktok">TikTok Excel</SelectItem>}
 	                  <SelectItem value="sml">SML</SelectItem>
                   <SelectItem value="catalog">สินค้า SML</SelectItem>

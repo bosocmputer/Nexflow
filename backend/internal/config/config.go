@@ -103,6 +103,7 @@ type Config struct {
 	ShopeeOrderEscrowEnrichmentEnabled bool
 	ShopeeRealtimeWebhookSecret        string
 	ShopeeRealtimeSyncIntervalSeconds  int
+	LineMyShopEnabled                  bool
 
 	// Auto-confirm
 	AutoConfirmThreshold float64
@@ -181,6 +182,7 @@ func Load() *Config {
 		ShopeeOrderEscrowEnrichmentEnabled: getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
 		ShopeeRealtimeWebhookSecret:        getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
 		ShopeeRealtimeSyncIntervalSeconds:  getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
+		LineMyShopEnabled:                  getEnvBool("ENABLE_LINE_MYSHOP", true),
 		AutoConfirmThreshold:               getEnvFloat("AUTO_CONFIRM_THRESHOLD", 0.85),
 		InsightCronHour:                    getEnvInt("INSIGHT_CRON_HOUR", 8),
 		BackupCronHour:                     getEnvInt("BACKUP_CRON_HOUR", 0),

@@ -21,7 +21,7 @@ import {
 import { DataTable } from '@/components/common/DataTable'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
-import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
+import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
@@ -65,6 +65,9 @@ const PHASE_PLUS_CHANNEL_SLOTS: Array<{
   ...(ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'tiktok' as ChannelKey, bill_type: 'sale' as const }]
     : []),
+  ...(ENABLE_LINE_MYSHOP && ENABLE_SALES_ORDERS
+    ? [{ channel: 'line_myshop' as ChannelKey, bill_type: 'sale' as const }]
+    : []),
   ...(ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee_settlement' as ChannelKey, bill_type: 'ar_receipt' as const }]
     : []),
@@ -94,12 +97,12 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
   if (row.channel === 'shopee' && row.bill_type === 'sale') {
     return { label: 'นำเข้า Shopee ย้อนหลัง', to: '/import/shopee' }
   }
-  if (ENABLE_SALES_ORDERS && (row.channel === 'shopee' || row.channel === 'lazada' || row.channel === 'tiktok') && row.bill_type === 'sale') {
+  if (ENABLE_SALES_ORDERS && (row.channel === 'shopee' || row.channel === 'lazada' || row.channel === 'tiktok' || row.channel === 'line_myshop') && row.bill_type === 'sale') {
     const route = `${row.endpoint ?? ''} ${row.doc_format_code ?? ''}`.toLowerCase()
     if (route.includes('saleinvoice') || route.includes('sale-invoices') || row.doc_format_code?.toUpperCase() === 'SI') {
-      return { label: 'ขายสินค้าและบริการ', to: '/sale-invoices' }
+      return { label: 'ขายสินค้าและบริการ', to: row.channel === 'line_myshop' ? '/sale-invoices?source=line_myshop' : '/sale-invoices' }
     }
-    return { label: 'ใบสั่งขาย', to: '/sales-orders' }
+    return { label: 'ใบสั่งขาย', to: row.channel === 'line_myshop' ? '/sales-orders?source=line_myshop' : '/sales-orders' }
   }
   if (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') {
     return { label: 'ใบสั่งซื้อ', to: '/bills' }
@@ -120,6 +123,9 @@ function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
   if (row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt') {
     return 'รอบถอนเงิน Shopee สำหรับรับชำระหนี้'
   }
+  if (row.channel === 'line_myshop' && row.bill_type === 'sale') {
+    return 'ออเดอร์จาก LINE MyShop webhook/polling แยกจาก LINE OA chat'
+  }
   if (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') {
     return 'อีเมล Shopee Shipped สำหรับสร้างใบสั่งซื้อ'
   }
@@ -135,6 +141,9 @@ function channelModeBadge(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>)
   }
   if (row.channel === 'shopee' && row.bill_type === 'sale') {
     return { label: 'สำรอง/ย้อนหลัง', className: 'border-warning/30 bg-warning/10 text-warning' }
+  }
+  if (row.channel === 'line_myshop' && row.bill_type === 'sale') {
+    return { label: 'Webhook', className: 'border-info/30 bg-info/10 text-info' }
   }
   return null
 }
@@ -154,7 +163,9 @@ function EndpointCell({ row }: { row: ChannelDefaultRow }) {
         ? 'ใช้เมื่อ Shopee ยกเลิก order หลังส่งใบขายเข้า SML แล้ว'
       : row.channel === 'shopee'
         ? 'ใช้เฉพาะเมื่อนำเข้าย้อนหลังหรือซ่อม order ตกหล่น'
-        : ''
+        : row.channel === 'line_myshop'
+          ? 'ใช้กับบิลที่สร้างจาก LINE MyShop webhook/polling'
+          : ''
 
   return (
     <div className="min-w-[220px] space-y-1">
@@ -308,7 +319,7 @@ export default function ChannelDefaults() {
   const unsetRoutes = tableRows.filter(isRouteUnset)
   const saleInvoiceRoute = tableRows.find((r) => (
     r.bill_type === 'sale' &&
-    (r.channel === 'shopee' || r.channel === 'shopee_realtime' || r.channel === 'lazada' || r.channel === 'tiktok') &&
+	    (r.channel === 'shopee' || r.channel === 'shopee_realtime' || r.channel === 'lazada' || r.channel === 'tiktok' || r.channel === 'line_myshop') &&
     `${r.endpoint ?? ''} ${r.doc_format_code ?? ''}`.toLowerCase().includes('saleinvoice')
   ))
   const settlementRoute = tableRows.find((r) => r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt')
