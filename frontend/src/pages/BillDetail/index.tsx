@@ -326,6 +326,8 @@ export default function BillDetail() {
           regeneratingDocNo={regeneratingDocNo}
           onRegenerateDocNo={handleRegenerateDocNo}
           smlReadiness={smlReadiness}
+          items={bill.items ?? []}
+          onJumpToItem={handleJumpToItem}
         />
       )}
 

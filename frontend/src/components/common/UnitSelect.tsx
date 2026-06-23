@@ -22,6 +22,7 @@ interface UnitSelectProps {
 }
 
 function unitLabel(unit: UnitOption) {
+  if (unit.name_1 === '__current_missing__') return `${unit.code} · ไม่พบในสินค้า SML`
   const name = (unit.name_1 || unit.name_2 || unit.code).trim()
   if (!name || name === unit.code) return unit.code
   return `${unit.code} · ${name}`
@@ -100,10 +101,16 @@ export function UnitSelect({
       ...units,
       {
         code: current,
-        name_1: current,
+        name_1: productScoped ? '__current_missing__' : current,
       },
     ]
-  }, [units, value])
+  }, [productScoped, units, value])
+
+  const currentUnitMissing =
+    productScoped &&
+    value.trim() !== '' &&
+    units.length > 0 &&
+    !units.some((unit) => unit.code === value.trim())
 
   useEffect(() => {
     if (!autoSelectSingle || value.trim() || options.length !== 1) return
@@ -149,7 +156,12 @@ export function UnitSelect({
         </SelectContent>
       </Select>
       {error && <p className="text-[11px] leading-4 text-warning">{error}</p>}
-      {!error && productScoped && !code && (
+      {!error && currentUnitMissing && (
+        <p className="text-[11px] leading-4 text-warning">
+          หน่วยปัจจุบันไม่อยู่ในสินค้า SML นี้ เลือกหน่วยจากรายการก่อนส่ง SML
+        </p>
+      )}
+      {!error && !currentUnitMissing && productScoped && !code && (
         <p className="text-[11px] leading-4 text-muted-foreground">เลือกสินค้า SML ก่อนจึงจะเลือกหน่วยได้</p>
       )}
     </div>

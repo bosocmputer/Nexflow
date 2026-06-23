@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertCircle, Check, Copy, RefreshCw } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Check, Copy, RefreshCw } from 'lucide-react'
 import dayjs from 'dayjs'
 import { toast } from 'sonner'
 
@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { isSMLReady, smlBlockedMessage } from '@/lib/sml-readiness'
 import { cn } from '@/lib/utils'
-import type { SMLReadiness } from '@/types'
+import type { BillItem, SMLReadiness } from '@/types'
 
 // Failure detail schema persisted to bills.error_msg by the backend's
 // recordFailure helper. Old rows have a plain string instead of JSON;
@@ -30,6 +30,8 @@ interface Props {
   regeneratingDocNo?: boolean
   onRegenerateDocNo?: () => Promise<string | null> | string | null | void
   smlReadiness?: SMLReadiness | null
+  items?: BillItem[]
+  onJumpToItem?: (itemId: string | null) => void
 }
 
 function parseFailure(msg: string): FailureDetail | null {
@@ -66,12 +68,38 @@ function isDuplicateDocNoFailure(text: string) {
   )
 }
 
+type ItemUnitFailure = {
+  lineIndex: number
+  unitCode: string
+  itemCode: string
+  item?: BillItem
+}
+
+function parseItemUnitFailure(text: string, items: BillItem[] = []): ItemUnitFailure | null {
+  const match = text.match(/item\s+(\d+)\s+unit\s+(.+?)\s+not\s+found\s+for\s+product\s+([^\s,]+)/i)
+  if (!match) return null
+
+  const lineIndex = Number(match[1])
+  const unitCode = match[2]?.trim()
+  const itemCode = match[3]?.trim()
+  if (!Number.isFinite(lineIndex) || !unitCode || !itemCode) return null
+
+  const item =
+    items.find((it) => (it.item_code ?? '').trim() === itemCode && (it.unit_code ?? '').trim() === unitCode) ??
+    items.find((it) => (it.item_code ?? '').trim() === itemCode) ??
+    items[lineIndex]
+
+  return { lineIndex, unitCode, itemCode, item }
+}
+
 export function BillFailureCard({
   errorMsg,
   retryError,
   regeneratingDocNo = false,
   onRegenerateDocNo,
   smlReadiness,
+  items = [],
+  onJumpToItem,
 }: Props) {
   const [copied, setCopied] = useState(false)
 
@@ -86,6 +114,7 @@ export function BillFailureCard({
   const occurredAt = detail?.occurred_at
   const canRegenerateDocNo = Boolean(onRegenerateDocNo && isDuplicateDocNoFailure(rawError))
   const smlReady = isSMLReady(smlReadiness)
+  const itemUnitFailure = parseItemUnitFailure(rawError, items)
 
   const handleCopy = async () => {
     // Build a multi-line block that's useful for dev triage out-of-context:
@@ -174,6 +203,49 @@ export function BillFailureCard({
           )}
         </div>
 
+        {itemUnitFailure && (
+          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-5">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div>
+                  <div className="font-semibold text-foreground">ต้องแก้หน่วยสินค้าในรายการ</div>
+                  <p className="text-muted-foreground">
+                    SML ไม่รับหน่วย{' '}
+                    <span className="font-medium text-foreground">{itemUnitFailure.unitCode}</span>{' '}
+                    สำหรับสินค้า{' '}
+                    <code className="rounded bg-background/70 px-1 font-mono text-[11px] text-foreground">
+                      {itemUnitFailure.itemCode}
+                    </code>
+                    . ให้กดแก้ไขรายการสินค้า แล้วเลือกหน่วยที่โหลดจาก SML ก่อนส่งอีกครั้ง
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-muted-foreground">
+                    แถวที่ SML แจ้ง: {itemUnitFailure.lineIndex + 1}
+                  </span>
+                  {itemUnitFailure.item?.raw_name && (
+                    <span className="max-w-xl truncate text-muted-foreground">
+                      รายการ: {itemUnitFailure.item.raw_name}
+                    </span>
+                  )}
+                  {itemUnitFailure.item && onJumpToItem && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 bg-card px-2 text-[11px]"
+                      onClick={() => onJumpToItem(itemUnitFailure.item?.id ?? null)}
+                    >
+                      ดูรายการ
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Error body — terminal-style, monospace, word-wrap on long lines */}
         <pre
           className={cn(
@@ -196,6 +268,8 @@ export function BillFailureCard({
         <p className="text-[11px] text-muted-foreground">
           {canRegenerateDocNo
             ? 'เลขเอกสารนี้ซ้ำใน SML กดออกเลขใหม่ แล้วส่ง SML อีกครั้ง'
+            : itemUnitFailure
+              ? 'หลังแก้หน่วยสินค้าแล้ว ให้กดส่ง SML อีกครั้ง ระบบจะใช้เลขเอกสารเดิมที่บันทึกไว้'
             : (
               <>
                 ส่ง error นี้ให้ทีมดูแลระบบเพื่อแก้ไข แล้วกด{' '}
