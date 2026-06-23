@@ -1977,26 +1977,61 @@ function UpdateSourceBadge({ source }: { source?: string }) {
 }
 
 function PaymentBreakdownBadge({ status }: { status?: string }) {
-  const normalized = String(status ?? '').trim()
+  const normalized = String(status ?? '').trim().toLowerCase()
   if (!normalized) return null
-  const label = normalized === 'ready'
-    ? 'Payment ready'
-    : normalized === 'failed'
-      ? 'Payment error'
-      : normalized === 'unavailable'
-        ? 'ยังไม่มี escrow'
-        : 'รอข้อมูลชำระเงิน'
+  const meta = paymentBreakdownBadgeMeta(normalized)
   return (
-    <Badge variant="outline" className={cn(
-      'mt-1 h-5 px-1.5 text-[10px]',
-      normalized === 'ready' && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
-      normalized === 'failed' && 'border-destructive/40 bg-destructive/10 text-destructive',
-      normalized === 'unavailable' && 'border-warning/40 bg-warning/10 text-warning',
-      (normalized === 'queued' || normalized === 'running') && 'border-info/40 bg-info/10 text-info',
-    )}>
-      {label}
-    </Badge>
+    <div className="mt-1 flex justify-end">
+      <span
+        className={cn('inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium leading-none', meta.className)}
+        title={meta.title}
+        aria-label={meta.title}
+      >
+        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', meta.dotClassName)} />
+        {meta.label}
+      </span>
+    </div>
   )
+}
+
+function paymentBreakdownBadgeMeta(status: string) {
+  switch (status) {
+    case 'ready':
+      return {
+        label: 'Escrow พร้อม',
+        title: 'ข้อมูลชำระเงิน Shopee escrow พร้อมแล้ว',
+        className: 'text-accentStrong',
+        dotClassName: 'bg-accentStrong',
+      }
+    case 'failed':
+      return {
+        label: 'ดึงยอดไม่ได้',
+        title: 'ดึงข้อมูลชำระเงิน Shopee ไม่สำเร็จ',
+        className: 'text-destructive',
+        dotClassName: 'bg-destructive',
+      }
+    case 'unavailable':
+      return {
+        label: 'ไม่มี escrow',
+        title: 'Shopee ยังไม่มีข้อมูล escrow สำหรับออเดอร์นี้',
+        className: 'text-warning',
+        dotClassName: 'bg-warning',
+      }
+    case 'running':
+      return {
+        label: 'กำลังดึงยอด',
+        title: 'กำลังดึงข้อมูลชำระเงินจาก Shopee',
+        className: 'text-info',
+        dotClassName: 'bg-info',
+      }
+    default:
+      return {
+        label: 'รอยอด Shopee',
+        title: 'รอดึงข้อมูลชำระเงินจาก Shopee',
+        className: 'text-info',
+        dotClassName: 'bg-info',
+      }
+  }
 }
 
 function sourceLabel(source?: string) {
