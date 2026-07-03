@@ -66,8 +66,52 @@ const THAI_MONTHS = [
 
 const WEEKDAY_LABELS = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา']
 
+function isoDateParts(value: string): { year: string; month: string; day: string } | null {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+  return { year: match[1], month: match[2], day: match[3] }
+}
+
+function isValidIsoDate(value: string): boolean {
+  const parts = isoDateParts(value)
+  if (!parts) return false
+
+  const parsed = new Date(`${value}T00:00:00`)
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.getFullYear() === Number(parts.year) &&
+    parsed.getMonth() + 1 === Number(parts.month) &&
+    parsed.getDate() === Number(parts.day)
+  )
+}
+
 function displayDate(value: string): string {
-  return value ? dayjs(value).format('DD/MM/YYYY') : ''
+  const parts = isoDateParts(value)
+  if (!parts || !isValidIsoDate(value)) return value
+  return `${parts.day}/${parts.month}/${parts.year}`
+}
+
+function parseDateInput(value: string): string | null {
+  const raw = value.trim()
+  if (!raw) return ''
+
+  const displayMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (displayMatch) {
+    const day = displayMatch[1].padStart(2, '0')
+    const month = displayMatch[2].padStart(2, '0')
+    const iso = `${displayMatch[3]}-${month}-${day}`
+    return isValidIsoDate(iso) ? iso : null
+  }
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
+  if (isoMatch) {
+    const month = isoMatch[2].padStart(2, '0')
+    const day = isoMatch[3].padStart(2, '0')
+    const iso = `${isoMatch[1]}-${month}-${day}`
+    return isValidIsoDate(iso) ? iso : null
+  }
+
+  return null
 }
 
 interface MiniCalendarProps {
@@ -197,12 +241,22 @@ export function DateRangePicker({
   )
   const [selectingStep, setSelectingStep] = useState<'from' | 'to'>('from')
   const [hoverDate, setHoverDate] = useState<string | null>(null)
+  const [fromInput, setFromInput] = useState(() => displayDate(from))
+  const [toInput, setToInput] = useState(() => displayDate(to))
 
   useEffect(() => {
     if (from && dayjs(from).isValid()) {
       setCalendarMonth(dayjs(from).startOf('month'))
     }
   }, [from])
+
+  useEffect(() => {
+    setFromInput(displayDate(from))
+  }, [from])
+
+  useEffect(() => {
+    setToInput(displayDate(to))
+  }, [to])
 
   const handleCalendarSelect = (date: string) => {
     if (selectingStep === 'from') {
@@ -220,6 +274,28 @@ export function DateRangePicker({
     }
     setSelectingStep('from')
     setHoverDate(null)
+  }
+
+  const handleFromInputChange = (value: string) => {
+    setFromInput(value)
+    const parsed = parseDateInput(value)
+    if (parsed !== null) onFromChange(parsed)
+  }
+
+  const handleToInputChange = (value: string) => {
+    setToInput(value)
+    const parsed = parseDateInput(value)
+    if (parsed !== null) onToChange(parsed)
+  }
+
+  const normalizeFromInput = () => {
+    const parsed = parseDateInput(fromInput)
+    setFromInput(displayDate(parsed !== null ? parsed : from))
+  }
+
+  const normalizeToInput = () => {
+    const parsed = parseDateInput(toInput)
+    setToInput(displayDate(parsed !== null ? parsed : to))
   }
 
   return (
@@ -291,9 +367,10 @@ export function DateRangePicker({
               </Label>
               <Input
                 id={`${id}-date-range-from`}
-                value={from}
-                onChange={(e) => onFromChange(e.target.value)}
-                placeholder="YYYY-MM-DD"
+                value={fromInput}
+                onChange={(e) => handleFromInputChange(e.target.value)}
+                onBlur={normalizeFromInput}
+                placeholder="DD/MM/YYYY"
                 className="h-8 font-mono text-xs"
               />
             </div>
@@ -303,9 +380,10 @@ export function DateRangePicker({
               </Label>
               <Input
                 id={`${id}-date-range-to`}
-                value={to}
-                onChange={(e) => onToChange(e.target.value)}
-                placeholder="YYYY-MM-DD"
+                value={toInput}
+                onChange={(e) => handleToInputChange(e.target.value)}
+                onBlur={normalizeToInput}
+                placeholder="DD/MM/YYYY"
                 className="h-8 font-mono text-xs"
               />
             </div>
