@@ -157,3 +157,51 @@ func TestNotificationRepoMarkReadIsUserScoped(t *testing.T) {
 		t.Fatalf("unmet mock expectations: %v", err)
 	}
 }
+
+func TestNotificationRepoMarkReadByEntityIsScoped(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectExec(`UPDATE notifications\s+SET read_at = COALESCE\(read_at, NOW\(\)\),\s+updated_at = NOW\(\)\s+WHERE recipient_id = \$1\s+AND source = \$2\s+AND entity_type = \$3\s+AND entity_id = \$4\s+AND read_at IS NULL\s+AND resolved_at IS NULL`).
+		WithArgs("user-1", "shopee_realtime", "shopee_order", "264993963:ORDER1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	repo := NewNotificationRepo(db)
+	changed, err := repo.MarkReadByEntity(context.Background(), "user-1", "shopee_realtime", "shopee_order", "264993963:ORDER1")
+	if err != nil {
+		t.Fatalf("MarkReadByEntity: %v", err)
+	}
+	if changed != 2 {
+		t.Fatalf("changed = %d, want 2", changed)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestNotificationRepoMarkReadByEntityNoopIsOK(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectExec("UPDATE notifications").
+		WithArgs("user-1", "shopee_realtime", "shopee_order", "264993963:ORDER1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	repo := NewNotificationRepo(db)
+	changed, err := repo.MarkReadByEntity(context.Background(), "user-1", "shopee_realtime", "shopee_order", "264993963:ORDER1")
+	if err != nil {
+		t.Fatalf("MarkReadByEntity no-op: %v", err)
+	}
+	if changed != 0 {
+		t.Fatalf("changed = %d, want 0", changed)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}

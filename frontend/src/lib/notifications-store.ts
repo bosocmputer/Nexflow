@@ -24,6 +24,7 @@ interface NotificationsState {
   setItems: (items: AppNotification[]) => void
   upsertFromEvent: (notification: AppNotification, unread: number) => void
   markReadLocal: (id: string, unread: number) => void
+  markEntityReadLocal: (entityType: string, entityID: string, unread: number) => void
   markAllReadLocal: () => void
 }
 
@@ -49,6 +50,18 @@ export const useNotificationsStore = create<NotificationsState>((set) => ({
         item.id === id ? { ...item, read_at: item.read_at || new Date().toISOString() } : item,
       ),
     })),
+  markEntityReadLocal: (entityType, entityID, unread) =>
+    set((state) => {
+      const readAt = new Date().toISOString()
+      return {
+        unread: Math.max(0, Number(unread) || 0),
+        items: state.items.map((item) =>
+          item.entity_type === entityType && item.entity_id === entityID
+            ? { ...item, read_at: item.read_at || readAt }
+            : item,
+        ),
+      }
+    }),
   markAllReadLocal: () =>
     set((state) => ({
       unread: 0,

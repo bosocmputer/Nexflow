@@ -126,6 +126,32 @@ func (r *NotificationRepo) MarkRead(ctx context.Context, userID, id string) (int
 	return int(n), nil
 }
 
+func (r *NotificationRepo) MarkReadByEntity(ctx context.Context, userID, source, entityType, entityID string) (int, error) {
+	source = strings.TrimSpace(source)
+	entityType = strings.TrimSpace(entityType)
+	entityID = strings.TrimSpace(entityID)
+	if strings.TrimSpace(userID) == "" || source == "" || entityType == "" || entityID == "" {
+		return 0, nil
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE notifications
+		    SET read_at = COALESCE(read_at, NOW()),
+		        updated_at = NOW()
+		  WHERE recipient_id = $1
+		    AND source = $2
+		    AND entity_type = $3
+		    AND entity_id = $4
+		    AND read_at IS NULL
+		    AND resolved_at IS NULL`,
+		userID, source, entityType, entityID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func (r *NotificationRepo) MarkAllRead(ctx context.Context, userID string) (int, error) {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE notifications

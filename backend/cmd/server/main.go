@@ -602,6 +602,7 @@ func main() {
 		api.POST("/shopee-operations/sync", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SyncNow)
 		api.POST("/shopee-operations/create-documents/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocumentsPreview)
 		api.POST("/shopee-operations/create-documents", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocuments)
+		api.POST("/shopee-operations/:shop_id/:order_sn/notifications/read", middleware.RequireRole("admin", "staff"), notificationH.MarkShopeeOrderRead)
 		api.POST("/shopee-operations/:shop_id/:order_sn/create-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CreateDocument)
 		api.GET("/shopee-operations/:shop_id/:order_sn/cancel-sml-document/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocumentPreview)
 		api.POST("/shopee-operations/:shop_id/:order_sn/cancel-sml-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocument)

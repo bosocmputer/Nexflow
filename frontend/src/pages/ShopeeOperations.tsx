@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import dayjs from 'dayjs'
@@ -48,6 +48,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
+import { useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
 import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
 
@@ -469,6 +470,10 @@ export default function ShopeeOperations() {
   const [cancelSMLPreview, setCancelSMLPreview] = useState<CancelSMLDocumentPreview | null>(null)
   const [cancelSMLConfirmed, setCancelSMLConfirmed] = useState(false)
   const subscribeEvents = useEventsStore((s) => s.subscribe)
+  const markNotificationEntityReadLocal = useNotificationsStore((s) => s.markEntityReadLocal)
+  const listRequestSeq = useRef(0)
+  const listRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const deferListRefreshRef = useRef(false)
   const page = readPage(params)
   const perPage = readPerPage(params)
   const statusGroup = readStatusGroup(params)
@@ -529,6 +534,15 @@ export default function ShopeeOperations() {
   const allVisibleEligibleSelected = visibleBulkEligibleOrders.length > 0
     && visibleBulkEligibleOrders.every((order) => selectedOrderKeys.has(orderKey(order)))
   const selectedCreateCount = selectedOrders.length
+  const listRefreshDeferred = timelineOpen
+    || trackingDialogOpen
+    || shippingDialogOpen
+    || erpDialogOpen
+    || savingERP
+    || bulkDialogOpen
+    || bulkCreating
+    || cancelSMLDialogOpen
+    || cancelSMLCreating
 
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params)
@@ -585,6 +599,8 @@ export default function ShopeeOperations() {
   }
 
   const loadOrders = async () => {
+    const requestSeq = listRequestSeq.current + 1
+    listRequestSeq.current = requestSeq
     setLoading(true)
     try {
       const [listRes, countRes] = await Promise.all([
@@ -593,17 +609,34 @@ export default function ShopeeOperations() {
           params: shopID === ALL ? {} : { shop_id: shopID },
         }),
       ])
+      if (requestSeq !== listRequestSeq.current) return
       setOrders(listRes.data.data ?? [])
       setTotal(Number(listRes.data.total ?? 0))
       setCounts(countRes.data ?? emptyCounts)
+      setPendingListRefresh(false)
     } catch (e) {
+      if (requestSeq !== listRequestSeq.current) return
       toast.error('โหลดคำสั่งซื้อ Shopee ไม่สำเร็จ: ' + apiError(e))
       setOrders([])
       setTotal(0)
       setCounts(emptyCounts)
     } finally {
-      setLoading(false)
+      if (requestSeq === listRequestSeq.current) setLoading(false)
     }
+  }
+
+  const scheduleListRefresh = () => {
+    if (listRefreshTimerRef.current) {
+      clearTimeout(listRefreshTimerRef.current)
+    }
+    listRefreshTimerRef.current = setTimeout(() => {
+      listRefreshTimerRef.current = null
+      if (deferListRefreshRef.current) {
+        setPendingListRefresh(true)
+        return
+      }
+      void loadOrders()
+    }, 450)
   }
 
   useEffect(() => {
@@ -611,10 +644,25 @@ export default function ShopeeOperations() {
   }, [])
 
   useEffect(() => {
+    deferListRefreshRef.current = listRefreshDeferred
+  }, [listRefreshDeferred])
+
+  useEffect(() => () => {
+    if (listRefreshTimerRef.current) {
+      clearTimeout(listRefreshTimerRef.current)
+      listRefreshTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     setPageJumpInput(String(page))
   }, [page])
 
   useEffect(() => {
+    if (listRefreshTimerRef.current) {
+      clearTimeout(listRefreshTimerRef.current)
+      listRefreshTimerRef.current = null
+    }
     void loadOrders()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryString, shopID])
@@ -645,14 +693,14 @@ export default function ShopeeOperations() {
         void loadTimeline(selected)
         return
       }
-      if (timelineOpen || trackingDialogOpen || shippingDialogOpen) {
+      if (listRefreshDeferred) {
         setPendingListRefresh(true)
         return
       }
-      void loadOrders()
+      scheduleListRefresh()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subscribeEvents, queryString, shopID, trackingDialogOpen, shippingDialogOpen, timelineOpen, selected])
+  }, [subscribeEvents, queryString, shopID, listRefreshDeferred, selected])
 
   const syncNow = async () => {
     if (!selectedConnectionID) {
@@ -680,12 +728,16 @@ export default function ShopeeOperations() {
   }
 
   const refreshVisibleList = async () => {
+    if (listRefreshTimerRef.current) {
+      clearTimeout(listRefreshTimerRef.current)
+      listRefreshTimerRef.current = null
+    }
     setPendingListRefresh(false)
     await loadOrders()
   }
 
   const createDocument = async () => {
-    if (!selected) return
+    if (!selected || savingERP) return
     setSavingERP(true)
     try {
       const res = await client.post(`/api/shopee-operations/${selected.shop_id}/${encodeURIComponent(selected.order_sn)}/create-document`, {
@@ -693,7 +745,7 @@ export default function ShopeeOperations() {
       })
       toast.success(res.data.message || 'สร้างเอกสารใน Nexflow แล้ว')
       setERPDialogOpen(false)
-      await loadOrders()
+      await refreshVisibleList()
     } catch (e) {
       toast.error('สร้างเอกสารไม่สำเร็จ: ' + apiError(e))
     } finally {
@@ -779,6 +831,7 @@ export default function ShopeeOperations() {
   }))
 
   const openBulkCreatePreview = async () => {
+    if (bulkPreviewLoading || bulkCreating) return
     const refs = selectedOrderRefs()
     if (refs.length === 0) {
       toast.error('กรุณาเลือก order ที่ต้องการสร้างเอกสาร')
@@ -800,17 +853,22 @@ export default function ShopeeOperations() {
   }
 
   const submitBulkCreate = async () => {
-    if (!bulkPreview || bulkPreview.ready_count === 0) return
+    if (bulkCreating || !bulkPreview || bulkPreview.ready_count === 0) return
+    const refs = selectedOrderRefs()
+    if (refs.length === 0) {
+      toast.error('รายการที่เลือกไม่พร้อมสร้างเอกสารแล้ว กรุณาเลือกใหม่')
+      return
+    }
     setBulkCreating(true)
     try {
       const res = await client.post<BulkCreateResult>('/api/shopee-operations/create-documents', {
         confirm: 'CREATE_DOCUMENTS',
         route_signature: bulkPreview.route_signature,
-        orders: selectedOrderRefs(),
+        orders: refs,
       })
       setBulkResult(res.data)
       setSelectedOrderKeys(new Set())
-      await loadOrders()
+      await refreshVisibleList()
       const created = Number(res.data.created_count ?? 0)
       const reused = Number(res.data.reused_count ?? 0)
       const failed = Number(res.data.failed_count ?? 0)
@@ -907,7 +965,7 @@ export default function ShopeeOperations() {
     }
   }
 
-  const loadTimeline = async (order: OrderSnapshot) => {
+  const loadTimeline = async (order: OrderSnapshot): Promise<boolean> => {
     setTimelineLoading(true)
     setTimelineError('')
     try {
@@ -917,6 +975,7 @@ export default function ShopeeOperations() {
       setERPMilestones(res.data.erp_milestones ?? [])
       setPaymentBreakdown(res.data.payment_breakdown ?? null)
       setTimelineEvents(res.data.events ?? [])
+      return true
     } catch (e) {
       const message = apiError(e)
       setTimelineError(message)
@@ -925,8 +984,21 @@ export default function ShopeeOperations() {
       setPaymentBreakdown(null)
       setTimelineEvents([])
       toast.error('โหลด timeline ไม่สำเร็จ: ' + message)
+      return false
     } finally {
       setTimelineLoading(false)
+    }
+  }
+
+  const markShopeeOrderNotificationsRead = async (order: OrderSnapshot) => {
+    try {
+      const entityID = `${order.shop_id}:${order.order_sn}`
+      const res = await client.post<{ unread: number }>(
+        `/api/shopee-operations/${order.shop_id}/${encodeURIComponent(order.order_sn)}/notifications/read`,
+      )
+      markNotificationEntityReadLocal('shopee_order', entityID, res.data.unread ?? 0)
+    } catch {
+      /* Opening the order is more important than the read receipt. */
     }
   }
 
@@ -954,7 +1026,8 @@ export default function ShopeeOperations() {
       next.set('order', order.order_sn)
       setParams(next, { replace: true })
     }
-    await loadTimeline(order)
+    const loaded = await loadTimeline(order)
+    if (loaded) void markShopeeOrderNotificationsRead(order)
   }
 
   const handleTimelineOpenChange = (open: boolean) => {
@@ -1280,10 +1353,10 @@ export default function ShopeeOperations() {
               <div className="text-xs text-muted-foreground">สร้างเอกสารใน Nexflow เท่านั้น ยังไม่ส่งเข้า SML</div>
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
-              <Button variant="outline" size="sm" className="h-8 bg-background" onClick={() => setSelectedOrderKeys(new Set())}>
+              <Button variant="outline" size="sm" className="h-8 bg-background" onClick={() => setSelectedOrderKeys(new Set())} disabled={bulkCreating}>
                 ล้างที่เลือก
               </Button>
-              <Button size="sm" className="h-8 gap-2" onClick={() => void openBulkCreatePreview()}>
+              <Button size="sm" className="h-8 gap-2" onClick={() => void openBulkCreatePreview()} disabled={bulkPreviewLoading || bulkCreating}>
                 <FilePlus2 className="h-3.5 w-3.5" />
                 สร้างเอกสาร {selectedCreateCount.toLocaleString()} รายการ
               </Button>
@@ -1502,7 +1575,10 @@ export default function ShopeeOperations() {
           </div>
         </div>
 
-        <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+        <Dialog open={bulkDialogOpen} onOpenChange={(open) => {
+          if (bulkCreating) return
+          setBulkDialogOpen(open)
+        }}>
           <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>สร้างเอกสารหลายรายการ</DialogTitle>
@@ -1561,7 +1637,7 @@ export default function ShopeeOperations() {
             )}
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setBulkDialogOpen(false)}>ปิด</Button>
+              <Button variant="outline" onClick={() => setBulkDialogOpen(false)} disabled={bulkCreating}>ปิด</Button>
               {!bulkResult && (
                 <Button
                   onClick={() => void submitBulkCreate()}

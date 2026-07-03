@@ -79,6 +79,32 @@ func (h *NotificationHandler) MarkRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "unread": unread})
 }
 
+func (h *NotificationHandler) MarkShopeeOrderRead(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "no user_id in context"})
+		return
+	}
+	shopID, err := strconv.ParseInt(strings.TrimSpace(c.Param("shop_id")), 10, 64)
+	if err != nil || shopID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "shop_id ไม่ถูกต้อง"})
+		return
+	}
+	orderSN := strings.TrimSpace(c.Param("order_sn"))
+	if orderSN == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "order_sn ไม่ถูกต้อง"})
+		return
+	}
+	entityID := strconv.FormatInt(shopID, 10) + ":" + orderSN
+	changed, err := h.repo.MarkReadByEntity(c.Request.Context(), userID, "shopee_realtime", "shopee_order", entityID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ของคำสั่งซื้อ Shopee ไม่สำเร็จ"})
+		return
+	}
+	unread := h.publishUnread(c, userID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread})
+}
+
 func (h *NotificationHandler) MarkAllRead(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {

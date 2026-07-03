@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, ReceiptText, RotateCcw } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, ReceiptText } from 'lucide-react'
 import {
   CartesianGrid,
   Legend,
@@ -15,8 +15,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { DateRangePicker } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
 import { ENABLE_SHOPEE_REALTIME_OPS } from '@/lib/featureFlags'
 import type { DashboardStats, PlatformKey, PlatformSalesStat } from '@/types'
@@ -78,9 +77,10 @@ export default function Dashboard() {
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [dateRange, setDateRange] = useState<DashboardDateRange>(() => defaultDashboardDateRange())
   const dateRangeError = dashboardDateRangeError(dateRange)
+  const dateRangeReady = Boolean(dateRange.from && dateRange.to && !dateRangeError)
 
   useEffect(() => {
-    if (dateRangeError) {
+    if (!dateRangeReady) {
       setLoading(false)
       return
     }
@@ -111,7 +111,7 @@ export default function Dashboard() {
     return () => {
       active = false
     }
-  }, [dateRange.from, dateRange.to, dateRangeError])
+  }, [dateRange.from, dateRange.to, dateRangeReady])
 
   useEffect(() => {
     client
@@ -148,7 +148,6 @@ export default function Dashboard() {
         dateRange={dateRange}
         dateRangeError={dateRangeError}
         onDateRangeChange={setDateRange}
-        onResetDateRange={() => setDateRange(defaultDashboardDateRange())}
       />
       <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
     </div>
@@ -162,7 +161,6 @@ function PlatformSalesOverview({
   dateRange,
   dateRangeError,
   onDateRangeChange,
-  onResetDateRange,
 }: {
   stats: DashboardStats | null
   loading: boolean
@@ -170,7 +168,6 @@ function PlatformSalesOverview({
   dateRange: DashboardDateRange
   dateRangeError: string
   onDateRangeChange: (range: DashboardDateRange) => void
-  onResetDateRange: () => void
 }) {
   const platforms = platformStats(stats)
   const total = stats?.sales_mtd_total ?? 0
@@ -199,9 +196,7 @@ function PlatformSalesOverview({
             <DashboardDateFilter
               range={dateRange}
               error={dateRangeError}
-              loading={loading}
               onChange={onDateRangeChange}
-              onReset={onResetDateRange}
             />
           </div>
 
@@ -252,63 +247,24 @@ function PlatformSalesOverview({
 function DashboardDateFilter({
   range,
   error,
-  loading,
   onChange,
-  onReset,
 }: {
   range: DashboardDateRange
   error: string
-  loading: boolean
   onChange: (range: DashboardDateRange) => void
-  onReset: () => void
 }) {
   return (
-    <div className="w-full rounded-md border border-border/70 bg-background/70 p-2.5 xl:w-auto">
-      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        <CalendarDays className="h-3.5 w-3.5" />
-        ช่วงวันที่
-      </div>
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,150px)_minmax(0,150px)_auto] sm:items-end">
-        <div className="space-y-1">
-          <Label htmlFor="dashboard-date-from" className="text-xs text-muted-foreground">
-            จากวันที่
-          </Label>
-          <Input
-            id="dashboard-date-from"
-            type="date"
-            value={range.from}
-            max={range.to || undefined}
-            onChange={(event) => onChange({ ...range, from: event.target.value })}
-            className="h-8 text-xs"
-            disabled={loading}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="dashboard-date-to" className="text-xs text-muted-foreground">
-            ถึงวันที่
-          </Label>
-          <Input
-            id="dashboard-date-to"
-            type="date"
-            value={range.to}
-            min={range.from || undefined}
-            onChange={(event) => onChange({ ...range, to: event.target.value })}
-            className="h-8 text-xs"
-            disabled={loading}
-          />
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 gap-1.5"
-          onClick={onReset}
-          disabled={loading || isDefaultDashboardDateRange(range)}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          เดือนนี้
-        </Button>
-      </div>
+    <div className="w-full xl:w-auto">
+      <DateRangePicker
+        from={range.from}
+        to={range.to}
+        onFromChange={(from) => onChange({ ...range, from })}
+        onToChange={(to) => onChange({ ...range, to })}
+        className="w-full sm:w-[250px]"
+        title="ช่วงวันที่ยอดขาย"
+        description="เลือกวันที่เริ่มต้นและสิ้นสุดเพื่อดูยอดขาย Nexflow"
+        clearLabel="ล้างช่วงวันที่"
+      />
       {error && <div className="mt-2 text-xs text-destructive">{error}</div>}
     </div>
   )
@@ -604,18 +560,13 @@ function defaultDashboardDateRange(): DashboardDateRange {
   }
 }
 
-function isDefaultDashboardDateRange(range: DashboardDateRange): boolean {
-  const current = defaultDashboardDateRange()
-  return range.from === current.from && range.to === current.to
-}
-
 function dashboardDateRangeError(range: DashboardDateRange): string {
-  if (!range.from || !range.to) return 'กรุณาเลือกวันที่เริ่มต้นและวันที่สิ้นสุด'
-  if (range.from > range.to) return 'วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด'
+  if (!range.from || !range.to) return ''
 
   const from = new Date(`${range.from}T00:00:00`)
   const to = new Date(`${range.to}T00:00:00`)
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 'รูปแบบวันที่ไม่ถูกต้อง'
+  if (range.from > range.to) return 'วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด'
   if (to.getTime() - from.getTime() > 366 * 24 * 60 * 60 * 1000) return 'เลือกช่วงวันที่ได้ไม่เกิน 366 วัน'
   return ''
 }
