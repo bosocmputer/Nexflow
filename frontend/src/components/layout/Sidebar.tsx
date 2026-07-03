@@ -262,9 +262,8 @@ export default function Sidebar() {
               )}
             >
               {!navCollapsed && (
-                <div className="flex items-center gap-2 px-2 pb-1.5 text-[11px] font-semibold text-sidebar-foreground/68">
-                  <span className="shrink-0">{group.label}</span>
-                  <span className="h-px min-w-4 flex-1 bg-sidebar-border/70" />
+                <div className="px-2 pb-1.5 text-[11px] font-semibold text-sidebar-foreground/68">
+                  {group.label}
                 </div>
               )}
               {navCollapsed && gi > 0 && <Separator className="my-1" />}
@@ -535,7 +534,11 @@ function MobileNavDrawer({
             </div>
           </div>
           <div className="space-y-2">
-            <ThemeToggle variant="menu-item" className="rounded-md bg-card text-card-foreground" />
+            <ThemeToggle
+              variant="menu-item"
+              tone="sidebar"
+              className="rounded-md border border-sidebar-border bg-sidebar-accent/60"
+            />
             <Button
               type="button"
               variant="ghost"
