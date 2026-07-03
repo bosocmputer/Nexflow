@@ -67,7 +67,7 @@ const THAI_MONTHS = [
 const WEEKDAY_LABELS = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา']
 
 function displayDate(value: string): string {
-  return value ? dayjs(value).format('DD/MM/YY') : ''
+  return value ? dayjs(value).format('DD/MM/YYYY') : ''
 }
 
 interface MiniCalendarProps {

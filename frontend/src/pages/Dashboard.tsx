@@ -535,7 +535,7 @@ function formatPercent(value: number): string {
 function formatShortDate(value: string): string {
   const [year, month, day] = value.split('-')
   if (!year || !month || !day) return value
-  return `${day}/${month}/${year.slice(2)}`
+  return `${day}/${month}/${year}`
 }
 
 function formatTrendDate(value: string): string {
