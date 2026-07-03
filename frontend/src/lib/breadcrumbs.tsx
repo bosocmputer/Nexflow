@@ -13,7 +13,7 @@ interface BreadcrumbDef {
 }
 
 const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
-  { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม' }, { label: 'ภาพรวมงานวันนี้' }] },
+  { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม' }, { label: 'ยอดขายตามแพลตฟอร์ม' }] },
   { pattern: '/setup', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'สถานะพร้อมใช้งาน' }] },
   { pattern: '/bills', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งซื้อ' }] },
   { pattern: '/sales-orders', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย' }] },

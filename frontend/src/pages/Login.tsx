@@ -133,7 +133,7 @@ export default function Login() {
           </form>
 
             <p className="mt-6 text-xs leading-5 text-muted-foreground">
-              หลังเข้าสู่ระบบ ระบบจะพาไปที่ภาพรวมงานวันนี้โดยอัตโนมัติ
+              หลังเข้าสู่ระบบ ระบบจะพาไปที่ยอดขายตามแพลตฟอร์มโดยอัตโนมัติ
             </p>
           </div>
         </section>

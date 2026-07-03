@@ -74,7 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ภาพรวมแพลตฟอร์ม',
     items: [
-      { to: '/dashboard', label: 'ภาพรวมงานวันนี้', icon: LayoutDashboard, hint: 'สถานะงานขายและสิ่งที่ต้องทำ' },
+      { to: '/dashboard', label: 'ยอดขายตามแพลตฟอร์ม', icon: LayoutDashboard, hint: 'ยอดเอกสารขาย Shopee, Lazada และ TikTok' },
     ],
   },
   {

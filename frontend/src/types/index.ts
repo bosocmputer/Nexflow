@@ -307,6 +307,41 @@ export interface DashboardStats {
   sales_failed?: number
   unread_messages?: number
   email_inbox_errors?: number
+  sales_today_total?: number
+  sales_mtd_total?: number
+  sales_mtd_order_count?: number
+  platform_sales?: PlatformSalesStat[]
+  platform_sales_trend?: PlatformSalesTrendPoint[]
+  platform_sales_meta?: PlatformSalesMeta
+}
+
+export type PlatformKey = 'shopee' | 'lazada' | 'tiktok'
+
+export interface PlatformSalesStat {
+  platform: PlatformKey
+  label: string
+  total_amount: number
+  today_amount: number
+  order_count: number
+  sent_count: number
+  pending_count: number
+  needs_review_count: number
+  failed_count: number
+  share_pct: number
+}
+
+export interface PlatformSalesTrendPoint {
+  date: string
+  shopee_amount: number
+  lazada_amount: number
+  tiktok_amount: number
+}
+
+export interface PlatformSalesMeta {
+  timezone: string
+  from_date: string
+  to_date: string
+  definition: string
 }
 
 export interface DailyInsight {

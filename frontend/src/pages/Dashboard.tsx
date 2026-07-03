@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, Copy, Download, FileText, ListChecks, Mail, Send, ShoppingBag, Sparkles, TrendingUp } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, Clock3, Copy, Download, FileText, ListChecks, ReceiptText, Send, ShoppingBag, Sparkles, TrendingUp } from 'lucide-react'
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { toast } from 'sonner'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import InsightCard from '@/components/InsightCard'
@@ -11,8 +22,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { useAuthStore } from '@/store/auth'
 import { ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
-import type { DailyInsight, DashboardStats, MappingStats } from '@/types'
-import { ActionCards } from './Dashboard/ActionCards'
+import type { DailyInsight, DashboardStats, MappingStats, PlatformKey, PlatformSalesStat, PlatformSalesTrendPoint } from '@/types'
 
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
@@ -23,11 +33,54 @@ type SetupStatus = {
   steps?: { key: string; ready: boolean; status: string }[]
 }
 
+type PlatformMeta = {
+  key: PlatformKey
+  label: string
+  icon: string
+  iconBoxClass?: string
+  iconClass?: string
+  color: string
+  softClass: string
+  to: string
+}
+
+const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
+  shopee: {
+    key: 'shopee',
+    label: 'Shopee',
+    icon: '/shopee-logo.svg',
+    color: '#ee4d2d',
+    softClass: 'bg-[#fff1eb] text-[#9f2f16] border-[#f3c4b6]',
+    to: ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee',
+  },
+  lazada: {
+    key: 'lazada',
+    label: 'Lazada',
+    icon: '/lazada.svg',
+    iconBoxClass: 'w-16',
+    iconClass: 'max-h-5 max-w-14',
+    color: '#1d3491',
+    softClass: 'bg-[#e5ebff] text-link border-[#cbd7ff]',
+    to: '/import/lazada',
+  },
+  tiktok: {
+    key: 'tiktok',
+    label: 'TikTok',
+    icon: '/tiktok.svg',
+    color: '#111817',
+    softClass: 'bg-muted text-foreground border-border',
+    to: '/import/tiktok',
+  },
+}
+
+const PLATFORM_ORDER: PlatformKey[] = ['shopee', 'lazada', 'tiktok']
+
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [insight, setInsight] = useState<DailyInsight | null>(null)
   const [mapStats, setMapStats] = useState<MappingStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [statsError, setStatsError] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const user = useAuthStore((s) => s.user)
@@ -42,8 +95,14 @@ export default function Dashboard() {
     Promise.all([
       client
         .get<DashboardStats>('/api/dashboard/stats')
-        .then((r) => setStats(r.data))
-        .catch(() => null),
+        .then((r) => {
+          setStats(r.data)
+          setStatsError(false)
+        })
+        .catch(() => {
+          setStatsError(true)
+          setStats(null)
+        }),
       loadInsight(),
       client
         .get<MappingStats>('/api/mappings/stats')
@@ -69,14 +128,13 @@ export default function Dashboard() {
     }
   }
 
-  const awaitingReview = (stats?.pending ?? 0) + (stats?.needs_review ?? 0)
   const smlSetupIssue = setupStatus?.steps?.find((step) => step.key === 'instance' && !step.ready)
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Nexflow Operations Console"
-        description={ENABLE_SALES_ORDERS ? 'คอนโซลตรวจคิวเอกสารจาก Email และ Marketplace โดยใช้ขายสินค้าและบริการ / SI เป็นเส้นทางใช้งานหลัก และยังคงใบสั่งขายไว้ครบตามเดิม' : 'คอนโซลตรวจบิลซื้อจากอีเมล แล้วส่งเป็นใบสั่งซื้อเข้า SML'}
+        title="ยอดขายตามแพลตฟอร์ม"
+        description="ดูยอดเอกสารขายจาก Shopee, Lazada และ TikTok ใน Nexflow พร้อมคิวที่ต้องจัดการต่อก่อนส่งหรือ reconcile"
         actions={
           PHASE >= 2 && user?.role === 'admin' && (
             <Button size="sm" onClick={handleGenerate} disabled={generating}>
@@ -98,7 +156,7 @@ export default function Dashboard() {
               )}
               <div>
                 <p className="text-sm font-semibold">
-                  {smlSetupIssue ? 'ระบบหลักยังต้องตรวจ' : 'งานขายหลักพร้อมใช้งาน งานเสริมยังตั้งค่าไม่ครบ'}
+                  {smlSetupIssue ? 'ระบบหลักยังต้องตรวจ' : 'ยอดขายหลักพร้อมดูได้ งานเสริมยังตั้งค่าไม่ครบ'}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {smlSetupIssue
@@ -122,7 +180,7 @@ export default function Dashboard() {
               <div>
                 <p className="text-sm font-semibold">ระบบพร้อมแล้ว แต่ยังไม่มีเอกสาร</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  เริ่มจากนำเข้าไฟล์ Marketplace หรือดึงอีเมลรับบิลเพื่อสร้างเอกสารเข้าคิวตรวจ
+                  เริ่มจากนำเข้า Marketplace หรือดึงออเดอร์ Shopee เพื่อสร้าง baseline ยอดขายตามแพลตฟอร์ม
                 </p>
               </div>
             </div>
@@ -152,12 +210,17 @@ export default function Dashboard() {
         </Card>
       )}
 
+      <PlatformSalesOverview stats={stats} loading={loading} error={statsError} />
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
-          <OperationsConsoleBoard stats={stats} loading={loading} />
+          <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
           <ActionCenter stats={stats} setupStatus={setupStatus} loading={loading} />
         </div>
-        <ProductionStatusCard stats={stats} setupStatus={setupStatus} loading={loading} />
+        <div className="space-y-4">
+          <PlatformShareCard stats={stats} loading={loading} error={statsError} />
+          <ProductionStatusCard stats={stats} setupStatus={setupStatus} loading={loading} />
+        </div>
       </div>
 
       <details className="group rounded-lg border border-border/70 bg-card shadow-sm">
@@ -216,6 +279,318 @@ export default function Dashboard() {
           </div>
         </div>
       </details>
+    </div>
+  )
+}
+
+function PlatformSalesOverview({
+  stats,
+  loading,
+  error,
+}: {
+  stats: DashboardStats | null
+  loading: boolean
+  error: boolean
+}) {
+  const platforms = platformStats(stats)
+  const total = stats?.sales_mtd_total ?? 0
+  const today = stats?.sales_today_total ?? 0
+  const orders = stats?.sales_mtd_order_count ?? 0
+  const meta = stats?.platform_sales_meta
+
+  return (
+    <section className="space-y-4" aria-label="ยอดขายตามแพลตฟอร์ม">
+      <Card className="overflow-hidden border-border/70 shadow-sm">
+        <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="gap-1 rounded-full px-2.5">
+                <ReceiptText className="h-3.5 w-3.5" />
+                ยอดเอกสาร Nexflow
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {meta ? `${formatShortDate(meta.from_date)} - ${formatShortDate(meta.to_date)} · ${meta.timezone}` : 'เดือนนี้ถึงวันนี้'}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-sm font-medium text-muted-foreground">ยอดขายใน Nexflow เดือนนี้</div>
+                <div className="mt-1 text-3xl font-semibold leading-tight tracking-normal text-foreground">
+                  {loading ? '—' : formatCurrency(total)}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:min-w-[420px]">
+                <HeroMetric label="ยอดวันนี้" value={loading ? '—' : formatCurrency(today, true)} />
+                <HeroMetric label="ออเดอร์เดือนนี้" value={loading ? '—' : orders.toLocaleString('th-TH')} />
+                <HeroMetric label="แพลตฟอร์ม" value="3" />
+              </div>
+            </div>
+            <p className="mt-3 max-w-3xl text-xs leading-5 text-muted-foreground">
+              {meta?.definition ?? 'ยอดนี้มาจากเอกสารขายใน Nexflow ตามวันที่สร้างเอกสาร ไม่ใช่ยอดรับชำระจริงหรือ payout จากแพลตฟอร์ม'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <Button asChild size="sm">
+              <Link to={ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee'}>
+                ดูคำสั่งซื้อ Shopee
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/sale-invoices">ดูเอกสารขาย</Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {error && (
+        <Card className="border-warning/35 bg-warning/[0.07] shadow-sm">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div>
+                <p className="text-sm font-semibold">โหลดตัวเลข dashboard ไม่สำเร็จ</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  ยังเข้าเมนูหลักได้ตามปกติ ลองรีเฟรชหรือเปิดหน้าคำสั่งซื้อเพื่อดูรายการล่าสุด
+                </p>
+              </div>
+            </div>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/shopee-operations">เปิดคำสั่งซื้อ</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        {platforms.map((platform) => (
+          <PlatformSalesCard key={platform.platform} stat={platform} loading={loading} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function HeroMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-background/70 px-3 py-2">
+      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold tabular-nums text-foreground">{value}</div>
+    </div>
+  )
+}
+
+function PlatformSalesCard({
+  stat,
+  loading,
+}: {
+  stat: PlatformSalesStat
+  loading: boolean
+}) {
+  const meta = PLATFORM_META[stat.platform]
+  const riskCount = stat.needs_review_count + stat.failed_count
+
+  return (
+    <Link
+      to={meta.to}
+      className="group flex min-h-[196px] flex-col justify-between rounded-lg border border-border bg-card p-4 shadow-sm transition-colors hover:border-primary/50 hover:bg-background/80"
+    >
+      <div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={`flex h-10 shrink-0 items-center justify-center rounded-md border border-border bg-background ${meta.iconBoxClass ?? 'w-10'}`}>
+              <img src={meta.icon} alt="" className={`${meta.iconClass ?? 'max-h-6 max-w-7'} object-contain`} />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">{meta.label}</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">ยอดเอกสารเดือนนี้</div>
+            </div>
+          </div>
+          <Badge variant="outline" className={meta.softClass}>
+            {loading ? '—' : `${formatPercent(stat.share_pct)} share`}
+          </Badge>
+        </div>
+
+        <div className="mt-4 text-2xl font-semibold tabular-nums text-foreground">
+          {loading ? '—' : formatCurrency(stat.total_amount)}
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <MiniMetric label="วันนี้" value={loading ? '—' : formatCurrency(stat.today_amount, true)} />
+          <MiniMetric label="ออเดอร์" value={loading ? '—' : stat.order_count.toLocaleString('th-TH')} />
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3">
+        <div className="flex flex-wrap gap-1.5">
+          {riskCount > 0 ? (
+            <>
+              {stat.needs_review_count > 0 && (
+                <Badge variant="secondary" className="bg-warning/15 text-warning hover:bg-warning/15">
+                  ต้องตรวจ {stat.needs_review_count.toLocaleString('th-TH')}
+                </Badge>
+              )}
+              {stat.failed_count > 0 && (
+                <Badge variant="destructive">
+                  ล้มเหลว {stat.failed_count.toLocaleString('th-TH')}
+                </Badge>
+              )}
+            </>
+          ) : (
+            <Badge variant="secondary" className="bg-success/10 text-foreground hover:bg-success/10">
+              ไม่มี risk ค้าง
+            </Badge>
+          )}
+        </div>
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-foreground">
+          เปิดรายการ
+          <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+        </span>
+      </div>
+    </Link>
+  )
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-muted/45 px-2.5 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold tabular-nums">{value}</div>
+    </div>
+  )
+}
+
+function PlatformSalesTrendCard({
+  stats,
+  loading,
+  error,
+}: {
+  stats: DashboardStats | null
+  loading: boolean
+  error: boolean
+}) {
+  const data = stats?.platform_sales_trend ?? []
+  const hasSales = data.some((point) => point.shopee_amount > 0 || point.lazada_amount > 0 || point.tiktok_amount > 0)
+
+  return (
+    <Card className="rounded-lg border-border/70 shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <BarChart3 className="h-4 w-4 text-accent-strong" />
+          ยอดขายรายวันเดือนนี้ตามแพลตฟอร์ม
+        </CardTitle>
+        <p className="text-xs leading-5 text-muted-foreground">
+          ใช้วันที่สร้างเอกสารใน Nexflow เพื่อดูจังหวะยอดขายที่เข้าระบบ ไม่ใช่ยอดเงินรับชำระ
+        </p>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="h-[260px] rounded-md bg-muted/35" />
+        ) : error ? (
+          <ChartEmptyState title="โหลดกราฟไม่ได้" description="ยังดูรายการจากเมนูออเดอร์และเอกสารได้ตามปกติ" />
+        ) : !hasSales ? (
+          <ChartEmptyState title="ยังไม่มียอดขายในเดือนนี้" description="เมื่อมีเอกสารจาก Shopee, Lazada หรือ TikTok กราฟจะแสดงยอดรายวันทันที" />
+        ) : (
+          <div className="h-[280px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
+                <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
+                <Tooltip content={<PlatformTrendTooltip />} />
+                <Legend formatter={(value) => platformLegendLabel(String(value))} />
+                <Line type="monotone" dataKey="shopee_amount" name="Shopee" stroke={PLATFORM_META.shopee.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="lazada_amount" name="Lazada" stroke={PLATFORM_META.lazada.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="tiktok_amount" name="TikTok" stroke={PLATFORM_META.tiktok.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ChartEmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="flex min-h-[260px] items-center justify-center rounded-md border border-dashed border-border bg-muted/20 px-4 text-center">
+      <div>
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        <div className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">{description}</div>
+      </div>
+    </div>
+  )
+}
+
+function PlatformShareCard({
+  stats,
+  loading,
+  error,
+}: {
+  stats: DashboardStats | null
+  loading: boolean
+  error: boolean
+}) {
+  const platforms = platformStats(stats)
+  const total = stats?.sales_mtd_total ?? 0
+
+  return (
+    <Card className="rounded-lg border-border/70 shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <TrendingUp className="h-4 w-4 text-accent-strong" />
+          สัดส่วนยอดเดือนนี้
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error ? (
+          <div className="rounded-md border border-warning/30 bg-warning/[0.06] px-3 py-2 text-xs text-muted-foreground">
+            โหลดสัดส่วนไม่ได้ในตอนนี้
+          </div>
+        ) : (
+          platforms.map((platform) => {
+            const meta = PLATFORM_META[platform.platform]
+            const width = Math.max(0, Math.min(100, platform.share_pct))
+            return (
+              <div key={platform.platform} className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.color }} />
+                    <span className="truncate font-medium text-foreground">{meta.label}</span>
+                  </div>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    {loading ? '—' : `${formatPercent(platform.share_pct)} · ${formatCurrency(platform.total_amount, true)}`}
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: loading || total <= 0 ? '0%' : `${width}%`, backgroundColor: meta.color }}
+                  />
+                </div>
+              </div>
+            )
+          })
+        )}
+        <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-5 text-muted-foreground">
+          Failed และต้องตรวจยังรวมในยอดเอกสาร เพื่อให้เห็นยอดขายที่เข้าระบบพร้อม risk ที่ต้องจัดการต่อ
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PlatformTrendTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number; dataKey?: string }>; label?: string }) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
+      <div className="mb-1 font-medium text-popover-foreground">{formatTrendDate(String(label ?? ''))}</div>
+      <div className="space-y-1">
+        {payload.map((item) => (
+          <div key={item.dataKey} className="flex min-w-[180px] items-center justify-between gap-4">
+            <span className="text-muted-foreground">{platformLegendLabel(String(item.name ?? item.dataKey ?? ''))}</span>
+            <span className="font-medium tabular-nums text-foreground">{formatCurrency(Number(item.value ?? 0), true)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -365,7 +740,7 @@ function ActionCenter({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <ListChecks className="h-4 w-4 text-accent-strong" />
-          Action Center
+          งานที่ต้องจัดการต่อ
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -395,108 +770,70 @@ function ActionCenter({
   )
 }
 
-function OperationsConsoleBoard({
-  stats,
-  loading,
-}: {
-  stats: DashboardStats | null
-  loading: boolean
-}) {
-  const lanes = [
-    {
-      label: 'Intake',
-      value: (stats?.today_bills ?? 0),
-      desc: 'เอกสารที่เข้ามาวันนี้',
-      to: ENABLE_SHOPEE_REALTIME_OPS
-        ? '/shopee-operations'
-        : ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
-          ? '/import/shopee'
-          : '/settings/email',
-      cta: ENABLE_SHOPEE_REALTIME_OPS
-        ? 'คำสั่งซื้อ Shopee'
-        : ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
-          ? 'นำเข้า Shopee ย้อนหลัง'
-          : 'เปิด Email intake',
-      tone: 'primary' as const,
-    },
-    {
-      label: 'Needs Mapping',
-      value: (stats?.purchase_needs_review ?? 0) + (stats?.sales_needs_review ?? 0),
-      desc: 'ต้องจับคู่สินค้า/ตรวจข้อมูล',
-      to: '/mappings',
-      cta: 'ตรวจ mapping',
-      tone: 'warning' as const,
-    },
-    {
-      label: 'Ready For SML',
-      value: (stats?.purchase_pending ?? 0) + (stats?.sales_pending ?? 0),
-      desc: 'พร้อมส่ง แต่ต้องยืนยันใน dialog',
-      to: ENABLE_SALES_ORDERS ? '/sale-invoices?status=pending' : '/bills?status=pending',
-      cta: 'ดูคิวพร้อมส่ง',
-      tone: 'primary' as const,
-    },
-    {
-      label: 'Sent',
-      value: stats?.sml_success ?? 0,
-      desc: 'ส่งเข้า SML สำเร็จแล้ว',
-      to: ENABLE_SALES_ORDERS ? '/sale-invoices?status=sent' : '/bills?status=sent',
-      cta: 'ดูเอกสารส่งแล้ว',
-      tone: 'success' as const,
-    },
-  ]
-
-  return (
-    <div className="grid gap-4">
-      <Card className="overflow-hidden border-border/80 bg-card/95 shadow-sm">
-        <CardHeader className="border-b border-border/70 pb-3">
-          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-            <ListChecks className="h-4 w-4 text-accent-strong" />
-            Work Queue
-          </CardTitle>
-          <p className="text-xs leading-5 text-muted-foreground">
-            เรียงตามลำดับงานประจำวัน: รับข้อมูล, ตรวจ mapping, ส่ง SML, และหลักฐานที่ส่งแล้ว
-          </p>
-        </CardHeader>
-        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
-          {lanes.map((lane) => (
-            <Link
-              key={lane.label}
-              to={lane.to}
-              className="group flex min-h-[154px] flex-col justify-between rounded-lg border border-border bg-background/70 p-3 transition-transform hover:-translate-y-0.5 hover:border-primary/50 hover:bg-card"
-            >
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {lane.label}
-                  </span>
-                  <span className={queueToneClass(lane.tone)}>
-                    {loading ? '—' : lane.value.toLocaleString()}
-                  </span>
-                </div>
-                <div className="mt-4 text-2xl font-semibold tabular-nums text-foreground">
-                  {loading ? '—' : lane.value.toLocaleString()}
-                </div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{lane.desc}</p>
-              </div>
-              <div className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-foreground">
-                {lane.cta}
-                <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-              </div>
-            </Link>
-          ))}
-        </CardContent>
-      </Card>
-    </div>
-  )
+function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
+  const byPlatform = new Map<PlatformKey, PlatformSalesStat>()
+  for (const item of stats?.platform_sales ?? []) {
+    byPlatform.set(item.platform, item)
+  }
+  return PLATFORM_ORDER.map((platform) => {
+    const meta = PLATFORM_META[platform]
+    return byPlatform.get(platform) ?? {
+      platform,
+      label: meta.label,
+      total_amount: 0,
+      today_amount: 0,
+      order_count: 0,
+      sent_count: 0,
+      pending_count: 0,
+      needs_review_count: 0,
+      failed_count: 0,
+      share_pct: 0,
+    }
+  })
 }
 
-function queueToneClass(tone: 'primary' | 'warning' | 'success') {
-  const classes = {
-    primary: 'rounded-full bg-primary/20 px-2 py-0.5 text-xs font-semibold text-foreground',
-    warning: 'rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning',
-    success: 'rounded-full bg-success/15 px-2 py-0.5 text-xs font-semibold text-foreground',
+const currencyFormatter = new Intl.NumberFormat('th-TH', {
+  style: 'currency',
+  currency: 'THB',
+  maximumFractionDigits: 0,
+})
+
+const compactCurrencyFormatter = new Intl.NumberFormat('th-TH', {
+  style: 'currency',
+  currency: 'THB',
+  notation: 'compact',
+  maximumFractionDigits: 1,
+})
+
+function formatCurrency(value: number, compact = false): string {
+  const n = Number(value || 0)
+  if (compact && Math.abs(n) >= 100_000) {
+    return compactCurrencyFormatter.format(n)
   }
-  return classes[tone]
+  return currencyFormatter.format(n)
+}
+
+function formatPercent(value: number): string {
+  return `${Number(value || 0).toLocaleString('th-TH', { maximumFractionDigits: 1 })}%`
+}
+
+function formatShortDate(value: string): string {
+  const [year, month, day] = value.split('-')
+  if (!year || !month || !day) return value
+  return `${day}/${month}/${year.slice(2)}`
+}
+
+function formatTrendDate(value: string): string {
+  const [year, month, day] = value.split('-')
+  if (!year || !month || !day) return value
+  return `${day}/${month}`
+}
+
+function platformLegendLabel(value: string): string {
+  if (value === 'shopee_amount') return 'Shopee'
+  if (value === 'lazada_amount') return 'Lazada'
+  if (value === 'tiktok_amount') return 'TikTok'
+  return value
 }
 
 function PilotResultCard({

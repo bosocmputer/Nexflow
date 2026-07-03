@@ -37,6 +37,59 @@ type BillQueueCounts struct {
 	Total       int `json:"total"`
 }
 
+type platformSalesSummary struct {
+	Platform         string  `json:"platform"`
+	Label            string  `json:"label"`
+	TotalAmount      float64 `json:"total_amount"`
+	TodayAmount      float64 `json:"today_amount"`
+	OrderCount       int     `json:"order_count"`
+	SentCount        int     `json:"sent_count"`
+	PendingCount     int     `json:"pending_count"`
+	NeedsReviewCount int     `json:"needs_review_count"`
+	FailedCount      int     `json:"failed_count"`
+	SharePct         float64 `json:"share_pct"`
+}
+
+type platformSalesTrendPoint struct {
+	Date         string  `json:"date"`
+	ShopeeAmount float64 `json:"shopee_amount"`
+	LazadaAmount float64 `json:"lazada_amount"`
+	TiktokAmount float64 `json:"tiktok_amount"`
+}
+
+type platformSalesMeta struct {
+	Timezone   string `json:"timezone"`
+	FromDate   string `json:"from_date"`
+	ToDate     string `json:"to_date"`
+	Definition string `json:"definition"`
+}
+
+type platformSalesWindow struct {
+	timezone    string
+	fromDate    string
+	toDate      string
+	fromTime    time.Time
+	toExclusive time.Time
+	todayDate   string
+}
+
+type platformSalesTrendRow struct {
+	Date     string
+	Platform string
+	Amount   float64
+}
+
+var platformSalesLabels = map[string]string{
+	"shopee": "Shopee",
+	"lazada": "Lazada",
+	"tiktok": "TikTok",
+}
+
+var platformSalesOrder = []string{"shopee", "lazada", "tiktok"}
+
+const platformSalesTimezone = "Asia/Bangkok"
+const platformSalesDefinition = "ยอดจากเอกสารขายใน Nexflow ตามวันที่สร้างเอกสาร ไม่ใช่ยอดรับชำระหรือ payout"
+
 func NewBillRepo(db *sql.DB) *BillRepo {
 	return &BillRepo{db: db}
 }
@@ -872,7 +925,250 @@ func (r *BillRepo) DashboardStats() (map[string]interface{}, error) {
 		stats[q.key+"_failed"] = failedQ
 	}
 
+	if err := r.attachPlatformSalesDashboardStats(stats, time.Now()); err != nil {
+		return nil, err
+	}
+
 	return stats, nil
+}
+
+func (r *BillRepo) attachPlatformSalesDashboardStats(stats map[string]interface{}, now time.Time) error {
+	window := buildPlatformSalesWindow(now)
+	summaries, err := r.platformSalesSummaries(window)
+	if err != nil {
+		return err
+	}
+	trendRows, err := r.platformSalesTrendRows(window)
+	if err != nil {
+		return err
+	}
+	applyPlatformSalesDashboardStats(stats, summaries, trendRows, window)
+	return nil
+}
+
+func buildPlatformSalesWindow(now time.Time) platformSalesWindow {
+	loc, err := time.LoadLocation(platformSalesTimezone)
+	if err != nil {
+		loc = time.FixedZone("ICT", 7*60*60)
+	}
+	localNow := now.In(loc)
+	fromLocal := time.Date(localNow.Year(), localNow.Month(), 1, 0, 0, 0, 0, loc)
+	todayLocal := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+	toExclusiveLocal := todayLocal.AddDate(0, 0, 1)
+
+	return platformSalesWindow{
+		timezone:    platformSalesTimezone,
+		fromDate:    fromLocal.Format("2006-01-02"),
+		toDate:      todayLocal.Format("2006-01-02"),
+		todayDate:   todayLocal.Format("2006-01-02"),
+		fromTime:    fromLocal,
+		toExclusive: toExclusiveLocal,
+	}
+}
+
+func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platformSalesSummary, error) {
+	rows, err := r.db.Query(`
+		WITH bill_amounts AS (
+			SELECT
+			  b.id,
+			  b.source AS platform,
+			  b.status,
+			  (b.created_at AT TIME ZONE $4)::date AS local_day,
+			  COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
+			FROM bills b
+			LEFT JOIN bill_items bi ON bi.bill_id = b.id
+			WHERE b.bill_type = 'sale'
+			  AND b.source = ANY($1)
+			  AND b.archived_at IS NULL
+			  AND b.status <> 'skipped'
+			  AND b.created_at >= $2
+			  AND b.created_at < $3
+			GROUP BY b.id, b.source, b.status, local_day
+		)
+		SELECT
+		  platform,
+		  COALESCE(SUM(amount), 0)::float8 AS total_amount,
+		  COALESCE(SUM(amount) FILTER (WHERE local_day = $5::date), 0)::float8 AS today_amount,
+		  COUNT(*)::int AS order_count,
+		  COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
+		  COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+		  COUNT(*) FILTER (WHERE status = 'needs_review')::int AS needs_review_count,
+		  COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count
+		FROM bill_amounts
+		GROUP BY platform`,
+		pq.Array(platformSalesOrder),
+		window.fromTime,
+		window.toExclusive,
+		window.timezone,
+		window.todayDate,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]platformSalesSummary, 0, len(platformSalesOrder))
+	for rows.Next() {
+		var s platformSalesSummary
+		if err := rows.Scan(
+			&s.Platform,
+			&s.TotalAmount,
+			&s.TodayAmount,
+			&s.OrderCount,
+			&s.SentCount,
+			&s.PendingCount,
+			&s.NeedsReviewCount,
+			&s.FailedCount,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *BillRepo) platformSalesTrendRows(window platformSalesWindow) ([]platformSalesTrendRow, error) {
+	rows, err := r.db.Query(`
+		WITH bill_amounts AS (
+			SELECT
+			  b.id,
+			  b.source AS platform,
+			  (b.created_at AT TIME ZONE $4)::date AS local_day,
+			  COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
+			FROM bills b
+			LEFT JOIN bill_items bi ON bi.bill_id = b.id
+			WHERE b.bill_type = 'sale'
+			  AND b.source = ANY($1)
+			  AND b.archived_at IS NULL
+			  AND b.status <> 'skipped'
+			  AND b.created_at >= $2
+			  AND b.created_at < $3
+			GROUP BY b.id, b.source, local_day
+		)
+		SELECT
+		  local_day::text,
+		  platform,
+		  COALESCE(SUM(amount), 0)::float8 AS amount
+		FROM bill_amounts
+		GROUP BY local_day, platform
+		ORDER BY local_day, platform`,
+		pq.Array(platformSalesOrder),
+		window.fromTime,
+		window.toExclusive,
+		window.timezone,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []platformSalesTrendRow{}
+	for rows.Next() {
+		var row platformSalesTrendRow
+		if err := rows.Scan(&row.Date, &row.Platform, &row.Amount); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func applyPlatformSalesDashboardStats(
+	stats map[string]interface{},
+	rawSummaries []platformSalesSummary,
+	rawTrendRows []platformSalesTrendRow,
+	window platformSalesWindow,
+) {
+	totalAmount := 0.0
+	todayAmount := 0.0
+	orderCount := 0
+
+	byPlatform := map[string]platformSalesSummary{}
+	for _, s := range rawSummaries {
+		if _, ok := platformSalesLabels[s.Platform]; !ok {
+			continue
+		}
+		s.Label = platformSalesLabels[s.Platform]
+		s.TotalAmount = roundPlatformSalesMoney(s.TotalAmount)
+		s.TodayAmount = roundPlatformSalesMoney(s.TodayAmount)
+		byPlatform[s.Platform] = s
+		totalAmount += s.TotalAmount
+		todayAmount += s.TodayAmount
+		orderCount += s.OrderCount
+	}
+
+	summaries := make([]platformSalesSummary, 0, len(platformSalesOrder))
+	for _, platform := range platformSalesOrder {
+		s := byPlatform[platform]
+		s.Platform = platform
+		s.Label = platformSalesLabels[platform]
+		if totalAmount > 0 {
+			s.SharePct = roundPct(s.TotalAmount / totalAmount * 100)
+		}
+		summaries = append(summaries, s)
+	}
+
+	stats["sales_today_total"] = roundPlatformSalesMoney(todayAmount)
+	stats["sales_mtd_total"] = roundPlatformSalesMoney(totalAmount)
+	stats["sales_mtd_order_count"] = orderCount
+	stats["platform_sales"] = summaries
+	stats["platform_sales_trend"] = buildPlatformSalesTrend(rawTrendRows, window)
+	stats["platform_sales_meta"] = platformSalesMeta{
+		Timezone:   window.timezone,
+		FromDate:   window.fromDate,
+		ToDate:     window.toDate,
+		Definition: platformSalesDefinition,
+	}
+}
+
+func buildPlatformSalesTrend(rows []platformSalesTrendRow, window platformSalesWindow) []platformSalesTrendPoint {
+	byDate := map[string]platformSalesTrendPoint{}
+	for _, row := range rows {
+		point := byDate[row.Date]
+		if point.Date == "" {
+			point.Date = row.Date
+		}
+		switch row.Platform {
+		case "shopee":
+			point.ShopeeAmount = roundPlatformSalesMoney(row.Amount)
+		case "lazada":
+			point.LazadaAmount = roundPlatformSalesMoney(row.Amount)
+		case "tiktok":
+			point.TiktokAmount = roundPlatformSalesMoney(row.Amount)
+		}
+		byDate[row.Date] = point
+	}
+
+	from, errFrom := time.Parse("2006-01-02", window.fromDate)
+	to, errTo := time.Parse("2006-01-02", window.toDate)
+	if errFrom != nil || errTo != nil || to.Before(from) {
+		return []platformSalesTrendPoint{}
+	}
+
+	points := []platformSalesTrendPoint{}
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		key := day.Format("2006-01-02")
+		point := byDate[key]
+		if point.Date == "" {
+			point.Date = key
+		}
+		points = append(points, point)
+	}
+	return points
+}
+
+func roundPlatformSalesMoney(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+func roundPct(v float64) float64 {
+	return math.Round(v*10) / 10
 }
 
 func applyPilotDashboardStats(stats map[string]interface{}, total, needsReview, pending, sent, failed int) {
