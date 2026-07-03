@@ -39,16 +39,18 @@ type BillQueueCounts struct {
 }
 
 type platformSalesSummary struct {
-	Platform         string  `json:"platform"`
-	Label            string  `json:"label"`
-	TotalAmount      float64 `json:"total_amount"`
-	TodayAmount      float64 `json:"today_amount"`
-	OrderCount       int     `json:"order_count"`
-	SentCount        int     `json:"sent_count"`
-	PendingCount     int     `json:"pending_count"`
-	NeedsReviewCount int     `json:"needs_review_count"`
-	FailedCount      int     `json:"failed_count"`
-	SharePct         float64 `json:"share_pct"`
+	Platform            string   `json:"platform"`
+	Label               string   `json:"label"`
+	TotalAmount         float64  `json:"total_amount"`
+	TodayAmount         float64  `json:"today_amount"`
+	PreviousTotalAmount float64  `json:"previous_total_amount"`
+	ChangePct           *float64 `json:"change_pct"`
+	OrderCount          int      `json:"order_count"`
+	SentCount           int      `json:"sent_count"`
+	PendingCount        int      `json:"pending_count"`
+	NeedsReviewCount    int      `json:"needs_review_count"`
+	FailedCount         int      `json:"failed_count"`
+	SharePct            float64  `json:"share_pct"`
 }
 
 type platformSalesTrendPoint struct {
@@ -59,10 +61,12 @@ type platformSalesTrendPoint struct {
 }
 
 type platformSalesMeta struct {
-	Timezone   string `json:"timezone"`
-	FromDate   string `json:"from_date"`
-	ToDate     string `json:"to_date"`
-	Definition string `json:"definition"`
+	Timezone         string `json:"timezone"`
+	FromDate         string `json:"from_date"`
+	ToDate           string `json:"to_date"`
+	PreviousFromDate string `json:"previous_from_date"`
+	PreviousToDate   string `json:"previous_to_date"`
+	Definition       string `json:"definition"`
 }
 
 type platformSalesWindow struct {
@@ -952,11 +956,16 @@ func (r *BillRepo) attachPlatformSalesDashboardStats(stats map[string]interface{
 	if err != nil {
 		return err
 	}
+	previousWindow := previousPlatformSalesWindow(window)
+	previousSummaries, err := r.platformSalesSummaries(previousWindow)
+	if err != nil {
+		return err
+	}
 	trendRows, err := r.platformSalesTrendRows(window)
 	if err != nil {
 		return err
 	}
-	applyPlatformSalesDashboardStats(stats, summaries, trendRows, window)
+	applyPlatformSalesDashboardStats(stats, summaries, previousSummaries, trendRows, window)
 	return nil
 }
 
@@ -1028,6 +1037,25 @@ func buildPlatformSalesWindowForDateRange(now time.Time, fromDate, toDate string
 		fromTime:    fromLocal,
 		toExclusive: toLocal.AddDate(0, 0, 1),
 	}, nil
+}
+
+func previousPlatformSalesWindow(window platformSalesWindow) platformSalesWindow {
+	days := int(window.toExclusive.Sub(window.fromTime).Hours() / 24)
+	if days < 1 {
+		days = 1
+	}
+	toExclusive := window.fromTime
+	fromTime := toExclusive.AddDate(0, 0, -days)
+	toDate := toExclusive.AddDate(0, 0, -1)
+
+	return platformSalesWindow{
+		timezone:    window.timezone,
+		fromDate:    fromTime.Format("2006-01-02"),
+		toDate:      toDate.Format("2006-01-02"),
+		todayDate:   toDate.Format("2006-01-02"),
+		fromTime:    fromTime,
+		toExclusive: toExclusive,
+	}
 }
 
 func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platformSalesSummary, error) {
@@ -1232,11 +1260,13 @@ func (r *BillRepo) platformSalesTrendRows(window platformSalesWindow) ([]platfor
 func applyPlatformSalesDashboardStats(
 	stats map[string]interface{},
 	rawSummaries []platformSalesSummary,
+	rawPreviousSummaries []platformSalesSummary,
 	rawTrendRows []platformSalesTrendRow,
 	window platformSalesWindow,
 ) {
 	totalAmount := 0.0
 	todayAmount := 0.0
+	previousTotalAmount := 0.0
 	orderCount := 0
 
 	byPlatform := map[string]platformSalesSummary{}
@@ -1253,11 +1283,24 @@ func applyPlatformSalesDashboardStats(
 		orderCount += s.OrderCount
 	}
 
+	previousByPlatform := map[string]platformSalesSummary{}
+	for _, s := range rawPreviousSummaries {
+		if _, ok := platformSalesLabels[s.Platform]; !ok {
+			continue
+		}
+		s.TotalAmount = roundPlatformSalesMoney(s.TotalAmount)
+		previousByPlatform[s.Platform] = s
+		previousTotalAmount += s.TotalAmount
+	}
+
 	summaries := make([]platformSalesSummary, 0, len(platformSalesOrder))
 	for _, platform := range platformSalesOrder {
 		s := byPlatform[platform]
 		s.Platform = platform
 		s.Label = platformSalesLabels[platform]
+		previous := previousByPlatform[platform]
+		s.PreviousTotalAmount = previous.TotalAmount
+		s.ChangePct = platformSalesChangePct(s.TotalAmount, previous.TotalAmount)
 		if totalAmount > 0 {
 			s.SharePct = roundPct(s.TotalAmount / totalAmount * 100)
 		}
@@ -1266,14 +1309,19 @@ func applyPlatformSalesDashboardStats(
 
 	stats["sales_today_total"] = roundPlatformSalesMoney(todayAmount)
 	stats["sales_mtd_total"] = roundPlatformSalesMoney(totalAmount)
+	stats["sales_previous_total"] = roundPlatformSalesMoney(previousTotalAmount)
+	stats["sales_change_pct"] = platformSalesChangePct(totalAmount, previousTotalAmount)
 	stats["sales_mtd_order_count"] = orderCount
 	stats["platform_sales"] = summaries
 	stats["platform_sales_trend"] = buildPlatformSalesTrend(rawTrendRows, window)
+	previousWindow := previousPlatformSalesWindow(window)
 	stats["platform_sales_meta"] = platformSalesMeta{
-		Timezone:   window.timezone,
-		FromDate:   window.fromDate,
-		ToDate:     window.toDate,
-		Definition: platformSalesDefinition,
+		Timezone:         window.timezone,
+		FromDate:         window.fromDate,
+		ToDate:           window.toDate,
+		PreviousFromDate: previousWindow.fromDate,
+		PreviousToDate:   previousWindow.toDate,
+		Definition:       platformSalesDefinition,
 	}
 }
 
@@ -1319,6 +1367,14 @@ func roundPlatformSalesMoney(v float64) float64 {
 
 func roundPct(v float64) float64 {
 	return math.Round(v*10) / 10
+}
+
+func platformSalesChangePct(current, previous float64) *float64 {
+	if previous <= 0 {
+		return nil
+	}
+	pct := roundPct((current - previous) / previous * 100)
+	return &pct
 }
 
 func applyPilotDashboardStats(stats map[string]interface{}, total, needsReview, pending, sent, failed int) {

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, ReceiptText } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw } from 'lucide-react'
 import {
   CartesianGrid,
   Legend,
@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
 import { ENABLE_SHOPEE_REALTIME_OPS } from '@/lib/featureFlags'
+import { cn } from '@/lib/utils'
 import type { DashboardStats, PlatformKey, PlatformSalesStat } from '@/types'
 
 type SetupStatus = {
@@ -76,8 +77,16 @@ export default function Dashboard() {
   const [statsError, setStatsError] = useState(false)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [dateRange, setDateRange] = useState<DashboardDateRange>(() => defaultDashboardDateRange())
+  const [refreshTick, setRefreshTick] = useState(0)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null)
   const dateRangeError = dashboardDateRangeError(dateRange)
   const dateRangeReady = Boolean(dateRange.from && dateRange.to && !dateRangeError)
+
+  const refreshStats = useCallback(() => {
+    if (dateRangeReady) {
+      setRefreshTick((tick) => tick + 1)
+    }
+  }, [dateRangeReady])
 
   useEffect(() => {
     if (!dateRangeReady) {
@@ -98,6 +107,7 @@ export default function Dashboard() {
         if (!active) return
         setStats(r.data)
         setStatsError(false)
+        setLastUpdatedAt(new Date().toISOString())
       })
       .catch(() => {
         if (!active) return
@@ -111,7 +121,7 @@ export default function Dashboard() {
     return () => {
       active = false
     }
-  }, [dateRange.from, dateRange.to, dateRangeReady])
+  }, [dateRange.from, dateRange.to, dateRangeReady, refreshTick])
 
   useEffect(() => {
     client
@@ -147,6 +157,8 @@ export default function Dashboard() {
         error={statsError}
         dateRange={dateRange}
         dateRangeError={dateRangeError}
+        lastUpdatedAt={lastUpdatedAt}
+        onRefresh={refreshStats}
         onDateRangeChange={setDateRange}
       />
       <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
@@ -160,6 +172,8 @@ function PlatformSalesOverview({
   error,
   dateRange,
   dateRangeError,
+  lastUpdatedAt,
+  onRefresh,
   onDateRangeChange,
 }: {
   stats: DashboardStats | null
@@ -167,6 +181,8 @@ function PlatformSalesOverview({
   error: boolean
   dateRange: DashboardDateRange
   dateRangeError: string
+  lastUpdatedAt: string | null
+  onRefresh: () => void
   onDateRangeChange: (range: DashboardDateRange) => void
 }) {
   const platforms = platformStats(stats)
@@ -193,11 +209,30 @@ function PlatformSalesOverview({
               </div>
               <div className="mt-2 text-sm font-medium text-muted-foreground">ยอดขายใน Nexflow ตามช่วงวันที่</div>
             </div>
-            <DashboardDateFilter
-              range={dateRange}
-              error={dateRangeError}
-              onChange={onDateRangeChange}
-            />
+            <div className="flex w-full flex-col gap-2 xl:w-auto xl:items-end">
+              <div className="flex items-center justify-between gap-2 xl:justify-end">
+                <div className="text-xs text-muted-foreground">
+                  {lastUpdatedAt ? `อัปเดตล่าสุดเมื่อ ${formatUpdatedAt(lastUpdatedAt)}` : 'ยังไม่เคยอัปเดต'}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={onRefresh}
+                  disabled={loading || Boolean(dateRangeError)}
+                  aria-label="รีเฟรชยอดขาย"
+                  title="รีเฟรชยอดขาย"
+                >
+                  <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+                </Button>
+              </div>
+              <DashboardDateFilter
+                range={dateRange}
+                error={dateRangeError}
+                onChange={onDateRangeChange}
+              />
+            </div>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-end">
@@ -205,12 +240,20 @@ function PlatformSalesOverview({
               <div className="mt-1 text-3xl font-semibold leading-tight tracking-normal text-foreground">
                 {loading ? '—' : formatCurrency(total)}
               </div>
+              <ComparisonLine
+                loading={loading}
+                current={total}
+                previous={stats?.sales_previous_total ?? 0}
+                changePct={stats?.sales_change_pct}
+                previousFrom={meta?.previous_from_date}
+                previousTo={meta?.previous_to_date}
+              />
               <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">
                 Shopee ใช้คำสั่งซื้อที่บันทึกใน Nexflow; Lazada/TikTok ใช้เอกสารขาย ไม่ใช่ยอดรับชำระหรือ payout
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <HeroMetric label="วันสุดท้าย" value={loading ? '—' : formatCurrency(today, true)} />
+              <HeroMetric label="ยอดวันสิ้นสุด" value={loading ? '—' : formatCurrency(today, true)} />
               <HeroMetric label="ออเดอร์" value={loading ? '—' : formatCount(orders)} />
               <HeroMetric label="รายการเสี่ยง" value={loading ? '—' : formatCount(riskCount)} />
             </div>
@@ -279,6 +322,48 @@ function HeroMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
+function ComparisonLine({
+  loading,
+  current,
+  previous,
+  changePct,
+  previousFrom,
+  previousTo,
+  compact = false,
+}: {
+  loading: boolean
+  current: number
+  previous: number
+  changePct?: number | null
+  previousFrom?: string
+  previousTo?: string
+  compact?: boolean
+}) {
+  const tone = comparisonTone(current, previous, changePct)
+  const label = comparisonLabel(current, previous, changePct)
+  const previousRange = previousFrom && previousTo
+    ? ` (${formatShortDate(previousFrom)} - ${formatShortDate(previousTo)})`
+    : ''
+
+  return (
+    <div className={cn('mt-1.5 flex flex-wrap items-center gap-2 text-xs', compact && 'mt-1')}>
+      <span
+        className={cn(
+          'inline-flex h-6 items-center rounded-full border px-2 font-semibold tabular-nums',
+          tone === 'up' && 'border-success/25 bg-success/10 text-success',
+          tone === 'down' && 'border-destructive/25 bg-destructive/10 text-destructive',
+          tone === 'flat' && 'border-border bg-muted/50 text-muted-foreground',
+        )}
+      >
+        {loading ? '—' : label}
+      </span>
+      <span className="text-muted-foreground">
+        เทียบช่วงก่อนหน้า{compact ? '' : previousRange}
+      </span>
+    </div>
+  )
+}
+
 function PlatformSalesCard({
   stat,
   loading,
@@ -313,8 +398,15 @@ function PlatformSalesCard({
         <div className="mt-4 text-2xl font-semibold tabular-nums text-foreground">
           {loading ? '—' : formatCurrency(stat.total_amount)}
         </div>
+        <ComparisonLine
+          loading={loading}
+          current={stat.total_amount}
+          previous={stat.previous_total_amount ?? 0}
+          changePct={stat.change_pct}
+          compact
+        />
         <div className="mt-2 grid grid-cols-2 gap-2">
-          <MiniMetric label="วันสุดท้าย" value={loading ? '—' : formatCurrency(stat.today_amount, true)} />
+          <MiniMetric label="ยอดวันสิ้นสุด" value={loading ? '—' : formatCurrency(stat.today_amount, true)} />
           <MiniMetric label="ออเดอร์" value={loading ? '—' : formatCount(stat.order_count)} />
         </div>
       </div>
@@ -493,6 +585,8 @@ function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
       label: meta.label,
       total_amount: 0,
       today_amount: 0,
+      previous_total_amount: 0,
+      change_pct: null,
       order_count: 0,
       sent_count: 0,
       pending_count: 0,
@@ -530,6 +624,40 @@ function formatCount(value: number): string {
 
 function formatPercent(value: number): string {
   return `${Number(value || 0).toLocaleString('th-TH', { maximumFractionDigits: 1 })}%`
+}
+
+function formatSignedPercent(value: number): string {
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${Number(value || 0).toLocaleString('th-TH', { maximumFractionDigits: 1 })}%`
+}
+
+function comparisonTone(current: number, previous: number, changePct?: number | null): 'up' | 'down' | 'flat' {
+  if (typeof changePct === 'number') {
+    if (changePct > 0) return 'up'
+    if (changePct < 0) return 'down'
+    return 'flat'
+  }
+  if (previous <= 0 && current > 0) return 'up'
+  return 'flat'
+}
+
+function comparisonLabel(current: number, previous: number, changePct?: number | null): string {
+  if (typeof changePct === 'number') return formatSignedPercent(changePct)
+  if (previous <= 0 && current > 0) return 'ใหม่'
+  return 'เท่าช่วงก่อนหน้า'
+}
+
+function formatUpdatedAt(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('th-TH-u-ca-gregory', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 function formatShortDate(value: string): string {

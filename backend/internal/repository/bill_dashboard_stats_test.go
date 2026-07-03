@@ -37,11 +37,17 @@ func TestApplyPilotDashboardStatsWithNoBills(t *testing.T) {
 
 func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 	stats := map[string]interface{}{}
+	loc, err := time.LoadLocation(platformSalesTimezone)
+	if err != nil {
+		t.Fatal(err)
+	}
 	window := platformSalesWindow{
-		timezone:  platformSalesTimezone,
-		fromDate:  "2026-07-01",
-		toDate:    "2026-07-03",
-		todayDate: "2026-07-03",
+		timezone:    platformSalesTimezone,
+		fromDate:    "2026-07-01",
+		toDate:      "2026-07-03",
+		todayDate:   "2026-07-03",
+		fromTime:    time.Date(2026, 7, 1, 0, 0, 0, 0, loc),
+		toExclusive: time.Date(2026, 7, 4, 0, 0, 0, 0, loc),
 	}
 
 	applyPlatformSalesDashboardStats(
@@ -50,6 +56,10 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 			{Platform: "shopee", TotalAmount: 1200, TodayAmount: 250, OrderCount: 4, SentCount: 2, PendingCount: 1, NeedsReviewCount: 1},
 			{Platform: "tiktok", TotalAmount: 300, TodayAmount: 0, OrderCount: 1, FailedCount: 1},
 			{Platform: "manual", TotalAmount: 99999, TodayAmount: 99999, OrderCount: 99},
+		},
+		[]platformSalesSummary{
+			{Platform: "shopee", TotalAmount: 1000, OrderCount: 2},
+			{Platform: "tiktok", TotalAmount: 600, OrderCount: 2},
 		},
 		[]platformSalesTrendRow{
 			{Date: "2026-07-01", Platform: "shopee", Amount: 800},
@@ -61,6 +71,8 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 
 	assertFloatStat(t, stats, "sales_mtd_total", 1500)
 	assertFloatStat(t, stats, "sales_today_total", 250)
+	assertFloatStat(t, stats, "sales_previous_total", 1600)
+	assertFloatPtrStat(t, stats, "sales_change_pct", -6.3)
 	assertIntStat(t, stats, "sales_mtd_order_count", 5)
 
 	summaries, ok := stats["platform_sales"].([]platformSalesSummary)
@@ -73,11 +85,20 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 	if summaries[0].Platform != "shopee" || summaries[0].Label != "Shopee" || summaries[0].SharePct != 80 {
 		t.Fatalf("shopee summary = %#v, want label Shopee and 80%% share", summaries[0])
 	}
+	if summaries[0].PreviousTotalAmount != 1000 || summaries[0].ChangePct == nil || *summaries[0].ChangePct != 20 {
+		t.Fatalf("shopee comparison = previous %f change %#v, want previous 1000 and +20%%", summaries[0].PreviousTotalAmount, summaries[0].ChangePct)
+	}
 	if summaries[1].Platform != "lazada" || summaries[1].TotalAmount != 0 || summaries[1].SharePct != 0 {
 		t.Fatalf("lazada zero-fill summary = %#v", summaries[1])
 	}
+	if summaries[1].PreviousTotalAmount != 0 || summaries[1].ChangePct != nil {
+		t.Fatalf("lazada comparison = previous %f change %#v, want zero previous and nil change", summaries[1].PreviousTotalAmount, summaries[1].ChangePct)
+	}
 	if summaries[2].Platform != "tiktok" || summaries[2].SharePct != 20 || summaries[2].FailedCount != 1 {
 		t.Fatalf("tiktok summary = %#v, want 20%% share and failed count", summaries[2])
+	}
+	if summaries[2].PreviousTotalAmount != 600 || summaries[2].ChangePct == nil || *summaries[2].ChangePct != -50 {
+		t.Fatalf("tiktok comparison = previous %f change %#v, want previous 600 and -50%%", summaries[2].PreviousTotalAmount, summaries[2].ChangePct)
 	}
 
 	points, ok := stats["platform_sales_trend"].([]platformSalesTrendPoint)
@@ -97,6 +118,9 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 	}
 	if meta.Timezone != "Asia/Bangkok" || meta.FromDate != "2026-07-01" || meta.ToDate != "2026-07-03" {
 		t.Fatalf("meta = %#v", meta)
+	}
+	if meta.PreviousFromDate != "2026-06-28" || meta.PreviousToDate != "2026-06-30" {
+		t.Fatalf("meta previous window = %#v, want 2026-06-28 to 2026-06-30", meta)
 	}
 }
 
@@ -130,6 +154,30 @@ func TestBuildPlatformSalesWindowForDateRangeUsesSelectedEndDate(t *testing.T) {
 	}
 }
 
+func TestPreviousPlatformSalesWindowUsesSameNumberOfDays(t *testing.T) {
+	loc, err := time.LoadLocation(platformSalesTimezone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := platformSalesWindow{
+		timezone:    platformSalesTimezone,
+		fromDate:    "2026-07-01",
+		toDate:      "2026-07-03",
+		todayDate:   "2026-07-03",
+		fromTime:    time.Date(2026, 7, 1, 0, 0, 0, 0, loc),
+		toExclusive: time.Date(2026, 7, 4, 0, 0, 0, 0, loc),
+	}
+
+	previous := previousPlatformSalesWindow(window)
+
+	if previous.fromDate != "2026-06-28" || previous.toDate != "2026-06-30" {
+		t.Fatalf("previous window = %s to %s, want 2026-06-28 to 2026-06-30", previous.fromDate, previous.toDate)
+	}
+	if got := previous.toExclusive.Sub(previous.fromTime); got != 3*24*time.Hour {
+		t.Fatalf("previous window duration = %s, want 3 days", got)
+	}
+}
+
 func TestBuildPlatformSalesWindowForDateRangeRejectsInvalidRange(t *testing.T) {
 	_, err := buildPlatformSalesWindowForDateRange(time.Now(), "2026-07-10", "2026-07-01")
 	if !errors.Is(err, ErrInvalidDashboardDateRange) {
@@ -158,5 +206,17 @@ func assertFloatStat(t *testing.T, stats map[string]interface{}, key string, wan
 	}
 	if math.Abs(got-want) > 0.000001 {
 		t.Fatalf("%s = %f, want %f", key, got, want)
+	}
+}
+
+func assertFloatPtrStat(t *testing.T, stats map[string]interface{}, key string, want float64) {
+	t.Helper()
+
+	got, ok := stats[key].(*float64)
+	if !ok || got == nil {
+		t.Fatalf("%s = %#v (%T), want *float64", key, stats[key], stats[key])
+	}
+	if math.Abs(*got-want) > 0.000001 {
+		t.Fatalf("%s = %f, want %f", key, *got, want)
 	}
 }

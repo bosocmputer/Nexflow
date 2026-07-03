@@ -309,6 +309,8 @@ export interface DashboardStats {
   email_inbox_errors?: number
   sales_today_total?: number
   sales_mtd_total?: number
+  sales_previous_total?: number
+  sales_change_pct?: number | null
   sales_mtd_order_count?: number
   platform_sales?: PlatformSalesStat[]
   platform_sales_trend?: PlatformSalesTrendPoint[]
@@ -322,6 +324,8 @@ export interface PlatformSalesStat {
   label: string
   total_amount: number
   today_amount: number
+  previous_total_amount?: number
+  change_pct?: number | null
   order_count: number
   sent_count: number
   pending_count: number
@@ -341,6 +345,8 @@ export interface PlatformSalesMeta {
   timezone: string
   from_date: string
   to_date: string
+  previous_from_date?: string
+  previous_to_date?: string
   definition: string
 }
 
