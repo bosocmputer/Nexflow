@@ -88,7 +88,7 @@ var platformSalesLabels = map[string]string{
 var platformSalesOrder = []string{"shopee", "lazada", "tiktok"}
 
 const platformSalesTimezone = "Asia/Bangkok"
-const platformSalesDefinition = "ยอดจากเอกสารขายใน Nexflow ตามวันที่สร้างเอกสาร ไม่ใช่ยอดรับชำระหรือ payout"
+const platformSalesDefinition = "ยอดขายใน Nexflow: Shopee ใช้คำสั่งซื้อที่บันทึกใน Shopee Operations; Lazada/TikTok ใช้เอกสารขายใน Nexflow ไม่ใช่ยอดรับชำระหรือ payout"
 
 func NewBillRepo(db *sql.DB) *BillRepo {
 	return &BillRepo{db: db}
@@ -970,7 +970,7 @@ func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platfor
 	rows, err := r.db.Query(`
 		WITH bill_amounts AS (
 			SELECT
-			  b.id,
+			  b.id::text AS id,
 			  b.source AS platform,
 			  b.status,
 			  (b.created_at AT TIME ZONE $4)::date AS local_day,
@@ -983,7 +983,51 @@ func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platfor
 			  AND b.status <> 'skipped'
 			  AND b.created_at >= $2
 			  AND b.created_at < $3
+			  AND (
+			    b.source <> 'shopee'
+			    OR NOT EXISTS (
+			      SELECT 1
+			      FROM shopee_order_snapshots sos
+			      WHERE sos.bill_id = b.id
+			         OR UPPER(sos.order_sn) = UPPER(TRIM(LEADING '#' FROM COALESCE(
+			              NULLIF(b.raw_data->>'shopee_order_id', ''),
+			              NULLIF(b.raw_data->>'order_id', ''),
+			              NULLIF(b.sml_order_id, ''),
+			              ''
+			            )))
+			    )
+			  )
 			GROUP BY b.id, b.source, b.status, local_day
+		),
+		shopee_snapshot_base AS (
+			SELECT
+			  s.order_sn AS id,
+			  'shopee' AS platform,
+			  s.erp_status AS status,
+			  CASE
+			    WHEN s.raw_detail->>'create_time' ~ '^[0-9]+$'
+			      THEN to_timestamp((s.raw_detail->>'create_time')::bigint)
+			    ELSE s.created_at
+			  END AS order_time,
+			  GREATEST(COALESCE(s.total_amount, 0), 0)::float8 AS amount
+			FROM shopee_order_snapshots s
+			WHERE COALESCE(s.order_status, '') NOT IN ('CANCELLED', 'IN_CANCEL', 'UNPAID')
+		),
+		shopee_snapshot_amounts AS (
+			SELECT
+			  id,
+			  platform,
+			  status,
+			  (order_time AT TIME ZONE $4)::date AS local_day,
+			  amount
+			FROM shopee_snapshot_base
+			WHERE order_time >= $2
+			  AND order_time < $3
+		),
+		platform_amounts AS (
+			SELECT id, platform, status, local_day, amount FROM bill_amounts
+			UNION ALL
+			SELECT id, platform, status, local_day, amount FROM shopee_snapshot_amounts
 		)
 		SELECT
 		  platform,
@@ -991,10 +1035,10 @@ func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platfor
 		  COALESCE(SUM(amount) FILTER (WHERE local_day = $5::date), 0)::float8 AS today_amount,
 		  COUNT(*)::int AS order_count,
 		  COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
-		  COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+		  COUNT(*) FILTER (WHERE status IN ('pending', 'pending_erp', 'waiting_shopee'))::int AS pending_count,
 		  COUNT(*) FILTER (WHERE status = 'needs_review')::int AS needs_review_count,
 		  COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count
-		FROM bill_amounts
+		FROM platform_amounts
 		GROUP BY platform`,
 		pq.Array(platformSalesOrder),
 		window.fromTime,
@@ -1034,7 +1078,7 @@ func (r *BillRepo) platformSalesTrendRows(window platformSalesWindow) ([]platfor
 	rows, err := r.db.Query(`
 		WITH bill_amounts AS (
 			SELECT
-			  b.id,
+			  b.id::text AS id,
 			  b.source AS platform,
 			  (b.created_at AT TIME ZONE $4)::date AS local_day,
 			  COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
@@ -1046,13 +1090,55 @@ func (r *BillRepo) platformSalesTrendRows(window platformSalesWindow) ([]platfor
 			  AND b.status <> 'skipped'
 			  AND b.created_at >= $2
 			  AND b.created_at < $3
+			  AND (
+			    b.source <> 'shopee'
+			    OR NOT EXISTS (
+			      SELECT 1
+			      FROM shopee_order_snapshots sos
+			      WHERE sos.bill_id = b.id
+			         OR UPPER(sos.order_sn) = UPPER(TRIM(LEADING '#' FROM COALESCE(
+			              NULLIF(b.raw_data->>'shopee_order_id', ''),
+			              NULLIF(b.raw_data->>'order_id', ''),
+			              NULLIF(b.sml_order_id, ''),
+			              ''
+			            )))
+			    )
+			  )
 			GROUP BY b.id, b.source, local_day
+		),
+		shopee_snapshot_base AS (
+			SELECT
+			  s.order_sn AS id,
+			  'shopee' AS platform,
+			  CASE
+			    WHEN s.raw_detail->>'create_time' ~ '^[0-9]+$'
+			      THEN to_timestamp((s.raw_detail->>'create_time')::bigint)
+			    ELSE s.created_at
+			  END AS order_time,
+			  GREATEST(COALESCE(s.total_amount, 0), 0)::float8 AS amount
+			FROM shopee_order_snapshots s
+			WHERE COALESCE(s.order_status, '') NOT IN ('CANCELLED', 'IN_CANCEL', 'UNPAID')
+		),
+		shopee_snapshot_amounts AS (
+			SELECT
+			  id,
+			  platform,
+			  (order_time AT TIME ZONE $4)::date AS local_day,
+			  amount
+			FROM shopee_snapshot_base
+			WHERE order_time >= $2
+			  AND order_time < $3
+		),
+		platform_amounts AS (
+			SELECT id, platform, local_day, amount FROM bill_amounts
+			UNION ALL
+			SELECT id, platform, local_day, amount FROM shopee_snapshot_amounts
 		)
 		SELECT
 		  local_day::text,
 		  platform,
 		  COALESCE(SUM(amount), 0)::float8 AS amount
-		FROM bill_amounts
+		FROM platform_amounts
 		GROUP BY local_day, platform
 		ORDER BY local_day, platform`,
 		pq.Array(platformSalesOrder),

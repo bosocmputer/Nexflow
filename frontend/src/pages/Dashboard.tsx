@@ -100,7 +100,7 @@ export default function Dashboard() {
     <div className="space-y-4">
       <PageHeader
         title="ยอดขายตามแพลตฟอร์ม"
-        description="ยอดเอกสารขายเดือนนี้จาก Shopee, Lazada และ TikTok พร้อมงานที่ต้องจัดการต่อ"
+        description="ยอดขายเดือนนี้จาก Shopee, Lazada และ TikTok พร้อมงานที่ต้องจัดการต่อ"
       />
 
       {smlSetupIssue && (
@@ -150,7 +150,7 @@ function PlatformSalesOverview({
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="gap-1 rounded-full px-2.5">
               <ReceiptText className="h-3.5 w-3.5" />
-              ยอดเอกสาร Nexflow
+              ยอดขาย Nexflow
             </Badge>
             <span className="text-xs text-muted-foreground">
               {meta ? `${formatShortDate(meta.from_date)} - ${formatShortDate(meta.to_date)} · ${meta.timezone}` : 'เดือนนี้ถึงวันนี้'}
@@ -164,7 +164,7 @@ function PlatformSalesOverview({
                 {loading ? '—' : formatCurrency(total)}
               </div>
               <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">
-                ยอดจากเอกสารขายใน Nexflow ไม่ใช่ยอดรับชำระหรือ payout จากแพลตฟอร์ม
+                Shopee ใช้คำสั่งซื้อที่บันทึกใน Nexflow; Lazada/TikTok ใช้เอกสารขาย ไม่ใช่ยอดรับชำระหรือ payout
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -316,7 +316,7 @@ function PlatformSalesTrendCard({
         ) : error ? (
           <ChartEmptyState title="โหลดกราฟไม่ได้" description="ลองรีเฟรช หรือเปิดรายการจากเมนูแพลตฟอร์ม" />
         ) : !hasSales ? (
-          <ChartEmptyState title="ยังไม่มียอดขายในเดือนนี้" description="เมื่อมีเอกสารจากแพลตฟอร์ม กราฟจะแสดงยอดรายวัน" />
+          <ChartEmptyState title="ยังไม่มียอดขายในเดือนนี้" description="เมื่อมีข้อมูลจากแพลตฟอร์ม กราฟจะแสดงยอดรายวัน" />
         ) : (
           <div className="h-[280px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -337,7 +337,7 @@ function PlatformSalesTrendCard({
         {!error && <PlatformShareBreakdown platforms={platforms} loading={loading} total={total} />}
 
         <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-5 text-muted-foreground">
-          Failed และต้องตรวจยังรวมในยอดเอกสาร เพื่อให้เห็นยอดที่เข้าระบบพร้อมงานที่ต้องแก้
+          Failed และต้องตรวจยังรวมในยอด เพื่อให้เห็นยอดที่เข้าระบบพร้อมงานที่ต้องแก้
         </div>
       </CardContent>
     </Card>
