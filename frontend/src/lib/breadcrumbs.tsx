@@ -13,100 +13,108 @@ interface BreadcrumbDef {
 }
 
 const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
-  { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวม' }] },
-  { pattern: '/setup', crumbs: [{ label: 'เริ่มต้นใช้งาน' }] },
-  { pattern: '/bills', crumbs: [{ label: 'งานฝั่งซื้อ' }, { label: 'ใบสั่งซื้อ' }] },
-  { pattern: '/sales-orders', crumbs: [{ label: 'งานฝั่งขาย' }, { label: 'ใบสั่งขาย' }] },
-  { pattern: '/sale-invoices', crumbs: [{ label: 'งานฝั่งขาย' }, { label: 'ขายสินค้าและบริการ' }] },
+  { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม' }, { label: 'ภาพรวมงานวันนี้' }] },
+  { pattern: '/setup', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'สถานะพร้อมใช้งาน' }] },
+  { pattern: '/bills', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งซื้อ' }] },
+  { pattern: '/sales-orders', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย' }] },
+  { pattern: '/sale-invoices', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ขายสินค้าและบริการ' }] },
   {
     pattern: '/bills/:id',
-    crumbs: [{ label: 'งานฝั่งซื้อ' }, { label: 'ใบสั่งซื้อ', href: '/bills' }, { label: ':id', dynamic: true }],
+    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งซื้อ', href: '/bills' }, { label: ':id', dynamic: true }],
   },
   {
     pattern: '/sales-orders/:id',
-    crumbs: [{ label: 'งานฝั่งขาย' }, { label: 'ใบสั่งขาย', href: '/sales-orders' }, { label: ':id', dynamic: true }],
+    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย', href: '/sales-orders' }, { label: ':id', dynamic: true }],
   },
   {
     pattern: '/sale-invoices/:id',
-    crumbs: [{ label: 'งานฝั่งขาย' }, { label: 'ขายสินค้าและบริการ', href: '/sale-invoices' }, { label: ':id', dynamic: true }],
+    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ขายสินค้าและบริการ', href: '/sale-invoices' }, { label: ':id', dynamic: true }],
   },
   {
     pattern: '/import',
-    crumbs: [{ label: 'ช่องทางรับข้อมูล' }, { label: 'Lazada Excel' }],
+    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'ศูนย์นำเข้าไฟล์' }],
   },
   {
     pattern: '/import/lazada',
-    crumbs: [{ label: 'ช่องทางรับข้อมูล' }, { label: 'Lazada Excel' }],
+    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'Lazada Excel' }],
   },
   {
     pattern: '/import/shopee',
-    crumbs: [{ label: 'ช่องทางรับข้อมูล' }, { label: 'นำเข้า Shopee ย้อนหลัง' }],
+    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'นำเข้า Shopee ย้อนหลัง' }],
   },
   {
     pattern: '/shopee-operations',
-    crumbs: [{ label: 'ช่องทางรับข้อมูล' }, { label: 'คำสั่งซื้อ Shopee' }],
+    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'คำสั่งซื้อ Shopee' }],
   },
   {
     pattern: '/import/tiktok',
-    crumbs: [{ label: 'ช่องทางรับข้อมูล' }, { label: 'TikTok Excel' }],
+    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'TikTok Excel' }],
   },
   {
     pattern: '/messages',
-    crumbs: [{ label: 'แชทลูกค้า' }, { label: 'ข้อความลูกค้า' }],
+    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'ข้อความลูกค้า' }],
   },
-  { pattern: '/mappings', crumbs: [{ label: 'ข้อมูลหลัก' }, { label: 'ตารางจับคู่สินค้า' }] },
+  { pattern: '/mappings', crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'ตารางจับคู่สินค้า' }] },
   {
     pattern: '/marketplace-aliases',
-    crumbs: [{ label: 'งานที่ต้องตรวจ' }, { label: 'สินค้ารอยืนยัน' }],
+    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'สินค้ารอยืนยัน' }],
   },
-  { pattern: '/settings', crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'ตั้งค่าทั่วไป' }] },
+  { pattern: '/settings', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ตั้งค่าทั่วไป' }] },
   {
     pattern: '/settings/catalog',
-    crumbs: [{ label: 'ข้อมูลหลัก' }, { label: 'สินค้าใน SML' }],
+    crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'สินค้าใน SML' }],
   },
   {
     pattern: '/settings/channels',
-    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'เส้นทางเอกสาร SML' }],
+    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'เส้นทางเอกสาร SML' }],
   },
   {
     pattern: '/settings/shopee-connections',
-    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'ร้าน Shopee' }],
+    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ร้าน Shopee' }],
   },
   {
     pattern: '/settings/ai-usage',
-    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'การใช้งาน AI' }],
+    crumbs: [{ label: 'ดูแลระบบ' }, { label: 'การใช้งาน AI' }],
   },
   {
     pattern: '/settings/instance',
-    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'การเชื่อมต่อระบบ' }],
+    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'การเชื่อมต่อระบบ' }],
   },
   {
     pattern: '/settings/email',
-    crumbs: [{ label: 'ช่องทางรับข้อมูล' }, { label: 'กล่องอีเมลรับบิล' }],
+    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'กล่องอีเมลรับบิล' }],
+  },
+  {
+    pattern: '/settings/line-notifications',
+    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'LINE แจ้งเตือน' }],
+  },
+  {
+    pattern: '/settings/line-myshop',
+    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'LINE MyShop' }],
   },
   {
     pattern: '/settings/line-oa',
-    crumbs: [{ label: 'แชทลูกค้า' }, { label: 'บัญชี LINE OA' }],
+    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'บัญชี LINE OA' }],
   },
   {
     pattern: '/settings/quick-replies',
-    crumbs: [{ label: 'แชทลูกค้า' }, { label: 'ข้อความสำเร็จรูป' }],
+    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'ข้อความสำเร็จรูป' }],
   },
   {
     pattern: '/settings/chat-tags',
-    crumbs: [{ label: 'แชทลูกค้า' }, { label: 'ป้ายลูกค้า' }],
+    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'ป้ายลูกค้า' }],
   },
   {
     pattern: '/settings/old-data',
-    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'จัดการข้อมูลเก่า' }],
+    crumbs: [{ label: 'ดูแลระบบ' }, { label: 'จัดการข้อมูลเก่า' }],
   },
   {
     pattern: '/settings/users',
-    crumbs: [{ label: 'ตั้งค่าระบบ' }, { label: 'ผู้ใช้ระบบ' }],
+    crumbs: [{ label: 'ดูแลระบบ' }, { label: 'ผู้ใช้ระบบ' }],
   },
-  { pattern: '/logs', crumbs: [{ label: 'ประวัติการทำงาน' }] },
-  { pattern: '/bulk-send-jobs', crumbs: [{ label: 'ประวัติส่ง SML แบบกลุ่ม' }] },
-  { pattern: '/shopee-settlements', crumbs: [{ label: 'งานฝั่งขาย' }, { label: 'รับชำระ Shopee' }] },
+  { pattern: '/logs', crumbs: [{ label: 'ดูแลระบบ' }, { label: 'ประวัติการทำงาน' }] },
+  { pattern: '/bulk-send-jobs', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'งานส่งเข้า SML' }] },
+  { pattern: '/shopee-settlements', crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'รับชำระ Shopee' }] },
 ]
 
 interface CtxValue {

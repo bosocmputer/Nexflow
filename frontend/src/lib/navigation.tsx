@@ -36,6 +36,8 @@ import {
 } from '@/lib/featureFlags'
 
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
+const ENABLE_MARKETPLACE_IMPORTS =
+  ENABLE_SHOPEE_EXCEL || ENABLE_LAZADA_EXCEL || ENABLE_TIKTOK_EXCEL
 
 export type NavBadgeKey =
   | boolean
@@ -64,66 +66,69 @@ export interface NavGroup {
   items: NavItem[]
 }
 
-// Ordered by operator workflow. Sidebar and command palette consume this same
-// source so new pages do not silently disappear from quick navigation.
+// Ordered as an online platform operations console: overview, orders,
+// import/payment repair, product data, customer channels, connections, audit.
+// Sidebar and command palette consume this same source so new pages do not
+// silently disappear from quick navigation.
 export const NAV_GROUPS: NavGroup[] = [
   {
-    label: 'ภาพรวม',
+    label: 'ภาพรวมแพลตฟอร์ม',
     items: [
       { to: '/dashboard', label: 'ภาพรวมงานวันนี้', icon: LayoutDashboard, hint: 'สถานะงานขายและสิ่งที่ต้องทำ' },
-      { to: '/setup', label: 'สถานะพร้อมใช้งาน', icon: ClipboardCheck, hint: 'ตรวจความพร้อมร้าน' },
     ],
   },
   {
-    label: 'ช่องทางรับข้อมูล',
+    label: 'ออเดอร์และเอกสาร',
     items: [
       { to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
-      { to: '/import/shopee', label: 'นำเข้า Shopee ย้อนหลัง', icon: Upload, hint: 'ดึงย้อนหลัง, ซ่อมรายการตกหล่น, หรือใช้ Excel fallback', enabled: ENABLE_SHOPEE_EXCEL },
-      { to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
-      { to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
-      { to: '/settings/line-myshop', label: 'LINE MyShop', icon: ShoppingBag, hint: 'บัญชี OA Plus และ webhook orders', enabled: ENABLE_LINE_MYSHOP, adminOnly: true },
-      { to: '/settings/email', label: 'กล่องอีเมลรับบิล', icon: Mail, hint: 'ตั้งค่ากล่องเมลสำหรับใบสั่งซื้อ' },
-    ],
-  },
-  {
-    label: 'งานฝั่งขาย',
-    items: [
       { to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
-      { to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },
+      { to: '/bills', label: 'ใบสั่งซื้อ', icon: FileText, hasBadge: 'purchase', hint: 'คิวบิลซื้อจากอีเมล' },
+      { to: '/marketplace-aliases', label: 'สินค้ารอยืนยัน', icon: Tags, hasBadge: 'marketplace_aliases', hint: 'ยืนยันครั้งเดียว ระบบจำให้บิลถัดไป', enabled: ENABLE_SALES_ORDERS },
       { to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },
     ],
   },
   {
-    label: 'งานฝั่งซื้อ',
+    label: 'นำเข้าและรับชำระ',
     items: [
-      { to: '/bills', label: 'ใบสั่งซื้อ', icon: FileText, hasBadge: 'purchase', hint: 'คิวบิลซื้อจากอีเมล' },
+      { to: '/import', label: 'ศูนย์นำเข้าไฟล์', icon: Upload, hint: 'เลือกช่องทางนำเข้าและตรวจรายการก่อนสร้างเอกสาร', enabled: ENABLE_MARKETPLACE_IMPORTS },
+      { to: '/import/shopee', label: 'นำเข้า Shopee ย้อนหลัง', icon: Upload, hint: 'ดึงย้อนหลัง, ซ่อมรายการตกหล่น, หรือใช้ Excel fallback', enabled: ENABLE_SHOPEE_EXCEL },
+      { to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
+      { to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
+      { to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },
     ],
   },
   {
-    label: 'ข้อมูลหลัก',
+    label: 'สินค้าและการจับคู่',
     items: [
-      { to: '/marketplace-aliases', label: 'สินค้ารอยืนยัน', icon: Tags, hasBadge: 'marketplace_aliases', hint: 'ยืนยันครั้งเดียว ระบบจำให้บิลถัดไป', enabled: ENABLE_SALES_ORDERS },
       { to: '/mappings', label: 'ตารางจับคู่สินค้า', icon: Workflow, hint: 'Item Mapping (raw_name → SML code)' },
       { to: '/settings/catalog', label: 'สินค้าใน SML', icon: Database, hint: 'SML Catalog' },
     ],
   },
   {
-    label: 'แชทลูกค้า',
+    label: 'ลูกค้าและ LINE',
     items: [
       { to: '/messages', label: 'ข้อความลูกค้า', icon: MessageSquare, hasBadge: 'messages', hint: 'Inbox รวมทุก OA', minPhase: 2, enabled: ENABLE_CHAT },
+      { to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จากคำสั่งซื้อ Shopee', adminOnly: true },
       { to: '/settings/line-oa', label: 'บัญชี LINE OA', icon: MessageSquare, end: true, hint: 'LINE OA Accounts', minPhase: 2, enabled: ENABLE_CHAT },
+      { to: '/settings/line-myshop', label: 'LINE MyShop', icon: ShoppingBag, hint: 'บัญชี OA Plus และ webhook orders', enabled: ENABLE_LINE_MYSHOP, adminOnly: true },
       { to: '/settings/quick-replies', label: 'ข้อความสำเร็จรูป', icon: MessageSquareQuote, end: true, hint: 'Quick Replies', minPhase: 2, enabled: ENABLE_CHAT },
       { to: '/settings/chat-tags', label: 'ป้ายลูกค้า', icon: Tag, end: true, hint: 'Chat Tags', minPhase: 2, enabled: ENABLE_CHAT },
     ],
   },
   {
-    label: 'ตั้งค่าระบบ',
+    label: 'เชื่อมต่อแพลตฟอร์ม',
     items: [
+      { to: '/setup', label: 'สถานะพร้อมใช้งาน', icon: ClipboardCheck, hint: 'ตรวจความพร้อมร้าน' },
       { to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'Document Routing' },
+      { to: '/settings/email', label: 'กล่องอีเมลรับบิล', icon: Mail, hint: 'ตั้งค่ากล่องเมลสำหรับใบสั่งซื้อ' },
       { to: '/settings/shopee-connections', label: 'ร้าน Shopee', icon: Store, hint: 'OAuth / token / shop connection', adminOnly: true, enabled: ENABLE_SHOPEE_EXCEL },
       { to: '/settings/instance', label: 'การเชื่อมต่อระบบ', icon: Settings2, hint: 'SML / OpenRouter / ร้านนี้' },
-      { to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จากคำสั่งซื้อ Shopee', adminOnly: true },
+    ],
+  },
+  {
+    label: 'ดูแลระบบ',
+    items: [
       { to: '/settings/users', label: 'ผู้ใช้ระบบ', icon: UsersRound, hint: 'Roles and access', adminOnly: true },
       { to: '/logs', label: 'ประวัติการทำงาน', icon: ScrollText, hint: 'ใครทำอะไรและผลลัพธ์' },
       { to: '/settings/ai-usage', label: 'การใช้งาน AI', icon: Bot, hint: 'ค่าใช้จ่าย / รุ่น AI' },

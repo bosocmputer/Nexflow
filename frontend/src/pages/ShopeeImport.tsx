@@ -1545,7 +1545,7 @@ export default function ShopeeImport() {
               <AlertTitle>สร้างเอกสารเพื่อตรวจได้ แต่ยังส่ง SML ไม่ได้</AlertTitle>
               <AlertDescription>
                 ยังไม่ได้ตั้งค่าลูกค้า Shopee สำหรับปลายทาง SML ระบบจะสร้างเอกสารใน Nexflow ให้ตรวจสินค้าและ SKU ก่อน
-                แล้วค่อยตั้งค่าลูกค้าในเมนูช่องทางรับข้อมูลก่อนกดส่ง SML
+                แล้วค่อยตั้งค่าลูกค้าในเมนูเชื่อมต่อแพลตฟอร์มก่อนกดส่ง SML
                 <Button asChild variant="link" className="h-auto px-1 py-0 text-xs">
                   <Link to="/settings/channels">ไปตั้งค่าตอนนี้</Link>
                 </Button>

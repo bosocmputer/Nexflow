@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { Fragment, useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   LogOut,
@@ -23,7 +23,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useTheme } from '@/lib/theme'
 import { useUIStore } from '@/lib/ui-store'
 import { billSourceLabel, billStatusLabel } from '@/lib/labels'
-import { visibleNavItems } from '@/lib/navigation'
+import { visibleNavGroups } from '@/lib/navigation'
 import type { Bill } from '@/types'
 
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
@@ -55,7 +55,7 @@ export function CommandPalette({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const isAdmin = user?.role === 'admin'
-  const navItems = visibleNavItems(user?.role)
+  const navGroups = visibleNavGroups(user?.role)
 
   useEffect(() => {
     if (!open) return
@@ -149,23 +149,28 @@ export function CommandPalette({
       <CommandList>
         <CommandEmpty>ไม่พบรายการ</CommandEmpty>
 
-        <CommandGroup heading="ไปหน้า">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            return (
-              <CommandItem
-                key={item.to}
-                value={`nav ${item.label} ${item.to}`}
-                onSelect={() => go(item.to)}
-              >
-                <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
-              </CommandItem>
-            )
-          })}
-        </CommandGroup>
+        {navGroups.map((group, index) => (
+          <Fragment key={group.label}>
+            {index > 0 && <CommandSeparator />}
+            <CommandGroup heading={group.label}>
+              {group.items.map((item) => {
+                const Icon = item.icon
+                return (
+                  <CommandItem
+                    key={item.to}
+                    value={`nav ${group.label} ${item.label} ${item.to} ${item.hint ?? ''}`}
+                    onSelect={() => go(item.to)}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span>{item.label}</span>
+                  </CommandItem>
+                )
+              })}
+            </CommandGroup>
+          </Fragment>
+        ))}
 
-        <CommandSeparator />
+        {navGroups.length > 0 && <CommandSeparator />}
 
         <CommandGroup heading="คำสั่ง">
           {PHASE >= 2 && isAdmin && (

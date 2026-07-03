@@ -213,7 +213,7 @@ export default function Sidebar() {
       : '?'
 
   const navCollapsed = collapsed
-  const sidebarWidth = navCollapsed ? 'w-14' : 'w-60'
+  const sidebarWidth = navCollapsed ? 'w-14' : 'w-64'
   const navGroups = visibleNavGroups(user?.role)
 
   return (
@@ -252,15 +252,22 @@ export default function Sidebar() {
         <Separator />
 
         {/* Nav */}
-        <nav className="flex-1 overflow-y-auto p-2">
+        <nav className="flex-1 overflow-y-auto px-2 py-3">
           {navGroups.map((group, gi) => (
-            <div key={group.label} className={cn('flex flex-col gap-0.5', gi > 0 && 'mt-4')}>
+            <div
+              key={group.label}
+              className={cn(
+                'flex flex-col gap-1',
+                gi > 0 && 'mt-3 border-t border-sidebar-border/70 pt-3',
+              )}
+            >
               {!navCollapsed && (
-                <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-sidebar-foreground/50">
-                  {group.label}
+                <div className="flex items-center gap-2 px-2 pb-1.5 text-[11px] font-semibold text-sidebar-foreground/68">
+                  <span className="shrink-0">{group.label}</span>
+                  <span className="h-px min-w-4 flex-1 bg-sidebar-border/70" />
                 </div>
               )}
-              {navCollapsed && gi > 0 && <Separator className="my-2" />}
+              {navCollapsed && gi > 0 && <Separator className="my-1" />}
 
               {group.items.map((item) => {
                 const Icon = item.icon
@@ -463,7 +470,7 @@ function MobileNavDrawer({
 
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           {navGroups.map((group) => (
-            <div key={group.label} className="mb-5 last:mb-0">
+            <div key={group.label} className="border-t border-sidebar-border/70 py-4 first:border-t-0 first:pt-0 last:pb-0">
               <div className="px-2 pb-2 text-[12px] font-semibold text-sidebar-foreground/55">
                 {group.label}
               </div>
