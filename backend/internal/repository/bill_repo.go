@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -89,6 +90,8 @@ var platformSalesOrder = []string{"shopee", "lazada", "tiktok"}
 
 const platformSalesTimezone = "Asia/Bangkok"
 const platformSalesDefinition = "ยอดขายใน Nexflow: Shopee ใช้คำสั่งซื้อที่บันทึกใน Shopee Operations; Lazada/TikTok ใช้เอกสารขายใน Nexflow ไม่ใช่ยอดรับชำระหรือ payout"
+
+var ErrInvalidDashboardDateRange = errors.New("invalid dashboard date range")
 
 func NewBillRepo(db *sql.DB) *BillRepo {
 	return &BillRepo{db: db}
@@ -824,6 +827,18 @@ func (r *BillRepo) ApplyVerifiedMappingToOpenItems(source, billType, rawName, it
 
 // DashboardStats returns aggregated counts for dashboard
 func (r *BillRepo) DashboardStats() (map[string]interface{}, error) {
+	return r.dashboardStats(buildPlatformSalesWindow(time.Now()))
+}
+
+func (r *BillRepo) DashboardStatsForDateRange(fromDate, toDate string) (map[string]interface{}, error) {
+	window, err := buildPlatformSalesWindowForDateRange(time.Now(), fromDate, toDate)
+	if err != nil {
+		return nil, err
+	}
+	return r.dashboardStats(window)
+}
+
+func (r *BillRepo) dashboardStats(window platformSalesWindow) (map[string]interface{}, error) {
 	stats := map[string]interface{}{}
 
 	rows, err := r.db.Query(`SELECT status, COUNT(*) FROM bills GROUP BY status`)
@@ -925,15 +940,14 @@ func (r *BillRepo) DashboardStats() (map[string]interface{}, error) {
 		stats[q.key+"_failed"] = failedQ
 	}
 
-	if err := r.attachPlatformSalesDashboardStats(stats, time.Now()); err != nil {
+	if err := r.attachPlatformSalesDashboardStats(stats, window); err != nil {
 		return nil, err
 	}
 
 	return stats, nil
 }
 
-func (r *BillRepo) attachPlatformSalesDashboardStats(stats map[string]interface{}, now time.Time) error {
-	window := buildPlatformSalesWindow(now)
+func (r *BillRepo) attachPlatformSalesDashboardStats(stats map[string]interface{}, window platformSalesWindow) error {
 	summaries, err := r.platformSalesSummaries(window)
 	if err != nil {
 		return err
@@ -964,6 +978,56 @@ func buildPlatformSalesWindow(now time.Time) platformSalesWindow {
 		fromTime:    fromLocal,
 		toExclusive: toExclusiveLocal,
 	}
+}
+
+func buildPlatformSalesWindowForDateRange(now time.Time, fromDate, toDate string) (platformSalesWindow, error) {
+	fromDate = strings.TrimSpace(fromDate)
+	toDate = strings.TrimSpace(toDate)
+	if fromDate == "" && toDate == "" {
+		return buildPlatformSalesWindow(now), nil
+	}
+
+	loc, err := time.LoadLocation(platformSalesTimezone)
+	if err != nil {
+		loc = time.FixedZone("ICT", 7*60*60)
+	}
+	localNow := now.In(loc)
+	defaultFrom := time.Date(localNow.Year(), localNow.Month(), 1, 0, 0, 0, 0, loc)
+	defaultTo := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+
+	fromLocal := defaultFrom
+	if fromDate != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", fromDate, loc)
+		if err != nil {
+			return platformSalesWindow{}, fmt.Errorf("%w: from_date must be YYYY-MM-DD", ErrInvalidDashboardDateRange)
+		}
+		fromLocal = parsed
+	}
+
+	toLocal := defaultTo
+	if toDate != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", toDate, loc)
+		if err != nil {
+			return platformSalesWindow{}, fmt.Errorf("%w: to_date must be YYYY-MM-DD", ErrInvalidDashboardDateRange)
+		}
+		toLocal = parsed
+	}
+
+	if toLocal.Before(fromLocal) {
+		return platformSalesWindow{}, fmt.Errorf("%w: to_date must be on or after from_date", ErrInvalidDashboardDateRange)
+	}
+	if toLocal.Sub(fromLocal) > 366*24*time.Hour {
+		return platformSalesWindow{}, fmt.Errorf("%w: date range must be 366 days or less", ErrInvalidDashboardDateRange)
+	}
+
+	return platformSalesWindow{
+		timezone:    platformSalesTimezone,
+		fromDate:    fromLocal.Format("2006-01-02"),
+		toDate:      toLocal.Format("2006-01-02"),
+		todayDate:   toLocal.Format("2006-01-02"),
+		fromTime:    fromLocal,
+		toExclusive: toLocal.AddDate(0, 0, 1),
+	}, nil
 }
 
 func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platformSalesSummary, error) {

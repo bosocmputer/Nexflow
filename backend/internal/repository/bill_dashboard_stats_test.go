@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -111,6 +112,28 @@ func TestBuildPlatformSalesWindowUsesBangkokMonthAndToday(t *testing.T) {
 	}
 	if got := window.toExclusive.Sub(window.fromTime); got != 24*time.Hour {
 		t.Fatalf("window duration = %s, want 24h for first day", got)
+	}
+}
+
+func TestBuildPlatformSalesWindowForDateRangeUsesSelectedEndDate(t *testing.T) {
+	now := time.Date(2026, 6, 30, 18, 30, 0, 0, time.UTC)
+	window, err := buildPlatformSalesWindowForDateRange(now, "2026-06-15", "2026-06-20")
+	if err != nil {
+		t.Fatalf("buildPlatformSalesWindowForDateRange: %v", err)
+	}
+
+	if window.fromDate != "2026-06-15" || window.toDate != "2026-06-20" || window.todayDate != "2026-06-20" {
+		t.Fatalf("window dates = from %s to %s today %s", window.fromDate, window.toDate, window.todayDate)
+	}
+	if got := window.toExclusive.Sub(window.fromTime); got != 6*24*time.Hour {
+		t.Fatalf("window duration = %s, want inclusive 6-day range", got)
+	}
+}
+
+func TestBuildPlatformSalesWindowForDateRangeRejectsInvalidRange(t *testing.T) {
+	_, err := buildPlatformSalesWindowForDateRange(time.Now(), "2026-07-10", "2026-07-01")
+	if !errors.Is(err, ErrInvalidDashboardDateRange) {
+		t.Fatalf("error = %v, want ErrInvalidDashboardDateRange", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -68,8 +69,14 @@ func (h *DashboardHandler) SetSMLReadiness(checker *sml.ReadinessChecker) {
 // power both the /bills pending badge and the /messages unread badge with a
 // single poll instead of two.
 func (h *DashboardHandler) Stats(c *gin.Context) {
-	stats, err := h.billRepo.DashboardStats()
+	fromDate := c.Query("from_date")
+	toDate := c.Query("to_date")
+	stats, err := h.billRepo.DashboardStatsForDateRange(fromDate, toDate)
 	if err != nil {
+		if errors.Is(err, repository.ErrInvalidDashboardDateRange) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		h.log.Error("DashboardStats", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, CheckCircle2, ListChecks, ReceiptText } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, ReceiptText, RotateCcw } from 'lucide-react'
 import {
   CartesianGrid,
   Legend,
@@ -15,9 +15,10 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { PageHeader } from '@/components/common/PageHeader'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import client from '@/api/client'
-import { ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS } from '@/lib/featureFlags'
+import { ENABLE_SHOPEE_REALTIME_OPS } from '@/lib/featureFlags'
 import type { DashboardStats, PlatformKey, PlatformSalesStat } from '@/types'
 
 type SetupStatus = {
@@ -33,6 +34,11 @@ type PlatformMeta = {
   icon: string
   color: string
   softClass: string
+  to: string
+}
+
+type DashboardDateRange = {
+  from: string
   to: string
 }
 
@@ -70,35 +76,54 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [statsError, setStatsError] = useState(false)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
+  const [dateRange, setDateRange] = useState<DashboardDateRange>(() => defaultDashboardDateRange())
+  const dateRangeError = dashboardDateRangeError(dateRange)
 
   useEffect(() => {
-    Promise.all([
-      client
-        .get<DashboardStats>('/api/dashboard/stats')
-        .then((r) => {
-          setStats(r.data)
-          setStatsError(false)
-        })
-        .catch(() => {
-          setStatsError(true)
-          setStats(null)
-        }),
-      client
-        .get<SetupStatus>('/api/setup/status')
-        .then((r) => setSetupStatus(r.data))
-        .catch(() => null),
-    ]).finally(() => setLoading(false))
+    if (dateRangeError) {
+      setLoading(false)
+      return
+    }
+
+    let active = true
+    setLoading(true)
+    client
+      .get<DashboardStats>('/api/dashboard/stats', {
+        params: {
+          from_date: dateRange.from,
+          to_date: dateRange.to,
+        },
+      })
+      .then((r) => {
+        if (!active) return
+        setStats(r.data)
+        setStatsError(false)
+      })
+      .catch(() => {
+        if (!active) return
+        setStatsError(true)
+        setStats(null)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [dateRange.from, dateRange.to, dateRangeError])
+
+  useEffect(() => {
+    client
+      .get<SetupStatus>('/api/setup/status')
+      .then((r) => setSetupStatus(r.data))
+      .catch(() => null)
   }, [])
 
   const smlSetupIssue = setupStatus?.steps?.find((step) => step.key === 'instance' && !step.ready)
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="ยอดขายตามแพลตฟอร์ม"
-        description="ยอดขายเดือนนี้จาก Shopee, Lazada และ TikTok พร้อมงานที่ต้องจัดการต่อ"
-      />
-
       {smlSetupIssue && (
         <Card className="border-warning/35 bg-warning/[0.07] shadow-sm">
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -116,9 +141,16 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <PlatformSalesOverview stats={stats} loading={loading} error={statsError} />
+      <PlatformSalesOverview
+        stats={stats}
+        loading={loading}
+        error={statsError}
+        dateRange={dateRange}
+        dateRangeError={dateRangeError}
+        onDateRangeChange={setDateRange}
+        onResetDateRange={() => setDateRange(defaultDashboardDateRange())}
+      />
       <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
-      <ActionCenter stats={stats} setupStatus={setupStatus} loading={loading} />
     </div>
   )
 }
@@ -127,10 +159,18 @@ function PlatformSalesOverview({
   stats,
   loading,
   error,
+  dateRange,
+  dateRangeError,
+  onDateRangeChange,
+  onResetDateRange,
 }: {
   stats: DashboardStats | null
   loading: boolean
   error: boolean
+  dateRange: DashboardDateRange
+  dateRangeError: string
+  onDateRangeChange: (range: DashboardDateRange) => void
+  onResetDateRange: () => void
 }) {
   const platforms = platformStats(stats)
   const total = stats?.sales_mtd_total ?? 0
@@ -142,20 +182,31 @@ function PlatformSalesOverview({
   return (
     <section className="space-y-3" aria-label="ยอดขายตามแพลตฟอร์ม">
       <Card className="overflow-hidden border-border/70 shadow-sm">
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="gap-1 rounded-full px-2.5">
-              <ReceiptText className="h-3.5 w-3.5" />
-              ยอดขาย Nexflow
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              {meta ? `${formatShortDate(meta.from_date)} - ${formatShortDate(meta.to_date)} · ${meta.timezone}` : 'เดือนนี้ถึงวันนี้'}
-            </span>
+        <CardContent className="space-y-4 p-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="gap-1 rounded-full px-2.5">
+                  <ReceiptText className="h-3.5 w-3.5" />
+                  ยอดขาย Nexflow
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  {meta ? `${formatShortDate(meta.from_date)} - ${formatShortDate(meta.to_date)} · ${meta.timezone}` : 'เดือนนี้ถึงวันนี้'}
+                </span>
+              </div>
+              <div className="mt-2 text-sm font-medium text-muted-foreground">ยอดขายใน Nexflow ตามช่วงวันที่</div>
+            </div>
+            <DashboardDateFilter
+              range={dateRange}
+              error={dateRangeError}
+              loading={loading}
+              onChange={onDateRangeChange}
+              onReset={onResetDateRange}
+            />
           </div>
 
-          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-end">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-end">
             <div className="min-w-0">
-              <div className="text-sm font-medium text-muted-foreground">ยอดขายใน Nexflow เดือนนี้</div>
               <div className="mt-1 text-3xl font-semibold leading-tight tracking-normal text-foreground">
                 {loading ? '—' : formatCurrency(total)}
               </div>
@@ -164,9 +215,9 @@ function PlatformSalesOverview({
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <HeroMetric label="วันนี้" value={loading ? '—' : formatCurrency(today, true)} />
+              <HeroMetric label="วันสุดท้าย" value={loading ? '—' : formatCurrency(today, true)} />
               <HeroMetric label="ออเดอร์" value={loading ? '—' : formatCount(orders)} />
-              <HeroMetric label="ต้องจัดการ" value={loading ? '—' : formatCount(riskCount)} />
+              <HeroMetric label="รายการเสี่ยง" value={loading ? '—' : formatCount(riskCount)} />
             </div>
           </div>
         </CardContent>
@@ -195,6 +246,71 @@ function PlatformSalesOverview({
         ))}
       </div>
     </section>
+  )
+}
+
+function DashboardDateFilter({
+  range,
+  error,
+  loading,
+  onChange,
+  onReset,
+}: {
+  range: DashboardDateRange
+  error: string
+  loading: boolean
+  onChange: (range: DashboardDateRange) => void
+  onReset: () => void
+}) {
+  return (
+    <div className="w-full rounded-md border border-border/70 bg-background/70 p-2.5 xl:w-auto">
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <CalendarDays className="h-3.5 w-3.5" />
+        ช่วงวันที่
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,150px)_minmax(0,150px)_auto] sm:items-end">
+        <div className="space-y-1">
+          <Label htmlFor="dashboard-date-from" className="text-xs text-muted-foreground">
+            จากวันที่
+          </Label>
+          <Input
+            id="dashboard-date-from"
+            type="date"
+            value={range.from}
+            max={range.to || undefined}
+            onChange={(event) => onChange({ ...range, from: event.target.value })}
+            className="h-8 text-xs"
+            disabled={loading}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="dashboard-date-to" className="text-xs text-muted-foreground">
+            ถึงวันที่
+          </Label>
+          <Input
+            id="dashboard-date-to"
+            type="date"
+            value={range.to}
+            min={range.from || undefined}
+            onChange={(event) => onChange({ ...range, to: event.target.value })}
+            className="h-8 text-xs"
+            disabled={loading}
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5"
+          onClick={onReset}
+          disabled={loading || isDefaultDashboardDateRange(range)}
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          เดือนนี้
+        </Button>
+      </div>
+      {error && <div className="mt-2 text-xs text-destructive">{error}</div>}
+    </div>
   )
 }
 
@@ -230,7 +346,7 @@ function PlatformSalesCard({
             </span>
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{meta.label}</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">เดือนนี้</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">ตามช่วงวันที่</div>
             </div>
           </div>
           <Badge variant="outline" className={meta.softClass}>
@@ -242,7 +358,7 @@ function PlatformSalesCard({
           {loading ? '—' : formatCurrency(stat.total_amount)}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
-          <MiniMetric label="วันนี้" value={loading ? '—' : formatCurrency(stat.today_amount, true)} />
+          <MiniMetric label="วันสุดท้าย" value={loading ? '—' : formatCurrency(stat.today_amount, true)} />
           <MiniMetric label="ออเดอร์" value={loading ? '—' : formatCount(stat.order_count)} />
         </div>
       </div>
@@ -303,7 +419,7 @@ function PlatformSalesTrendCard({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-sm font-semibold">
           <BarChart3 className="h-4 w-4 text-accent-strong" />
-          ยอดรายวันเดือนนี้
+          ยอดรายวันตามช่วงวันที่
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -312,7 +428,7 @@ function PlatformSalesTrendCard({
         ) : error ? (
           <ChartEmptyState title="โหลดกราฟไม่ได้" description="ลองรีเฟรช หรือเปิดรายการจากเมนูแพลตฟอร์ม" />
         ) : !hasSales ? (
-          <ChartEmptyState title="ยังไม่มียอดขายในเดือนนี้" description="เมื่อมีข้อมูลจากแพลตฟอร์ม กราฟจะแสดงยอดรายวัน" />
+          <ChartEmptyState title="ยังไม่มียอดขายในช่วงวันที่นี้" description="เมื่อมีข้อมูลจากแพลตฟอร์ม กราฟจะแสดงยอดรายวัน" />
         ) : (
           <div className="h-[280px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -409,164 +525,6 @@ function PlatformTrendTooltip({ active, payload, label }: { active?: boolean; pa
   )
 }
 
-function ActionCenter({
-  stats,
-  setupStatus,
-  loading,
-}: {
-  stats: DashboardStats | null
-  setupStatus: SetupStatus | null
-  loading: boolean
-}) {
-  const purchaseNeedsReview = stats?.purchase_needs_review ?? 0
-  const purchasePending = stats?.purchase_pending ?? 0
-  const purchaseFailed = stats?.purchase_failed ?? 0
-  const salesNeedsReview = stats?.sales_needs_review ?? 0
-  const salesPending = stats?.sales_pending ?? 0
-  const salesFailed = stats?.sales_failed ?? 0
-  const emailErrors = stats?.email_inbox_errors ?? 0
-  const totalBills = stats?.total_bills ?? 0
-  const coreSetupIssue = setupStatus?.steps?.find((step) => step.key === 'instance' && !step.ready)
-
-  const actions: Array<{
-    title: string
-    desc: string
-    to: string
-    cta: string
-    tone: 'danger' | 'warning' | 'primary'
-  }> = []
-
-  if (coreSetupIssue) {
-    actions.push({
-      title: 'ระบบหลักยังไม่พร้อม',
-      desc: coreSetupIssue.status,
-      to: '/setup',
-      cta: 'ตรวจ setup',
-      tone: 'warning',
-    })
-  }
-  if (emailErrors > 0) {
-    actions.push({
-      title: 'กล่องอีเมลมีปัญหา',
-      desc: `${formatCount(emailErrors)} กล่องต้องตรวจ`,
-      to: '/settings/email',
-      cta: 'ตรวจ email',
-      tone: 'danger',
-    })
-  }
-  if (purchaseFailed + salesFailed > 0) {
-    actions.push({
-      title: 'เอกสารส่ง SML ไม่สำเร็จ',
-      desc: `ซื้อ ${formatCount(purchaseFailed)} · ขาย ${formatCount(salesFailed)}`,
-      to: salesFailed > 0 && ENABLE_SALES_ORDERS ? '/sales-orders?status=failed' : '/bills?status=failed',
-      cta: 'แก้รายการ',
-      tone: 'danger',
-    })
-  }
-  if (purchaseNeedsReview + salesNeedsReview > 0) {
-    actions.push({
-      title: 'ต้องตรวจสินค้า/ข้อมูล',
-      desc: `ซื้อ ${formatCount(purchaseNeedsReview)} · ขาย ${formatCount(salesNeedsReview)}`,
-      to: '/mappings',
-      cta: 'ไปตรวจ',
-      tone: 'warning',
-    })
-  }
-  if (purchasePending + salesPending > 0) {
-    actions.push({
-      title: 'พร้อมส่งเข้า SML',
-      desc: `ซื้อ ${formatCount(purchasePending)} · ขาย ${formatCount(salesPending)}`,
-      to: salesPending > 0 && ENABLE_SALES_ORDERS ? '/sale-invoices?status=pending' : '/bills?status=pending',
-      cta: 'ไปส่ง',
-      tone: 'primary',
-    })
-  }
-  if (!loading && setupStatus?.ready && totalBills === 0) {
-    actions.push({
-      title: 'เริ่มนำเข้าข้อมูล',
-      desc: 'ยังไม่มีเอกสารในระบบ',
-      to: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? '/import/shopee' : '/settings/email',
-      cta: 'เริ่มงานแรก',
-      tone: 'primary',
-    })
-  }
-
-  const visible = actions.slice(0, 3)
-
-  return (
-    <Card className="rounded-lg border-border/70 shadow-sm">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <ListChecks className="h-4 w-4 text-accent-strong" />
-          งานที่ต้องจัดการต่อ
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {loading ? (
-          <div className="grid gap-2 md:grid-cols-3">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-16 rounded-md border border-border bg-muted/30" />
-            ))}
-          </div>
-        ) : visible.length === 0 ? (
-          <div className="flex items-start gap-2 rounded-md border border-success/25 bg-success/[0.06] px-3 py-2 text-xs">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-            <div>
-              <div className="font-medium text-foreground">ไม่มีงานเร่งด่วน</div>
-              <div className="mt-0.5 text-muted-foreground">ไม่มีค้างตรวจ, ค้างส่ง, ส่งไม่สำเร็จ หรือกล่องอีเมลมีปัญหา</div>
-            </div>
-          </div>
-        ) : (
-          <div className="grid gap-2 md:grid-cols-3">
-            {visible.map((action, index) => (
-              <ActionCenterItem key={action.title} index={index + 1} {...action} />
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function ActionCenterItem({
-  index,
-  title,
-  desc,
-  to,
-  cta,
-  tone,
-}: {
-  index: number
-  title: string
-  desc: string
-  to: string
-  cta: string
-  tone: 'danger' | 'warning' | 'primary'
-}) {
-  const toneCls = {
-    danger: 'border-destructive/30 bg-destructive/[0.05] text-destructive',
-    warning: 'border-warning/35 bg-warning/[0.06] text-warning',
-    primary: 'border-primary/25 bg-primary/[0.04] text-accent-strong',
-  }[tone]
-  return (
-    <Link to={to} className="group block rounded-md border border-border bg-card px-3 py-2.5 transition-colors hover:bg-accent/55">
-      <div className="flex items-start gap-3">
-        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${toneCls}`}>
-          {index}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">{desc}</div>
-          <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-link">
-            {cta}
-            <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-          </div>
-        </div>
-      </div>
-    </Link>
-  )
-}
-
 function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
   const byPlatform = new Map<PlatformKey, PlatformSalesStat>()
   for (const item of stats?.platform_sales ?? []) {
@@ -635,4 +593,36 @@ function platformLegendLabel(value: string): string {
   if (value === 'lazada_amount') return 'Lazada'
   if (value === 'tiktok_amount') return 'TikTok'
   return value
+}
+
+function defaultDashboardDateRange(): DashboardDateRange {
+  const today = new Date()
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1)
+  return {
+    from: formatDateInput(firstDay),
+    to: formatDateInput(today),
+  }
+}
+
+function isDefaultDashboardDateRange(range: DashboardDateRange): boolean {
+  const current = defaultDashboardDateRange()
+  return range.from === current.from && range.to === current.to
+}
+
+function dashboardDateRangeError(range: DashboardDateRange): string {
+  if (!range.from || !range.to) return 'กรุณาเลือกวันที่เริ่มต้นและวันที่สิ้นสุด'
+  if (range.from > range.to) return 'วันที่เริ่มต้นต้องไม่เกินวันที่สิ้นสุด'
+
+  const from = new Date(`${range.from}T00:00:00`)
+  const to = new Date(`${range.to}T00:00:00`)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 'รูปแบบวันที่ไม่ถูกต้อง'
+  if (to.getTime() - from.getTime() > 366 * 24 * 60 * 60 * 1000) return 'เลือกช่วงวันที่ได้ไม่เกิน 366 วัน'
+  return ''
+}
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
