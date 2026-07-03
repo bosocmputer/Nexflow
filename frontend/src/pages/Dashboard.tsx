@@ -31,8 +31,6 @@ type PlatformMeta = {
   key: PlatformKey
   label: string
   icon: string
-  iconBoxClass?: string
-  iconClass?: string
   color: string
   softClass: string
   to: string
@@ -42,7 +40,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   shopee: {
     key: 'shopee',
     label: 'Shopee',
-    icon: '/shopee-logo.svg',
+    icon: '/shopee2.svg',
     color: '#ee4d2d',
     softClass: 'bg-[#fff1eb] text-[#9f2f16] border-[#f3c4b6]',
     to: ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee',
@@ -50,9 +48,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   lazada: {
     key: 'lazada',
     label: 'Lazada',
-    icon: '/lazada.svg',
-    iconBoxClass: 'w-16',
-    iconClass: 'max-h-5 max-w-14',
+    icon: '/lazada2.png',
     color: '#1d3491',
     softClass: 'bg-[#e5ebff] text-link border-[#cbd7ff]',
     to: '/import/lazada',
@@ -60,7 +56,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   tiktok: {
     key: 'tiktok',
     label: 'TikTok',
-    icon: '/tiktok.svg',
+    icon: '/tiktok2.png',
     color: 'hsl(var(--foreground))',
     softClass: 'bg-muted text-foreground border-border',
     to: '/import/tiktok',
@@ -229,8 +225,8 @@ function PlatformSalesCard({
       <div>
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
-            <span className={`flex h-10 shrink-0 items-center justify-center rounded-md border border-border bg-background ${meta.iconBoxClass ?? 'w-10'}`}>
-              <img src={meta.icon} alt="" className={`${meta.iconClass ?? 'max-h-6 max-w-7'} object-contain`} />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+              <img src={meta.icon} alt="" className="h-8 w-8 object-contain" />
             </span>
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{meta.label}</div>
