@@ -67,7 +67,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
     key: 'tiktok',
     label: 'TikTok',
     icon: '/tiktok.svg',
-    color: '#111817',
+    color: 'hsl(var(--foreground))',
     softClass: 'bg-muted text-foreground border-border',
     to: '/import/tiktok',
   },
