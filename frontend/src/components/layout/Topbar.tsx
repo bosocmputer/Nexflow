@@ -28,6 +28,8 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
       ? 'ขายสินค้าและบริการ'
       : location.pathname.startsWith('/import/shopee')
         ? 'นำเข้า Shopee ย้อนหลัง'
+        : location.pathname.startsWith('/nextstep-marketplace')
+          ? 'NextStep Marketplace'
         : location.pathname.startsWith('/shopee-operations')
           ? 'คำสั่งซื้อ Shopee'
           : location.pathname.startsWith('/dashboard')

@@ -13,6 +13,7 @@ interface DateRangePickerProps {
   to: string
   onFromChange: (value: string) => void
   onToChange: (value: string) => void
+  onRangeChange?: (value: { from: string; to: string }) => void
   className?: string
   title?: string
   description?: string
@@ -226,6 +227,7 @@ export function DateRangePicker({
   to,
   onFromChange,
   onToChange,
+  onRangeChange,
   className,
   title = 'ช่วงวันที่',
   description = 'ใช้กรองประวัติการทำงานตามวันที่เกิดรายการ',
@@ -258,19 +260,26 @@ export function DateRangePicker({
     setToInput(displayDate(to))
   }, [to])
 
+  const commitRange = (next: { from: string; to: string }) => {
+    if (onRangeChange) {
+      onRangeChange(next)
+      return
+    }
+    onFromChange(next.from)
+    onToChange(next.to)
+  }
+
   const handleCalendarSelect = (date: string) => {
     if (selectingStep === 'from') {
-      onFromChange(date)
-      onToChange('')
+      commitRange({ from: date, to: '' })
       setSelectingStep('to')
       return
     }
 
     if (from && date < from) {
-      onToChange(from)
-      onFromChange(date)
+      commitRange({ from: date, to: from })
     } else {
-      onToChange(date)
+      commitRange({ from, to: date })
     }
     setSelectingStep('from')
     setHoverDate(null)
@@ -279,13 +288,13 @@ export function DateRangePicker({
   const handleFromInputChange = (value: string) => {
     setFromInput(value)
     const parsed = parseDateInput(value)
-    if (parsed !== null) onFromChange(parsed)
+    if (parsed !== null) commitRange({ from: parsed, to })
   }
 
   const handleToInputChange = (value: string) => {
     setToInput(value)
     const parsed = parseDateInput(value)
-    if (parsed !== null) onToChange(parsed)
+    if (parsed !== null) commitRange({ from, to: parsed })
   }
 
   const normalizeFromInput = () => {
@@ -331,8 +340,7 @@ export function DateRangePicker({
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const range = preset.getRange()
-                  onFromChange(range.from)
-                  onToChange(range.to)
+                  commitRange(range)
                   setCalendarMonth(dayjs(range.from).startOf('month'))
                   setSelectingStep('from')
                   setHoverDate(null)
@@ -396,8 +404,7 @@ export function DateRangePicker({
               size="sm"
               className="h-7 w-full text-xs"
               onClick={() => {
-                onFromChange('')
-                onToChange('')
+                commitRange({ from: '', to: '' })
                 setSelectingStep('from')
                 setHoverDate(null)
               }}

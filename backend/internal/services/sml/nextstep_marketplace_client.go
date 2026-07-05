@@ -49,6 +49,7 @@ type NextStepMarketplaceRequest struct {
 	CustCode string
 	DateFrom string
 	DateTo   string
+	Search   string
 	Page     int
 	Size     int
 }
@@ -106,6 +107,7 @@ type NextStepMarketplaceMeta struct {
 	DateTo    string `json:"date_to"`
 	DateBasis string `json:"date_basis"`
 	Source    string `json:"source"`
+	Search    string `json:"search,omitempty"`
 	Page      int    `json:"page"`
 	Size      int    `json:"size"`
 	Total     int    `json:"total"`
@@ -150,6 +152,9 @@ func (c *NextStepMarketplaceClient) Fetch(ctx context.Context, req NextStepMarke
 	q.Set("cust_code", custCode)
 	q.Set("date_from", strings.TrimSpace(req.DateFrom))
 	q.Set("date_to", strings.TrimSpace(req.DateTo))
+	if search := strings.TrimSpace(req.Search); search != "" {
+		q.Set("search", search)
+	}
 	q.Set("page", fmt.Sprintf("%d", page))
 	q.Set("size", fmt.Sprintf("%d", size))
 	u.RawQuery = q.Encode()

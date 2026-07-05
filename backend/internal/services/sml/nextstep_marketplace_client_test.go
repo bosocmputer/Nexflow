@@ -26,8 +26,11 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 		if got := r.URL.Query().Get("date_from"); got != "2026-07-01" {
 			t.Fatalf("date_from = %q", got)
 		}
+		if got := r.URL.Query().Get("search"); got != "MQT2607" {
+			t.Fatalf("search = %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"meta":{"tenant":"aoy","cust_code":"C001","doc_prefix":"MQT","date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","page":1,"size":5,"total":1}}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"meta":{"tenant":"aoy","cust_code":"C001","doc_prefix":"MQT","date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","page":1,"size":5,"total":1}}}`))
 	}))
 	defer srv.Close()
 
@@ -41,6 +44,7 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 		CustCode: "C001",
 		DateFrom: "2026-07-01",
 		DateTo:   "2026-07-03",
+		Search:   "MQT2607",
 		Page:     1,
 		Size:     5,
 	})

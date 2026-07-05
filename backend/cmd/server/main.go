@@ -565,6 +565,7 @@ func main() {
 		api.GET("/dashboard/stats", dashH.Stats)
 		api.GET("/dashboard/insights", dashH.Insights)
 		api.POST("/dashboard/insights/generate", middleware.RequireRole("admin"), dashH.GenerateInsight)
+		api.GET("/nextstep-marketplace/orders", middleware.RequireRole("admin", "staff"), dashH.NextStepMarketplaceOrders)
 
 		// Settings
 		api.GET("/settings/status", dashH.SettingsStatus)

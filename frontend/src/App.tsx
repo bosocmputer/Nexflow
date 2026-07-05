@@ -3,6 +3,7 @@ import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import NextStepMarketplace from './pages/NextStepMarketplace'
 import Bills from './pages/Bills'
 import BillDetail from './pages/BillDetail'
 import Import from './pages/Import'
@@ -64,6 +65,7 @@ export default function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="setup" element={<SetupCenter />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="nextstep-marketplace" element={<NextStepMarketplace />} />
           <Route path="bills" element={<Bills mode="purchase-order" />} />
           <Route path="sales-orders" element={ENABLE_SALES_ORDERS ? <Bills mode="sales-order" /> : <Navigate to="/dashboard" replace />} />
           <Route path="sale-invoices" element={ENABLE_SALES_ORDERS ? <Bills mode="sale-invoice" /> : <Navigate to="/dashboard" replace />} />

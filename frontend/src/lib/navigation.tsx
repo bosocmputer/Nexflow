@@ -74,7 +74,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ภาพรวมแพลตฟอร์ม',
     items: [
-      { to: '/dashboard', label: 'ยอดขายตามแพลตฟอร์ม', icon: LayoutDashboard, hint: 'ยอดเอกสารขาย Shopee, Lazada และ TikTok' },
+      { to: '/dashboard', label: 'ยอดขายตามแพลตฟอร์ม', icon: LayoutDashboard, hint: 'ยอดเอกสารขาย Shopee, Lazada, TikTok และ NextStep' },
+      { to: '/nextstep-marketplace', label: 'NextStep Marketplace', icon: Store, hint: 'ออเดอร์ MQT จาก SML marketplace' },
     ],
   },
   {

@@ -14,6 +14,7 @@ interface BreadcrumbDef {
 
 const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม' }, { label: 'ยอดขายตามแพลตฟอร์ม' }] },
+  { pattern: '/nextstep-marketplace', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม', href: '/dashboard' }, { label: 'NextStep Marketplace' }] },
   { pattern: '/setup', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'สถานะพร้อมใช้งาน' }] },
   { pattern: '/bills', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งซื้อ' }] },
   { pattern: '/sales-orders', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย' }] },

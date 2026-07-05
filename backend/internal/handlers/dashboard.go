@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,7 +112,7 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	}
 	if c.Query("include_nextstep") == "1" {
 		from, to := dashboardDateRangeForNextStep(out, fromDate, toDate)
-		out["nextstep_marketplace"] = h.nextStepMarketplaceDashboard(c.Request.Context(), from, to)
+		out["nextstep_marketplace"] = h.nextStepMarketplaceState(c.Request.Context(), from, to, 1, 5, "")
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -139,7 +140,27 @@ func dashboardDateRangeForNextStep(stats map[string]interface{}, fromDate, toDat
 	return fromDate, toDate
 }
 
-func (h *DashboardHandler) nextStepMarketplaceDashboard(ctx context.Context, fromDate, toDate string) gin.H {
+// NextStepMarketplaceOrders proxies SML marketplace MQT orders for the
+// authenticated Nexflow UI. It soft-fails into a state object so the page can
+// still render filters and setup actions when SML is unavailable.
+func (h *DashboardHandler) NextStepMarketplaceOrders(c *gin.Context) {
+	page := parsePositiveIntQuery(c, "page", 1)
+	size := parsePositiveIntQuery(c, "size", 20)
+	if size > 50 {
+		size = 50
+	}
+	state := h.nextStepMarketplaceState(
+		c.Request.Context(),
+		strings.TrimSpace(c.Query("from_date")),
+		strings.TrimSpace(c.Query("to_date")),
+		page,
+		size,
+		strings.TrimSpace(c.Query("search")),
+	)
+	c.JSON(http.StatusOK, state)
+}
+
+func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDate, toDate string, page, size int, search string) gin.H {
 	state := gin.H{
 		"configured": false,
 		"available":  false,
@@ -175,14 +196,16 @@ func (h *DashboardHandler) nextStepMarketplaceDashboard(ctx context.Context, fro
 		CustCode: custCode,
 		DateFrom: fromDate,
 		DateTo:   toDate,
-		Page:     1,
-		Size:     5,
+		Search:   search,
+		Page:     page,
+		Size:     size,
 	})
 	if err != nil {
 		h.log.Warn("nextstep marketplace dashboard fetch failed",
 			zap.String("cust_code", custCode),
 			zap.String("from_date", fromDate),
 			zap.String("to_date", toDate),
+			zap.String("search", search),
 			zap.Error(err),
 		)
 		state["error"] = "sml_unavailable"
@@ -195,6 +218,14 @@ func (h *DashboardHandler) nextStepMarketplaceDashboard(ctx context.Context, fro
 	state["orders"] = data.Orders
 	state["meta"] = data.Meta
 	return state
+}
+
+func parsePositiveIntQuery(c *gin.Context, key string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(c.Query(key)))
+	if err != nil || value < 1 {
+		return fallback
+	}
+	return value
 }
 
 // GET /api/dashboard/insights — returns last 7 daily insights

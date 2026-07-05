@@ -408,6 +408,7 @@ export interface NextStepMarketplaceMeta {
   date_to: string
   date_basis: string
   source: string
+  search?: string
   page: number
   size: number
   total: number
