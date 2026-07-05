@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search, Store } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search, Settings2, Store } from 'lucide-react'
 
 import client from '@/api/client'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
@@ -145,7 +145,13 @@ export default function NextStepMarketplace() {
             </div>
 
             <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
-              <div className="flex items-center justify-end gap-2">
+              <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+                <Button asChild variant="outline" size="sm" className="h-9 shrink-0 px-3">
+                  <Link to="/settings/instance" title="แก้ไข NextStep marketplace cust_code">
+                    <Settings2 className="mr-1.5 h-3.5 w-3.5" />
+                    แก้ไข cust_code
+                  </Link>
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
