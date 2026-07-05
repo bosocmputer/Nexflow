@@ -2,11 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw, Store } from 'lucide-react'
 import {
-  Bar,
   CartesianGrid,
-  ComposedChart,
-  Legend,
   Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -51,6 +49,15 @@ type ShareBreakdownItem = {
   sharePct: number
 }
 
+type SalesTrendSeriesKey = 'shopee_amount' | 'lazada_amount' | 'tiktok_amount' | 'nextstep_amount' | 'previous_total'
+
+type SalesTrendSeries = {
+  key: SalesTrendSeriesKey
+  label: string
+  color: string
+  dashed?: boolean
+}
+
 const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   shopee: {
     key: 'shopee',
@@ -81,6 +88,21 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
 const PLATFORM_ORDER: PlatformKey[] = ['shopee', 'lazada', 'tiktok']
 const NEXTSTEP_TREND_COLOR = '#0f766e'
 const COMPARISON_PREVIOUS_COLOR = '#64748b'
+const SALES_TREND_SERIES: SalesTrendSeries[] = [
+  { key: 'shopee_amount', label: 'Shopee', color: PLATFORM_META.shopee.color },
+  { key: 'lazada_amount', label: 'Lazada', color: PLATFORM_META.lazada.color },
+  { key: 'tiktok_amount', label: 'TikTok', color: PLATFORM_META.tiktok.color },
+  { key: 'nextstep_amount', label: 'NextStep', color: NEXTSTEP_TREND_COLOR },
+  { key: 'previous_total', label: 'ช่วงก่อนหน้า', color: COMPARISON_PREVIOUS_COLOR, dashed: true },
+]
+
+const DEFAULT_VISIBLE_TREND_SERIES: Record<SalesTrendSeriesKey, boolean> = {
+  shopee_amount: true,
+  lazada_amount: true,
+  tiktok_amount: true,
+  nextstep_amount: true,
+  previous_total: true,
+}
 
 export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -603,10 +625,18 @@ function SalesTrendCard({
   loading: boolean
   error: boolean
 }) {
+  const [visibleSeries, setVisibleSeries] = useState<Record<SalesTrendSeriesKey, boolean>>(DEFAULT_VISIBLE_TREND_SERIES)
   const data = salesTrendData(stats)
   const shareBreakdown = platformShareBreakdown(stats)
   const hasSales = data.some((point) => point.current_total > 0 || point.previous_total > 0)
+  const hasVisibleSeries = SALES_TREND_SERIES.some((series) => visibleSeries[series.key])
   const meta = stats?.platform_sales_meta
+  const toggleSeries = useCallback((key: SalesTrendSeriesKey) => {
+    setVisibleSeries((current) => ({
+      ...current,
+      [key]: !current[key],
+    }))
+  }, [])
 
   return (
     <Card className="rounded-lg border-border/70 shadow-sm">
@@ -624,27 +654,46 @@ function SalesTrendCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!error && (
+          <ChartSeriesToggle
+            series={SALES_TREND_SERIES}
+            visibleSeries={visibleSeries}
+            loading={loading}
+            onToggle={toggleSeries}
+          />
+        )}
+
         {loading ? (
           <div className="h-[260px] rounded-md bg-muted/35" />
         ) : error ? (
           <ChartEmptyState title="โหลดกราฟไม่ได้" description="ลองรีเฟรช หรือเปิดรายการจากเมนูแพลตฟอร์ม" />
+        ) : !hasVisibleSeries ? (
+          <ChartEmptyState title="ปิดเส้นกราฟทั้งหมด" description="เลือกช่องทางด้านบนเพื่อเปิดเส้นกราฟกลับมา" />
         ) : !hasSales ? (
           <ChartEmptyState title="ไม่มีข้อมูลช่วงนี้หรือช่วงก่อนหน้า" description="เมื่อมีเอกสารขายในช่วงวันที่ กราฟเทียบจะแสดงที่นี่" />
         ) : (
           <div className="h-[280px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
                 <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
-                <Tooltip content={<SalesTrendTooltip />} />
-                <Legend />
-                <Bar dataKey="shopee_amount" name="Shopee" stackId="current" fill={PLATFORM_META.shopee.color} maxBarSize={32} />
-                <Bar dataKey="lazada_amount" name="Lazada" stackId="current" fill={PLATFORM_META.lazada.color} maxBarSize={32} />
-                <Bar dataKey="tiktok_amount" name="TikTok" stackId="current" fill={PLATFORM_META.tiktok.color} maxBarSize={32} />
-                <Bar dataKey="nextstep_amount" name="NextStep Marketplace" stackId="current" fill={NEXTSTEP_TREND_COLOR} maxBarSize={32} />
-                <Line type="monotone" dataKey="previous_total" name="ช่วงก่อนหน้า" stroke={COMPARISON_PREVIOUS_COLOR} strokeWidth={2.25} strokeDasharray="5 5" dot={false} activeDot={{ r: 4 }} />
-              </ComposedChart>
+                <Tooltip content={<SalesTrendTooltip visibleSeries={visibleSeries} />} />
+                {SALES_TREND_SERIES.filter((series) => visibleSeries[series.key]).map((series) => (
+                  <Line
+                    key={series.key}
+                    type="monotone"
+                    dataKey={series.key}
+                    name={series.label}
+                    stroke={series.color}
+                    strokeWidth={series.dashed ? 2.4 : 2.2}
+                    strokeDasharray={series.dashed ? '5 5' : undefined}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
             </ResponsiveContainer>
           </div>
         )}
@@ -699,6 +748,57 @@ function PlatformShareBreakdown({
   )
 }
 
+function ChartSeriesToggle({
+  series,
+  visibleSeries,
+  loading,
+  onToggle,
+}: {
+  series: SalesTrendSeries[]
+  visibleSeries: Record<SalesTrendSeriesKey, boolean>
+  loading: boolean
+  onToggle: (key: SalesTrendSeriesKey) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {series.map((item) => {
+        const active = visibleSeries[item.key]
+        return (
+          <button
+            key={item.key}
+            type="button"
+            aria-pressed={active}
+            disabled={loading}
+            onClick={() => onToggle(item.key)}
+            className={cn(
+              'inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors',
+              active
+                ? 'border-border bg-background text-foreground shadow-sm'
+                : 'border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60',
+              loading && 'cursor-not-allowed opacity-60',
+            )}
+          >
+            <span className="relative h-2.5 w-5 shrink-0">
+              <span
+                className={cn('absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2', item.dashed && 'border-t border-dashed bg-transparent')}
+                style={{
+                  backgroundColor: item.dashed ? 'transparent' : item.color,
+                  borderColor: item.dashed ? item.color : undefined,
+                }}
+              />
+              <span
+                className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+                style={{ backgroundColor: item.color }}
+              />
+            </span>
+            <span>{item.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function ChartEmptyState({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex min-h-[220px] items-center justify-center rounded-md border border-dashed border-border bg-muted/20 px-4 text-center">
@@ -725,21 +825,28 @@ function SalesTrendTooltip({
   active,
   payload,
   label,
+  visibleSeries,
 }: {
   active?: boolean
   payload?: Array<{ payload?: SalesTrendPoint }>
   label?: string
+  visibleSeries: Record<SalesTrendSeriesKey, boolean>
 }) {
   if (!active || !payload?.length) return null
   const point = payload[0]?.payload
   if (!point) return null
 
-  const rows = [
-    { key: 'shopee', label: 'Shopee', amount: point.shopee_amount, color: PLATFORM_META.shopee.color },
-    { key: 'lazada', label: 'Lazada', amount: point.lazada_amount, color: PLATFORM_META.lazada.color },
-    { key: 'tiktok', label: 'TikTok', amount: point.tiktok_amount, color: PLATFORM_META.tiktok.color },
-    { key: 'nextstep', label: 'NextStep Marketplace', amount: point.nextstep_amount, color: NEXTSTEP_TREND_COLOR },
-  ]
+  const rows = SALES_TREND_SERIES
+    .filter((series) => visibleSeries[series.key])
+    .map((series) => ({
+      key: series.key,
+      label: series.label,
+      amount: Number(point[series.key] || 0),
+      color: series.color,
+      dashed: series.dashed,
+    }))
+  const showCurrentTotal = ['shopee_amount', 'lazada_amount', 'tiktok_amount', 'nextstep_amount']
+    .some((key) => visibleSeries[key as SalesTrendSeriesKey])
 
   return (
     <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
@@ -751,22 +858,28 @@ function SalesTrendTooltip({
         {rows.map((item) => (
           <div key={item.key} className="flex min-w-[220px] items-center justify-between gap-4">
             <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="relative h-2 w-4 shrink-0">
+                <span
+                  className={cn('absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2', item.dashed && 'border-t border-dashed bg-transparent')}
+                  style={{
+                    backgroundColor: item.dashed ? 'transparent' : item.color,
+                    borderColor: item.dashed ? item.color : undefined,
+                  }}
+                />
+              </span>
               <span className="truncate">{item.label}</span>
             </span>
             <span className="font-medium tabular-nums text-foreground">{formatCurrency(item.amount, true)}</span>
           </div>
         ))}
-        <div className="mt-1 border-t border-border pt-1">
-          <div className="flex min-w-[220px] items-center justify-between gap-4">
-            <span className="font-medium text-popover-foreground">รวมช่วงที่เลือก</span>
-            <span className="font-semibold tabular-nums text-popover-foreground">{formatCurrency(point.current_total, true)}</span>
+        {showCurrentTotal && (
+          <div className="mt-1 border-t border-border pt-1">
+            <div className="flex min-w-[220px] items-center justify-between gap-4">
+              <span className="font-medium text-popover-foreground">รวมช่วงที่เลือก</span>
+              <span className="font-semibold tabular-nums text-popover-foreground">{formatCurrency(point.current_total, true)}</span>
+            </div>
           </div>
-          <div className="mt-1 flex min-w-[220px] items-center justify-between gap-4">
-            <span className="text-muted-foreground">ช่วงก่อนหน้า</span>
-            <span className="font-medium tabular-nums text-foreground">{formatCurrency(point.previous_total, true)}</span>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   )
