@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -112,7 +113,13 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	}
 	if c.Query("include_nextstep") == "1" {
 		from, to := dashboardDateRangeForNextStep(out, fromDate, toDate)
-		out["nextstep_marketplace"] = h.nextStepMarketplaceState(c.Request.Context(), from, to, 1, 5, "")
+		state := h.nextStepMarketplaceState(c.Request.Context(), from, to, 1, 5, "", false)
+		if state["available"] == true {
+			if previousFrom, previousTo := dashboardPreviousDateRange(out); previousFrom != "" && previousTo != "" {
+				h.attachPreviousNextStepMarketplaceState(c.Request.Context(), state, previousFrom, previousTo)
+			}
+		}
+		out["nextstep_marketplace"] = state
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -140,6 +147,16 @@ func dashboardDateRangeForNextStep(stats map[string]interface{}, fromDate, toDat
 	return fromDate, toDate
 }
 
+func dashboardPreviousDateRange(stats map[string]interface{}) (string, string) {
+	meta, ok := stats["platform_sales_meta"].(map[string]interface{})
+	if !ok {
+		return "", ""
+	}
+	from, _ := meta["previous_from_date"].(string)
+	to, _ := meta["previous_to_date"].(string)
+	return strings.TrimSpace(from), strings.TrimSpace(to)
+}
+
 // NextStepMarketplaceOrders proxies SML marketplace MQT orders for the
 // authenticated Nexflow UI. It soft-fails into a state object so the page can
 // still render filters and setup actions when SML is unavailable.
@@ -156,11 +173,12 @@ func (h *DashboardHandler) NextStepMarketplaceOrders(c *gin.Context) {
 		page,
 		size,
 		strings.TrimSpace(c.Query("search")),
+		true,
 	)
 	c.JSON(http.StatusOK, state)
 }
 
-func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDate, toDate string, page, size int, search string) gin.H {
+func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDate, toDate string, page, size int, search string, includeOrders bool) gin.H {
 	state := gin.H{
 		"configured": false,
 		"available":  false,
@@ -193,12 +211,13 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	data, err := h.nextStepMarketplace.Fetch(reqCtx, sml.NextStepMarketplaceRequest{
-		CustCode: custCode,
-		DateFrom: fromDate,
-		DateTo:   toDate,
-		Search:   search,
-		Page:     page,
-		Size:     size,
+		CustCode:      custCode,
+		DateFrom:      fromDate,
+		DateTo:        toDate,
+		Search:        search,
+		Page:          page,
+		Size:          size,
+		IncludeOrders: &includeOrders,
 	})
 	if err != nil {
 		h.log.Warn("nextstep marketplace dashboard fetch failed",
@@ -216,8 +235,46 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 	state["message"] = "พร้อมใช้งาน"
 	state["summary"] = data.Summary
 	state["orders"] = data.Orders
+	state["trend"] = data.Trend
 	state["meta"] = data.Meta
 	return state
+}
+
+func (h *DashboardHandler) attachPreviousNextStepMarketplaceState(ctx context.Context, state gin.H, fromDate, toDate string) {
+	previous := h.nextStepMarketplaceState(ctx, fromDate, toDate, 1, 1, "", false)
+	state["previous_available"] = previous["available"] == true
+	if previous["available"] != true {
+		state["previous_error"] = previous["error"]
+		state["previous_message"] = previous["message"]
+		return
+	}
+	state["previous_summary"] = previous["summary"]
+	state["previous_trend"] = previous["trend"]
+	state["previous_meta"] = previous["meta"]
+
+	currentTotal := nextStepSummaryTotal(state["summary"])
+	previousTotal := nextStepSummaryTotal(previous["summary"])
+	state["change_pct"] = dashboardSalesChangePct(currentTotal, previousTotal)
+}
+
+func nextStepSummaryTotal(value interface{}) float64 {
+	switch v := value.(type) {
+	case sml.NextStepMarketplaceSummary:
+		return v.TotalAmount
+	case map[string]interface{}:
+		if n, ok := v["total_amount"].(float64); ok {
+			return n
+		}
+	}
+	return 0
+}
+
+func dashboardSalesChangePct(current, previous float64) *float64 {
+	if previous <= 0 {
+		return nil
+	}
+	pct := math.Round(((current-previous)/previous*100)*10) / 10
+	return &pct
 }
 
 func parsePositiveIntQuery(c *gin.Context, key string, fallback int) int {

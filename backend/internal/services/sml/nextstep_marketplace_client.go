@@ -46,12 +46,13 @@ func (c *NextStepMarketplaceClient) IsConfigured() bool {
 }
 
 type NextStepMarketplaceRequest struct {
-	CustCode string
-	DateFrom string
-	DateTo   string
-	Search   string
-	Page     int
-	Size     int
+	CustCode      string
+	DateFrom      string
+	DateTo        string
+	Search        string
+	Page          int
+	Size          int
+	IncludeOrders *bool
 }
 
 type NextStepMarketplaceData struct {
@@ -163,6 +164,9 @@ func (c *NextStepMarketplaceClient) Fetch(ctx context.Context, req NextStepMarke
 	}
 	q.Set("page", fmt.Sprintf("%d", page))
 	q.Set("size", fmt.Sprintf("%d", size))
+	if req.IncludeOrders != nil {
+		q.Set("include_orders", fmt.Sprintf("%t", *req.IncludeOrders))
+	}
 	u.RawQuery = q.Encode()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)

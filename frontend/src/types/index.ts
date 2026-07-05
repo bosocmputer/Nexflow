@@ -314,6 +314,7 @@ export interface DashboardStats {
   sales_mtd_order_count?: number
   platform_sales?: PlatformSalesStat[]
   platform_sales_trend?: PlatformSalesTrendPoint[]
+  sales_comparison_trend?: SalesComparisonTrendPoint[]
   platform_sales_meta?: PlatformSalesMeta
   nextstep_marketplace?: NextStepMarketplaceState
 }
@@ -343,6 +344,13 @@ export interface PlatformSalesTrendPoint {
   nextstep_amount?: number
 }
 
+export interface SalesComparisonTrendPoint {
+  date: string
+  previous_date: string
+  current_total: number
+  previous_total: number
+}
+
 export interface PlatformSalesMeta {
   timezone: string
   from_date: string
@@ -358,9 +366,16 @@ export interface NextStepMarketplaceState {
   error?: string
   message?: string
   summary?: NextStepMarketplaceSummary
+  previous_summary?: NextStepMarketplaceSummary
   orders?: NextStepMarketplaceOrder[]
   trend?: NextStepMarketplaceTrendPoint[]
+  previous_trend?: NextStepMarketplaceTrendPoint[]
   meta?: NextStepMarketplaceMeta
+  previous_meta?: NextStepMarketplaceMeta
+  previous_available?: boolean
+  previous_error?: string
+  previous_message?: string
+  change_pct?: number | null
 }
 
 export interface NextStepMarketplaceSummary {

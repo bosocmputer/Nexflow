@@ -60,6 +60,13 @@ type platformSalesTrendPoint struct {
 	TiktokAmount float64 `json:"tiktok_amount"`
 }
 
+type platformSalesComparisonTrendPoint struct {
+	Date          string  `json:"date"`
+	PreviousDate  string  `json:"previous_date"`
+	CurrentTotal  float64 `json:"current_total"`
+	PreviousTotal float64 `json:"previous_total"`
+}
+
 type platformSalesMeta struct {
 	Timezone         string `json:"timezone"`
 	FromDate         string `json:"from_date"`
@@ -965,7 +972,11 @@ func (r *BillRepo) attachPlatformSalesDashboardStats(stats map[string]interface{
 	if err != nil {
 		return err
 	}
-	applyPlatformSalesDashboardStats(stats, summaries, previousSummaries, trendRows, window)
+	previousTrendRows, err := r.platformSalesTrendRows(previousWindow)
+	if err != nil {
+		return err
+	}
+	applyPlatformSalesDashboardStats(stats, summaries, previousSummaries, trendRows, previousTrendRows, window)
 	return nil
 }
 
@@ -1262,6 +1273,7 @@ func applyPlatformSalesDashboardStats(
 	rawSummaries []platformSalesSummary,
 	rawPreviousSummaries []platformSalesSummary,
 	rawTrendRows []platformSalesTrendRow,
+	rawPreviousTrendRows []platformSalesTrendRow,
 	window platformSalesWindow,
 ) {
 	totalAmount := 0.0
@@ -1315,6 +1327,7 @@ func applyPlatformSalesDashboardStats(
 	stats["platform_sales"] = summaries
 	stats["platform_sales_trend"] = buildPlatformSalesTrend(rawTrendRows, window)
 	previousWindow := previousPlatformSalesWindow(window)
+	stats["sales_comparison_trend"] = buildPlatformSalesComparisonTrend(rawTrendRows, rawPreviousTrendRows, window, previousWindow)
 	stats["platform_sales_meta"] = platformSalesMeta{
 		Timezone:         window.timezone,
 		FromDate:         window.fromDate,
@@ -1359,6 +1372,46 @@ func buildPlatformSalesTrend(rows []platformSalesTrendRow, window platformSalesW
 		points = append(points, point)
 	}
 	return points
+}
+
+func buildPlatformSalesComparisonTrend(
+	currentRows []platformSalesTrendRow,
+	previousRows []platformSalesTrendRow,
+	window platformSalesWindow,
+	previousWindow platformSalesWindow,
+) []platformSalesComparisonTrendPoint {
+	currentByDate := totalPlatformSalesTrendByDate(currentRows)
+	previousByDate := totalPlatformSalesTrendByDate(previousRows)
+
+	from, errFrom := time.Parse("2006-01-02", window.fromDate)
+	to, errTo := time.Parse("2006-01-02", window.toDate)
+	previousFrom, errPreviousFrom := time.Parse("2006-01-02", previousWindow.fromDate)
+	if errFrom != nil || errTo != nil || errPreviousFrom != nil || to.Before(from) {
+		return []platformSalesComparisonTrendPoint{}
+	}
+
+	points := []platformSalesComparisonTrendPoint{}
+	offset := 0
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		currentDate := day.Format("2006-01-02")
+		previousDate := previousFrom.AddDate(0, 0, offset).Format("2006-01-02")
+		points = append(points, platformSalesComparisonTrendPoint{
+			Date:          currentDate,
+			PreviousDate:  previousDate,
+			CurrentTotal:  roundPlatformSalesMoney(currentByDate[currentDate]),
+			PreviousTotal: roundPlatformSalesMoney(previousByDate[previousDate]),
+		})
+		offset++
+	}
+	return points
+}
+
+func totalPlatformSalesTrendByDate(rows []platformSalesTrendRow) map[string]float64 {
+	byDate := map[string]float64{}
+	for _, row := range rows {
+		byDate[row.Date] += row.Amount
+	}
+	return byDate
 }
 
 func roundPlatformSalesMoney(v float64) float64 {

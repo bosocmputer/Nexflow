@@ -66,6 +66,10 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 			{Date: "2026-07-03", Platform: "shopee", Amount: 250},
 			{Date: "2026-07-03", Platform: "tiktok", Amount: 0},
 		},
+		[]platformSalesTrendRow{
+			{Date: "2026-06-28", Platform: "shopee", Amount: 1000},
+			{Date: "2026-06-30", Platform: "tiktok", Amount: 600},
+		},
 		window,
 	)
 
@@ -110,6 +114,23 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 	}
 	if points[1].Date != "2026-07-02" || points[1].ShopeeAmount != 0 || points[1].LazadaAmount != 0 || points[1].TiktokAmount != 0 {
 		t.Fatalf("missing-day trend point = %#v, want zero-filled 2026-07-02", points[1])
+	}
+
+	comparison, ok := stats["sales_comparison_trend"].([]platformSalesComparisonTrendPoint)
+	if !ok {
+		t.Fatalf("sales_comparison_trend = %#v (%T), want []platformSalesComparisonTrendPoint", stats["sales_comparison_trend"], stats["sales_comparison_trend"])
+	}
+	if len(comparison) != 3 {
+		t.Fatalf("comparison trend len = %d, want 3", len(comparison))
+	}
+	if comparison[0].Date != "2026-07-01" || comparison[0].PreviousDate != "2026-06-28" || comparison[0].CurrentTotal != 800 || comparison[0].PreviousTotal != 1000 {
+		t.Fatalf("comparison[0] = %#v, want aligned current/previous totals", comparison[0])
+	}
+	if comparison[1].Date != "2026-07-02" || comparison[1].PreviousDate != "2026-06-29" || comparison[1].CurrentTotal != 0 || comparison[1].PreviousTotal != 0 {
+		t.Fatalf("comparison[1] = %#v, want zero-filled current and previous day", comparison[1])
+	}
+	if comparison[2].Date != "2026-07-03" || comparison[2].PreviousDate != "2026-06-30" || comparison[2].CurrentTotal != 250 || comparison[2].PreviousTotal != 600 {
+		t.Fatalf("comparison[2] = %#v, want aligned current/previous totals", comparison[2])
 	}
 
 	meta, ok := stats["platform_sales_meta"].(platformSalesMeta)

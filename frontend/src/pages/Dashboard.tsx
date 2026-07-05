@@ -79,6 +79,8 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
 
 const PLATFORM_ORDER: PlatformKey[] = ['shopee', 'lazada', 'tiktok']
 const NEXTSTEP_TREND_COLOR = '#0f766e'
+const COMPARISON_CURRENT_COLOR = '#2563eb'
+const COMPARISON_PREVIOUS_COLOR = '#64748b'
 
 export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -199,6 +201,7 @@ export default function Dashboard() {
         onRefresh={refreshStats}
         onDateRangeChange={handleDateRangeChange}
       />
+      <SalesComparisonTrendCard stats={stats} loading={loading} error={statsError} />
       <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
     </div>
   )
@@ -224,9 +227,11 @@ function PlatformSalesOverview({
   onDateRangeChange: (range: DashboardDateRange) => void
 }) {
   const platforms = platformStats(stats)
-  const total = stats?.sales_mtd_total ?? 0
-  const today = stats?.sales_today_total ?? 0
-  const orders = stats?.sales_mtd_order_count ?? 0
+  const total = dashboardCurrentTotal(stats)
+  const previousTotal = dashboardPreviousTotal(stats)
+  const today = dashboardEndDateTotal(stats)
+  const orders = dashboardOrderCount(stats)
+  const changePct = dashboardChangePct(total, previousTotal)
   const riskCount = platforms.reduce((sum, p) => sum + p.needs_review_count + p.failed_count, 0)
   const meta = stats?.platform_sales_meta
 
@@ -281,8 +286,8 @@ function PlatformSalesOverview({
               <ComparisonLine
                 loading={loading}
                 current={total}
-                previous={stats?.sales_previous_total ?? 0}
-                changePct={stats?.sales_change_pct}
+                previous={previousTotal}
+                changePct={changePct}
                 previousFrom={meta?.previous_from_date}
                 previousTo={meta?.previous_to_date}
               />
@@ -320,7 +325,12 @@ function PlatformSalesOverview({
         {platforms.map((platform) => (
           <PlatformSalesCard key={platform.platform} stat={platform} loading={loading} />
         ))}
-        <NextStepSalesCard state={stats?.nextstep_marketplace} loading={loading} dateRange={dateRange} />
+        <NextStepSalesCard
+          state={stats?.nextstep_marketplace}
+          loading={loading}
+          dateRange={dateRange}
+          sharePct={nextStepSharePct(stats)}
+        />
       </div>
     </section>
   )
@@ -384,6 +394,9 @@ function ComparisonLine({
   const previousRange = previousFrom && previousTo
     ? ` (${formatShortDate(previousFrom)} - ${formatShortDate(previousTo)})`
     : ''
+  const previousLabel = previous > 0
+    ? `ก่อนหน้า ${formatCurrency(previous, compact)}${compact ? '' : previousRange}`
+    : `ไม่มีข้อมูลช่วงก่อนหน้า${compact ? '' : previousRange}`
 
   return (
     <div className={cn('mt-1.5 flex flex-wrap items-center gap-2 text-xs', compact && 'mt-1')}>
@@ -397,8 +410,8 @@ function ComparisonLine({
       >
         {loading ? '—' : label}
       </span>
-      <span className="text-muted-foreground">
-        เทียบช่วงก่อนหน้า{compact ? '' : previousRange}
+      <span className="text-muted-foreground tabular-nums">
+        {loading ? 'เทียบช่วงก่อนหน้า' : previousLabel}
       </span>
     </div>
   )
@@ -483,10 +496,12 @@ function NextStepSalesCard({
   state,
   loading,
   dateRange,
+  sharePct,
 }: {
   state?: NextStepMarketplaceState
   loading: boolean
   dateRange: DashboardDateRange
+  sharePct: number
 }) {
   const summary = state?.summary
   const statusCounts = summary?.status_counts ?? {}
@@ -514,13 +529,20 @@ function NextStepSalesCard({
             </div>
           </div>
           <Badge variant="outline" className="bg-muted text-foreground">
-            {loading ? '—' : state?.configured ? 'SML MQT' : 'ตั้งค่า'}
+            {loading ? '—' : state?.available ? formatPercent(sharePct) : state?.configured ? 'SML MQT' : 'ตั้งค่า'}
           </Badge>
         </div>
 
         <div className="mt-4 text-2xl font-semibold tabular-nums text-foreground">
           {loading ? '—' : formatCurrency(summary?.total_amount ?? 0)}
         </div>
+        <ComparisonLine
+          loading={loading}
+          current={summary?.total_amount ?? 0}
+          previous={state?.previous_summary?.total_amount ?? 0}
+          changePct={state?.change_pct}
+          compact
+        />
         <div className="mt-1.5 text-xs leading-5 text-muted-foreground">
           {state?.available ? 'ยอดจากเอกสาร MQT ใน SML' : state?.message || 'ข้อมูลจาก SML marketplace'}
         </div>
@@ -570,6 +592,61 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate text-sm font-semibold tabular-nums">{value}</div>
     </div>
+  )
+}
+
+function SalesComparisonTrendCard({
+  stats,
+  loading,
+  error,
+}: {
+  stats: DashboardStats | null
+  loading: boolean
+  error: boolean
+}) {
+  const data = salesComparisonTrendData(stats)
+  const hasSales = data.some((point) => point.current_total > 0 || point.previous_total > 0)
+  const meta = stats?.platform_sales_meta
+
+  return (
+    <Card className="rounded-lg border-border/70 shadow-sm">
+      <CardHeader className="pb-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+            <BarChart3 className="h-4 w-4 text-accent-strong" />
+            ยอดขายเทียบช่วงก่อนหน้า
+          </CardTitle>
+          {meta?.previous_from_date && meta.previous_to_date && (
+            <div className="text-xs text-muted-foreground">
+              เทียบ {formatShortDate(meta.previous_from_date)} - {formatShortDate(meta.previous_to_date)}
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="h-[260px] rounded-md bg-muted/35" />
+        ) : error ? (
+          <ChartEmptyState title="โหลดกราฟเทียบไม่ได้" description="ลองรีเฟรช หรือเปิดรายการจากเมนูแพลตฟอร์ม" />
+        ) : !hasSales ? (
+          <ChartEmptyState title="ไม่มีข้อมูลช่วงนี้หรือช่วงก่อนหน้า" description="เมื่อมีเอกสารขายในช่วงวันที่ กราฟเทียบจะแสดงที่นี่" />
+        ) : (
+          <div className="h-[280px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
+                <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
+                <Tooltip content={<SalesComparisonTooltip />} />
+                <Legend />
+                <Line type="monotone" dataKey="current_total" name="ช่วงที่เลือก" stroke={COMPARISON_CURRENT_COLOR} strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="previous_total" name="ช่วงก่อนหน้า" stroke={COMPARISON_PREVIOUS_COLOR} strokeWidth={2.25} strokeDasharray="5 5" dot={false} activeDot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -697,6 +774,54 @@ function PlatformTrendTooltip({ active, payload, label }: { active?: boolean; pa
   )
 }
 
+function SalesComparisonTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: Array<{ name?: string; value?: number; dataKey?: string; payload?: { previous_date?: string } }>
+  label?: string
+}) {
+  if (!active || !payload?.length) return null
+  const previousDate = payload[0]?.payload?.previous_date
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
+      <div className="mb-1 font-medium text-popover-foreground">
+        {formatShortDate(String(label ?? ''))}
+        {previousDate ? ` เทียบกับ ${formatShortDate(previousDate)}` : ''}
+      </div>
+      <div className="space-y-1">
+        {payload.map((item) => (
+          <div key={item.dataKey} className="flex min-w-[190px] items-center justify-between gap-4">
+            <span className="text-muted-foreground">{item.name}</span>
+            <span className="font-medium tabular-nums text-foreground">{formatCurrency(Number(item.value ?? 0), true)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function salesComparisonTrendData(stats: DashboardStats | null) {
+  const currentNextStepByDate = new Map<string, number>()
+  const previousNextStepByDate = new Map<string, number>()
+
+  for (const point of stats?.nextstep_marketplace?.trend ?? []) {
+    currentNextStepByDate.set(point.date, Number(point.total_amount || 0))
+  }
+  for (const point of stats?.nextstep_marketplace?.previous_trend ?? []) {
+    previousNextStepByDate.set(point.date, Number(point.total_amount || 0))
+  }
+
+  return (stats?.sales_comparison_trend ?? []).map((point) => ({
+    date: point.date,
+    previous_date: point.previous_date,
+    current_total: Number(point.current_total || 0) + Number(currentNextStepByDate.get(point.date) ?? 0),
+    previous_total: Number(point.previous_total || 0) + Number(previousNextStepByDate.get(point.previous_date) ?? 0),
+  }))
+}
+
 function platformTrendData(stats: DashboardStats | null) {
   const byDate = new Map<string, {
     date: string
@@ -759,14 +884,60 @@ function platformShareBreakdown(stats: DashboardStats | null): { items: ShareBre
   }
 }
 
+function dashboardCurrentTotal(stats: DashboardStats | null): number {
+  return Number(stats?.sales_mtd_total ?? 0) + nextStepCurrentTotal(stats)
+}
+
+function dashboardPreviousTotal(stats: DashboardStats | null): number {
+  return Number(stats?.sales_previous_total ?? 0) + nextStepPreviousTotal(stats)
+}
+
+function dashboardOrderCount(stats: DashboardStats | null): number {
+  const nextStepOrders = stats?.nextstep_marketplace?.available
+    ? Number(stats.nextstep_marketplace.summary?.total_orders ?? 0)
+    : 0
+  return Number(stats?.sales_mtd_order_count ?? 0) + nextStepOrders
+}
+
+function dashboardEndDateTotal(stats: DashboardStats | null): number {
+  const endDate = stats?.platform_sales_meta?.to_date
+  const nextStepEndDateAmount = stats?.nextstep_marketplace?.available
+    ? Number((stats.nextstep_marketplace.trend ?? []).find((point) => point.date === endDate)?.total_amount ?? 0)
+    : 0
+  return Number(stats?.sales_today_total ?? 0) + nextStepEndDateAmount
+}
+
+function dashboardChangePct(current: number, previous: number): number | null {
+  if (previous <= 0) return null
+  return Math.round(((current - previous) / previous * 100) * 10) / 10
+}
+
+function nextStepCurrentTotal(stats: DashboardStats | null): number {
+  return stats?.nextstep_marketplace?.available
+    ? Number(stats.nextstep_marketplace.summary?.total_amount ?? 0)
+    : 0
+}
+
+function nextStepPreviousTotal(stats: DashboardStats | null): number {
+  return stats?.nextstep_marketplace?.available
+    ? Number(stats.nextstep_marketplace.previous_summary?.total_amount ?? 0)
+    : 0
+}
+
+function nextStepSharePct(stats: DashboardStats | null): number {
+  const total = dashboardCurrentTotal(stats)
+  return total > 0 ? nextStepCurrentTotal(stats) / total * 100 : 0
+}
+
 function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
   const byPlatform = new Map<PlatformKey, PlatformSalesStat>()
   for (const item of stats?.platform_sales ?? []) {
     byPlatform.set(item.platform, item)
   }
+  const total = dashboardCurrentTotal(stats)
   return PLATFORM_ORDER.map((platform) => {
     const meta = PLATFORM_META[platform]
-    return byPlatform.get(platform) ?? {
+    const item = byPlatform.get(platform) ?? {
       platform,
       label: meta.label,
       total_amount: 0,
@@ -779,6 +950,10 @@ function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
       needs_review_count: 0,
       failed_count: 0,
       share_pct: 0,
+    }
+    return {
+      ...item,
+      share_pct: total > 0 ? Number(item.total_amount || 0) / total * 100 : 0,
     }
   })
 }
