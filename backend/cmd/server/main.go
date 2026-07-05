@@ -129,6 +129,13 @@ func main() {
 		ConfigFile: cfg.ShopeeSMLConfigFile,
 		Database:   cfg.ShopeeSMLDatabase,
 	}, logger)
+	nextStepMarketplaceClient := sml.NewNextStepMarketplaceClient(sml.PartyConfig{
+		BaseURL:    cfg.ShopeeSMLURL,
+		GUID:       cfg.ShopeeSMLGUID,
+		Provider:   cfg.ShopeeSMLProvider,
+		ConfigFile: cfg.ShopeeSMLConfigFile,
+		Database:   cfg.ShopeeSMLDatabase,
+	}, logger)
 	setupH := handlers.NewSetupHandler(db, cfg, appSettingsRepo, auditLogRepo, smlReadiness, logger)
 
 	// Services
@@ -367,6 +374,7 @@ func main() {
 	mappingH := handlers.NewMappingHandler(mappingRepo, mapperSvc, catalogRepo, auditLogRepo, logger)
 	dashH := handlers.NewDashboardHandler(billRepo, insightRepo, chatConvRepo, imapAccountRepo, lineOARepo, insightSvc, logger)
 	dashH.SetSMLReadiness(smlReadiness)
+	dashH.SetNextStepMarketplace(nextStepMarketplaceClient, appSettingsRepo)
 	imapConfigured := false
 	if accs, err := imapAccountRepo.ListEnabled(); err == nil && len(accs) > 0 {
 		imapConfigured = true

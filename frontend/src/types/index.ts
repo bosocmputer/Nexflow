@@ -315,6 +315,7 @@ export interface DashboardStats {
   platform_sales?: PlatformSalesStat[]
   platform_sales_trend?: PlatformSalesTrendPoint[]
   platform_sales_meta?: PlatformSalesMeta
+  nextstep_marketplace?: NextStepMarketplaceState
 }
 
 export type PlatformKey = 'shopee' | 'lazada' | 'tiktok'
@@ -348,6 +349,68 @@ export interface PlatformSalesMeta {
   previous_from_date?: string
   previous_to_date?: string
   definition: string
+}
+
+export interface NextStepMarketplaceState {
+  configured: boolean
+  available: boolean
+  error?: string
+  message?: string
+  summary?: NextStepMarketplaceSummary
+  orders?: NextStepMarketplaceOrder[]
+  meta?: NextStepMarketplaceMeta
+}
+
+export interface NextStepMarketplaceSummary {
+  total_orders: number
+  total_amount: number
+  cn_total_amount: number
+  total_except_vat?: number
+  total_after_vat?: number
+  total_vat_value?: number
+  status_counts: Record<string, number>
+  pending_count?: number
+  packing_count?: number
+  payment_count?: number
+  success_count?: number
+  cancel_count?: number
+}
+
+export interface NextStepMarketplaceOrder {
+  remark_5?: string
+  inv_doc_no?: string
+  inv_doc_date?: string
+  wallet_amount?: number
+  remark_qt?: string
+  remark_cancel?: string
+  remark_inv?: string
+  doc_no: string
+  doc_date: string
+  doc_time?: string
+  cust_code?: string
+  send_type?: number
+  emp_code?: string
+  emp_name?: string
+  total_amount: number
+  cn_total_amount?: number
+  total_except_vat?: number
+  total_after_vat?: number
+  total_vat_value?: number
+  balance?: number
+  status: 'pending' | 'packing' | 'payment' | 'success' | 'cancel' | string
+}
+
+export interface NextStepMarketplaceMeta {
+  tenant: string
+  cust_code: string
+  doc_prefix: string
+  date_from: string
+  date_to: string
+  date_basis: string
+  source: string
+  page: number
+  size: number
+  total: number
 }
 
 export interface DailyInsight {

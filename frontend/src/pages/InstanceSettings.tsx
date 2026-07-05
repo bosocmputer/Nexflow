@@ -12,7 +12,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { PageHeader } from '@/components/common/PageHeader'
 import { cn } from '@/lib/utils'
 
-type SettingGroup = 'instance' | 'sml' | 'sml_db' | 'line' | 'ai' | 'automation'
+type SettingGroup = 'instance' | 'sml' | 'sml_db' | 'marketplace' | 'line' | 'ai' | 'automation'
 
 type InstanceSetting = {
   key: string
@@ -97,6 +97,11 @@ const GROUP_META: Record<SettingGroup, { title: string; description: string; ico
     description: 'ข้อมูลเชื่อมต่อ PostgreSQL ของร้านค้านี้ — ส่งเป็น X-DB-* headers ไปยัง sml-api-byboss ทุก request ไม่ต้อง restart',
     icon: Database,
   },
+  marketplace: {
+    title: 'Marketplace Dashboard',
+    description: 'ค่าที่ใช้แสดงข้อมูล marketplace จาก SML บน Dashboard',
+    icon: PackageCheck,
+  },
   line: {
     title: 'LINE แจ้งเตือนระบบ',
     description: 'Token และ userId สำหรับส่ง error/สถานะระบบไปหาแอดมิน',
@@ -114,7 +119,7 @@ const GROUP_META: Record<SettingGroup, { title: string; description: string; ico
   },
 }
 
-const GROUP_ORDER: SettingGroup[] = ['instance', 'sml', 'sml_db', 'line', 'ai', 'automation']
+const GROUP_ORDER: SettingGroup[] = ['instance', 'sml', 'sml_db', 'marketplace', 'line', 'ai', 'automation']
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
 const PHASE1_HIDDEN_KEYS = new Set([

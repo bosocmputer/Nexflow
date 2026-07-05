@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, Database, ReceiptText, RefreshCw } from 'lucide-react'
 import {
   CartesianGrid,
   Legend,
@@ -101,6 +101,7 @@ export default function Dashboard() {
         params: {
           from_date: dateRange.from,
           to_date: dateRange.to,
+          include_nextstep: '1',
         },
       })
       .then((r) => {
@@ -162,6 +163,7 @@ export default function Dashboard() {
         onDateRangeChange={setDateRange}
       />
       <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
+      <NextStepMarketplaceSection stats={stats} loading={loading} error={statsError} />
     </div>
   )
 }
@@ -545,6 +547,186 @@ function PlatformShareBreakdown({
   )
 }
 
+function NextStepMarketplaceSection({
+  stats,
+  loading,
+  error,
+}: {
+  stats: DashboardStats | null
+  loading: boolean
+  error: boolean
+}) {
+  const state = stats?.nextstep_marketplace
+  const summary = state?.summary
+  const orders = state?.orders ?? []
+  const meta = state?.meta
+  const statusCounts = summary?.status_counts ?? {}
+
+  return (
+    <Card className="rounded-lg border-border/70 shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex flex-wrap items-center justify-between gap-3 text-sm font-semibold">
+          <span className="inline-flex items-center gap-2">
+            <Database className="h-4 w-4 text-accent-strong" />
+            NextStep Marketplace
+          </span>
+          {meta && (
+            <Badge variant="secondary" className="rounded-full">
+              SML {meta.doc_prefix} · {formatShortDate(meta.date_from)} - {formatShortDate(meta.date_to)}
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading ? (
+          <>
+            <div className="grid gap-2 md:grid-cols-4">
+              <div className="h-20 rounded-md bg-muted/35" />
+              <div className="h-20 rounded-md bg-muted/35" />
+              <div className="h-20 rounded-md bg-muted/35" />
+              <div className="h-20 rounded-md bg-muted/35" />
+            </div>
+            <div className="h-36 rounded-md bg-muted/25" />
+          </>
+        ) : error ? (
+          <NextStepStateMessage
+            title="ยังโหลดข้อมูล NextStep ไม่ได้"
+            description="Dashboard หลักยังใช้งานได้ ลองรีเฟรชอีกครั้งหลังระบบ SML พร้อม"
+          />
+        ) : !state?.configured ? (
+          <NextStepConfigMessage message={state?.message || 'ยังไม่ได้ตั้งค่า NextStep marketplace cust_code'} />
+        ) : !state.available ? (
+          <NextStepStateMessage
+            title="เชื่อมต่อข้อมูล NextStep ไม่สำเร็จ"
+            description={state.message || 'ตรวจ SML API และลองรีเฟรชอีกครั้ง'}
+          />
+        ) : (
+          <>
+            <div className="grid gap-2 md:grid-cols-4">
+              <NextStepMetric label="ยอดสุทธิ MQT" value={formatCurrency(summary?.total_amount ?? 0, true)} />
+              <NextStepMetric label="ออเดอร์" value={formatCount(summary?.total_orders ?? 0)} />
+              <NextStepMetric label="CN หักแล้ว" value={formatCurrency(summary?.cn_total_amount ?? 0, true)} />
+              <NextStepMetric label="สำเร็จ" value={formatCount(statusCounts.success ?? summary?.success_count ?? 0)} />
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              <NextStepStatusBadge label="รอดำเนินการ" count={statusCounts.pending ?? summary?.pending_count ?? 0} tone="muted" />
+              <NextStepStatusBadge label="แพ็กของ" count={statusCounts.packing ?? summary?.packing_count ?? 0} tone="info" />
+              <NextStepStatusBadge label="รอชำระ" count={statusCounts.payment ?? summary?.payment_count ?? 0} tone="warning" />
+              <NextStepStatusBadge label="สำเร็จ" count={statusCounts.success ?? summary?.success_count ?? 0} tone="success" />
+              <NextStepStatusBadge label="ยกเลิก" count={statusCounts.cancel ?? summary?.cancel_count ?? 0} tone="danger" />
+            </div>
+
+            {orders.length === 0 ? (
+              <ChartEmptyState title="ยังไม่มีออเดอร์ NextStep ในช่วงวันที่นี้" description="เมื่อ SML มีเอกสาร MQT ของ cust_code ที่ตั้งไว้ รายการจะแสดงตรงนี้" />
+            ) : (
+              <div className="overflow-hidden rounded-md border border-border/70">
+                <div className="hidden grid-cols-[1.2fr_0.85fr_0.85fr_0.8fr_0.8fr] gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground md:grid">
+                  <div>เอกสาร MQT</div>
+                  <div>วันที่</div>
+                  <div>สถานะ</div>
+                  <div className="text-right">ยอดสุทธิ</div>
+                  <div className="text-right">คงเหลือ</div>
+                </div>
+                <div className="divide-y divide-border/70">
+                  {orders.map((order) => (
+                    <div key={order.doc_no} className="grid gap-2 px-3 py-3 text-sm md:grid-cols-[1.2fr_0.85fr_0.85fr_0.8fr_0.8fr] md:items-center md:gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-foreground">{order.doc_no}</div>
+                        <div className="mt-0.5 truncate text-xs text-muted-foreground">{order.inv_doc_no ? `Invoice ${order.inv_doc_no}` : 'ยังไม่มี invoice'}</div>
+                      </div>
+                      <div className="text-xs text-muted-foreground md:text-sm md:text-foreground">{formatShortDate(order.doc_date)}</div>
+                      <div>
+                        <NextStepOrderStatus status={order.status} />
+                      </div>
+                      <div className="font-semibold tabular-nums text-foreground md:text-right">{formatCurrency(order.total_amount, true)}</div>
+                      <div className="tabular-nums text-muted-foreground md:text-right">{formatCurrency(order.balance ?? 0, true)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              ข้อมูลส่วนนี้อ่านจาก SML เอกสาร MQT ตาม {meta?.date_basis || 'ic_qt.doc_date'} ไม่ใช่ยอดรับชำระหรือ payout และแยกจากยอดขาย Nexflow ด้านบน
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function NextStepMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-background/70 px-3 py-3">
+      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-lg font-semibold tabular-nums text-foreground">{value}</div>
+    </div>
+  )
+}
+
+function NextStepStatusBadge({
+  label,
+  count,
+  tone,
+}: {
+  label: string
+  count?: number
+  tone: 'muted' | 'info' | 'warning' | 'success' | 'danger'
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        'rounded-full bg-background',
+        tone === 'info' && 'border-primary/25 bg-primary/10 text-primary',
+        tone === 'warning' && 'border-warning/25 bg-warning/10 text-warning',
+        tone === 'success' && 'border-success/25 bg-success/10 text-success',
+        tone === 'danger' && 'border-destructive/25 bg-destructive/10 text-destructive',
+      )}
+    >
+      {label}{typeof count === 'number' ? ` ${formatCount(count)}` : ''}
+    </Badge>
+  )
+}
+
+function NextStepOrderStatus({ status }: { status: string }) {
+  const label = nextStepStatusLabel(status)
+  const tone =
+    status === 'success' ? 'success' :
+      status === 'cancel' ? 'danger' :
+        status === 'payment' ? 'warning' :
+          status === 'packing' ? 'info' : 'muted'
+  return <NextStepStatusBadge label={label} tone={tone} />
+}
+
+function NextStepStateMessage({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-8 text-center">
+      <div className="text-sm font-semibold text-foreground">{title}</div>
+      <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
+    </div>
+  )
+}
+
+function NextStepConfigMessage({ message }: { message: string }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-warning/35 bg-warning/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+        <div>
+          <p className="text-sm font-semibold">ยังไม่แสดง NextStep Marketplace</p>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{message}</p>
+        </div>
+      </div>
+      <Button asChild size="sm" variant="outline">
+        <Link to="/settings/instance">ตั้งค่า</Link>
+      </Button>
+    </div>
+  )
+}
+
 function ChartEmptyState({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex min-h-[220px] items-center justify-center rounded-md border border-dashed border-border bg-muted/20 px-4 text-center">
@@ -677,6 +859,14 @@ function platformLegendLabel(value: string): string {
   if (value === 'lazada_amount') return 'Lazada'
   if (value === 'tiktok_amount') return 'TikTok'
   return value
+}
+
+function nextStepStatusLabel(value: string): string {
+  if (value === 'packing') return 'แพ็กของ'
+  if (value === 'payment') return 'รอชำระ'
+  if (value === 'success') return 'สำเร็จ'
+  if (value === 'cancel') return 'ยกเลิก'
+  return 'รอดำเนินการ'
 }
 
 function defaultDashboardDateRange(): DashboardDateRange {

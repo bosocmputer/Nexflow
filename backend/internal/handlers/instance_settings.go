@@ -59,6 +59,8 @@ var instanceSettingDefs = []settingDef{
 	{Key: "sml.database", Label: "Database (tenant)", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อ database SML ของร้านนี้ ต้องเป็น lowercase เช่น sml1_2026 (sml-api-byboss แปลงเป็น lowercase เสมอ ห้ามใช้ตัวพิมพ์ใหญ่)"},
 	{Key: "sml.stock_request_url", Label: "Stock Request URL", Group: "sml", Type: "url", Restart: false, Required: false, Description: "URL ของ SML server คำนวณต้นทุนสต๊อก (ไม่ใช่ sml-api-byboss) — path /SMLJavaWebService/rest/v1/processstockrequest จะถูกเติมอัตโนมัติ เช่น http://192.168.2.248:8080 (ว่าง = ข้ามการคำนวณ)"},
 
+	{Key: "marketplace.nextstep_cust_code", Label: "NextStep marketplace cust_code", Group: "marketplace", Type: "text", Restart: false, Required: false, Description: "รหัสลูกค้า SML ที่ใช้กรองเอกสาร MQT ของ NextStep marketplace บน Dashboard"},
+
 	{Key: "line.notify_channel_secret", Label: "LINE Channel secret", Group: "line", Type: "password", Secret: true, Restart: true, Description: "ใช้กับ LINE OA ที่ส่งแจ้งเตือนระบบ"},
 	{Key: "line.notify_channel_access_token", Label: "LINE Channel access token", Group: "line", Type: "password", Secret: true, Restart: true, Description: "ใช้ส่ง Push แจ้งเตือน error และสถานะระบบไปยังแอดมิน"},
 	{Key: "line.notify_admin_user_id", Label: "LINE admin user ID", Group: "line", Type: "text", Restart: true, Description: "userId ของผู้รับแจ้งเตือนระบบ เช่น SML error, email error, disk/tunnel warning"},
@@ -180,7 +182,8 @@ func (h *InstanceSettingsHandler) Update(c *gin.Context) {
 
 	// optional fields that may be explicitly cleared to empty string
 	clearableKeys := map[string]bool{
-		"sml.stock_request_url": true,
+		"sml.stock_request_url":          true,
+		"marketplace.nextstep_cust_code": true,
 	}
 
 	values := map[string]string{}

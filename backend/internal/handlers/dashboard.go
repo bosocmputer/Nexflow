@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -25,6 +28,8 @@ type DashboardHandler struct {
 	imapConfigured       bool
 	smlConfigured        bool
 	smlReadiness         *sml.ReadinessChecker
+	nextStepMarketplace  *sml.NextStepMarketplaceClient
+	appSettings          *repository.AppSettingsRepo
 	aiConfigured         bool
 	autoConfirmThreshold float64
 	log                  *zap.Logger
@@ -63,6 +68,11 @@ func (h *DashboardHandler) SetSMLReadiness(checker *sml.ReadinessChecker) {
 	h.smlReadiness = checker
 }
 
+func (h *DashboardHandler) SetNextStepMarketplace(client *sml.NextStepMarketplaceClient, settings *repository.AppSettingsRepo) {
+	h.nextStepMarketplace = client
+	h.appSettings = settings
+}
+
 // GET /api/dashboard/stats
 //
 // Returns the existing bill stats plus `unread_messages` so the Sidebar can
@@ -99,7 +109,92 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 			out["email_inbox_errors"] = failing
 		}
 	}
+	if c.Query("include_nextstep") == "1" {
+		from, to := dashboardDateRangeForNextStep(out, fromDate, toDate)
+		out["nextstep_marketplace"] = h.nextStepMarketplaceDashboard(c.Request.Context(), from, to)
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+func dashboardDateRangeForNextStep(stats map[string]interface{}, fromDate, toDate string) (string, string) {
+	fromDate = strings.TrimSpace(fromDate)
+	toDate = strings.TrimSpace(toDate)
+	if fromDate != "" && toDate != "" {
+		return fromDate, toDate
+	}
+	meta, ok := stats["platform_sales_meta"].(map[string]interface{})
+	if !ok {
+		return fromDate, toDate
+	}
+	if fromDate == "" {
+		if v, ok := meta["from_date"].(string); ok {
+			fromDate = v
+		}
+	}
+	if toDate == "" {
+		if v, ok := meta["to_date"].(string); ok {
+			toDate = v
+		}
+	}
+	return fromDate, toDate
+}
+
+func (h *DashboardHandler) nextStepMarketplaceDashboard(ctx context.Context, fromDate, toDate string) gin.H {
+	state := gin.H{
+		"configured": false,
+		"available":  false,
+		"message":    "ยังไม่ได้ตั้งค่า NextStep marketplace",
+	}
+	if h.nextStepMarketplace == nil || h.appSettings == nil {
+		state["error"] = "not_configured"
+		return state
+	}
+	if !h.nextStepMarketplace.IsConfigured() {
+		state["error"] = "sml_not_configured"
+		state["message"] = "ยังไม่ได้ตั้งค่า SML REST URL, API key หรือ tenant"
+		return state
+	}
+	custCode, err := h.appSettings.GetValue("marketplace.nextstep_cust_code")
+	if err != nil {
+		h.log.Warn("nextstep marketplace setting lookup failed", zap.Error(err))
+		state["error"] = "setting_lookup_failed"
+		state["message"] = "อ่านค่า NextStep cust_code ไม่สำเร็จ"
+		return state
+	}
+	custCode = strings.TrimSpace(custCode)
+	if custCode == "" {
+		state["error"] = "missing_cust_code"
+		state["message"] = "ไปที่การเชื่อมต่อระบบ แล้วตั้งค่า NextStep marketplace cust_code"
+		return state
+	}
+
+	state["configured"] = true
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	data, err := h.nextStepMarketplace.Fetch(reqCtx, sml.NextStepMarketplaceRequest{
+		CustCode: custCode,
+		DateFrom: fromDate,
+		DateTo:   toDate,
+		Page:     1,
+		Size:     5,
+	})
+	if err != nil {
+		h.log.Warn("nextstep marketplace dashboard fetch failed",
+			zap.String("cust_code", custCode),
+			zap.String("from_date", fromDate),
+			zap.String("to_date", toDate),
+			zap.Error(err),
+		)
+		state["error"] = "sml_unavailable"
+		state["message"] = "โหลดข้อมูล NextStep จาก SML ไม่สำเร็จ"
+		return state
+	}
+	state["available"] = true
+	state["message"] = "พร้อมใช้งาน"
+	state["summary"] = data.Summary
+	state["orders"] = data.Orders
+	state["meta"] = data.Meta
+	return state
 }
 
 // GET /api/dashboard/insights — returns last 7 daily insights
