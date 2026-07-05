@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw, Store } from 'lucide-react'
 import {
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -79,7 +80,6 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
 
 const PLATFORM_ORDER: PlatformKey[] = ['shopee', 'lazada', 'tiktok']
 const NEXTSTEP_TREND_COLOR = '#0f766e'
-const COMPARISON_CURRENT_COLOR = '#2563eb'
 const COMPARISON_PREVIOUS_COLOR = '#64748b'
 
 export default function Dashboard() {
@@ -201,8 +201,7 @@ export default function Dashboard() {
         onRefresh={refreshStats}
         onDateRangeChange={handleDateRangeChange}
       />
-      <SalesComparisonTrendCard stats={stats} loading={loading} error={statsError} />
-      <PlatformSalesTrendCard stats={stats} loading={loading} error={statsError} />
+      <SalesTrendCard stats={stats} loading={loading} error={statsError} />
     </div>
   )
 }
@@ -595,7 +594,7 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function SalesComparisonTrendCard({
+function SalesTrendCard({
   stats,
   loading,
   error,
@@ -604,7 +603,8 @@ function SalesComparisonTrendCard({
   loading: boolean
   error: boolean
 }) {
-  const data = salesComparisonTrendData(stats)
+  const data = salesTrendData(stats)
+  const shareBreakdown = platformShareBreakdown(stats)
   const hasSales = data.some((point) => point.current_total > 0 || point.previous_total > 0)
   const meta = stats?.platform_sales_meta
 
@@ -614,7 +614,7 @@ function SalesComparisonTrendCard({
         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
           <CardTitle className="flex items-center gap-2 text-sm font-semibold">
             <BarChart3 className="h-4 w-4 text-accent-strong" />
-            ยอดขายเทียบช่วงก่อนหน้า
+            ยอดขายรายวันเทียบช่วงก่อนหน้า
           </CardTitle>
           {meta?.previous_from_date && meta.previous_to_date && (
             <div className="text-xs text-muted-foreground">
@@ -623,75 +623,28 @@ function SalesComparisonTrendCard({
           )}
         </div>
       </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="h-[260px] rounded-md bg-muted/35" />
-        ) : error ? (
-          <ChartEmptyState title="โหลดกราฟเทียบไม่ได้" description="ลองรีเฟรช หรือเปิดรายการจากเมนูแพลตฟอร์ม" />
-        ) : !hasSales ? (
-          <ChartEmptyState title="ไม่มีข้อมูลช่วงนี้หรือช่วงก่อนหน้า" description="เมื่อมีเอกสารขายในช่วงวันที่ กราฟเทียบจะแสดงที่นี่" />
-        ) : (
-          <div className="h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
-                <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
-                <Tooltip content={<SalesComparisonTooltip />} />
-                <Legend />
-                <Line type="monotone" dataKey="current_total" name="ช่วงที่เลือก" stroke={COMPARISON_CURRENT_COLOR} strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
-                <Line type="monotone" dataKey="previous_total" name="ช่วงก่อนหน้า" stroke={COMPARISON_PREVIOUS_COLOR} strokeWidth={2.25} strokeDasharray="5 5" dot={false} activeDot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-function PlatformSalesTrendCard({
-  stats,
-  loading,
-  error,
-}: {
-  stats: DashboardStats | null
-  loading: boolean
-  error: boolean
-}) {
-  const data = platformTrendData(stats)
-  const shareBreakdown = platformShareBreakdown(stats)
-  const hasSales = data.some((point) => point.shopee_amount > 0 || point.lazada_amount > 0 || point.tiktok_amount > 0 || Number(point.nextstep_amount ?? 0) > 0)
-
-  return (
-    <Card className="rounded-lg border-border/70 shadow-sm">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <BarChart3 className="h-4 w-4 text-accent-strong" />
-          ยอดรายวันตามช่วงวันที่
-        </CardTitle>
-      </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
           <div className="h-[260px] rounded-md bg-muted/35" />
         ) : error ? (
           <ChartEmptyState title="โหลดกราฟไม่ได้" description="ลองรีเฟรช หรือเปิดรายการจากเมนูแพลตฟอร์ม" />
         ) : !hasSales ? (
-          <ChartEmptyState title="ยังไม่มียอดขายในช่วงวันที่นี้" description="เมื่อมีข้อมูลจากแพลตฟอร์ม กราฟจะแสดงยอดรายวัน" />
+          <ChartEmptyState title="ไม่มีข้อมูลช่วงนี้หรือช่วงก่อนหน้า" description="เมื่อมีเอกสารขายในช่วงวันที่ กราฟเทียบจะแสดงที่นี่" />
         ) : (
           <div className="h-[280px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <ComposedChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
                 <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
-                <Tooltip content={<PlatformTrendTooltip />} />
-                <Legend formatter={(value) => platformLegendLabel(String(value))} />
-                <Line type="monotone" dataKey="shopee_amount" name="Shopee" stroke={PLATFORM_META.shopee.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
-                <Line type="monotone" dataKey="lazada_amount" name="Lazada" stroke={PLATFORM_META.lazada.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
-                <Line type="monotone" dataKey="tiktok_amount" name="TikTok" stroke={PLATFORM_META.tiktok.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
-                <Line type="monotone" dataKey="nextstep_amount" name="NextStep Marketplace" stroke={NEXTSTEP_TREND_COLOR} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
-              </LineChart>
+                <Tooltip content={<SalesTrendTooltip />} />
+                <Legend />
+                <Bar dataKey="shopee_amount" name="Shopee" stackId="current" fill={PLATFORM_META.shopee.color} maxBarSize={32} />
+                <Bar dataKey="lazada_amount" name="Lazada" stackId="current" fill={PLATFORM_META.lazada.color} maxBarSize={32} />
+                <Bar dataKey="tiktok_amount" name="TikTok" stackId="current" fill={PLATFORM_META.tiktok.color} maxBarSize={32} />
+                <Bar dataKey="nextstep_amount" name="NextStep Marketplace" stackId="current" fill={NEXTSTEP_TREND_COLOR} maxBarSize={32} />
+                <Line type="monotone" dataKey="previous_total" name="ช่วงก่อนหน้า" stroke={COMPARISON_PREVIOUS_COLOR} strokeWidth={2.25} strokeDasharray="5 5" dot={false} activeDot={{ r: 4 }} />
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         )}
@@ -757,69 +710,117 @@ function ChartEmptyState({ title, description }: { title: string; description: s
   )
 }
 
-function PlatformTrendTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number; dataKey?: string }>; label?: string }) {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
-      <div className="mb-1 font-medium text-popover-foreground">{formatTrendDate(String(label ?? ''))}</div>
-      <div className="space-y-1">
-        {payload.map((item) => (
-          <div key={item.dataKey} className="flex min-w-[180px] items-center justify-between gap-4">
-            <span className="text-muted-foreground">{platformLegendLabel(String(item.name ?? item.dataKey ?? ''))}</span>
-            <span className="font-medium tabular-nums text-foreground">{formatCurrency(Number(item.value ?? 0), true)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+type SalesTrendPoint = {
+  date: string
+  previous_date: string
+  shopee_amount: number
+  lazada_amount: number
+  tiktok_amount: number
+  nextstep_amount: number
+  current_total: number
+  previous_total: number
 }
 
-function SalesComparisonTooltip({
+function SalesTrendTooltip({
   active,
   payload,
   label,
 }: {
   active?: boolean
-  payload?: Array<{ name?: string; value?: number; dataKey?: string; payload?: { previous_date?: string } }>
+  payload?: Array<{ payload?: SalesTrendPoint }>
   label?: string
 }) {
   if (!active || !payload?.length) return null
-  const previousDate = payload[0]?.payload?.previous_date
+  const point = payload[0]?.payload
+  if (!point) return null
+
+  const rows = [
+    { key: 'shopee', label: 'Shopee', amount: point.shopee_amount, color: PLATFORM_META.shopee.color },
+    { key: 'lazada', label: 'Lazada', amount: point.lazada_amount, color: PLATFORM_META.lazada.color },
+    { key: 'tiktok', label: 'TikTok', amount: point.tiktok_amount, color: PLATFORM_META.tiktok.color },
+    { key: 'nextstep', label: 'NextStep Marketplace', amount: point.nextstep_amount, color: NEXTSTEP_TREND_COLOR },
+  ]
+
   return (
     <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
       <div className="mb-1 font-medium text-popover-foreground">
         {formatShortDate(String(label ?? ''))}
-        {previousDate ? ` เทียบกับ ${formatShortDate(previousDate)}` : ''}
+        {point.previous_date ? ` เทียบกับ ${formatShortDate(point.previous_date)}` : ''}
       </div>
       <div className="space-y-1">
-        {payload.map((item) => (
-          <div key={item.dataKey} className="flex min-w-[190px] items-center justify-between gap-4">
-            <span className="text-muted-foreground">{item.name}</span>
-            <span className="font-medium tabular-nums text-foreground">{formatCurrency(Number(item.value ?? 0), true)}</span>
+        {rows.map((item) => (
+          <div key={item.key} className="flex min-w-[220px] items-center justify-between gap-4">
+            <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="truncate">{item.label}</span>
+            </span>
+            <span className="font-medium tabular-nums text-foreground">{formatCurrency(item.amount, true)}</span>
           </div>
         ))}
+        <div className="mt-1 border-t border-border pt-1">
+          <div className="flex min-w-[220px] items-center justify-between gap-4">
+            <span className="font-medium text-popover-foreground">รวมช่วงที่เลือก</span>
+            <span className="font-semibold tabular-nums text-popover-foreground">{formatCurrency(point.current_total, true)}</span>
+          </div>
+          <div className="mt-1 flex min-w-[220px] items-center justify-between gap-4">
+            <span className="text-muted-foreground">ช่วงก่อนหน้า</span>
+            <span className="font-medium tabular-nums text-foreground">{formatCurrency(point.previous_total, true)}</span>
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-function salesComparisonTrendData(stats: DashboardStats | null) {
-  const currentNextStepByDate = new Map<string, number>()
+function salesTrendData(stats: DashboardStats | null): SalesTrendPoint[] {
   const previousNextStepByDate = new Map<string, number>()
 
-  for (const point of stats?.nextstep_marketplace?.trend ?? []) {
-    currentNextStepByDate.set(point.date, Number(point.total_amount || 0))
-  }
   for (const point of stats?.nextstep_marketplace?.previous_trend ?? []) {
     previousNextStepByDate.set(point.date, Number(point.total_amount || 0))
   }
 
-  return (stats?.sales_comparison_trend ?? []).map((point) => ({
-    date: point.date,
-    previous_date: point.previous_date,
-    current_total: Number(point.current_total || 0) + Number(currentNextStepByDate.get(point.date) ?? 0),
-    previous_total: Number(point.previous_total || 0) + Number(previousNextStepByDate.get(point.previous_date) ?? 0),
-  }))
+  const byDate = new Map<string, SalesTrendPoint>()
+  for (const point of platformTrendData(stats)) {
+    const currentTotal =
+      Number(point.shopee_amount || 0) +
+      Number(point.lazada_amount || 0) +
+      Number(point.tiktok_amount || 0) +
+      Number(point.nextstep_amount || 0)
+    byDate.set(point.date, {
+      date: point.date,
+      previous_date: '',
+      shopee_amount: point.shopee_amount,
+      lazada_amount: point.lazada_amount,
+      tiktok_amount: point.tiktok_amount,
+      nextstep_amount: point.nextstep_amount,
+      current_total: currentTotal,
+      previous_total: 0,
+    })
+  }
+
+  for (const point of stats?.sales_comparison_trend ?? []) {
+    const current = byDate.get(point.date) ?? {
+      date: point.date,
+      previous_date: '',
+      shopee_amount: 0,
+      lazada_amount: 0,
+      tiktok_amount: 0,
+      nextstep_amount: 0,
+      current_total: Number(point.current_total || 0),
+      previous_total: 0,
+    }
+    const stackedTotal =
+      Number(current.shopee_amount || 0) +
+      Number(current.lazada_amount || 0) +
+      Number(current.tiktok_amount || 0) +
+      Number(current.nextstep_amount || 0)
+    current.previous_date = point.previous_date
+    current.current_total = stackedTotal > 0 ? stackedTotal : Number(point.current_total || 0)
+    current.previous_total = Number(point.previous_total || 0) + Number(previousNextStepByDate.get(point.previous_date) ?? 0)
+    byDate.set(point.date, current)
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
 }
 
 function platformTrendData(stats: DashboardStats | null) {
@@ -1031,14 +1032,6 @@ function formatTrendDate(value: string): string {
   const [year, month, day] = value.split('-')
   if (!year || !month || !day) return value
   return `${day}/${month}`
-}
-
-function platformLegendLabel(value: string): string {
-  if (value === 'shopee_amount') return 'Shopee'
-  if (value === 'lazada_amount') return 'Lazada'
-  if (value === 'tiktok_amount') return 'TikTok'
-  if (value === 'nextstep_amount') return 'NextStep Marketplace'
-  return value
 }
 
 function defaultDashboardDateRange(): DashboardDateRange {
