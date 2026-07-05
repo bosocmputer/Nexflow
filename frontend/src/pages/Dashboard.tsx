@@ -42,6 +42,14 @@ type DashboardDateRange = {
   to: string
 }
 
+type ShareBreakdownItem = {
+  key: string
+  label: string
+  color: string
+  amount: number
+  sharePct: number
+}
+
 const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   shopee: {
     key: 'shopee',
@@ -575,8 +583,7 @@ function PlatformSalesTrendCard({
   error: boolean
 }) {
   const data = platformTrendData(stats)
-  const platforms = platformStats(stats)
-  const total = stats?.sales_mtd_total ?? 0
+  const shareBreakdown = platformShareBreakdown(stats)
   const hasSales = data.some((point) => point.shopee_amount > 0 || point.lazada_amount > 0 || point.tiktok_amount > 0 || Number(point.nextstep_amount ?? 0) > 0)
 
   return (
@@ -612,10 +619,10 @@ function PlatformSalesTrendCard({
           </div>
         )}
 
-        {!error && <PlatformShareBreakdown platforms={platforms} loading={loading} total={total} />}
+        {!error && <PlatformShareBreakdown items={shareBreakdown.items} loading={loading} total={shareBreakdown.total} />}
 
         <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-5 text-muted-foreground">
-          Failed และต้องตรวจยังรวมในยอด เพื่อให้เห็นยอดที่เข้าระบบพร้อมงานที่ต้องแก้
+          Failed และต้องตรวจยังรวมในยอด Nexflow; NextStep Marketplace อ่านจาก SML MQT ตาม cust_code ที่ตั้งไว้
         </div>
       </CardContent>
     </Card>
@@ -623,38 +630,37 @@ function PlatformSalesTrendCard({
 }
 
 function PlatformShareBreakdown({
-  platforms,
+  items,
   loading,
   total,
 }: {
-  platforms: PlatformSalesStat[]
+  items: ShareBreakdownItem[]
   loading: boolean
   total: number
 }) {
   return (
-    <div className="grid gap-2 md:grid-cols-3">
-      {platforms.map((platform) => {
-        const meta = PLATFORM_META[platform.platform]
-        const width = Math.max(0, Math.min(100, platform.share_pct))
+    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      {items.map((item) => {
+        const width = Math.max(0, Math.min(100, item.sharePct))
         return (
-          <div key={platform.platform} className="rounded-md border border-border/70 bg-background/65 px-3 py-2">
+          <div key={item.key} className="rounded-md border border-border/70 bg-background/65 px-3 py-2">
             <div className="flex items-center justify-between gap-3 text-xs">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.color }} />
-                <span className="truncate font-medium text-foreground">{meta.label}</span>
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="truncate font-medium text-foreground">{item.label}</span>
               </div>
               <span className="shrink-0 tabular-nums text-muted-foreground">
-                {loading ? '—' : formatPercent(platform.share_pct)}
+                {loading ? '—' : formatPercent(item.sharePct)}
               </span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full rounded-full transition-all"
-                style={{ width: loading || total <= 0 ? '0%' : `${width}%`, backgroundColor: meta.color }}
+                style={{ width: loading || total <= 0 ? '0%' : `${width}%`, backgroundColor: item.color }}
               />
             </div>
             <div className="mt-1.5 text-xs font-semibold tabular-nums text-foreground">
-              {loading ? '—' : formatCurrency(platform.total_amount, true)}
+              {loading ? '—' : formatCurrency(item.amount, true)}
             </div>
           </div>
         )
@@ -723,6 +729,34 @@ function platformTrendData(stats: DashboardStats | null) {
   }
 
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
+}
+
+function platformShareBreakdown(stats: DashboardStats | null): { items: ShareBreakdownItem[]; total: number } {
+  const rawItems = [
+    ...platformStats(stats).map((platform) => {
+      const meta = PLATFORM_META[platform.platform]
+      return {
+        key: platform.platform,
+        label: meta.label,
+        color: meta.color,
+        amount: platform.total_amount,
+      }
+    }),
+    {
+      key: 'nextstep',
+      label: 'NextStep Marketplace',
+      color: NEXTSTEP_TREND_COLOR,
+      amount: stats?.nextstep_marketplace?.available ? (stats.nextstep_marketplace.summary?.total_amount ?? 0) : 0,
+    },
+  ]
+  const total = rawItems.reduce((sum, item) => sum + Number(item.amount || 0), 0)
+  return {
+    total,
+    items: rawItems.map((item) => ({
+      ...item,
+      sharePct: total > 0 ? (Number(item.amount || 0) / total) * 100 : 0,
+    })),
+  }
 }
 
 function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
