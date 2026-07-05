@@ -55,9 +55,10 @@ type NextStepMarketplaceRequest struct {
 }
 
 type NextStepMarketplaceData struct {
-	Summary NextStepMarketplaceSummary `json:"summary"`
-	Orders  []NextStepMarketplaceOrder `json:"orders"`
-	Meta    NextStepMarketplaceMeta    `json:"meta"`
+	Summary NextStepMarketplaceSummary      `json:"summary"`
+	Orders  []NextStepMarketplaceOrder      `json:"orders"`
+	Trend   []NextStepMarketplaceTrendPoint `json:"trend"`
+	Meta    NextStepMarketplaceMeta         `json:"meta"`
 }
 
 type NextStepMarketplaceSummary struct {
@@ -97,6 +98,11 @@ type NextStepMarketplaceOrder struct {
 	TotalVATValue  float64 `json:"total_vat_value"`
 	Balance        float64 `json:"balance"`
 	Status         string  `json:"status"`
+}
+
+type NextStepMarketplaceTrendPoint struct {
+	Date        string  `json:"date"`
+	TotalAmount float64 `json:"total_amount"`
 }
 
 type NextStepMarketplaceMeta struct {
@@ -197,6 +203,9 @@ func (c *NextStepMarketplaceClient) Fetch(ctx context.Context, req NextStepMarke
 	}
 	if envelope.Data.Orders == nil {
 		envelope.Data.Orders = []NextStepMarketplaceOrder{}
+	}
+	if envelope.Data.Trend == nil {
+		envelope.Data.Trend = []NextStepMarketplaceTrendPoint{}
 	}
 	if envelope.Data.Summary.StatusCounts == nil {
 		envelope.Data.Summary.StatusCounts = map[string]int{}

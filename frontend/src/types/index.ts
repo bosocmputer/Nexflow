@@ -340,6 +340,7 @@ export interface PlatformSalesTrendPoint {
   shopee_amount: number
   lazada_amount: number
   tiktok_amount: number
+  nextstep_amount?: number
 }
 
 export interface PlatformSalesMeta {
@@ -358,6 +359,7 @@ export interface NextStepMarketplaceState {
   message?: string
   summary?: NextStepMarketplaceSummary
   orders?: NextStepMarketplaceOrder[]
+  trend?: NextStepMarketplaceTrendPoint[]
   meta?: NextStepMarketplaceMeta
 }
 
@@ -398,6 +400,11 @@ export interface NextStepMarketplaceOrder {
   total_vat_value?: number
   balance?: number
   status: 'pending' | 'packing' | 'payment' | 'success' | 'cancel' | string
+}
+
+export interface NextStepMarketplaceTrendPoint {
+  date: string
+  total_amount: number
 }
 
 export interface NextStepMarketplaceMeta {

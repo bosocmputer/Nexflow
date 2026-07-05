@@ -30,7 +30,7 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 			t.Fatalf("search = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"meta":{"tenant":"aoy","cust_code":"C001","doc_prefix":"MQT","date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","page":1,"size":5,"total":1}}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"trend":[{"date":"2026-07-01","total_amount":0},{"date":"2026-07-02","total_amount":0},{"date":"2026-07-03","total_amount":1200}],"meta":{"tenant":"aoy","cust_code":"C001","doc_prefix":"MQT","date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","page":1,"size":5,"total":1}}}`))
 	}))
 	defer srv.Close()
 
@@ -56,6 +56,9 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 	}
 	if len(got.Orders) != 1 || got.Orders[0].DocNo != "MQT26070001" {
 		t.Fatalf("orders = %+v", got.Orders)
+	}
+	if len(got.Trend) != 3 || got.Trend[2].TotalAmount != 1200 {
+		t.Fatalf("trend = %+v", got.Trend)
 	}
 }
 

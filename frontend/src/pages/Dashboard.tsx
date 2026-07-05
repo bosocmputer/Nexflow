@@ -70,6 +70,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
 }
 
 const PLATFORM_ORDER: PlatformKey[] = ['shopee', 'lazada', 'tiktok']
+const NEXTSTEP_TREND_COLOR = '#0f766e'
 
 export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -573,10 +574,10 @@ function PlatformSalesTrendCard({
   loading: boolean
   error: boolean
 }) {
-  const data = stats?.platform_sales_trend ?? []
+  const data = platformTrendData(stats)
   const platforms = platformStats(stats)
   const total = stats?.sales_mtd_total ?? 0
-  const hasSales = data.some((point) => point.shopee_amount > 0 || point.lazada_amount > 0 || point.tiktok_amount > 0)
+  const hasSales = data.some((point) => point.shopee_amount > 0 || point.lazada_amount > 0 || point.tiktok_amount > 0 || Number(point.nextstep_amount ?? 0) > 0)
 
   return (
     <Card className="rounded-lg border-border/70 shadow-sm">
@@ -605,6 +606,7 @@ function PlatformSalesTrendCard({
                 <Line type="monotone" dataKey="shopee_amount" name="Shopee" stroke={PLATFORM_META.shopee.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
                 <Line type="monotone" dataKey="lazada_amount" name="Lazada" stroke={PLATFORM_META.lazada.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
                 <Line type="monotone" dataKey="tiktok_amount" name="TikTok" stroke={PLATFORM_META.tiktok.color} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="nextstep_amount" name="NextStep Marketplace" stroke={NEXTSTEP_TREND_COLOR} strokeWidth={2.25} dot={false} activeDot={{ r: 4 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -687,6 +689,40 @@ function PlatformTrendTooltip({ active, payload, label }: { active?: boolean; pa
       </div>
     </div>
   )
+}
+
+function platformTrendData(stats: DashboardStats | null) {
+  const byDate = new Map<string, {
+    date: string
+    shopee_amount: number
+    lazada_amount: number
+    tiktok_amount: number
+    nextstep_amount: number
+  }>()
+
+  for (const point of stats?.platform_sales_trend ?? []) {
+    byDate.set(point.date, {
+      date: point.date,
+      shopee_amount: point.shopee_amount,
+      lazada_amount: point.lazada_amount,
+      tiktok_amount: point.tiktok_amount,
+      nextstep_amount: Number(point.nextstep_amount ?? 0),
+    })
+  }
+
+  for (const point of stats?.nextstep_marketplace?.trend ?? []) {
+    const current = byDate.get(point.date) ?? {
+      date: point.date,
+      shopee_amount: 0,
+      lazada_amount: 0,
+      tiktok_amount: 0,
+      nextstep_amount: 0,
+    }
+    current.nextstep_amount = point.total_amount
+    byDate.set(point.date, current)
+  }
+
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
 }
 
 function platformStats(stats: DashboardStats | null): PlatformSalesStat[] {
@@ -792,6 +828,7 @@ function platformLegendLabel(value: string): string {
   if (value === 'shopee_amount') return 'Shopee'
   if (value === 'lazada_amount') return 'Lazada'
   if (value === 'tiktok_amount') return 'TikTok'
+  if (value === 'nextstep_amount') return 'NextStep Marketplace'
   return value
 }
 
