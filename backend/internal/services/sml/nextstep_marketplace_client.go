@@ -46,7 +46,6 @@ func (c *NextStepMarketplaceClient) IsConfigured() bool {
 }
 
 type NextStepMarketplaceRequest struct {
-	CustCode      string
 	DateFrom      string
 	DateTo        string
 	Search        string
@@ -107,17 +106,18 @@ type NextStepMarketplaceTrendPoint struct {
 }
 
 type NextStepMarketplaceMeta struct {
-	Tenant    string `json:"tenant"`
-	CustCode  string `json:"cust_code"`
-	DocPrefix string `json:"doc_prefix"`
-	DateFrom  string `json:"date_from"`
-	DateTo    string `json:"date_to"`
-	DateBasis string `json:"date_basis"`
-	Source    string `json:"source"`
-	Search    string `json:"search,omitempty"`
-	Page      int    `json:"page"`
-	Size      int    `json:"size"`
-	Total     int    `json:"total"`
+	Tenant      string   `json:"tenant"`
+	CustCode    string   `json:"cust_code,omitempty"`
+	DocPrefix   string   `json:"doc_prefix,omitempty"`
+	DocPrefixes []string `json:"doc_prefixes,omitempty"`
+	DateFrom    string   `json:"date_from"`
+	DateTo      string   `json:"date_to"`
+	DateBasis   string   `json:"date_basis"`
+	Source      string   `json:"source"`
+	Search      string   `json:"search,omitempty"`
+	Page        int      `json:"page"`
+	Size        int      `json:"size"`
+	Total       int      `json:"total"`
 }
 
 type nextStepMarketplaceEnvelope struct {
@@ -134,10 +134,6 @@ type smlAPIErrorBody struct {
 func (c *NextStepMarketplaceClient) Fetch(ctx context.Context, req NextStepMarketplaceRequest) (*NextStepMarketplaceData, error) {
 	if !c.IsConfigured() {
 		return nil, fmt.Errorf("sml marketplace client is not configured")
-	}
-	custCode := strings.TrimSpace(req.CustCode)
-	if custCode == "" {
-		return nil, fmt.Errorf("cust_code is required")
 	}
 	if strings.TrimSpace(req.DateFrom) == "" || strings.TrimSpace(req.DateTo) == "" {
 		return nil, fmt.Errorf("date_from and date_to are required")
@@ -156,7 +152,6 @@ func (c *NextStepMarketplaceClient) Fetch(ctx context.Context, req NextStepMarke
 		return nil, err
 	}
 	q := u.Query()
-	q.Set("cust_code", custCode)
 	q.Set("date_from", strings.TrimSpace(req.DateFrom))
 	q.Set("date_to", strings.TrimSpace(req.DateTo))
 	if search := strings.TrimSpace(req.Search); search != "" {

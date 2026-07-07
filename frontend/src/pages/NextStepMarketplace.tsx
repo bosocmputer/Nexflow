@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search, Settings2, Store } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search, Store } from 'lucide-react'
 
 import client from '@/api/client'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
@@ -136,7 +136,7 @@ export default function NextStepMarketplace() {
                 <div className="min-w-0">
                   <h1 className="truncate text-lg font-semibold leading-6 text-foreground">NextStep Marketplace</h1>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span>ยอดจาก SML MQT</span>
+                    <span>ยอดจากเอกสาร MQT/PREQT ใน SML</span>
                     {meta && <span>{formatShortDate(meta.date_from)} - {formatShortDate(meta.date_to)}</span>}
                     {meta && <span>{meta.date_basis}</span>}
                   </div>
@@ -146,12 +146,6 @@ export default function NextStepMarketplace() {
 
             <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
               <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
-                <Button asChild variant="outline" size="sm" className="h-9 shrink-0 px-3">
-                  <Link to="/settings/instance" title="แก้ไข NextStep marketplace cust_code">
-                    <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-                    แก้ไข cust_code
-                  </Link>
-                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -172,7 +166,7 @@ export default function NextStepMarketplace() {
                   onRangeChange={updateRange}
                   className="w-full sm:w-[250px]"
                   title="ช่วงวันที่ NextStep"
-                  description="กรองเอกสาร MQT ตามวันที่เอกสารใน SML"
+                  description="กรองเอกสาร MQT/PREQT ตามวันที่เอกสารใน SML"
                   clearLabel="ล้างช่วงวันที่"
                 />
               </div>
@@ -186,7 +180,7 @@ export default function NextStepMarketplace() {
               <Input
                 value={searchDraft}
                 onChange={(event) => setSearchDraft(event.target.value)}
-                placeholder="ค้นหา MQT, invoice, sale code, remark"
+                placeholder="ค้นหา MQT, PREQT, invoice, sale code, remark"
                 className="h-10 pl-9"
               />
             </div>
@@ -212,7 +206,7 @@ export default function NextStepMarketplace() {
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="ยอดสุทธิ MQT" value={loading ? '—' : formatCurrency(summary?.total_amount ?? 0)} icon={<Database className="h-4 w-4" />} />
+        <MetricCard label="ยอดสุทธิ MQT/PREQT" value={loading ? '—' : formatCurrency(summary?.total_amount ?? 0)} icon={<Database className="h-4 w-4" />} />
         <MetricCard label="ออเดอร์" value={loading ? '—' : formatCount(summary?.total_orders ?? 0)} />
         <MetricCard label="CN หักแล้ว" value={loading ? '—' : formatCurrency(summary?.cn_total_amount ?? 0)} />
         <MetricCard label="คงค้าง" value={loading ? '—' : formatCount(pendingStatusCount(summary))} />
@@ -222,7 +216,7 @@ export default function NextStepMarketplace() {
         <CardContent className="space-y-4 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-foreground">รายการเอกสาร MQT</div>
+              <div className="text-sm font-semibold text-foreground">รายการเอกสาร MQT/PREQT</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
                 {loading ? 'กำลังโหลด' : `${formatCount(total)} รายการ`}
               </div>
@@ -248,13 +242,13 @@ export default function NextStepMarketplace() {
               description="ลองรีเฟรชอีกครั้ง หรือเช็ก backend log ถ้า SML API ไม่ตอบ"
             />
           ) : !state?.configured ? (
-            <ConfigMessage message={state?.message || 'ยังไม่ได้ตั้งค่า NextStep marketplace cust_code'} />
+            <ConfigMessage message={state?.message || 'ยังไม่ได้ตั้งค่า SML API สำหรับ NextStep Marketplace'} />
           ) : !state.available ? (
             <StateMessage title="เชื่อมต่อ SML ไม่สำเร็จ" description={state.message || 'ตรวจ SML API แล้วลองรีเฟรชอีกครั้ง'} />
           ) : orders.length === 0 ? (
             <StateMessage
               title="ไม่พบออเดอร์ในเงื่อนไขนี้"
-              description="ช่วงวันที่และคำค้นหานี้ยังไม่มีเอกสาร MQT ที่ตรงกัน"
+              description="ช่วงวันที่และคำค้นหานี้ยังไม่มีเอกสาร MQT/PREQT ที่ตรงกัน"
             />
           ) : (
             <OrdersTable orders={orders} />
@@ -289,7 +283,7 @@ export default function NextStepMarketplace() {
           )}
 
           <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-5 text-muted-foreground">
-            ยอดนี้อ่านจาก SML เอกสาร MQT ตามวันที่เอกสาร ไม่ใช่ยอดรับชำระหรือ payout
+            ยอดนี้อ่านจากเอกสาร MQT/PREQT ใน SML ตามวันที่เอกสาร ไม่ใช่ยอดรับชำระหรือ payout
           </div>
         </CardContent>
       </Card>
@@ -301,7 +295,7 @@ function OrdersTable({ orders }: { orders: NextStepMarketplaceOrder[] }) {
   return (
     <div className="overflow-hidden rounded-md border border-border/70">
       <div className="hidden grid-cols-[1.15fr_0.8fr_0.8fr_0.75fr_0.75fr_0.75fr] gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
-        <div>เอกสาร MQT</div>
+        <div>เอกสาร MQT/PREQT</div>
         <div>วันที่</div>
         <div>สถานะ</div>
         <div className="text-right">ยอดสุทธิ</div>

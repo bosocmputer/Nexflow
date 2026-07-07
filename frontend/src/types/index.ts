@@ -424,8 +424,9 @@ export interface NextStepMarketplaceTrendPoint {
 
 export interface NextStepMarketplaceMeta {
   tenant: string
-  cust_code: string
-  doc_prefix: string
+  cust_code?: string
+  doc_prefix?: string
+  doc_prefixes?: string[]
   date_from: string
   date_to: string
   date_basis: string

@@ -550,7 +550,7 @@ function NextStepSalesCard({
             </div>
           </div>
           <Badge variant="outline" className="bg-muted text-foreground">
-            {loading ? '—' : state?.available ? formatPercent(sharePct) : state?.configured ? 'SML MQT' : 'ตั้งค่า'}
+            {loading ? '—' : state?.available ? formatPercent(sharePct) : state?.configured ? 'SML' : 'ตั้งค่า'}
           </Badge>
         </div>
 
@@ -565,7 +565,7 @@ function NextStepSalesCard({
           compact
         />
         <div className="mt-1.5 text-xs leading-5 text-muted-foreground">
-          {state?.available ? 'ยอดจากเอกสาร MQT ใน SML' : state?.message || 'ข้อมูลจาก SML marketplace'}
+          {state?.available ? 'ยอดจากเอกสาร MQT/PREQT ใน SML' : state?.message || 'ข้อมูลจาก SML marketplace'}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <MiniMetric label="CN หักแล้ว" value={loading ? '—' : formatCurrency(summary?.cn_total_amount ?? 0, true)} />
@@ -701,7 +701,7 @@ function SalesTrendCard({
         {!error && <PlatformShareBreakdown items={shareBreakdown.items} loading={loading} total={shareBreakdown.total} />}
 
         <div className="rounded-md border border-border/70 bg-muted/25 px-3 py-2 text-xs leading-5 text-muted-foreground">
-          Failed และต้องตรวจยังรวมในยอด Nexflow; NextStep Marketplace อ่านจาก SML MQT ตาม cust_code ที่ตั้งไว้
+          Failed และต้องตรวจยังรวมในยอด Nexflow; NextStep Marketplace อ่านจากเอกสาร MQT/PREQT ใน SML
         </div>
       </CardContent>
     </Card>

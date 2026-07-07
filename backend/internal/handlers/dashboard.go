@@ -31,7 +31,6 @@ type DashboardHandler struct {
 	smlConfigured        bool
 	smlReadiness         *sml.ReadinessChecker
 	nextStepMarketplace  *sml.NextStepMarketplaceClient
-	appSettings          *repository.AppSettingsRepo
 	aiConfigured         bool
 	autoConfirmThreshold float64
 	log                  *zap.Logger
@@ -70,9 +69,8 @@ func (h *DashboardHandler) SetSMLReadiness(checker *sml.ReadinessChecker) {
 	h.smlReadiness = checker
 }
 
-func (h *DashboardHandler) SetNextStepMarketplace(client *sml.NextStepMarketplaceClient, settings *repository.AppSettingsRepo) {
+func (h *DashboardHandler) SetNextStepMarketplace(client *sml.NextStepMarketplaceClient, _ *repository.AppSettingsRepo) {
 	h.nextStepMarketplace = client
-	h.appSettings = settings
 }
 
 // GET /api/dashboard/stats
@@ -184,7 +182,7 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 		"available":  false,
 		"message":    "ยังไม่ได้ตั้งค่า NextStep marketplace",
 	}
-	if h.nextStepMarketplace == nil || h.appSettings == nil {
+	if h.nextStepMarketplace == nil {
 		state["error"] = "not_configured"
 		return state
 	}
@@ -193,25 +191,11 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 		state["message"] = "ยังไม่ได้ตั้งค่า SML REST URL, API key หรือ tenant"
 		return state
 	}
-	custCode, err := h.appSettings.GetValue("marketplace.nextstep_cust_code")
-	if err != nil {
-		h.log.Warn("nextstep marketplace setting lookup failed", zap.Error(err))
-		state["error"] = "setting_lookup_failed"
-		state["message"] = "อ่านค่า NextStep cust_code ไม่สำเร็จ"
-		return state
-	}
-	custCode = strings.TrimSpace(custCode)
-	if custCode == "" {
-		state["error"] = "missing_cust_code"
-		state["message"] = "ไปที่การเชื่อมต่อระบบ แล้วตั้งค่า NextStep marketplace cust_code"
-		return state
-	}
 
 	state["configured"] = true
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	data, err := h.nextStepMarketplace.Fetch(reqCtx, sml.NextStepMarketplaceRequest{
-		CustCode:      custCode,
 		DateFrom:      fromDate,
 		DateTo:        toDate,
 		Search:        search,
@@ -221,10 +205,10 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 	})
 	if err != nil {
 		h.log.Warn("nextstep marketplace dashboard fetch failed",
-			zap.String("cust_code", custCode),
 			zap.String("from_date", fromDate),
 			zap.String("to_date", toDate),
 			zap.String("search", search),
+			zap.Bool("include_orders", includeOrders),
 			zap.Error(err),
 		)
 		state["error"] = "sml_unavailable"

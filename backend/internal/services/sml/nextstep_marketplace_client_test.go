@@ -21,8 +21,8 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 		if got := r.Header.Get("X-Api-Key"); got != "smlx" {
 			t.Fatalf("X-Api-Key = %q", got)
 		}
-		if got := r.URL.Query().Get("cust_code"); got != "C001" {
-			t.Fatalf("cust_code = %q", got)
+		if got := r.URL.Query().Get("cust_code"); got != "" {
+			t.Fatalf("cust_code should not be sent, got %q", got)
 		}
 		if got := r.URL.Query().Get("date_from"); got != "2026-07-01" {
 			t.Fatalf("date_from = %q", got)
@@ -34,7 +34,7 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 			t.Fatalf("include_orders = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"trend":[{"date":"2026-07-01","total_amount":0},{"date":"2026-07-02","total_amount":0},{"date":"2026-07-03","total_amount":1200}],"meta":{"tenant":"aoy","cust_code":"C001","doc_prefix":"MQT","date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","page":1,"size":5,"total":1}}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"trend":[{"date":"2026-07-01","total_amount":0},{"date":"2026-07-02","total_amount":0},{"date":"2026-07-03","total_amount":1200}],"meta":{"tenant":"aoy","doc_prefix":"MQT/PREQT","doc_prefixes":["MQT","PREQT"],"date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","page":1,"size":5,"total":1}}}`))
 	}))
 	defer srv.Close()
 
@@ -45,7 +45,6 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 	}, zap.NewNop()).WithHTTPClient(srv.Client())
 
 	got, err := client.Fetch(context.Background(), NextStepMarketplaceRequest{
-		CustCode:      "C001",
 		DateFrom:      "2026-07-01",
 		DateTo:        "2026-07-03",
 		Search:        "MQT2607",
@@ -65,12 +64,14 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 	if len(got.Trend) != 3 || got.Trend[2].TotalAmount != 1200 {
 		t.Fatalf("trend = %+v", got.Trend)
 	}
+	if got.Meta.DocPrefix != "MQT/PREQT" || len(got.Meta.DocPrefixes) != 2 {
+		t.Fatalf("meta prefixes = %+v", got.Meta)
+	}
 }
 
 func TestNextStepMarketplaceClientRejectsMissingConfig(t *testing.T) {
 	client := NewNextStepMarketplaceClient(PartyConfig{}, zap.NewNop())
 	if _, err := client.Fetch(context.Background(), NextStepMarketplaceRequest{
-		CustCode: "C001",
 		DateFrom: "2026-07-01",
 		DateTo:   "2026-07-03",
 	}); err == nil {
