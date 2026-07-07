@@ -105,6 +105,26 @@ func (h *NotificationHandler) MarkShopeeOrderRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread})
 }
 
+func (h *NotificationHandler) MarkNextStepOrderRead(c *gin.Context) {
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "no user_id in context"})
+		return
+	}
+	docNo := strings.TrimSpace(c.Param("doc_no"))
+	if docNo == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "doc_no ไม่ถูกต้อง"})
+		return
+	}
+	changed, err := h.repo.MarkReadByEntity(c.Request.Context(), userID, "nextstep_marketplace", "nextstep_order", docNo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ของ NextStep ไม่สำเร็จ"})
+		return
+	}
+	unread := h.publishUnread(c, userID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread})
+}
+
 func (h *NotificationHandler) MarkAllRead(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {

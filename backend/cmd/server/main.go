@@ -34,6 +34,7 @@ import (
 	"nexflow/internal/services/mapper"
 	"nexflow/internal/services/media"
 	"nexflow/internal/services/mistral"
+	nextstepnotifications "nexflow/internal/services/nextstep_notifications"
 	"nexflow/internal/services/sml"
 	"nexflow/internal/worker"
 )
@@ -109,6 +110,7 @@ func main() {
 	aiUsageRepo := repository.NewAIUsageRepo(db)
 	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db)
 	notificationRepo := repository.NewNotificationRepo(db)
+	nextStepNotificationRepo := repository.NewNextStepMarketplaceNotificationRepo(db)
 	if err := appSettingsRepo.ApplyToConfig(cfg); err != nil {
 		logger.Warn("apply DB instance settings", zap.Error(err))
 	}
@@ -403,6 +405,8 @@ func main() {
 	publicMediaH := handlers.NewPublicMediaHandler(chatMediaRepo, mediaSigner, logger)
 	sseH := handlers.NewSSEHandler(eventBroker, mediaSigner)
 	notificationH := handlers.NewNotificationHandler(notificationRepo, eventBroker)
+	nextStepNotificationWorker := nextstepnotifications.NewWorker(nextStepMarketplaceClient, nextStepNotificationRepo, notificationRepo, eventBroker, logger)
+	nextStepNotificationWorker.Start(appCtx)
 	lineNotificationSvc := linenotify.NewService(
 		lineNotificationRepo,
 		cfg.PublicBaseURL,
@@ -493,6 +497,7 @@ func main() {
 		api.GET("/notifications/count", middleware.RequireRole("admin", "staff"), notificationH.Count)
 		api.POST("/notifications/:id/read", middleware.RequireRole("admin", "staff"), notificationH.MarkRead)
 		api.POST("/notifications/read-all", middleware.RequireRole("admin", "staff"), notificationH.MarkAllRead)
+		api.POST("/nextstep-marketplace/orders/:doc_no/notifications/read", middleware.RequireRole("admin", "staff"), notificationH.MarkNextStepOrderRead)
 
 		// LINE order notifications — admin-only, separate from LINE chat feature.
 		lineNotificationH := handlers.NewLineNotificationHandler(lineOARepo, lineNotificationRepo, lineRegistry, auditLogRepo, cfg, logger)

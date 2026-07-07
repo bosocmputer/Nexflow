@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search, Store } from 'lucide-react'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
 import type { NextStepMarketplaceOrder, NextStepMarketplaceState } from '@/types'
 
@@ -31,6 +32,8 @@ export default function NextStepMarketplace() {
   const [loading, setLoading] = useState(true)
   const [networkError, setNetworkError] = useState(false)
   const [refreshTick, setRefreshTick] = useState(0)
+  const markedReadDocsRef = useRef<Set<string>>(new Set())
+  const markNotificationEntityReadLocal = useNotificationsStore((s) => s.markEntityReadLocal)
   const page = Math.max(1, Number(params.get('page') || '1') || 1)
   const committedSearch = params.get('search') || ''
   const rangeError = dateRangeError(dateRange)
@@ -97,6 +100,23 @@ export default function NextStepMarketplace() {
       active = false
     }
   }, [committedSearch, dateRange.from, dateRange.to, page, rangeReady, refreshTick])
+
+  useEffect(() => {
+    if (loading || !state?.available || !committedSearch.trim()) return
+    const search = committedSearch.trim().toLowerCase()
+    const order = (state.orders ?? []).find((row) => row.doc_no.toLowerCase() === search)
+    if (!order?.doc_no || markedReadDocsRef.current.has(order.doc_no)) return
+
+    markedReadDocsRef.current.add(order.doc_no)
+    client
+      .post<{ unread: number }>(`/api/nextstep-marketplace/orders/${encodeURIComponent(order.doc_no)}/notifications/read`)
+      .then((res) => {
+        markNotificationEntityReadLocal('nextstep_order', order.doc_no, res.data.unread ?? 0)
+      })
+      .catch(() => {
+        markedReadDocsRef.current.delete(order.doc_no)
+      })
+  }, [committedSearch, loading, markNotificationEntityReadLocal, state?.available, state?.orders])
 
   const summary = state?.summary
   const meta = state?.meta

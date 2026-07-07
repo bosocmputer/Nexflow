@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Bell, CheckCheck, CircleDot, RadioTower } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Bell, CheckCheck, CircleDot, RadioTower, Volume2, VolumeX } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
@@ -17,6 +17,9 @@ type NotificationListResponse = {
   data: AppNotification[]
   unread: number
 }
+
+const SOUND_STORAGE_KEY = 'nexflow.notifications.sound_enabled'
+const SOUND_BURST_WINDOW_MS = 900
 
 const severityMeta = {
   error: {
@@ -41,6 +44,12 @@ export function NotificationBell() {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(SOUND_STORAGE_KEY) === '1'
+  })
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const lastSoundAtRef = useRef(0)
   const subscribe = useEventsStore((s) => s.subscribe)
   const unread = useNotificationsStore((s) => s.unread)
   const items = useNotificationsStore((s) => s.items)
@@ -51,6 +60,56 @@ export function NotificationBell() {
   const markAllReadLocal = useNotificationsStore((s) => s.markAllReadLocal)
 
   const canUseNotifications = user?.role === 'admin' || user?.role === 'staff'
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(SOUND_STORAGE_KEY, soundEnabled ? '1' : '0')
+  }, [soundEnabled])
+
+  const getAudioContext = useCallback(() => {
+    if (typeof window === 'undefined') return null
+    if (!audioCtxRef.current) {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext
+      if (!Ctx) return null
+      audioCtxRef.current = new Ctx()
+    }
+    return audioCtxRef.current
+  }, [])
+
+  const playChimeOnContext = useCallback((ctx: AudioContext) => {
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, now)
+    osc.frequency.setValueAtTime(1320, now + 0.08)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.14, now + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22)
+    osc.connect(gain).connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.24)
+  }, [])
+
+  const playNotificationSound = useCallback((force = false) => {
+    if (!force && !soundEnabled) return
+    const nowMs = Date.now()
+    if (!force && nowMs - lastSoundAtRef.current < SOUND_BURST_WINDOW_MS) return
+    lastSoundAtRef.current = nowMs
+    try {
+      const ctx = getAudioContext()
+      if (!ctx) return
+      if (ctx.state === 'suspended') {
+        void ctx.resume().then(() => playChimeOnContext(ctx)).catch(() => {
+          /* Browser may still block until the next user gesture. */
+        })
+        return
+      }
+      playChimeOnContext(ctx)
+    } catch {
+      /* Audio is a convenience, never a blocking notification path. */
+    }
+  }, [getAudioContext, playChimeOnContext, soundEnabled])
 
   const grouped = useMemo(() => {
     const groups: Record<AppNotification['severity'], AppNotification[]> = {
@@ -99,8 +158,9 @@ export function NotificationBell() {
       if (notification.severity === 'error') toast.error(notification.title, opts)
       else if (notification.severity === 'warning') toast.warning(notification.title, opts)
       else toast.info(notification.title, opts)
+      playNotificationSound()
     })
-  }, [canUseNotifications, setUnread, subscribe, unread, upsertFromEvent])
+  }, [canUseNotifications, playNotificationSound, setUnread, subscribe, unread, upsertFromEvent])
 
   const markOneRead = async (notification: AppNotification, navigateToAction: boolean) => {
     try {
@@ -122,6 +182,12 @@ export function NotificationBell() {
     } catch {
       toast.error('อ่าน notification ทั้งหมดไม่สำเร็จ')
     }
+  }
+
+  const toggleSound = () => {
+    const next = !soundEnabled
+    setSoundEnabled(next)
+    if (next) playNotificationSound(true)
   }
 
   if (!canUseNotifications) return null
@@ -150,20 +216,35 @@ export function NotificationBell() {
           <div>
             <div className="text-sm font-semibold text-foreground">การแจ้งเตือน</div>
             <div className="text-xs text-muted-foreground">
-              คำสั่งซื้อ Shopee และงานที่ต้องตรวจ
+              Shopee, NextStep และงานที่ต้องตรวจ
             </div>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={markAllRead}
-            disabled={unread === 0}
-          >
-            <CheckCheck className="h-3.5 w-3.5" />
-            อ่านทั้งหมด
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs"
+              onClick={toggleSound}
+              aria-pressed={soundEnabled}
+              aria-label={soundEnabled ? 'ปิดเสียงแจ้งเตือน' : 'เปิดเสียงแจ้งเตือน'}
+              title={soundEnabled ? 'ปิดเสียงแจ้งเตือน' : 'เปิดเสียงแจ้งเตือน'}
+            >
+              {soundEnabled ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{soundEnabled ? 'เสียงเปิด' : 'เสียงปิด'}</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={markAllRead}
+              disabled={unread === 0}
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              อ่านทั้งหมด
+            </Button>
+          </div>
         </div>
         <ScrollArea className="max-h-[min(70vh,520px)]">
           <div className="space-y-3 p-3">
