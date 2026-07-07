@@ -40,6 +40,7 @@ type SeenRepository interface {
 type NotificationRepository interface {
 	CreateForRoles(context.Context, []string, models.NotificationInput) ([]models.Notification, error)
 	UnreadCount(context.Context, string) (int, error)
+	UnreadCountsBySource(context.Context, string) (map[string]int, error)
 }
 
 type EventPublisher interface {
@@ -254,7 +255,7 @@ func (w *Worker) publishOrderNotification(ctx context.Context, order sml.NextSte
 	created, err := w.notifyRepo.CreateForRoles(ctx, []string{"admin", "staff"}, models.NotificationInput{
 		Source:     "nextstep_marketplace",
 		Severity:   "info",
-		Title:      "มีออเดอร์ NextStep ใหม่",
+		Title:      "มีออเดอร์ NextStep Marketplace ใหม่",
 		Body:       nextStepNotificationBody(order),
 		ActionURL:  nextStepNotificationActionURL(order),
 		EntityType: "nextstep_order",
@@ -266,18 +267,22 @@ func (w *Worker) publishOrderNotification(ctx context.Context, order sml.NextSte
 	}
 	for _, n := range created {
 		unread, _ := w.notifyRepo.UnreadCount(ctx, n.RecipientID)
+		bySource, _ := w.notifyRepo.UnreadCountsBySource(ctx, n.RecipientID)
+		if bySource == nil {
+			bySource = map[string]int{}
+		}
 		if w.broker == nil {
 			continue
 		}
 		w.broker.Publish(events.Event{
 			Type:         events.TypeNotificationCreated,
 			TargetUserID: n.RecipientID,
-			Payload:      map[string]any{"notification": n, "unread_count": unread},
+			Payload:      map[string]any{"notification": n, "unread_count": unread, "unread_by_source": bySource},
 		})
 		w.broker.Publish(events.Event{
 			Type:         events.TypeNotificationUnreadChanged,
 			TargetUserID: n.RecipientID,
-			Payload:      map[string]any{"total": unread},
+			Payload:      map[string]any{"total": unread, "unread_by_source": bySource},
 		})
 	}
 	return len(created), nil

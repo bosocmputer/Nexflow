@@ -110,6 +110,32 @@ func TestNotificationRepoUnreadCountExcludesResolved(t *testing.T) {
 	}
 }
 
+func TestNotificationRepoUnreadCountsBySource(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT source, COUNT").
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"source", "count"}).
+			AddRow("shopee_realtime", 2).
+			AddRow("nextstep_marketplace", 3))
+
+	repo := NewNotificationRepo(db)
+	counts, err := repo.UnreadCountsBySource(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("UnreadCountsBySource: %v", err)
+	}
+	if counts["shopee_realtime"] != 2 || counts["nextstep_marketplace"] != 3 {
+		t.Fatalf("counts = %#v, want source split", counts)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
 func TestNotificationRepoResolveShopeeShopIssues(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

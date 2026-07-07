@@ -9,13 +9,18 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { useNotificationsStore } from '@/lib/notifications-store'
+import { type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
 import type { NextStepMarketplaceOrder, NextStepMarketplaceState } from '@/types'
 
 type DateRange = {
   from: string
   to: string
+}
+
+type NotificationWriteResponse = {
+  unread: number
+  unread_by_source?: NotificationUnreadBySource
 }
 
 const PAGE_SIZE = 20
@@ -109,9 +114,9 @@ export default function NextStepMarketplace() {
 
     markedReadDocsRef.current.add(order.doc_no)
     client
-      .post<{ unread: number }>(`/api/nextstep-marketplace/orders/${encodeURIComponent(order.doc_no)}/notifications/read`)
+      .post<NotificationWriteResponse>(`/api/nextstep-marketplace/orders/${encodeURIComponent(order.doc_no)}/notifications/read`)
       .then((res) => {
-        markNotificationEntityReadLocal('nextstep_order', order.doc_no, res.data.unread ?? 0)
+        markNotificationEntityReadLocal('nextstep_order', order.doc_no, res.data.unread ?? 0, res.data.unread_by_source)
       })
       .catch(() => {
         markedReadDocsRef.current.delete(order.doc_no)
@@ -185,7 +190,7 @@ export default function NextStepMarketplace() {
                   onToChange={(to) => updateRange({ ...dateRange, to })}
                   onRangeChange={updateRange}
                   className="w-full sm:w-[250px]"
-                  title="ช่วงวันที่ NextStep"
+                  title="ช่วงวันที่ NextStep Marketplace"
                   description="กรองเอกสาร MQT/PREQT ตามวันที่เอกสารใน SML"
                   clearLabel="ล้างช่วงวันที่"
                 />

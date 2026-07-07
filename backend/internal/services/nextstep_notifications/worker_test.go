@@ -60,12 +60,20 @@ func TestPollOnceNewActionableOrderCreatesNotification(t *testing.T) {
 	if notify.inputs[0].Source != "nextstep_marketplace" || notify.inputs[0].EntityID != "MQT26070002" {
 		t.Fatalf("notification input = %+v", notify.inputs[0])
 	}
+	if notify.inputs[0].Title != "มีออเดอร์ NextStep Marketplace ใหม่" {
+		t.Fatalf("notification title = %q", notify.inputs[0].Title)
+	}
 	seen := w.seenRepo.(*fakeSeenRepo)
 	if len(seen.markNotified) != 1 || seen.markNotified[0] != "MQT26070002" {
 		t.Fatalf("markNotified = %+v", seen.markNotified)
 	}
 	if got := len(w.broker.(*fakePublisher).events); got != 2 {
 		t.Fatalf("published events = %d, want 2", got)
+	}
+	for _, ev := range w.broker.(*fakePublisher).events {
+		if _, ok := ev.Payload["unread_by_source"]; !ok {
+			t.Fatalf("event payload missing unread_by_source: %#v", ev.Payload)
+		}
 	}
 }
 
@@ -197,6 +205,10 @@ func (f *fakeNotificationRepo) CreateForRoles(_ context.Context, _ []string, in 
 
 func (f *fakeNotificationRepo) UnreadCount(context.Context, string) (int, error) {
 	return 1, nil
+}
+
+func (f *fakeNotificationRepo) UnreadCountsBySource(context.Context, string) (map[string]int, error) {
+	return map[string]int{"nextstep_marketplace": 1}, nil
 }
 
 type fakePublisher struct {

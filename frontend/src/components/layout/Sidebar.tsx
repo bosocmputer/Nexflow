@@ -36,7 +36,7 @@ import {
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { NexflowLogo } from '@/components/common/NexflowLogo'
 import { useAuth } from '@/hooks/useAuth'
-import { useNotificationsStore } from '@/lib/notifications-store'
+import { type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { useUIStore } from '@/lib/ui-store'
 import { cn } from '@/lib/utils'
 import { WORK_QUEUE_CHANGED_EVENT } from '@/lib/work-queue-events'
@@ -98,11 +98,12 @@ function navBadgeCount(
   badgeKind: string | boolean | null | undefined,
   queueCounts: QueueCounts,
   unreadMessages: number,
-  unreadNotifications: number,
+  unreadBySource: NotificationUnreadBySource,
 ) {
   const kind = badgeKind === true ? 'bills' : badgeKind || null
   if (kind === 'messages') return unreadMessages
-  if (kind === 'shopee_realtime') return unreadNotifications
+  if (kind === 'shopee_realtime') return unreadBySource.shopee_realtime ?? 0
+  if (kind === 'nextstep_marketplace') return unreadBySource.nextstep_marketplace ?? 0
   if (kind === 'purchase') return queueCounts.purchase
   if (kind === 'saleorder') return queueCounts.saleorder
   if (kind === 'saleinvoice') return queueCounts.saleinvoice
@@ -118,7 +119,7 @@ export default function Sidebar() {
   const toggle = useUIStore((s) => s.toggleSidebar)
   const mobileOpen = useUIStore((s) => s.mobileNavOpen)
   const setMobileOpen = useUIStore((s) => s.setMobileNavOpen)
-  const unreadNotifications = useNotificationsStore((s) => s.unread)
+  const unreadBySource = useNotificationsStore((s) => s.unreadBySource)
   const [queueCounts, setQueueCounts] = useState({ purchase: 0, saleorder: 0, saleinvoice: 0, marketplaceAliases: 0 })
   const [unreadMessages, setUnreadMessages] = useState(0)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -224,7 +225,7 @@ export default function Sidebar() {
         navGroups={navGroups}
         queueCounts={queueCounts}
         unreadMessages={unreadMessages}
-        unreadNotifications={unreadNotifications}
+        unreadBySource={unreadBySource}
         userEmail={user?.email}
         userRole={user?.role}
         userInitials={initials}
@@ -272,7 +273,7 @@ export default function Sidebar() {
                 const Icon = item.icon
                 const badgeKind =
                   item.hasBadge === true ? 'bills' : item.hasBadge || null
-                const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadNotifications)
+                const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadBySource)
                 const showBadge = !!badgeKind && badgeCount > 0
                 const urgentBadge = !!badgeKind && URGENT_BADGES.has(badgeKind)
 
@@ -435,7 +436,7 @@ function MobileNavDrawer({
   navGroups,
   queueCounts,
   unreadMessages,
-  unreadNotifications,
+  unreadBySource,
   userEmail,
   userRole,
   userInitials,
@@ -446,7 +447,7 @@ function MobileNavDrawer({
   navGroups: NavGroup[]
   queueCounts: QueueCounts
   unreadMessages: number
-  unreadNotifications: number
+  unreadBySource: NotificationUnreadBySource
   userEmail?: string
   userRole?: string
   userInitials: string
@@ -477,7 +478,7 @@ function MobileNavDrawer({
                 {group.items.map((item) => {
                   const Icon = item.icon
                   const badgeKind = item.hasBadge === true ? 'bills' : item.hasBadge || null
-                  const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadNotifications)
+                  const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadBySource)
                   const urgentBadge = !!badgeKind && URGENT_BADGES.has(badgeKind)
                   return (
                     <NavLink

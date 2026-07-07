@@ -42,7 +42,11 @@ func (h *NotificationHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลด notification ไม่สำเร็จ"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rows, "unread": unread})
+	bySource, _ := h.repo.UnreadCountsBySource(c.Request.Context(), userID)
+	if bySource == nil {
+		bySource = map[string]int{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows, "unread": unread, "unread_by_source": bySource})
 }
 
 func (h *NotificationHandler) Count(c *gin.Context) {
@@ -56,7 +60,11 @@ func (h *NotificationHandler) Count(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดจำนวน notification ไม่สำเร็จ"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"unread": n})
+	bySource, _ := h.repo.UnreadCountsBySource(c.Request.Context(), userID)
+	if bySource == nil {
+		bySource = map[string]int{}
+	}
+	c.JSON(http.StatusOK, gin.H{"unread": n, "unread_by_source": bySource})
 }
 
 func (h *NotificationHandler) MarkRead(c *gin.Context) {
@@ -75,8 +83,8 @@ func (h *NotificationHandler) MarkRead(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ไม่สำเร็จ"})
 		return
 	}
-	unread := h.publishUnread(c, userID)
-	c.JSON(http.StatusOK, gin.H{"success": true, "unread": unread})
+	unread, bySource := h.publishUnread(c, userID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "unread": unread, "unread_by_source": bySource})
 }
 
 func (h *NotificationHandler) MarkShopeeOrderRead(c *gin.Context) {
@@ -101,8 +109,8 @@ func (h *NotificationHandler) MarkShopeeOrderRead(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ของคำสั่งซื้อ Shopee ไม่สำเร็จ"})
 		return
 	}
-	unread := h.publishUnread(c, userID)
-	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread})
+	unread, bySource := h.publishUnread(c, userID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread, "unread_by_source": bySource})
 }
 
 func (h *NotificationHandler) MarkNextStepOrderRead(c *gin.Context) {
@@ -118,11 +126,11 @@ func (h *NotificationHandler) MarkNextStepOrderRead(c *gin.Context) {
 	}
 	changed, err := h.repo.MarkReadByEntity(c.Request.Context(), userID, "nextstep_marketplace", "nextstep_order", docNo)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ของ NextStep ไม่สำเร็จ"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ของ NextStep Marketplace ไม่สำเร็จ"})
 		return
 	}
-	unread := h.publishUnread(c, userID)
-	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread})
+	unread, bySource := h.publishUnread(c, userID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread, "unread_by_source": bySource})
 }
 
 func (h *NotificationHandler) MarkAllRead(c *gin.Context) {
@@ -136,18 +144,22 @@ func (h *NotificationHandler) MarkAllRead(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน notification ทั้งหมดไม่สำเร็จ"})
 		return
 	}
-	unread := h.publishUnread(c, userID)
-	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread})
+	unread, bySource := h.publishUnread(c, userID)
+	c.JSON(http.StatusOK, gin.H{"success": true, "changed": changed, "unread": unread, "unread_by_source": bySource})
 }
 
-func (h *NotificationHandler) publishUnread(c *gin.Context, userID string) int {
+func (h *NotificationHandler) publishUnread(c *gin.Context, userID string) (int, map[string]int) {
 	unread, _ := h.repo.UnreadCount(c.Request.Context(), userID)
+	bySource, _ := h.repo.UnreadCountsBySource(c.Request.Context(), userID)
+	if bySource == nil {
+		bySource = map[string]int{}
+	}
 	if h.broker != nil {
 		h.broker.Publish(events.Event{
 			Type:         events.TypeNotificationUnreadChanged,
 			TargetUserID: userID,
-			Payload:      map[string]any{"total": unread},
+			Payload:      map[string]any{"total": unread, "unread_by_source": bySource},
 		})
 	}
-	return unread
+	return unread, bySource
 }

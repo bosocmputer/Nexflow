@@ -180,7 +180,7 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 	state := gin.H{
 		"configured": false,
 		"available":  false,
-		"message":    "ยังไม่ได้ตั้งค่า NextStep marketplace",
+		"message":    "ยังไม่ได้ตั้งค่า NextStep Marketplace",
 	}
 	if h.nextStepMarketplace == nil {
 		state["error"] = "not_configured"
@@ -212,7 +212,7 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 			zap.Error(err),
 		)
 		state["error"] = "sml_unavailable"
-		state["message"] = "โหลดข้อมูล NextStep จาก SML ไม่สำเร็จ"
+		state["message"] = "โหลดข้อมูล NextStep Marketplace จาก SML ไม่สำเร็จ"
 		return state
 	}
 	state["available"] = true

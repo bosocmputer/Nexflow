@@ -111,6 +111,37 @@ func (r *NotificationRepo) UnreadCount(ctx context.Context, userID string) (int,
 	return n, err
 }
 
+func (r *NotificationRepo) UnreadCountsBySource(ctx context.Context, userID string) (map[string]int, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT source, COUNT(*)::int
+		   FROM notifications
+		  WHERE recipient_id = $1
+		    AND read_at IS NULL
+		    AND resolved_at IS NULL
+		  GROUP BY source`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var source string
+		var count int
+		if err := rows.Scan(&source, &count); err != nil {
+			return nil, err
+		}
+		source = strings.TrimSpace(source)
+		if source == "" {
+			source = "system"
+		}
+		out[source] = count
+	}
+	return out, rows.Err()
+}
+
 func (r *NotificationRepo) MarkRead(ctx context.Context, userID, id string) (int, error) {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE notifications

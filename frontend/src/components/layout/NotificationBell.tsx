@@ -10,12 +10,18 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAuth } from '@/hooks/useAuth'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
-import { type AppNotification, useNotificationsStore } from '@/lib/notifications-store'
+import { type AppNotification, type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
 
 type NotificationListResponse = {
   data: AppNotification[]
   unread: number
+  unread_by_source?: NotificationUnreadBySource
+}
+
+type NotificationWriteResponse = {
+  unread: number
+  unread_by_source?: NotificationUnreadBySource
 }
 
 const SOUND_STORAGE_KEY = 'nexflow.notifications.sound_enabled'
@@ -45,8 +51,13 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return window.localStorage.getItem(SOUND_STORAGE_KEY) === '1'
+    if (typeof window === 'undefined') return true
+    try {
+      const stored = window.localStorage.getItem(SOUND_STORAGE_KEY)
+      return stored === null ? true : stored === '1'
+    } catch {
+      return true
+    }
   })
   const audioCtxRef = useRef<AudioContext | null>(null)
   const lastSoundAtRef = useRef(0)
@@ -63,7 +74,11 @@ export function NotificationBell() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    window.localStorage.setItem(SOUND_STORAGE_KEY, soundEnabled ? '1' : '0')
+    try {
+      window.localStorage.setItem(SOUND_STORAGE_KEY, soundEnabled ? '1' : '0')
+    } catch {
+      /* localStorage can be unavailable in private contexts. */
+    }
   }, [soundEnabled])
 
   const getAudioContext = useCallback(() => {
@@ -76,20 +91,56 @@ export function NotificationBell() {
     return audioCtxRef.current
   }, [])
 
-  const playChimeOnContext = useCallback((ctx: AudioContext) => {
-    const now = ctx.currentTime
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(880, now)
-    osc.frequency.setValueAtTime(1320, now + 0.08)
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(0.14, now + 0.02)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22)
-    osc.connect(gain).connect(ctx.destination)
-    osc.start(now)
-    osc.stop(now + 0.24)
+  const playBellStrike = useCallback((ctx: AudioContext, startAt: number) => {
+    const master = ctx.createGain()
+    master.gain.setValueAtTime(0.0001, startAt)
+    master.gain.exponentialRampToValueAtTime(0.32, startAt + 0.015)
+    master.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.28)
+    master.connect(ctx.destination)
+
+    const partials = [
+      { frequency: 1046.5, type: 'sine' as OscillatorType },
+      { frequency: 1568, type: 'triangle' as OscillatorType },
+    ]
+    partials.forEach(({ frequency, type }) => {
+      const osc = ctx.createOscillator()
+      osc.type = type
+      osc.frequency.setValueAtTime(frequency, startAt)
+      osc.frequency.exponentialRampToValueAtTime(frequency * 0.985, startAt + 0.25)
+      osc.connect(master)
+      osc.start(startAt)
+      osc.stop(startAt + 0.3)
+    })
   }, [])
+
+  const playBellBurstOnContext = useCallback((ctx: AudioContext) => {
+    const start = ctx.currentTime
+    playBellStrike(ctx, start)
+    playBellStrike(ctx, start + 0.34)
+    playBellStrike(ctx, start + 0.68)
+  }, [playBellStrike])
+
+  useEffect(() => {
+    if (!soundEnabled || typeof window === 'undefined') return
+    const unlock = () => {
+      try {
+        const ctx = getAudioContext()
+        if (ctx?.state === 'suspended') {
+          void ctx.resume().catch(() => {
+            /* Browser may still block until a later gesture. */
+          })
+        }
+      } catch {
+        /* Audio unlock is best effort only. */
+      }
+    }
+    window.addEventListener('pointerdown', unlock, { once: true, passive: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', unlock)
+      window.removeEventListener('keydown', unlock)
+    }
+  }, [getAudioContext, soundEnabled])
 
   const playNotificationSound = useCallback((force = false) => {
     if (!force && !soundEnabled) return
@@ -100,16 +151,16 @@ export function NotificationBell() {
       const ctx = getAudioContext()
       if (!ctx) return
       if (ctx.state === 'suspended') {
-        void ctx.resume().then(() => playChimeOnContext(ctx)).catch(() => {
+        void ctx.resume().then(() => playBellBurstOnContext(ctx)).catch(() => {
           /* Browser may still block until the next user gesture. */
         })
         return
       }
-      playChimeOnContext(ctx)
+      playBellBurstOnContext(ctx)
     } catch {
       /* Audio is a convenience, never a blocking notification path. */
     }
-  }, [getAudioContext, playChimeOnContext, soundEnabled])
+  }, [getAudioContext, playBellBurstOnContext, soundEnabled])
 
   const grouped = useMemo(() => {
     const groups: Record<AppNotification['severity'], AppNotification[]> = {
@@ -129,7 +180,7 @@ export function NotificationBell() {
     try {
       const res = await client.get<NotificationListResponse>('/api/notifications?limit=30')
       setItems(res.data.data ?? [])
-      setUnread(res.data.unread ?? 0)
+      setUnread(res.data.unread ?? 0, res.data.unread_by_source)
     } catch {
       /* avoid noisy topbar errors */
     } finally {
@@ -146,14 +197,14 @@ export function NotificationBell() {
     if (!canUseNotifications) return
     return subscribe((type: ServerEventType, payload: any) => {
       if (type === 'notification_unread_changed') {
-        setUnread(payload?.total ?? 0)
+        setUnread(payload?.total ?? 0, payload?.unread_by_source)
         return
       }
       if (type !== 'notification_created') return
       const notification = payload?.notification as AppNotification | undefined
       if (!notification?.id) return
       const nextUnread = Number(payload?.unread_count ?? unread + 1)
-      upsertFromEvent(notification, nextUnread)
+      upsertFromEvent(notification, nextUnread, payload?.unread_by_source)
       const opts = notification.body ? { description: notification.body } : undefined
       if (notification.severity === 'error') toast.error(notification.title, opts)
       else if (notification.severity === 'warning') toast.warning(notification.title, opts)
@@ -164,8 +215,8 @@ export function NotificationBell() {
 
   const markOneRead = async (notification: AppNotification, navigateToAction: boolean) => {
     try {
-      const res = await client.post<{ unread: number }>(`/api/notifications/${notification.id}/read`)
-      markReadLocal(notification.id, res.data.unread ?? Math.max(0, unread - 1))
+      const res = await client.post<NotificationWriteResponse>(`/api/notifications/${notification.id}/read`)
+      markReadLocal(notification.id, res.data.unread ?? Math.max(0, unread - 1), res.data.unread_by_source)
     } catch {
       /* navigation remains useful even if read write fails */
     }
@@ -177,8 +228,8 @@ export function NotificationBell() {
 
   const markAllRead = async () => {
     try {
-      await client.post('/api/notifications/read-all')
-      markAllReadLocal()
+      const res = await client.post<NotificationWriteResponse>('/api/notifications/read-all')
+      markAllReadLocal(res.data.unread_by_source)
     } catch {
       toast.error('อ่าน notification ทั้งหมดไม่สำเร็จ')
     }
@@ -216,7 +267,7 @@ export function NotificationBell() {
           <div>
             <div className="text-sm font-semibold text-foreground">การแจ้งเตือน</div>
             <div className="text-xs text-muted-foreground">
-              Shopee, NextStep และงานที่ต้องตรวจ
+              Shopee, NextStep Marketplace และงานที่ต้องตรวจ
             </div>
           </div>
           <div className="flex items-center gap-1">

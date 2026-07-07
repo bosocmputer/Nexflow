@@ -3116,18 +3116,22 @@ func (h *ShopeeRealtimeHandler) publishNotification(ctx context.Context, in mode
 	}
 	for _, n := range created {
 		unread, _ := h.notificationRepo.UnreadCount(ctx, n.RecipientID)
+		bySource, _ := h.notificationRepo.UnreadCountsBySource(ctx, n.RecipientID)
+		if bySource == nil {
+			bySource = map[string]int{}
+		}
 		if h.broker == nil {
 			continue
 		}
 		h.broker.Publish(events.Event{
 			Type:         events.TypeNotificationCreated,
 			TargetUserID: n.RecipientID,
-			Payload:      map[string]any{"notification": n, "unread_count": unread},
+			Payload:      map[string]any{"notification": n, "unread_count": unread, "unread_by_source": bySource},
 		})
 		h.broker.Publish(events.Event{
 			Type:         events.TypeNotificationUnreadChanged,
 			TargetUserID: n.RecipientID,
-			Payload:      map[string]any{"total": unread},
+			Payload:      map[string]any{"total": unread, "unread_by_source": bySource},
 		})
 	}
 	return len(created)

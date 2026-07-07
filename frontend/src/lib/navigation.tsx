@@ -46,6 +46,7 @@ export type NavBadgeKey =
   | 'messages'
   | 'marketplace_aliases'
   | 'shopee_realtime'
+  | 'nextstep_marketplace'
 
 export interface NavItem {
   to: string
@@ -72,8 +73,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ภาพรวมแพลตฟอร์ม',
     items: [
-      { to: '/dashboard', label: 'ยอดขายตามแพลตฟอร์ม', icon: LayoutDashboard, hint: 'ยอดเอกสารขาย Shopee, Lazada, TikTok และ NextStep' },
-      { to: '/nextstep-marketplace', label: 'NextStep Marketplace', icon: Store, hint: 'ออเดอร์ MQT จาก SML marketplace' },
+      { to: '/dashboard', label: 'ยอดขายตามแพลตฟอร์ม', icon: LayoutDashboard, hint: 'ยอดเอกสารขาย Shopee, Lazada, TikTok และ NextStep Marketplace' },
+      { to: '/nextstep-marketplace', label: 'NextStep Marketplace', icon: Store, hasBadge: 'nextstep_marketplace', hint: 'ออเดอร์ MQT จาก SML marketplace' },
     ],
   },
   {
