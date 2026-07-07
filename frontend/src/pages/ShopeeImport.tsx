@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, Fragment } from 'react'
 import { Link } from 'react-router-dom'
+import dayjs from 'dayjs'
 import {
   AlertCircle,
   AlertTriangle,
@@ -36,6 +37,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { DateRangePicker, type DateRangePreset } from '@/components/common/DateRangePicker'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { cn } from '@/lib/utils'
@@ -164,9 +166,74 @@ interface ShopeeAPIConnection {
   access_expires_at: string
   refresh_expires_at: string
   disabled_at?: string
+  last_sync_at?: string
+  last_sync_status?: string
+  last_sync_error?: string
+  token_state?: string
+  can_fetch?: boolean
   connected_at?: string
   updated_at?: string
 }
+
+type APIStatusTone = 'success' | 'warning' | 'danger' | 'muted'
+
+interface ShopeeAPIStatus {
+  enabled: boolean
+  configured: boolean
+  environment: string
+  connected: boolean
+  shop_id?: number
+  shop_name?: string
+  last_sync_at?: string
+  last_sync_status?: string
+  last_sync_error?: string
+  token_state?: string
+  can_fetch?: boolean
+  blocking_reason?: string
+}
+
+type PreviewSource = 'excel' | 'api'
+
+const shopeeImportPresets: DateRangePreset[] = [
+  {
+    label: 'วันนี้',
+    getRange: () => {
+      const today = dayjs().format('YYYY-MM-DD')
+      return { from: today, to: today }
+    },
+  },
+  {
+    label: '3 วัน',
+    getRange: () => ({
+      from: dayjs().subtract(2, 'day').format('YYYY-MM-DD'),
+      to: dayjs().format('YYYY-MM-DD'),
+    }),
+  },
+  {
+    label: '7 วัน',
+    getRange: () => ({
+      from: dayjs().subtract(6, 'day').format('YYYY-MM-DD'),
+      to: dayjs().format('YYYY-MM-DD'),
+    }),
+  },
+  {
+    label: '15 วัน',
+    getRange: () => ({
+      from: dayjs().subtract(14, 'day').format('YYYY-MM-DD'),
+      to: dayjs().format('YYYY-MM-DD'),
+    }),
+  },
+]
+
+const shopeeOrderStatusOptions = [
+  { value: 'ready_to_bill', label: 'พร้อมออกบิล' },
+  { value: 'all', label: 'ทุกสถานะ' },
+  { value: 'ready_to_ship', label: 'รอจัดส่ง' },
+  { value: 'processed', label: 'จัดเตรียมแล้ว' },
+  { value: 'shipped', label: 'จัดส่งแล้ว' },
+  { value: 'to_confirm_receive', label: 'รอยืนยันรับสินค้า' },
+  { value: 'completed', label: 'สำเร็จแล้ว' },
+]
 
 function fmt(n: number) {
   return n.toLocaleString('th-TH', { minimumFractionDigits: 2 })
@@ -180,6 +247,58 @@ function fmtDateTime(s: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function apiErrorMessage(err: unknown, fallback: string) {
+  const data = (err as { response?: { data?: { error?: string; error_code?: string } } })?.response?.data
+  const raw = data?.error?.trim()
+  switch (data?.error_code) {
+    case 'not_configured':
+      return 'Shopee Open API ยังไม่ได้ตั้งค่า Partner ID/Key บน server ให้ใช้ไฟล์ Excel หรือแจ้งแอดมินตั้งค่าก่อน'
+    case 'redirect_not_ready':
+      return 'Redirect URL ยังไม่พร้อม ให้ไปจัดการร้าน Shopee และตรวจ domain ก่อนเชื่อมต่อ'
+    case 'not_connected':
+      return 'ยังไม่ได้เชื่อมต่อร้าน Shopee ให้ไปจัดการร้าน Shopee หรือใช้ไฟล์ Excel'
+    case 'token_error':
+      return 'Shopee token ใช้งานไม่ได้หรือหมดอายุ ให้ไปจัดการร้าน Shopee แล้วเชื่อมร้านใหม่'
+    case 'permission_denied':
+      return 'Shopee ยังไม่อนุญาตสิทธิ์นี้ ให้ตรวจสิทธิ์ร้าน หรือใช้ไฟล์ Excel แทน'
+    default:
+      return raw || fallback
+  }
+}
+
+function apiRangeError(from: string, to: string) {
+  if (!from || !to) return 'เลือกวันที่เริ่มต้นและสิ้นสุดให้ครบ'
+  const fromDate = new Date(`${from}T00:00:00`)
+  const toDate = new Date(`${to}T00:00:00`)
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) return 'รูปแบบวันที่ไม่ถูกต้อง'
+  if (toDate < fromDate) return 'วันที่สิ้นสุดต้องไม่ก่อนวันที่เริ่มต้น'
+  const days = Math.floor((toDate.getTime() - fromDate.getTime()) / 86400000) + 1
+  if (days > 15) return 'Shopee API ดึงได้ไม่เกิน 15 วันต่อครั้ง ให้ลดช่วงวันที่'
+  return ''
+}
+
+function tokenStateLabel(v?: string) {
+  switch (v) {
+    case 'access_valid':
+      return 'พร้อมใช้'
+    case 'access_expiring':
+      return 'ใกล้ refresh'
+    case 'refresh_required':
+      return 'ต้อง refresh'
+    case 'refresh_expired':
+      return 'หมดอายุ'
+    default:
+      return '—'
+  }
+}
+
+function apiStatusToneClass(tone: APIStatusTone) {
+  if (tone === 'success') return 'border-success/30 bg-success/5 text-success'
+  if (tone === 'danger') return 'border-destructive/30 bg-destructive/5 text-destructive'
+  if (tone === 'warning') return 'border-warning/35 bg-warning/10 text-warning'
+  return 'border-border bg-muted/30 text-muted-foreground'
 }
 
 function shopeeDestination(config?: ShopeeConfig | null) {
@@ -242,9 +361,12 @@ type Step = 'idle' | 'uploading' | 'preview' | 'confirming' | 'done'
 
 export default function ShopeeImport() {
   const fileRef = useRef<HTMLInputElement>(null)
+  const apiStatusRequestSeq = useRef(0)
+  const apiPreviewRequestSeq = useRef(0)
   const [step, setStep] = useState<Step>('idle')
   const [config, setConfig] = useState<ShopeeConfig | null>(null)
   const [preview, setPreview] = useState<PreviewResponse | null>(null)
+  const [previewSource, setPreviewSource] = useState<PreviewSource>('excel')
   const [selectedIDs, setSelectedIDs] = useState<Set<string>>(new Set())
   const [results, setResults] = useState<{
     success_count: number
@@ -257,6 +379,15 @@ export default function ShopeeImport() {
   const [confirmElapsed, setConfirmElapsed] = useState(0)
   const [apiConnections, setAPIConnections] = useState<ShopeeAPIConnection[]>([])
   const [selectedConnectionID, setSelectedConnectionID] = useState('')
+  const [apiHelperOpen, setAPIHelperOpen] = useState(false)
+  const [apiStatus, setAPIStatus] = useState<ShopeeAPIStatus | null>(null)
+  const [apiStatusLoading, setAPIStatusLoading] = useState(false)
+  const [apiStatusError, setAPIStatusError] = useState('')
+  const [apiBusy, setAPIBusy] = useState(false)
+  const [apiFrom, setAPIFrom] = useState(() => dayjs().subtract(2, 'day').format('YYYY-MM-DD'))
+  const [apiTo, setAPITo] = useState(() => dayjs().format('YYYY-MM-DD'))
+  const [apiTimeRangeField, setAPITimeRangeField] = useState<'create_time' | 'update_time'>('create_time')
+  const [apiOrderStatus, setAPIOrderStatus] = useState('ready_to_bill')
 
   // Track config load + ready states separately so preflight UI can render
   // a missing-config banner BEFORE admin uploads a file. Without this, file
@@ -284,6 +415,28 @@ export default function ShopeeImport() {
     vat_type: -1,
     vat_rate: -1,
     doc_time: '',
+  }
+
+  const invalidateAPIPreviewRequest = () => {
+    apiPreviewRequestSeq.current += 1
+    setAPIBusy(false)
+  }
+
+  const loadAPIStatus = async () => {
+    const seq = apiStatusRequestSeq.current + 1
+    apiStatusRequestSeq.current = seq
+    setAPIStatusLoading(true)
+    setAPIStatusError('')
+    try {
+      const res = await client.get<ShopeeAPIStatus>('/api/settings/shopee-api/status')
+      if (apiStatusRequestSeq.current !== seq) return
+      setAPIStatus(res.data)
+    } catch (err: unknown) {
+      if (apiStatusRequestSeq.current !== seq) return
+      setAPIStatusError(apiErrorMessage(err, 'โหลดสถานะ Shopee API ไม่ได้ ให้ใช้ไฟล์ Excel หรือไปจัดการร้าน Shopee'))
+    } finally {
+      if (apiStatusRequestSeq.current === seq) setAPIStatusLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -324,6 +477,11 @@ export default function ShopeeImport() {
   }, [])
 
   useEffect(() => {
+    if (!apiHelperOpen || apiStatus || apiStatusLoading) return
+    void loadAPIStatus()
+  }, [apiHelperOpen, apiStatus, apiStatusLoading])
+
+  useEffect(() => {
     if (step !== 'confirming') {
       setConfirmElapsed(0)
       return
@@ -347,9 +505,11 @@ export default function ShopeeImport() {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
+    invalidateAPIPreviewRequest()
     setStep('uploading')
     setError('')
     setPreview(null)
+    setPreviewSource('excel')
     setResults(null)
     const form = new FormData()
     form.append('file', file)
@@ -360,6 +520,7 @@ export default function ShopeeImport() {
         form,
         { headers: { 'Content-Type': 'multipart/form-data' } },
       )
+      setPreviewSource('excel')
       setPreview(res.data)
       setSelectedIDs(
         new Set(res.data.orders.filter((o) => !isOrderBlocked(o)).map((o) => o.order_id)),
@@ -374,6 +535,54 @@ export default function ShopeeImport() {
     }
   }
 
+  const handleFetchAPI = async () => {
+    const dateError = apiRangeError(apiFrom, apiTo)
+    const selectedConnection = apiConnections.filter((c) => !c.disabled_at).find((c) => c.id === selectedConnectionID)
+    const needsShopSelection = apiConnections.filter((c) => !c.disabled_at).length > 1 && !selectedConnection
+    if (dateError || needsShopSelection || !selectedConnection) {
+      setError(dateError || (needsShopSelection ? 'เลือกร้าน Shopee ก่อนดึง order เพื่อกัน import ผิดร้าน' : 'ยังไม่มีร้าน Shopee ที่พร้อมดึง order ให้ไปจัดการร้าน Shopee หรือใช้ไฟล์ Excel'))
+      return
+    }
+    if (!apiStatus?.enabled || !apiStatus.configured || !selectedConnection.can_fetch) {
+      setError('Shopee API หรือ token ร้านนี้ยังไม่พร้อม ให้ไปจัดการร้าน Shopee หรือใช้ไฟล์ Excel จาก Seller Center')
+      return
+    }
+
+    const seq = apiPreviewRequestSeq.current + 1
+    apiPreviewRequestSeq.current = seq
+    setStep('uploading')
+    setError('')
+    setPreview(null)
+    setPreviewSource('api')
+    setResults(null)
+    setAPIBusy(true)
+    try {
+      const res = await client.post<PreviewResponse>('/api/import/shopee/api/preview', {
+        connection_id: selectedConnection.id,
+        time_from: apiFrom,
+        time_to: apiTo,
+        time_range_field: apiTimeRangeField,
+        order_status: apiOrderStatus,
+        page_size: 50,
+      })
+      if (apiPreviewRequestSeq.current !== seq) return
+      setPreviewSource('api')
+      setPreview(res.data)
+      setSelectedIDs(
+        new Set(res.data.orders.filter((o) => !isOrderBlocked(o)).map((o) => o.order_id)),
+      )
+      setStep('preview')
+      void loadAPIStatus()
+    } catch (err: unknown) {
+      if (apiPreviewRequestSeq.current !== seq) return
+      setError(`${apiErrorMessage(err, 'ดึง order จาก Shopee API ไม่ได้')} ถ้าต้องทำงานต่อทันที ให้ใช้ไฟล์ Excel จาก Seller Center ได้`)
+      setStep('idle')
+      void loadAPIStatus()
+    } finally {
+      if (apiPreviewRequestSeq.current === seq) setAPIBusy(false)
+    }
+  }
+
   const handleConfirm = async () => {
     if (!preview || selectedIDs.size === 0) return
     setStep('confirming')
@@ -385,7 +594,7 @@ export default function ShopeeImport() {
         orders: preview.orders,
         file_token: preview.file_token,
         import_run_id: preview.import_run_id,
-        source_flow: 'shopee_excel',
+        source_flow: previewSource === 'api' ? 'shopee_api' : 'shopee_excel',
         connection_id: selectedConnectionID,
       }, { timeout: 120000 })
       setResults(res.data)
@@ -420,6 +629,77 @@ export default function ShopeeImport() {
     })
   const activeConnections = apiConnections.filter((c) => !c.disabled_at)
   const selectedConnection = activeConnections.find((c) => c.id === selectedConnectionID) ?? null
+  const apiDateError = apiRangeError(apiFrom, apiTo)
+  const apiNeedsShopSelection = activeConnections.length > 1 && !selectedConnection
+  const selectedConnectionReady = Boolean(selectedConnection?.can_fetch)
+  const apiCanFetch = Boolean(apiStatus?.enabled && apiStatus.configured && selectedConnectionReady)
+  const apiFetchDisabled = apiBusy || apiStatusLoading || !apiCanFetch || !!apiDateError || apiNeedsShopSelection
+  const apiLastSyncError = selectedConnection?.last_sync_error || apiStatus?.last_sync_error || ''
+  const apiSummary = (() => {
+    if (apiStatusLoading) {
+      return {
+        title: 'กำลังตรวจสถานะ Shopee API',
+        description: 'ระหว่างนี้ยังเลือกไฟล์ Excel ได้ตามปกติ',
+        tone: 'muted' as APIStatusTone,
+      }
+    }
+    if (apiStatusError) {
+      return {
+        title: 'ยังโหลดสถานะ API ไม่ได้',
+        description: apiStatusError,
+        tone: 'warning' as APIStatusTone,
+      }
+    }
+    if (!apiStatus) {
+      return {
+        title: 'ยังไม่ได้ตรวจสถานะ API',
+        description: 'กดแสดงตัวช่วยเพื่อโหลดสถานะร้านและ token เฉพาะเมื่อจำเป็น',
+        tone: 'muted' as APIStatusTone,
+      }
+    }
+    if (!apiStatus.enabled || !apiStatus.configured) {
+      return {
+        title: !apiStatus.enabled ? 'Shopee API ปิดใช้งาน' : 'ต้องให้แอดมินตั้งค่า API',
+        description: apiStatus.blocking_reason || 'ใช้ไฟล์ Excel ได้ตามปกติ หรือไปจัดการร้าน Shopee เพื่อตรวจค่าเชื่อมต่อ',
+        tone: 'warning' as APIStatusTone,
+      }
+    }
+    if (activeConnections.length === 0) {
+      return {
+        title: 'ยังไม่มีร้าน Shopee ที่เชื่อมต่อ',
+        description: 'ไปจัดการร้าน Shopee เพื่อเชื่อมร้านก่อนดึง order จาก API หรือใช้ไฟล์ Excel',
+        tone: 'warning' as APIStatusTone,
+      }
+    }
+    if (apiNeedsShopSelection) {
+      return {
+        title: 'เลือกร้านก่อนดึง order',
+        description: 'มีหลายร้านในระบบ เลือกร้านให้ตรงกับข้อมูลที่ต้องการดึงเพื่อกันสร้างเอกสารผิดร้าน',
+        tone: 'warning' as APIStatusTone,
+      }
+    }
+    if (selectedConnection && !selectedConnectionReady) {
+      return {
+        title: 'ร้านนี้ยังไม่พร้อมดึง order',
+        description: `Token: ${tokenStateLabel(selectedConnection.token_state)} ไปจัดการร้าน Shopee หรือใช้ไฟล์ Excel`,
+        tone: 'warning' as APIStatusTone,
+      }
+    }
+    if (apiCanFetch) {
+      return {
+        title: 'พร้อมดึง order จาก Shopee API',
+        description: selectedConnection
+          ? `${selectedConnection.label || selectedConnection.shop_name || 'Shopee shop'} · ${selectedConnection.shop_id}`
+          : 'เลือกร้าน Shopee แล้วดึงช่วงวันที่ที่ต้องการ',
+        tone: 'success' as APIStatusTone,
+      }
+    }
+    return {
+      title: 'ยังดึง order ไม่ได้',
+      description: apiStatus.blocking_reason || 'ตรวจ token หรือเลือกช่วงวันที่ใหม่ ถ้าต้องทำงานต่อให้ใช้ไฟล์ Excel',
+      tone: 'warning' as APIStatusTone,
+    }
+  })()
   const confirmDisabled = selectedIDs.size === 0 || !!preview?.more
   const confirmTitle = preview?.more
     ? 'ลดช่วงวันที่หรือเลือกสถานะแยกก่อนยืนยันนำเข้า'
@@ -433,8 +713,8 @@ export default function ShopeeImport() {
       (preview.warnings?.length ?? 0)
     : 0
   const previewHasNoOrders = !!preview && preview.orders.length === 0
-  const resetPreviewLabel = 'เลือกไฟล์ใหม่'
-  const resetDoneLabel = 'นำเข้าไฟล์ใหม่'
+  const resetPreviewLabel = previewSource === 'api' ? 'กลับไปเลือกช่วงวันที่ใหม่' : 'เลือกไฟล์ใหม่'
+  const resetDoneLabel = previewSource === 'api' ? 'ดึงออเดอร์ใหม่' : 'นำเข้าไฟล์ใหม่'
 
   return (
     <div className="space-y-5">
@@ -527,7 +807,10 @@ export default function ShopeeImport() {
                 </div>
                 <Select
                   value={selectedConnectionID || NO_SHOP_SELECTED}
-                  onValueChange={(value) => setSelectedConnectionID(value === NO_SHOP_SELECTED ? '' : value)}
+                  onValueChange={(value) => {
+                    invalidateAPIPreviewRequest()
+                    setSelectedConnectionID(value === NO_SHOP_SELECTED ? '' : value)
+                  }}
                 >
                   <SelectTrigger className="h-10 bg-background text-sm">
                     <SelectValue placeholder="เลือกร้าน Shopee" />
@@ -573,6 +856,179 @@ export default function ShopeeImport() {
               </>
             )}
           </div>
+
+          {step === 'idle' && (
+            <Card className="border-border bg-card">
+              <CardContent className="space-y-4 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted/40">
+                      <Database className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground">
+                        ไม่มีไฟล์ Excel?
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        ใช้ตัวช่วยดึงจาก Shopee API เฉพาะกรณี order ตกหล่นหรือไม่มีไฟล์ ยังไม่สร้างบิลจนกว่าจะตรวจรายการและกดยืนยัน
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => setAPIHelperOpen((open) => !open)}
+                  >
+                    <ChevronDown className={cn('h-4 w-4 transition-transform', apiHelperOpen && 'rotate-180')} />
+                    {apiHelperOpen ? 'ซ่อนตัวช่วย' : 'แสดงตัวช่วยดึงจาก Shopee API'}
+                  </Button>
+                </div>
+
+                {apiHelperOpen && (
+                  <div className="space-y-4 border-t border-border pt-4">
+                    <div className={cn('rounded-md border px-3 py-2 text-sm', apiStatusToneClass(apiSummary.tone))}>
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <p className="font-medium">{apiSummary.title}</p>
+                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                            {apiSummary.description}
+                          </p>
+                        </div>
+                        <Button asChild variant="outline" size="sm" className="shrink-0 bg-background">
+                          <Link to="/settings/shopee-connections">
+                            <Store className="h-4 w-4" />
+                            จัดการร้าน Shopee
+                          </Link>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-[minmax(180px,0.9fr)_minmax(240px,1fr)_minmax(160px,0.7fr)_minmax(180px,0.8fr)_auto] lg:items-end">
+                      <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                        ร้าน Shopee
+                        {activeConnections.length > 1 ? (
+                          <Select
+                            value={selectedConnectionID || NO_SHOP_SELECTED}
+                            onValueChange={(value) => {
+                              invalidateAPIPreviewRequest()
+                              setSelectedConnectionID(value === NO_SHOP_SELECTED ? '' : value)
+                            }}
+                          >
+                            <SelectTrigger className="h-10 bg-background text-sm">
+                              <SelectValue placeholder="เลือกร้าน Shopee" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NO_SHOP_SELECTED}>เลือกร้าน Shopee</SelectItem>
+                              {activeConnections.map((conn) => (
+                                <SelectItem key={conn.id} value={conn.id}>
+                                  {conn.label || conn.shop_name || 'Shopee shop'} · {conn.shop_id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <div className="flex h-10 items-center rounded-md border border-border bg-background px-3 text-sm text-foreground">
+                            <span className="truncate">
+                              {selectedConnection
+                                ? `${selectedConnection.label || selectedConnection.shop_name || 'Shopee shop'} · ${selectedConnection.shop_id}`
+                                : 'ยังไม่มีร้านที่เชื่อมต่อ'}
+                            </span>
+                          </div>
+                        )}
+                      </label>
+
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-medium text-muted-foreground">ช่วงวันที่</div>
+                        <DateRangePicker
+                          from={apiFrom}
+                          to={apiTo}
+                          onFromChange={(value) => {
+                            invalidateAPIPreviewRequest()
+                            setAPIFrom(value)
+                          }}
+                          onToChange={(value) => {
+                            invalidateAPIPreviewRequest()
+                            setAPITo(value)
+                          }}
+                          presets={shopeeImportPresets}
+                          title="ช่วงวันที่ Shopee"
+                          description="ดึง order ได้ครั้งละไม่เกิน 15 วัน"
+                          className="h-10 w-full min-w-0 bg-background text-sm"
+                        />
+                      </div>
+
+                      <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                        ค้นหาจาก
+                        <Select
+                          value={apiTimeRangeField}
+                          onValueChange={(value) => {
+                            invalidateAPIPreviewRequest()
+                            setAPITimeRangeField(value as 'create_time' | 'update_time')
+                          }}
+                        >
+                          <SelectTrigger className="h-10 bg-background text-sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="create_time">วันที่สร้าง order</SelectItem>
+                            <SelectItem value="update_time">วันที่อัปเดต order</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+                        สถานะ
+                        <Select
+                          value={apiOrderStatus}
+                          onValueChange={(value) => {
+                            invalidateAPIPreviewRequest()
+                            setAPIOrderStatus(value)
+                          }}
+                        >
+                          <SelectTrigger className="h-10 bg-background text-sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {shopeeOrderStatusOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <Button
+                        type="button"
+                        className="h-10"
+                        onClick={handleFetchAPI}
+                        disabled={apiFetchDisabled}
+                        title={apiDateError || (apiNeedsShopSelection ? 'เลือกร้าน Shopee ก่อนดึง order' : undefined)}
+                      >
+                        {apiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+                        ดึงออเดอร์
+                      </Button>
+                    </div>
+
+                    {(apiDateError || apiNeedsShopSelection || apiLastSyncError) && (
+                      <div className="space-y-1 text-xs leading-5">
+                        {apiDateError && <p className="text-warning">{apiDateError}</p>}
+                        {apiNeedsShopSelection && <p className="text-warning">เลือกร้าน Shopee ก่อนดึง order เพื่อกัน import ผิดร้าน</p>}
+                        {apiLastSyncError && <p className="text-destructive">{apiLastSyncError}</p>}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                      <ShieldCheck className="h-4 w-4 text-success" />
+                      <span>หลังดึง API ระบบจะแสดง preview ก่อน ยังไม่สร้างบิล ไม่ส่ง SML และยังไม่แก้เอกสารเดิม</span>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 
@@ -641,10 +1097,12 @@ export default function ShopeeImport() {
                 <Database className="h-8 w-8 text-muted-foreground" />
                 <div>
                   <p className="text-sm font-semibold text-foreground">
-                    ไม่พบ order ในไฟล์นี้
+                    {previewSource === 'api' ? 'ไม่พบ order ในช่วงวันที่นี้' : 'ไม่พบ order ในไฟล์นี้'}
                   </p>
                   <p className="mt-1 max-w-xl text-sm leading-6 text-muted-foreground">
-                    ตรวจว่าไฟล์ export จาก Shopee Seller Center ถูกต้อง แล้วเลือกไฟล์ใหม่อีกครั้ง
+                    {previewSource === 'api'
+                      ? 'ลองขยายช่วงวันที่ เปลี่ยนสถานะ order หรือใช้ไฟล์ Excel จาก Seller Center แทน'
+                      : 'ตรวจว่าไฟล์ export จาก Shopee Seller Center ถูกต้อง แล้วเลือกไฟล์ใหม่อีกครั้ง'}
                   </p>
                 </div>
                 <Button
@@ -653,6 +1111,7 @@ export default function ShopeeImport() {
                   onClick={() => {
                     setStep('idle')
                     setPreview(null)
+                    if (previewSource === 'api') setAPIHelperOpen(true)
                   }}
                 >
                   {resetPreviewLabel}
@@ -727,6 +1186,7 @@ export default function ShopeeImport() {
                   onClick={() => {
                     setStep('idle')
                     setPreview(null)
+                    if (previewSource === 'api') setAPIHelperOpen(true)
                   }}
                 >
                   {resetPreviewLabel}
@@ -942,7 +1402,7 @@ export default function ShopeeImport() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">
-                    กำลัง{destination.action}จาก Shopee Excel
+                    กำลัง{destination.action}จาก {previewSource === 'api' ? 'Shopee API' : 'Shopee Excel'}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     ระบบกำลังจับคู่สินค้าและสร้างเอกสารไว้รอตรวจ ยังไม่ส่งเข้า SML อัตโนมัติ
@@ -1029,6 +1489,7 @@ export default function ShopeeImport() {
                 setStep('idle')
                 setPreview(null)
                 setResults(null)
+                if (previewSource === 'api') setAPIHelperOpen(true)
               }}
             >
               {resetDoneLabel}
