@@ -33,7 +33,7 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   },
   {
     pattern: '/import',
-    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'ศูนย์นำเข้าไฟล์' }],
+    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'นำเข้า Marketplace' }],
   },
   {
     pattern: '/import/lazada',
@@ -41,7 +41,7 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   },
   {
     pattern: '/import/shopee',
-    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'นำเข้า Shopee ย้อนหลัง' }],
+    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'นำเข้า Shopee' }],
   },
   {
     pattern: '/shopee-operations',

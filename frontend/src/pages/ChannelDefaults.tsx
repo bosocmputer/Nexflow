@@ -95,7 +95,7 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
     return { label: 'คำสั่งซื้อ Shopee ที่ยกเลิก', to: '/shopee-operations?status_group=cancelled' }
   }
   if (row.channel === 'shopee' && row.bill_type === 'sale') {
-    return { label: 'นำเข้า Shopee ย้อนหลัง', to: '/import/shopee' }
+    return { label: 'นำเข้า Shopee', to: '/import/shopee' }
   }
   if (ENABLE_SALES_ORDERS && (row.channel === 'shopee' || row.channel === 'lazada' || row.channel === 'tiktok' || row.channel === 'line_myshop') && row.bill_type === 'sale') {
     const route = `${row.endpoint ?? ''} ${row.doc_format_code ?? ''}`.toLowerCase()

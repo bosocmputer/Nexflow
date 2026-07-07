@@ -1203,7 +1203,7 @@ export default function ShopeeOperations() {
               <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
                 งานประจำวัน: ติดตาม order สดจาก Shopee, สร้างเอกสารใน Nexflow แล้วส่ง SML จากคิวเอกสารเดิม{' '}
                 <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
-                  <Link to="/import/shopee">ต้องดึงย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee ย้อนหลัง</Link>
+                  <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
                 </Button>
               </p>
               <OperationsHealthLine readiness={readiness} />
@@ -1403,7 +1403,7 @@ export default function ShopeeOperations() {
                         <div className="font-medium">ยังไม่มี order ในคิวนี้</div>
                         <div className="mt-1 text-sm text-muted-foreground">กดซิงก์เพื่อดึง snapshot จาก Shopee หรือปรับ filter</div>
                         <Button asChild variant="link" size="sm" className="mt-1 h-auto px-0 text-xs">
-                          <Link to="/import/shopee">ถ้าเป็นข้อมูลย้อนหลังหรือรายการตกหล่น ให้ไปนำเข้า Shopee ย้อนหลัง</Link>
+                          <Link to="/import/shopee">ถ้าเป็นข้อมูลย้อนหลังหรือรายการตกหล่น ให้ไปนำเข้า Shopee</Link>
                         </Button>
                       </div>
                     </td>

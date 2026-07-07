@@ -36,8 +36,6 @@ import {
 } from '@/lib/featureFlags'
 
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
-const ENABLE_MARKETPLACE_IMPORTS =
-  ENABLE_SHOPEE_EXCEL || ENABLE_LAZADA_EXCEL || ENABLE_TIKTOK_EXCEL
 
 export type NavBadgeKey =
   | boolean
@@ -92,8 +90,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'นำเข้าและรับชำระ',
     items: [
-      { to: '/import', label: 'ศูนย์นำเข้าไฟล์', icon: Upload, hint: 'เลือกช่องทางนำเข้าและตรวจรายการก่อนสร้างเอกสาร', enabled: ENABLE_MARKETPLACE_IMPORTS },
-      { to: '/import/shopee', label: 'นำเข้า Shopee ย้อนหลัง', icon: Upload, hint: 'ดึงย้อนหลัง, ซ่อมรายการตกหล่น, หรือใช้ Excel fallback', enabled: ENABLE_SHOPEE_EXCEL },
+      { to: '/import/shopee', label: 'นำเข้า Shopee', icon: Upload, hint: 'นำเข้าจาก Shopee Excel สำหรับงานย้อนหลังหรือรายการตกหล่น', enabled: ENABLE_SHOPEE_EXCEL },
       { to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
       { to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
       { to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },

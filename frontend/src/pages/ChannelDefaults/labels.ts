@@ -215,7 +215,7 @@ export function destinationKindFor(
 export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   line: 'LINE OA',
   email: 'Email',
-  shopee: 'นำเข้า Shopee ย้อนหลัง',
+  shopee: 'นำเข้า Shopee',
   shopee_realtime: 'คำสั่งซื้อ Shopee',
   shopee_realtime_cancel: 'Shopee ยกเลิกหลังส่ง SML',
   shopee_email: 'Shopee Order',

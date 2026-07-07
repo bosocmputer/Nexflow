@@ -231,7 +231,7 @@ export default function Import() {
           </div>
           <Button asChild className="w-full lg:w-auto">
             <Link to="/import/shopee">
-              นำเข้า Shopee ย้อนหลัง
+              นำเข้า Shopee
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
