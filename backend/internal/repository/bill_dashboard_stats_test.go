@@ -126,11 +126,20 @@ func TestApplyPlatformSalesDashboardStatsZeroFillsAndShares(t *testing.T) {
 	if comparison[0].Date != "2026-07-01" || comparison[0].PreviousDate != "2026-06-28" || comparison[0].CurrentTotal != 800 || comparison[0].PreviousTotal != 1000 {
 		t.Fatalf("comparison[0] = %#v, want aligned current/previous totals", comparison[0])
 	}
+	if comparison[0].PreviousShopeeAmount != 1000 || comparison[0].PreviousLazadaAmount != 0 || comparison[0].PreviousTiktokAmount != 0 {
+		t.Fatalf("comparison[0] previous platform amounts = %#v, want Shopee 1000 only", comparison[0])
+	}
 	if comparison[1].Date != "2026-07-02" || comparison[1].PreviousDate != "2026-06-29" || comparison[1].CurrentTotal != 0 || comparison[1].PreviousTotal != 0 {
 		t.Fatalf("comparison[1] = %#v, want zero-filled current and previous day", comparison[1])
 	}
+	if comparison[1].PreviousShopeeAmount != 0 || comparison[1].PreviousLazadaAmount != 0 || comparison[1].PreviousTiktokAmount != 0 {
+		t.Fatalf("comparison[1] previous platform amounts = %#v, want zero-filled", comparison[1])
+	}
 	if comparison[2].Date != "2026-07-03" || comparison[2].PreviousDate != "2026-06-30" || comparison[2].CurrentTotal != 250 || comparison[2].PreviousTotal != 600 {
 		t.Fatalf("comparison[2] = %#v, want aligned current/previous totals", comparison[2])
+	}
+	if comparison[2].PreviousShopeeAmount != 0 || comparison[2].PreviousLazadaAmount != 0 || comparison[2].PreviousTiktokAmount != 600 {
+		t.Fatalf("comparison[2] previous platform amounts = %#v, want TikTok 600 only", comparison[2])
 	}
 
 	meta, ok := stats["platform_sales_meta"].(platformSalesMeta)

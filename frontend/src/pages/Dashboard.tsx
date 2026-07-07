@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw, Store } from 'lucide-react'
 import {
@@ -49,13 +49,24 @@ type ShareBreakdownItem = {
   sharePct: number
 }
 
-type SalesTrendSeriesKey = 'shopee_amount' | 'lazada_amount' | 'tiktok_amount' | 'nextstep_amount' | 'previous_total'
+type SalesTrendPlatformKey = 'shopee' | 'lazada' | 'tiktok' | 'nextstep'
 
-type SalesTrendSeries = {
-  key: SalesTrendSeriesKey
+type SalesTrendSeriesKey =
+  | 'shopee_amount'
+  | 'previous_shopee_amount'
+  | 'lazada_amount'
+  | 'previous_lazada_amount'
+  | 'tiktok_amount'
+  | 'previous_tiktok_amount'
+  | 'nextstep_amount'
+  | 'previous_nextstep_amount'
+
+type SalesTrendPlatformSeries = {
+  key: SalesTrendPlatformKey
   label: string
   color: string
-  dashed?: boolean
+  currentKey: SalesTrendSeriesKey
+  previousKey: SalesTrendSeriesKey
 }
 
 const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
@@ -87,21 +98,18 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
 
 const PLATFORM_ORDER: PlatformKey[] = ['shopee', 'lazada', 'tiktok']
 const NEXTSTEP_TREND_COLOR = '#0f766e'
-const COMPARISON_PREVIOUS_COLOR = '#64748b'
-const SALES_TREND_SERIES: SalesTrendSeries[] = [
-  { key: 'shopee_amount', label: 'Shopee', color: PLATFORM_META.shopee.color },
-  { key: 'lazada_amount', label: 'Lazada', color: PLATFORM_META.lazada.color },
-  { key: 'tiktok_amount', label: 'TikTok', color: PLATFORM_META.tiktok.color },
-  { key: 'nextstep_amount', label: 'NextStep', color: NEXTSTEP_TREND_COLOR },
-  { key: 'previous_total', label: 'ช่วงก่อนหน้า', color: COMPARISON_PREVIOUS_COLOR, dashed: true },
+const SALES_TREND_PLATFORMS: SalesTrendPlatformSeries[] = [
+  { key: 'shopee', label: 'Shopee', color: PLATFORM_META.shopee.color, currentKey: 'shopee_amount', previousKey: 'previous_shopee_amount' },
+  { key: 'lazada', label: 'Lazada', color: PLATFORM_META.lazada.color, currentKey: 'lazada_amount', previousKey: 'previous_lazada_amount' },
+  { key: 'tiktok', label: 'TikTok', color: PLATFORM_META.tiktok.color, currentKey: 'tiktok_amount', previousKey: 'previous_tiktok_amount' },
+  { key: 'nextstep', label: 'NextStep', color: NEXTSTEP_TREND_COLOR, currentKey: 'nextstep_amount', previousKey: 'previous_nextstep_amount' },
 ]
 
-const DEFAULT_VISIBLE_TREND_SERIES: Record<SalesTrendSeriesKey, boolean> = {
-  shopee_amount: true,
-  lazada_amount: true,
-  tiktok_amount: true,
-  nextstep_amount: true,
-  previous_total: true,
+const DEFAULT_VISIBLE_TREND_PLATFORMS: Record<SalesTrendPlatformKey, boolean> = {
+  shopee: true,
+  lazada: true,
+  tiktok: true,
+  nextstep: true,
 }
 
 export default function Dashboard() {
@@ -625,14 +633,14 @@ function SalesTrendCard({
   loading: boolean
   error: boolean
 }) {
-  const [visibleSeries, setVisibleSeries] = useState<Record<SalesTrendSeriesKey, boolean>>(DEFAULT_VISIBLE_TREND_SERIES)
-  const data = salesTrendData(stats)
-  const shareBreakdown = platformShareBreakdown(stats)
-  const hasSales = data.some((point) => point.current_total > 0 || point.previous_total > 0)
-  const hasVisibleSeries = SALES_TREND_SERIES.some((series) => visibleSeries[series.key])
+  const [visiblePlatforms, setVisiblePlatforms] = useState<Record<SalesTrendPlatformKey, boolean>>(DEFAULT_VISIBLE_TREND_PLATFORMS)
+  const data = useMemo(() => salesTrendData(stats), [stats])
+  const shareBreakdown = useMemo(() => platformShareBreakdown(stats), [stats])
+  const hasSales = salesTrendHasValue(data)
+  const hasVisibleSeries = SALES_TREND_PLATFORMS.some((platform) => visiblePlatforms[platform.key])
   const meta = stats?.platform_sales_meta
-  const toggleSeries = useCallback((key: SalesTrendSeriesKey) => {
-    setVisibleSeries((current) => ({
+  const togglePlatform = useCallback((key: SalesTrendPlatformKey) => {
+    setVisiblePlatforms((current) => ({
       ...current,
       [key]: !current[key],
     }))
@@ -655,11 +663,11 @@ function SalesTrendCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {!error && (
-          <ChartSeriesToggle
-            series={SALES_TREND_SERIES}
-            visibleSeries={visibleSeries}
+          <ChartPlatformToggle
+            platforms={SALES_TREND_PLATFORMS}
+            visiblePlatforms={visiblePlatforms}
             loading={loading}
-            onToggle={toggleSeries}
+            onToggle={togglePlatform}
           />
         )}
 
@@ -678,20 +686,31 @@ function SalesTrendCard({
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
                 <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
-                <Tooltip content={<SalesTrendTooltip visibleSeries={visibleSeries} />} />
-                {SALES_TREND_SERIES.filter((series) => visibleSeries[series.key]).map((series) => (
-                  <Line
-                    key={series.key}
-                    type="monotone"
-                    dataKey={series.key}
-                    name={series.label}
-                    stroke={series.color}
-                    strokeWidth={series.dashed ? 2.4 : 2.2}
-                    strokeDasharray={series.dashed ? '5 5' : undefined}
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                    connectNulls
-                  />
+                <Tooltip content={<SalesTrendTooltip visiblePlatforms={visiblePlatforms} />} />
+                {SALES_TREND_PLATFORMS.filter((platform) => visiblePlatforms[platform.key]).map((platform) => (
+                  <Fragment key={platform.key}>
+                    <Line
+                      type="monotone"
+                      dataKey={platform.currentKey}
+                      name={`${platform.label} ช่วงที่เลือก`}
+                      stroke={platform.color}
+                      strokeWidth={2.2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                      connectNulls
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey={platform.previousKey}
+                      name={`${platform.label} ช่วงก่อนหน้า`}
+                      stroke={platform.color}
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={false}
+                      activeDot={{ r: 3.5 }}
+                      connectNulls
+                    />
+                  </Fragment>
                 ))}
               </LineChart>
             </ResponsiveContainer>
@@ -748,53 +767,49 @@ function PlatformShareBreakdown({
   )
 }
 
-function ChartSeriesToggle({
-  series,
-  visibleSeries,
+function ChartPlatformToggle({
+  platforms,
+  visiblePlatforms,
   loading,
   onToggle,
 }: {
-  series: SalesTrendSeries[]
-  visibleSeries: Record<SalesTrendSeriesKey, boolean>
+  platforms: SalesTrendPlatformSeries[]
+  visiblePlatforms: Record<SalesTrendPlatformKey, boolean>
   loading: boolean
-  onToggle: (key: SalesTrendSeriesKey) => void
+  onToggle: (key: SalesTrendPlatformKey) => void
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {series.map((item) => {
-        const active = visibleSeries[item.key]
-        return (
-          <button
-            key={item.key}
-            type="button"
-            aria-pressed={active}
-            disabled={loading}
-            onClick={() => onToggle(item.key)}
-            className={cn(
-              'inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors',
-              active
-                ? 'border-border bg-background text-foreground shadow-sm'
-                : 'border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60',
-              loading && 'cursor-not-allowed opacity-60',
-            )}
-          >
-            <span className="relative h-2.5 w-5 shrink-0">
-              <span
-                className={cn('absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2', item.dashed && 'border-t border-dashed bg-transparent')}
-                style={{
-                  backgroundColor: item.dashed ? 'transparent' : item.color,
-                  borderColor: item.dashed ? item.color : undefined,
-                }}
-              />
-              <span
-                className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-                style={{ backgroundColor: item.color }}
-              />
-            </span>
-            <span>{item.label}</span>
-          </button>
-        )
-      })}
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {platforms.map((item) => {
+          const active = visiblePlatforms[item.key]
+          return (
+            <button
+              key={item.key}
+              type="button"
+              aria-pressed={active}
+              disabled={loading}
+              onClick={() => onToggle(item.key)}
+              className={cn(
+                'inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs font-medium transition-colors',
+                active
+                  ? 'border-border bg-background text-foreground shadow-sm'
+                  : 'border-border/70 bg-muted/35 text-muted-foreground hover:bg-muted/60',
+                loading && 'cursor-not-allowed opacity-60',
+              )}
+            >
+              <span className="relative h-3 w-6 shrink-0">
+                <span className="absolute left-0 right-0 top-1 h-0.5" style={{ backgroundColor: item.color }} />
+                <span className="absolute left-0 right-0 bottom-0 border-t border-dashed" style={{ borderColor: item.color }} />
+              </span>
+              <span>{item.label}</span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        เส้นทึบคือช่วงที่เลือก · เส้นประคือช่วงก่อนหน้า
+      </div>
     </div>
   )
 }
@@ -814,9 +829,13 @@ type SalesTrendPoint = {
   date: string
   previous_date: string
   shopee_amount: number
+  previous_shopee_amount: number
   lazada_amount: number
+  previous_lazada_amount: number
   tiktok_amount: number
+  previous_tiktok_amount: number
   nextstep_amount: number
+  previous_nextstep_amount: number
   current_total: number
   previous_total: number
 }
@@ -825,28 +844,28 @@ function SalesTrendTooltip({
   active,
   payload,
   label,
-  visibleSeries,
+  visiblePlatforms,
 }: {
   active?: boolean
   payload?: Array<{ payload?: SalesTrendPoint }>
   label?: string
-  visibleSeries: Record<SalesTrendSeriesKey, boolean>
+  visiblePlatforms: Record<SalesTrendPlatformKey, boolean>
 }) {
   if (!active || !payload?.length) return null
   const point = payload[0]?.payload
   if (!point) return null
 
-  const rows = SALES_TREND_SERIES
-    .filter((series) => visibleSeries[series.key])
+  const rows = SALES_TREND_PLATFORMS
+    .filter((platform) => visiblePlatforms[platform.key])
     .map((series) => ({
       key: series.key,
       label: series.label,
-      amount: Number(point[series.key] || 0),
+      currentAmount: Number(point[series.currentKey] || 0),
+      previousAmount: Number(point[series.previousKey] || 0),
       color: series.color,
-      dashed: series.dashed,
     }))
-  const showCurrentTotal = ['shopee_amount', 'lazada_amount', 'tiktok_amount', 'nextstep_amount']
-    .some((key) => visibleSeries[key as SalesTrendSeriesKey])
+  const visibleCurrentTotal = rows.reduce((sum, item) => sum + item.currentAmount, 0)
+  const visiblePreviousTotal = rows.reduce((sum, item) => sum + item.previousAmount, 0)
 
   return (
     <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
@@ -856,30 +875,27 @@ function SalesTrendTooltip({
       </div>
       <div className="space-y-1">
         {rows.map((item) => (
-          <div key={item.key} className="flex min-w-[220px] items-center justify-between gap-4">
-            <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
-              <span className="relative h-2 w-4 shrink-0">
-                <span
-                  className={cn('absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2', item.dashed && 'border-t border-dashed bg-transparent')}
-                  style={{
-                    backgroundColor: item.dashed ? 'transparent' : item.color,
-                    borderColor: item.dashed ? item.color : undefined,
-                  }}
-                />
-              </span>
+          <div key={item.key} className="grid min-w-[260px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
+            <span className="flex min-w-0 items-center gap-2 font-medium text-popover-foreground">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
               <span className="truncate">{item.label}</span>
             </span>
-            <span className="font-medium tabular-nums text-foreground">{formatCurrency(item.amount, true)}</span>
+            <span className="tabular-nums text-foreground">{formatCurrency(item.currentAmount, true)}</span>
+            <span className="tabular-nums text-muted-foreground">{formatCurrency(item.previousAmount, true)}</span>
           </div>
         ))}
-        {showCurrentTotal && (
-          <div className="mt-1 border-t border-border pt-1">
-            <div className="flex min-w-[220px] items-center justify-between gap-4">
-              <span className="font-medium text-popover-foreground">รวมช่วงที่เลือก</span>
-              <span className="font-semibold tabular-nums text-popover-foreground">{formatCurrency(point.current_total, true)}</span>
-            </div>
+        <div className="mt-1 border-t border-border pt-1">
+          <div className="grid min-w-[260px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
+            <span className="font-semibold text-popover-foreground">รวมที่เปิดอยู่</span>
+            <span className="font-semibold tabular-nums text-popover-foreground">{formatCurrency(visibleCurrentTotal, true)}</span>
+            <span className="font-semibold tabular-nums text-muted-foreground">{formatCurrency(visiblePreviousTotal, true)}</span>
           </div>
-        )}
+          <div className="mt-0.5 grid min-w-[260px] grid-cols-[minmax(0,1fr)_auto_auto] gap-3 text-[11px] text-muted-foreground">
+            <span />
+            <span>ช่วงนี้</span>
+            <span>ก่อนหน้า</span>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -894,46 +910,64 @@ function salesTrendData(stats: DashboardStats | null): SalesTrendPoint[] {
 
   const byDate = new Map<string, SalesTrendPoint>()
   for (const point of platformTrendData(stats)) {
-    const currentTotal =
-      Number(point.shopee_amount || 0) +
-      Number(point.lazada_amount || 0) +
-      Number(point.tiktok_amount || 0) +
-      Number(point.nextstep_amount || 0)
-    byDate.set(point.date, {
-      date: point.date,
-      previous_date: '',
-      shopee_amount: point.shopee_amount,
-      lazada_amount: point.lazada_amount,
-      tiktok_amount: point.tiktok_amount,
-      nextstep_amount: point.nextstep_amount,
-      current_total: currentTotal,
-      previous_total: 0,
-    })
+    const current = emptySalesTrendPoint(point.date)
+    current.shopee_amount = Number(point.shopee_amount || 0)
+    current.lazada_amount = Number(point.lazada_amount || 0)
+    current.tiktok_amount = Number(point.tiktok_amount || 0)
+    current.nextstep_amount = Number(point.nextstep_amount || 0)
+    current.current_total = salesTrendCurrentTotal(current)
+    byDate.set(point.date, current)
   }
 
   for (const point of stats?.sales_comparison_trend ?? []) {
-    const current = byDate.get(point.date) ?? {
-      date: point.date,
-      previous_date: '',
-      shopee_amount: 0,
-      lazada_amount: 0,
-      tiktok_amount: 0,
-      nextstep_amount: 0,
-      current_total: Number(point.current_total || 0),
-      previous_total: 0,
-    }
-    const stackedTotal =
-      Number(current.shopee_amount || 0) +
-      Number(current.lazada_amount || 0) +
-      Number(current.tiktok_amount || 0) +
-      Number(current.nextstep_amount || 0)
+    const current = byDate.get(point.date) ?? emptySalesTrendPoint(point.date)
     current.previous_date = point.previous_date
-    current.current_total = stackedTotal > 0 ? stackedTotal : Number(point.current_total || 0)
-    current.previous_total = Number(point.previous_total || 0) + Number(previousNextStepByDate.get(point.previous_date) ?? 0)
+    current.previous_shopee_amount = Number(point.previous_shopee_amount || 0)
+    current.previous_lazada_amount = Number(point.previous_lazada_amount || 0)
+    current.previous_tiktok_amount = Number(point.previous_tiktok_amount || 0)
+    current.previous_nextstep_amount = Number(previousNextStepByDate.get(point.previous_date) ?? 0)
+    const stackedTotal = salesTrendCurrentTotal(current)
+    current.current_total = stackedTotal !== 0 ? stackedTotal : Number(point.current_total || 0)
+    current.previous_total = Number(point.previous_total || 0) + current.previous_nextstep_amount
     byDate.set(point.date, current)
   }
 
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
+}
+
+function emptySalesTrendPoint(date: string): SalesTrendPoint {
+  return {
+    date,
+    previous_date: '',
+    shopee_amount: 0,
+    previous_shopee_amount: 0,
+    lazada_amount: 0,
+    previous_lazada_amount: 0,
+    tiktok_amount: 0,
+    previous_tiktok_amount: 0,
+    nextstep_amount: 0,
+    previous_nextstep_amount: 0,
+    current_total: 0,
+    previous_total: 0,
+  }
+}
+
+function salesTrendCurrentTotal(point: SalesTrendPoint): number {
+  return (
+    Number(point.shopee_amount || 0) +
+    Number(point.lazada_amount || 0) +
+    Number(point.tiktok_amount || 0) +
+    Number(point.nextstep_amount || 0)
+  )
+}
+
+function salesTrendHasValue(data: SalesTrendPoint[]): boolean {
+  return data.some((point) => (
+    SALES_TREND_PLATFORMS.some((platform) => (
+      Math.abs(Number(point[platform.currentKey] || 0)) > 0 ||
+      Math.abs(Number(point[platform.previousKey] || 0)) > 0
+    ))
+  ))
 }
 
 function platformTrendData(stats: DashboardStats | null) {

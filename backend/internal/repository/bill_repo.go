@@ -61,10 +61,13 @@ type platformSalesTrendPoint struct {
 }
 
 type platformSalesComparisonTrendPoint struct {
-	Date          string  `json:"date"`
-	PreviousDate  string  `json:"previous_date"`
-	CurrentTotal  float64 `json:"current_total"`
-	PreviousTotal float64 `json:"previous_total"`
+	Date                 string  `json:"date"`
+	PreviousDate         string  `json:"previous_date"`
+	CurrentTotal         float64 `json:"current_total"`
+	PreviousTotal        float64 `json:"previous_total"`
+	PreviousShopeeAmount float64 `json:"previous_shopee_amount"`
+	PreviousLazadaAmount float64 `json:"previous_lazada_amount"`
+	PreviousTiktokAmount float64 `json:"previous_tiktok_amount"`
 }
 
 type platformSalesMeta struct {
@@ -1382,6 +1385,7 @@ func buildPlatformSalesComparisonTrend(
 ) []platformSalesComparisonTrendPoint {
 	currentByDate := totalPlatformSalesTrendByDate(currentRows)
 	previousByDate := totalPlatformSalesTrendByDate(previousRows)
+	previousByDatePlatform := platformSalesTrendByDatePlatform(previousRows)
 
 	from, errFrom := time.Parse("2006-01-02", window.fromDate)
 	to, errTo := time.Parse("2006-01-02", window.toDate)
@@ -1395,11 +1399,15 @@ func buildPlatformSalesComparisonTrend(
 	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
 		currentDate := day.Format("2006-01-02")
 		previousDate := previousFrom.AddDate(0, 0, offset).Format("2006-01-02")
+		previousPlatforms := previousByDatePlatform[previousDate]
 		points = append(points, platformSalesComparisonTrendPoint{
-			Date:          currentDate,
-			PreviousDate:  previousDate,
-			CurrentTotal:  roundPlatformSalesMoney(currentByDate[currentDate]),
-			PreviousTotal: roundPlatformSalesMoney(previousByDate[previousDate]),
+			Date:                 currentDate,
+			PreviousDate:         previousDate,
+			CurrentTotal:         roundPlatformSalesMoney(currentByDate[currentDate]),
+			PreviousTotal:        roundPlatformSalesMoney(previousByDate[previousDate]),
+			PreviousShopeeAmount: roundPlatformSalesMoney(previousPlatforms["shopee"]),
+			PreviousLazadaAmount: roundPlatformSalesMoney(previousPlatforms["lazada"]),
+			PreviousTiktokAmount: roundPlatformSalesMoney(previousPlatforms["tiktok"]),
 		})
 		offset++
 	}
@@ -1410,6 +1418,20 @@ func totalPlatformSalesTrendByDate(rows []platformSalesTrendRow) map[string]floa
 	byDate := map[string]float64{}
 	for _, row := range rows {
 		byDate[row.Date] += row.Amount
+	}
+	return byDate
+}
+
+func platformSalesTrendByDatePlatform(rows []platformSalesTrendRow) map[string]map[string]float64 {
+	byDate := map[string]map[string]float64{}
+	for _, row := range rows {
+		if _, ok := platformSalesLabels[row.Platform]; !ok {
+			continue
+		}
+		if byDate[row.Date] == nil {
+			byDate[row.Date] = map[string]float64{}
+		}
+		byDate[row.Date][row.Platform] += row.Amount
 	}
 	return byDate
 }

@@ -349,6 +349,9 @@ export interface SalesComparisonTrendPoint {
   previous_date: string
   current_total: number
   previous_total: number
+  previous_shopee_amount?: number
+  previous_lazada_amount?: number
+  previous_tiktok_amount?: number
 }
 
 export interface PlatformSalesMeta {
