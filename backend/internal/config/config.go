@@ -186,7 +186,7 @@ func Load() *Config {
 		AutoConfirmThreshold:               getEnvFloat("AUTO_CONFIRM_THRESHOLD", 0.85),
 		InsightCronHour:                    getEnvInt("INSIGHT_CRON_HOUR", 8),
 		BackupCronHour:                     getEnvInt("BACKUP_CRON_HOUR", 0),
-		InsightLineNotify:                  getEnvBool("INSIGHT_LINE_NOTIFY", true),
+		InsightLineNotify:                  getEnvBool("INSIGHT_LINE_NOTIFY", false),
 		DiskWarnPercent:                    getEnvInt("DISK_WARN_PERCENT", 90),
 		DataLifecycleEnabled:               getEnvBool("DATA_LIFECYCLE_ENABLED", true),
 		DataLifecycleCronHour:              getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
