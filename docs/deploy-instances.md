@@ -17,8 +17,10 @@ Standard code deploy:
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target all
 ```
 
-The script syncs only `backend/` and `frontend/` and preserves each instance
-`.env`, `docker-compose.yml`, database volume, `backups/`, and `artifacts/`.
+The script SSHes to the server, updates
+`/mnt/data/nextstep-node-2/nexflow-release` from GitHub, rebuilds both
+instances from that release clone, and preserves each instance `.env`,
+`docker-compose.yml`, database volume, `backups/`, and `artifacts/`.
 
 ---
 

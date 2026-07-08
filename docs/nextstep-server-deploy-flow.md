@@ -29,12 +29,14 @@ same commit on both instances.
 ```mermaid
 flowchart TB
   Dev["Local workspace<br/>/Users/nontawatwongnuk/dev_bos/Nexflow"]
-  Commit["Git commit / HEAD"]
-  Script["scripts/deploy_nextstep_instances.py<br/>sync backend/ + frontend/ only"]
+  Commit["commit + push to GitHub"]
+  Script["scripts/deploy_nextstep_instances.py<br/>SSH orchestration"]
 
   Dev --> Commit --> Script
 
   subgraph Server["PROD server 10.121.20.83<br/>/mnt/data/nextstep-node-2"]
+    Release["nexflow-release<br/>git clone<br/>checkout origin/main or commit SHA"]
+
     subgraph Demo["demo instance"]
       DemoFE["nexflow-frontend<br/>6323 -> nginx :80"]
       DemoBE["nexflow-backend<br/>8110 -> Go :8090"]
@@ -65,10 +67,11 @@ flowchart TB
   Cloudflare -->|"nexflow.nextstep-soft.com"| DemoFE
   Cloudflare -->|"nexflow-aoy.nextstep-soft.com"| AoyFE
 
-  Script --> DemoFE
-  Script --> DemoBE
-  Script --> AoyFE
-  Script --> AoyBE
+  Script --> Release
+  Release -->|"Docker build context"| DemoFE
+  Release -->|"Docker build context"| DemoBE
+  Release -->|"Docker build context"| AoyFE
+  Release -->|"Docker build context"| AoyBE
 ```
 
 ## Standard Code Deploy
@@ -80,17 +83,34 @@ version.
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target all
 ```
 
+The server-side deploy shape is:
+
+```bash
+cd /mnt/data/nextstep-node-2/nexflow-release
+git fetch --prune origin
+git checkout --detach origin/main
+
+cd /mnt/data/nextstep-node-2/nexflow
+docker compose up -d --build backend frontend
+
+cd /mnt/data/nextstep-node-2/nexflow-aoy
+docker compose up -d --build backend frontend
+```
+
 Deploy only one instance when the change is intentionally isolated:
 
 ```bash
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --ref d52de63
 ```
 
 The script:
 
-- deploys a committed git ref only, default `HEAD`
-- syncs `backend/` and `frontend/`
+- prepares `/mnt/data/nextstep-node-2/nexflow-release` as the server Git clone
+- fetches GitHub and checks out a ref, default `origin/main`
+- updates each instance compose file once so Docker build contexts point to the
+  release clone
 - preserves each instance `.env`, `docker-compose.yml`, database volume,
   `backups/`, and `artifacts/`
 - backs up `.env` and Postgres before rebuilding
@@ -98,8 +118,9 @@ The script:
 - smoke-tests backend health and `/login`
 - scans recent backend logs for severe errors
 
-It intentionally does not sync `docker-compose.yml` because the two instances
-use different ports, container names, and volumes.
+It intentionally does not turn each instance folder into a Git checkout. The
+instance folders remain config/runtime folders; the release clone is the source
+of code truth.
 
 ## Per-Instance Config
 
