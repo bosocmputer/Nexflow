@@ -72,14 +72,8 @@ async function countMarketplaceAliasQueue() {
   }
 }
 
-const URGENT_BADGES = new Set([
-  'bills',
-  'purchase',
-  'saleorder',
-  'saleinvoice',
-  'marketplace_aliases',
-  'shopee_realtime',
-])
+const MENU_COUNT_BADGE_CLASS =
+  'border-transparent bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive'
 
 const ROLE_LABEL: Record<string, string> = {
   admin: 'ผู้ดูแลระบบ',
@@ -275,7 +269,6 @@ export default function Sidebar() {
                   item.hasBadge === true ? 'bills' : item.hasBadge || null
                 const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadBySource)
                 const showBadge = !!badgeKind && badgeCount > 0
-                const urgentBadge = !!badgeKind && URGENT_BADGES.has(badgeKind)
 
                 const linkInner = (active: boolean) => (
                   <span
@@ -301,7 +294,7 @@ export default function Sidebar() {
                         <span
                           className={cn(
                             'absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full',
-                            urgentBadge ? 'bg-destructive' : 'bg-warning',
+                            'bg-destructive',
                           )}
                         />
                       )}
@@ -311,8 +304,10 @@ export default function Sidebar() {
                         <span className="flex-1 truncate">{item.label}</span>
                         {showBadge && (
                           <Badge
-                            variant={urgentBadge ? 'destructive' : 'secondary'}
-                            className="h-5 min-w-[20px] justify-center px-1.5 text-[10px]"
+                            className={cn(
+                              'h-5 min-w-[20px] justify-center px-1.5 text-[10px]',
+                              MENU_COUNT_BADGE_CLASS,
+                            )}
                           >
                             {badgeCount > 99 ? '99+' : badgeCount}
                           </Badge>
@@ -479,7 +474,6 @@ function MobileNavDrawer({
                   const Icon = item.icon
                   const badgeKind = item.hasBadge === true ? 'bills' : item.hasBadge || null
                   const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadBySource)
-                  const urgentBadge = !!badgeKind && URGENT_BADGES.has(badgeKind)
                   return (
                     <NavLink
                       key={item.to}
@@ -506,8 +500,10 @@ function MobileNavDrawer({
                       </span>
                       {badgeCount > 0 && (
                         <Badge
-                          variant={urgentBadge ? 'destructive' : 'secondary'}
-                          className="h-5 min-w-[22px] justify-center px-1.5 text-[10px]"
+                          className={cn(
+                            'h-5 min-w-[22px] justify-center px-1.5 text-[10px]',
+                            MENU_COUNT_BADGE_CLASS,
+                          )}
                         >
                           {badgeCount > 99 ? '99+' : badgeCount}
                         </Badge>
