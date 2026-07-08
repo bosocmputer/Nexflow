@@ -153,10 +153,11 @@ def resolve_ref(ref: str) -> str:
 def ensure_release_clone(ref: str) -> str:
     repo_url = os.environ.get("NX_REPO_URL", REPO_URL)
     resolved_ref = resolve_ref(ref)
+    remote_user = os.environ.get("NX_NEXTSTEP_USER", DEFAULT_USER)
     script = f"""
 set -euo pipefail
 mkdir -p {shlex.quote(SERVER_ROOT)}
-chown {shlex.quote(os.environ.get("NX_NEXTSTEP_USER", DEFAULT_USER))}:{shlex.quote(os.environ.get("NX_NEXTSTEP_USER", DEFAULT_USER))} {shlex.quote(SERVER_ROOT)}
+chown {shlex.quote(remote_user)}:{shlex.quote(remote_user)} {shlex.quote(SERVER_ROOT)}
 if [ ! -d {shlex.quote(RELEASE_DIR)}/.git ]; then
   rm -rf {shlex.quote(RELEASE_DIR)}
   git clone {shlex.quote(repo_url)} {shlex.quote(RELEASE_DIR)}
@@ -167,6 +168,7 @@ git fetch --prune origin
 git checkout --detach {shlex.quote(resolved_ref)}
 git clean -fdx
 git rev-parse HEAD
+chown -R {shlex.quote(remote_user)}:{shlex.quote(remote_user)} {shlex.quote(RELEASE_DIR)}
 """
     return sudo(script, label=f"prepare release clone ({resolved_ref})", timeout=300).splitlines()[-1].strip()
 
