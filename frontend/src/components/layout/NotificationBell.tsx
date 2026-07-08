@@ -7,7 +7,6 @@ import client from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAuth } from '@/hooks/useAuth'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { type AppNotification, type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
@@ -306,7 +305,7 @@ export function NotificationBell() {
       stopOrderAlarm()
       return
     }
-    if (orderAttentionActive) playNotificationSound(true)
+    playNotificationSound(true)
   }
 
   if (!canUseNotifications) return null
@@ -374,7 +373,7 @@ export function NotificationBell() {
             </Button>
           </div>
         </div>
-        <ScrollArea className="max-h-[min(70vh,520px)]">
+        <div className="max-h-[min(70vh,520px)] overflow-y-auto overscroll-contain">
           <div className="space-y-3 p-3">
             {loading && items.length === 0 && (
               <div className="rounded-md border border-border bg-muted/30 px-3 py-5 text-center text-sm text-muted-foreground">
@@ -442,7 +441,7 @@ export function NotificationBell() {
               )
             })}
           </div>
-        </ScrollArea>
+        </div>
       </PopoverContent>
     </Popover>
   )
