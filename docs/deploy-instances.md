@@ -8,8 +8,8 @@
 
 | Instance | Public URL | Server folder | Frontend | Backend | Postgres |
 | --- | --- | --- | --- | --- | --- |
-| demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `6323` | `8110` | `5440` |
-| aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `6324` | `8111` | `5441` |
+| demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | edge `6323`, debug `127.0.0.1:16323` | `8110` | `5440` |
+| aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | edge `6323`, debug `127.0.0.1:16324` | `8111` | `5441` |
 
 Standard code deploy:
 
@@ -19,8 +19,9 @@ NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target
 
 The script SSHes to the server, updates
 `/mnt/data/nextstep-node-2/nexflow-release` from GitHub, rebuilds both
-instances from that release clone, and preserves each instance `.env`,
-`docker-compose.yml`, database volume, `backups/`, and `artifacts/`.
+instances from that release clone, updates `nexflow-edge`, and preserves each
+instance `.env`, `docker-compose.yml`, database volume, `backups/`, and
+`artifacts/`.
 
 ---
 

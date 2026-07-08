@@ -9,8 +9,17 @@ ngrok deployment is DEV/legacy only and must not be used for production deploys.
 
 | Instance | Public URL | Server folder | Frontend | Backend | Postgres | SML tenant |
 | --- | --- | --- | --- | --- | --- | --- |
-| demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `6323 -> 80` | `8110 -> 8090` | `5440 -> 5432` | `demo` |
-| aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `6324 -> 80` | `8111 -> 8090` | `5441 -> 5432` | `aoy` |
+| demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `127.0.0.1:16323 -> 80` | `8110 -> 8090` | `5440 -> 5432` | `demo` |
+| aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `127.0.0.1:16324 -> 80` | `8111 -> 8090` | `5441 -> 5432` | `aoy` |
+
+Public entrypoint:
+
+```text
+container: nexflow-edge
+folder:    /mnt/data/nextstep-node-2/nexflow-edge
+port:      6323 -> 80
+routing:   by Host header
+```
 
 Shared SML gateway:
 
@@ -36,9 +45,10 @@ flowchart TB
 
   subgraph Server["PROD server 10.121.20.83<br/>/mnt/data/nextstep-node-2"]
     Release["nexflow-release<br/>git clone<br/>checkout origin/main or commit SHA"]
+    Edge["nexflow-edge<br/>6323 -> nginx :80<br/>host-based routing"]
 
     subgraph Demo["demo instance"]
-      DemoFE["nexflow-frontend<br/>6323 -> nginx :80"]
+      DemoFE["nexflow-frontend<br/>127.0.0.1:16323 -> nginx :80"]
       DemoBE["nexflow-backend<br/>8110 -> Go :8090"]
       DemoDB["nexflow-postgres<br/>5440 -> PostgreSQL"]
       DemoFE -->|"same-origin /api"| DemoBE
@@ -46,7 +56,7 @@ flowchart TB
     end
 
     subgraph Aoy["aoy instance"]
-      AoyFE["nexflow-aoy-frontend<br/>6324 -> nginx :80"]
+      AoyFE["nexflow-aoy-frontend<br/>127.0.0.1:16324 -> nginx :80"]
       AoyBE["nexflow-aoy-backend<br/>8111 -> Go :8090"]
       AoyDB["nexflow-aoy-postgres<br/>5441 -> PostgreSQL"]
       AoyFE -->|"same-origin /api"| AoyBE
@@ -64,10 +74,14 @@ flowchart TB
   end
 
   Cloudflare["Cloudflare proxied DNS / HTTPS"]
-  Cloudflare -->|"nexflow.nextstep-soft.com"| DemoFE
-  Cloudflare -->|"nexflow-aoy.nextstep-soft.com"| AoyFE
+  Cloudflare -->|"both hostnames to :6323"| Edge
+  Edge -->|"Host: nexflow.nextstep-soft.com"| DemoFE
+  Edge -->|"Host: nexflow-aoy.nextstep-soft.com"| AoyFE
+  Edge -->|"demo /api, /health, /webhook"| DemoBE
+  Edge -->|"aoy /api, /health, /webhook"| AoyBE
 
   Script --> Release
+  Release -->|"edge config"| Edge
   Release -->|"Docker build context"| DemoFE
   Release -->|"Docker build context"| DemoBE
   Release -->|"Docker build context"| AoyFE
@@ -95,6 +109,9 @@ docker compose up -d --build backend frontend
 
 cd /mnt/data/nextstep-node-2/nexflow-aoy
 docker compose up -d --build backend frontend
+
+cd /mnt/data/nextstep-node-2/nexflow-edge
+docker compose up -d
 ```
 
 Deploy only one instance when the change is intentionally isolated:
@@ -110,12 +127,14 @@ The script:
 - prepares `/mnt/data/nextstep-node-2/nexflow-release` as the server Git clone
 - fetches GitHub and checks out a ref, default `origin/main`
 - updates each instance compose file once so Docker build contexts point to the
-  release clone
+  release clone and frontends bind to local-only debug ports
+- updates and restarts `nexflow-edge`
 - preserves each instance `.env`, `docker-compose.yml`, database volume,
   `backups/`, and `artifacts/`
 - backs up `.env` and Postgres before rebuilding
 - rebuilds and restarts `backend` + `frontend`
 - smoke-tests backend health and `/login`
+- smoke-tests both hostnames through edge port `6323`
 - scans recent backend logs for severe errors
 
 It intentionally does not turn each instance folder into a Git checkout. The
@@ -155,13 +174,17 @@ ssh ubuntu@10.121.20.83
 # Containers
 sudo docker ps --format '{{.Names}} {{.Status}} {{.Ports}}' | grep -E 'nexflow|sml-api'
 
-# Demo
-curl -s http://localhost:8110/health
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:6323/login
+# Edge public entrypoint
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow.nextstep-soft.com' http://localhost:6323/login
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow-aoy.nextstep-soft.com' http://localhost:6323/login
 
-# AOY
+# Demo debug/direct
+curl -s http://localhost:8110/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16323/login
+
+# AOY debug/direct
 curl -s http://localhost:8111/health
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:6324/login
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16324/login
 
 # SML gateway
 curl -s -H 'x-tenant: demo' http://localhost:8200/health/ready
@@ -171,12 +194,12 @@ curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
 ## Cloudflare / IT Routing
 
 The two domains can use the same CNAME target from IT when they land on the same
-server/router. The reverse proxy must route by hostname:
+server/router. Both hostnames should route to the same origin:
 
 | Hostname | Origin |
 | --- | --- |
 | `nexflow.nextstep-soft.com` | `http://10.121.20.83:6323` |
-| `nexflow-aoy.nextstep-soft.com` | `http://10.121.20.83:6324` |
+| `nexflow-aoy.nextstep-soft.com` | `http://10.121.20.83:6323` |
 
 If Cloudflare returns 525, the origin/proxy SSL mode is wrong for the origin.
 Keep Cloudflare public HTTPS, but proxy to the internal HTTP port above unless

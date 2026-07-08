@@ -1,0 +1,18 @@
+services:
+  edge:
+    image: nginx:1.27-alpine
+    container_name: nexflow-edge
+    ports:
+      - "${EDGE_BIND:-6323:80}"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - nexflow_default
+      - nexflow-aoy_default
+    restart: unless-stopped
+
+networks:
+  nexflow_default:
+    external: true
+  nexflow-aoy_default:
+    external: true

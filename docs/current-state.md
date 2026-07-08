@@ -13,7 +13,7 @@ demo:
   Folder:    /mnt/data/nextstep-node-2/nexflow
   Public:    https://nexflow.nextstep-soft.com
   Backend:   nexflow-backend       :8110  → {"database":"ok","env":"production","status":"ok"}
-  Frontend:  nexflow-frontend      :6323  → HTTP 200
+  Frontend:  nexflow-frontend      :127.0.0.1:16323  → HTTP 200
   Postgres:  nexflow-postgres      :5440  → healthy
   SML DB:    demo
 
@@ -21,10 +21,11 @@ aoy:
   Folder:    /mnt/data/nextstep-node-2/nexflow-aoy
   Public:    https://nexflow-aoy.nextstep-soft.com
   Backend:   nexflow-aoy-backend   :8111  → {"database":"ok","env":"production","status":"ok"}
-  Frontend:  nexflow-aoy-frontend  :6324  → HTTP 200
+  Frontend:  nexflow-aoy-frontend  :127.0.0.1:16324  → HTTP 200
   Postgres:  nexflow-aoy-postgres  :5441  → healthy
   SML DB:    aoy
 
+edge:      nexflow-edge          :6323  → host-based routing for both domains
 sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy
 ```
 
