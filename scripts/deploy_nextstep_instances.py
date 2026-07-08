@@ -175,7 +175,7 @@ def ensure_build_contexts(target: Target) -> None:
     script = f"""
 set -euo pipefail
 python3 - <<'PY'
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import shutil
 
@@ -185,7 +185,7 @@ new = text
 new = new.replace("build: ./backend", "build: {RELEASE_DIR}/backend")
 new = new.replace("context: ./frontend", "context: {RELEASE_DIR}/frontend")
 if new != text:
-    backup = path.with_name(path.name + ".bak-gitdeploy-" + datetime.utcnow().strftime("%Y%m%d%H%M%S"))
+    backup = path.with_name(path.name + ".bak-gitdeploy-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
     shutil.copy2(path, backup)
     path.write_text(new)
     print(f"updated {{path}}; backup={{backup}}")
@@ -247,7 +247,7 @@ def deploy_target(target: Target) -> None:
         timeout=30,
     )
     sudo(
-        f"docker logs {shlex.quote(target.backend_container)} --tail=120 2>&1 "
+        f"docker logs {shlex.quote(target.backend_container)} --since=2m 2>&1 "
         "| grep -iE 'fatal|panic|error|5xx' | tail -30 || true",
         label=f"recent backend error scan {target.name}",
         timeout=30,
