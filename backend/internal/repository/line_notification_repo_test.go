@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -131,5 +132,36 @@ func TestLineNotificationRepoEnqueueRejectsIncompleteMessage(t *testing.T) {
 		DedupeKey: "dedupe",
 	}); err == nil {
 		t.Fatal("expected incomplete message error")
+	}
+}
+
+func TestValidateLineNotificationDestination(t *testing.T) {
+	tests := []struct {
+		name            string
+		destinationType string
+		destinationID   string
+		wantErr         bool
+	}{
+		{name: "user id", destinationType: "user", destinationID: "U1234567890"},
+		{name: "group id", destinationType: "group", destinationID: "C1234567890"},
+		{name: "room id", destinationType: "room", destinationID: "R1234567890"},
+		{name: "default user", destinationType: "", destinationID: "U1234567890"},
+		{name: "user with group prefix", destinationType: "user", destinationID: "C1234567890", wantErr: true},
+		{name: "group with user prefix", destinationType: "group", destinationID: "U1234567890", wantErr: true},
+		{name: "room empty", destinationType: "room", destinationID: "", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateLineNotificationDestination(tt.destinationType, tt.destinationID)
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidLineNotificationDestination) {
+					t.Fatalf("err = %v, want ErrInvalidLineNotificationDestination", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateLineNotificationDestination: %v", err)
+			}
+		})
 	}
 }

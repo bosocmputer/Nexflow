@@ -30,6 +30,37 @@ type LineNotificationRecipientUpsert struct {
 	Enabled         *bool  `json:"enabled"`
 }
 
+type LineNotificationContactCandidate struct {
+	ID                 string    `json:"id"`
+	LineOAID           string    `json:"line_oa_id"`
+	LineOAName         string    `json:"line_oa_name,omitempty"`
+	DestinationType    string    `json:"destination_type"`
+	DestinationID      string    `json:"destination_id"`
+	DisplayName        string    `json:"display_name"`
+	LastMessagePreview string    `json:"last_message_preview"`
+	LastWebhookEventID string    `json:"last_webhook_event_id"`
+	IsRecipient        bool      `json:"is_recipient"`
+	RecipientID        string    `json:"recipient_id,omitempty"`
+	LastSeenAt         time.Time `json:"last_seen_at"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+type LineNotificationContactCandidateUpsert struct {
+	LineOAID           string
+	DestinationType    string
+	DestinationID      string
+	DisplayName        string
+	LastMessagePreview string
+	LastWebhookEventID string
+	LastSeenAt         time.Time
+}
+
+type LineNotificationCandidateAddRecipientInput struct {
+	Name    string `json:"name"`
+	Enabled *bool  `json:"enabled"`
+}
+
 type LineNotificationDelivery struct {
 	ID             string          `json:"id"`
 	RecipientID    string          `json:"recipient_id"`

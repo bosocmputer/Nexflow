@@ -400,7 +400,7 @@ func main() {
 	// /api/admin/events subscribers stream events to admin browsers.
 	eventBroker := events.NewBroker()
 
-	lineH := handlers.NewLineHandler(lineRegistry, chatConvRepo, chatMessageRepo, chatMediaRepo, auditLogRepo, pool, cfg, eventBroker, logger)
+	lineH := handlers.NewLineHandler(lineRegistry, chatConvRepo, chatMessageRepo, chatMediaRepo, auditLogRepo, lineNotificationRepo, pool, cfg, eventBroker, logger)
 	chatInboxH := handlers.NewChatInboxHandler(chatConvRepo, chatMessageRepo, chatMediaRepo, billRepo, auditLogRepo, lineRegistry, aiClient, ocrClient, mediaSigner, eventBroker, cfg.PublicBaseURL, logger)
 	publicMediaH := handlers.NewPublicMediaHandler(chatMediaRepo, mediaSigner, logger)
 	sseH := handlers.NewSSEHandler(eventBroker, mediaSigner)
@@ -508,6 +508,8 @@ func main() {
 			lineNotificationGroup.POST("/senders", lineNotificationH.CreateSender)
 			lineNotificationGroup.PUT("/senders/:id", lineNotificationH.UpdateSender)
 			lineNotificationGroup.POST("/senders/:id/test", lineNotificationH.TestSender)
+			lineNotificationGroup.POST("/candidates/:id/add-recipient", lineNotificationH.AddCandidateRecipient)
+			lineNotificationGroup.DELETE("/candidates/:id", lineNotificationH.DeleteCandidate)
 			lineNotificationGroup.POST("/recipients", lineNotificationH.CreateRecipient)
 			lineNotificationGroup.PUT("/recipients/:id", lineNotificationH.UpdateRecipient)
 			lineNotificationGroup.DELETE("/recipients/:id", lineNotificationH.DeleteRecipient)

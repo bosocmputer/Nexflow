@@ -36,3 +36,39 @@ func TestLineNotificationSampleMessageMatchesRichShopeeFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestLineNotificationDestinationFromWebhookSource(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   lineSource
+		wantType string
+		wantID   string
+	}{
+		{
+			name:     "user",
+			source:   lineSource{Type: "user", UserID: "U111"},
+			wantType: "user",
+			wantID:   "U111",
+		},
+		{
+			name:     "group uses group id",
+			source:   lineSource{Type: "group", UserID: "U111", GroupID: "C222"},
+			wantType: "group",
+			wantID:   "C222",
+		},
+		{
+			name:     "room uses room id",
+			source:   lineSource{Type: "room", UserID: "U111", RoomID: "R333"},
+			wantType: "room",
+			wantID:   "R333",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotType, gotID := lineNotificationDestination(tt.source)
+			if gotType != tt.wantType || gotID != tt.wantID {
+				t.Fatalf("lineNotificationDestination = (%q, %q), want (%q, %q)", gotType, gotID, tt.wantType, tt.wantID)
+			}
+		})
+	}
+}

@@ -4,13 +4,16 @@ import {
   AlertTriangle,
   Bell,
   CheckCircle2,
+  Copy,
   Edit3,
   Eye,
   EyeOff,
+  MessageCircle,
   Plus,
   RefreshCw,
   Send,
   Trash2,
+  UserPlus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -78,9 +81,24 @@ interface LineDelivery {
   created_at: string
 }
 
+interface LineCandidate {
+  id: string
+  line_oa_id: string
+  line_oa_name?: string
+  destination_type: 'user' | 'group' | 'room'
+  destination_id: string
+  display_name: string
+  last_message_preview: string
+  last_webhook_event_id: string
+  is_recipient: boolean
+  recipient_id?: string
+  last_seen_at: string
+}
+
 interface Overview {
   senders: LineSender[]
   recipients: LineRecipient[]
+  candidates: LineCandidate[]
   deliveries: LineDelivery[]
   sample_text: string
   readiness: {
@@ -112,6 +130,8 @@ export default function LineNotifications() {
   const [recipientDialog, setRecipientDialog] = useState<LineRecipient | 'new' | null>(null)
   const [deleteRecipient, setDeleteRecipient] = useState<LineRecipient | null>(null)
   const [testRecipient, setTestRecipient] = useState<LineRecipient | null>(null)
+  const [candidateToAdd, setCandidateToAdd] = useState<LineCandidate | null>(null)
+  const [candidateToHide, setCandidateToHide] = useState<LineCandidate | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -152,6 +172,15 @@ export default function LineNotifications() {
     }
   }
 
+  const copyWebhookURL = async (sender: LineSender) => {
+    try {
+      await navigator.clipboard.writeText(webhookURL(sender.id))
+      toast.success('คัดลอก Webhook URL แล้ว')
+    } catch {
+      toast.error('คัดลอกไม่สำเร็จ กรุณาเลือกและคัดลอกเอง')
+    }
+  }
+
   const runRecipientTest = async () => {
     if (!testRecipient) return
     const id = toast.loading('กำลังส่ง LINE ทดสอบ')
@@ -178,11 +207,23 @@ export default function LineNotifications() {
     }
   }
 
+  const runHideCandidate = async () => {
+    if (!candidateToHide) return
+    try {
+      await client.delete(`/api/settings/line-notifications/candidates/${candidateToHide.id}`)
+      toast.success('ซ่อนรายการนี้แล้ว')
+      setCandidateToHide(null)
+      await load()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'ซ่อนรายการไม่สำเร็จ')
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ส่ง Flex แจ้งเตือนออเดอร์ใหม่จาก Shopee ให้ทีมงาน พร้อมยอดชำระ/escrow เท่าที่ Shopee มีจริง ไม่ใส่ข้อมูลลูกค้าและไม่ส่ง event ซ้ำจาก sync"
+        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ Shopee ใหม่ ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
@@ -201,7 +242,7 @@ export default function LineNotifications() {
               title={!data?.senders.length ? 'เพิ่ม LINE OA sender ก่อน' : undefined}
             >
               <Plus className="h-3.5 w-3.5" />
-              เพิ่มผู้รับ
+              เพิ่มด้วย Destination ID
             </Button>
           </>
         }
@@ -218,7 +259,7 @@ export default function LineNotifications() {
                 {ready ? 'พร้อมส่ง LINE เมื่อมีออเดอร์ใหม่' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                ต้องมี LINE OA ที่เปิดใช้งาน, ผู้รับอย่างน้อย 1 คน และคำสั่งซื้อ Shopee เปิดอยู่ ระบบจะส่งเฉพาะ new order จริงที่ผ่าน dedupe แล้ว
+                เพิ่ม LINE OA, copy Webhook URL ไปเปิด Use webhook ใน LINE Developers, ให้ผู้รับทัก OA แล้วเพิ่มเป็นผู้รับแจ้งเตือน
               </p>
             </div>
           </div>
@@ -237,8 +278,21 @@ export default function LineNotifications() {
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <h2 className="text-base font-semibold">LINE OA sender</h2>
-                <p className="text-sm text-muted-foreground">ใช้ Channel secret และ access token สำหรับส่ง Push notification</p>
+                <p className="text-sm text-muted-foreground">เพิ่ม OA แล้วนำ Webhook URL ไปใส่ใน LINE Developers ของ OA นั้น</p>
               </div>
+            </div>
+            <div className="mb-3 grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                'เพิ่ม LINE OA',
+                'คัดลอก Webhook URL',
+                'เปิด Use webhook ใน LINE Developers',
+                'ให้ผู้รับทัก LINE OA',
+              ].map((step, index) => (
+                <div key={step} className="rounded-md border border-border bg-muted/35 px-3 py-2">
+                  <span className="mr-2 font-mono text-xs text-muted-foreground">{index + 1}</span>
+                  <span className="font-medium">{step}</span>
+                </div>
+              ))}
             </div>
             <DataTable<LineSender>
               data={data?.senders ?? []}
@@ -257,9 +311,28 @@ export default function LineNotifications() {
                   ),
                 },
                 {
+                  key: 'webhook',
+                  header: 'Webhook URL',
+                  cell: (s) => (
+                    <div className="flex max-w-[360px] items-center gap-2">
+                      <code className="min-w-0 flex-1 truncate rounded-md bg-muted/50 px-2 py-1 font-mono text-[11px] text-foreground">
+                        {webhookURL(s.id)}
+                      </code>
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => copyWebhookURL(s)} title="คัดลอก Webhook URL">
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ),
+                },
+                {
                   key: 'status',
                   header: 'สถานะ',
-                  cell: (s) => s.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>,
+                  cell: (s) => (
+                    <div className="flex flex-wrap gap-1">
+                      {s.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}
+                      {s.bot_user_id ? <Badge className="bg-info/15 text-info">token ใช้ได้</Badge> : <Badge className="bg-warning/15 text-warning">รอทดสอบ</Badge>}
+                    </div>
+                  ),
                 },
                 {
                   key: 'updated',
@@ -289,12 +362,87 @@ export default function LineNotifications() {
           <div className="rounded-lg border border-border/80 bg-card/95 p-4">
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
+                <h2 className="text-base font-semibold">ผู้ที่ทัก LINE OA ล่าสุด</h2>
+                <p className="text-sm text-muted-foreground">หลังตั้ง Webhook แล้ว ให้ผู้รับส่งข้อความหา OA จากนั้นกดเพิ่มเป็นผู้รับแจ้งเตือน</p>
+              </div>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                รีเฟรช
+              </Button>
+            </div>
+            <DataTable<LineCandidate>
+              data={data?.candidates ?? []}
+              loading={loading}
+              dense
+              empty={<EmptyState icon={MessageCircle} title="ยังไม่มีคนทัก LINE OA" description="ให้ผู้รับส่งข้อความหา OA หลังเปิด Webhook แล้วกดรีเฟรช รายการจะขึ้นที่นี่" />}
+              columns={[
+                {
+                  key: 'contact',
+                  header: 'ปลายทาง',
+                  cell: (c) => (
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{candidateName(c)}</div>
+                      <div className="truncate text-xs text-muted-foreground">{c.line_oa_name || senderNameById.get(c.line_oa_id) || 'LINE OA'}</div>
+                      {c.last_message_preview && <div className="mt-1 max-w-[360px] truncate text-xs text-muted-foreground">ล่าสุด: {c.last_message_preview}</div>}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'destination',
+                  header: 'Destination',
+                  cell: (c) => (
+                    <div className="font-mono text-xs">
+                      <span className="text-muted-foreground">{destinationLabels[c.destination_type]} </span>
+                      {shortId(c.destination_id)}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'seen',
+                  header: 'ทักล่าสุด',
+                  cell: (c) => <span className="text-xs text-muted-foreground">{formatDate(c.last_seen_at)}</span>,
+                },
+                {
+                  key: 'status',
+                  header: 'สถานะ',
+                  cell: (c) => c.is_recipient ? <Badge className="bg-success/15 text-success">เพิ่มแล้ว</Badge> : <Badge className="bg-warning/15 text-warning">ยังไม่ได้เพิ่ม</Badge>,
+                },
+                {
+                  key: 'actions',
+                  header: '',
+                  headerClassName: 'text-right',
+                  className: 'text-right',
+                  cell: (c) => (
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs"
+                        disabled={c.is_recipient}
+                        onClick={() => setCandidateToAdd(c)}
+                      >
+                        <UserPlus className="h-3 w-3" />
+                        เพิ่มเป็นผู้รับ
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => setCandidateToHide(c)} title="ซ่อนรายการนี้">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </div>
+
+          <div className="rounded-lg border border-border/80 bg-card/95 p-4">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
                 <h2 className="text-base font-semibold">ผู้รับแจ้งเตือน</h2>
-                <p className="text-sm text-muted-foreground">กรอก LINE user ID, group ID หรือ room ID ด้วยมือก่อน ปุ่มทดสอบจะส่ง Flex ตัวอย่างของออเดอร์ Shopee ใหม่</p>
+                <p className="text-sm text-muted-foreground">เพิ่มจากรายการคนที่ทัก OA เพื่อลดพิมพ์ ID ผิด หรือเพิ่มด้วย Destination ID เองเมื่อมี ID อยู่แล้ว</p>
               </div>
               <Button size="sm" className="gap-1.5" disabled={!data?.senders.length} onClick={() => setRecipientDialog('new')}>
                 <Plus className="h-3.5 w-3.5" />
-                เพิ่มผู้รับ
+                เพิ่มด้วย Destination ID
               </Button>
             </div>
             <DataTable<LineRecipient>
@@ -404,8 +552,17 @@ export default function LineNotifications() {
       <RecipientDialog
         open={!!recipientDialog}
         recipient={recipientDialog === 'new' ? null : recipientDialog}
+        candidate={null}
         senders={data?.senders ?? []}
         onOpenChange={(open) => !open && setRecipientDialog(null)}
+        onSaved={load}
+      />
+      <RecipientDialog
+        open={!!candidateToAdd}
+        recipient={null}
+        candidate={candidateToAdd}
+        senders={data?.senders ?? []}
+        onOpenChange={(open) => !open && setCandidateToAdd(null)}
         onSaved={load}
       />
       <ConfirmDialog
@@ -425,6 +582,15 @@ export default function LineNotifications() {
         variant="destructive"
         onConfirm={runDeleteRecipient}
       />
+      <ConfirmDialog
+        open={!!candidateToHide}
+        onOpenChange={(open) => !open && setCandidateToHide(null)}
+        title="ซ่อนรายการที่ทัก LINE OA"
+        description={candidateToHide ? `ซ่อน ${candidateName(candidateToHide)} ออกจากรายการล่าสุด ถ้าปลายทางนี้ทัก OA อีกครั้ง ระบบจะแสดงกลับมาใหม่` : ''}
+        confirmLabel="ซ่อนรายการ"
+        variant="destructive"
+        onConfirm={runHideCandidate}
+      />
     </div>
   )
 }
@@ -436,6 +602,24 @@ function ReadinessChip({ label, value, ok }: { label: string; value: string; ok:
       <div className={ok ? 'text-sm font-semibold text-foreground' : 'text-sm font-semibold text-warning'}>{value}</div>
     </div>
   )
+}
+
+function webhookURL(senderID: string) {
+  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  return `${origin}/webhook/line/${senderID}`
+}
+
+async function copyText(value: string, message: string) {
+  try {
+    await navigator.clipboard.writeText(value)
+    toast.success(message)
+  } catch {
+    toast.error('คัดลอกไม่สำเร็จ กรุณาเลือกและคัดลอกเอง')
+  }
+}
+
+function candidateName(candidate: LineCandidate) {
+  return candidate.display_name?.trim() || `${destinationLabels[candidate.destination_type]} ${shortId(candidate.destination_id)}`
 }
 
 function SenderDialog({
@@ -559,17 +743,20 @@ function SenderDialog({
 function RecipientDialog({
   open,
   recipient,
+  candidate,
   senders,
   onOpenChange,
   onSaved,
 }: {
   open: boolean
   recipient: LineRecipient | null
+  candidate?: LineCandidate | null
   senders: LineSender[]
   onOpenChange: (open: boolean) => void
   onSaved: () => void
 }) {
   const isEdit = !!recipient
+  const isCandidateMode = !!candidate && !recipient
   const [lineOAID, setLineOAID] = useState('')
   const [name, setName] = useState('')
   const [destinationType, setDestinationType] = useState<LineRecipient['destination_type']>('user')
@@ -579,12 +766,20 @@ function RecipientDialog({
 
   useEffect(() => {
     if (!open) return
+    if (candidate) {
+      setLineOAID(candidate.line_oa_id)
+      setName(candidateName(candidate))
+      setDestinationType(candidate.destination_type)
+      setDestinationID(candidate.destination_id)
+      setEnabled(true)
+      return
+    }
     setLineOAID(recipient?.line_oa_id || senders[0]?.id || '')
     setName(recipient?.name ?? '')
     setDestinationType(recipient?.destination_type ?? 'user')
     setDestinationID(recipient?.destination_id ?? '')
     setEnabled(recipient?.enabled ?? true)
-  }, [open, recipient, senders])
+  }, [open, recipient, candidate, senders])
 
   const submit = async () => {
     if (!lineOAID || !name.trim() || !destinationID.trim()) {
@@ -600,7 +795,12 @@ function RecipientDialog({
         destination_id: destinationID.trim(),
         enabled,
       }
-      if (isEdit && recipient) {
+      if (isCandidateMode && candidate) {
+        await client.post(`/api/settings/line-notifications/candidates/${candidate.id}/add-recipient`, {
+          name: name.trim(),
+          enabled,
+        })
+      } else if (isEdit && recipient) {
         await client.put(`/api/settings/line-notifications/recipients/${recipient.id}`, body)
       } else {
         await client.post('/api/settings/line-notifications/recipients', body)
@@ -619,16 +819,18 @@ function RecipientDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'แก้ไขผู้รับแจ้งเตือน' : 'เพิ่มผู้รับแจ้งเตือน'}</DialogTitle>
+          <DialogTitle>{isEdit ? 'แก้ไขผู้รับแจ้งเตือน' : isCandidateMode ? 'เพิ่มผู้รับจาก LINE OA ล่าสุด' : 'เพิ่มผู้รับแจ้งเตือน'}</DialogTitle>
           <DialogDescription>
-            วันนี้กรอก LINE destination ID เองก่อน รอบถัดไปค่อยทำ auto capture จาก webhook
+            {isCandidateMode
+              ? 'ตรวจชื่อผู้รับแล้วกดบันทึก ระบบจะใช้ Destination ID ที่จับได้จาก Webhook เพื่อลดการพิมพ์ผิด'
+              : 'เลือกจากรายการคนที่ทัก LINE OA ได้ หรือกรอก Destination ID เองเมื่อมี ID อยู่แล้ว'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
             <Label>LINE OA sender</Label>
-            <Select value={lineOAID} onValueChange={setLineOAID}>
-              <SelectTrigger>
+            <Select value={lineOAID} onValueChange={setLineOAID} disabled={isCandidateMode}>
+              <SelectTrigger disabled={isCandidateMode}>
                 <SelectValue placeholder="เลือก LINE OA" />
               </SelectTrigger>
               <SelectContent>
@@ -647,8 +849,8 @@ function RecipientDialog({
           <div className="grid gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
             <div className="space-y-1.5">
               <Label>ประเภท</Label>
-              <Select value={destinationType} onValueChange={(v: LineRecipient['destination_type']) => setDestinationType(v)}>
-                <SelectTrigger>
+              <Select value={destinationType} onValueChange={(v: LineRecipient['destination_type']) => setDestinationType(v)} disabled={isCandidateMode}>
+                <SelectTrigger disabled={isCandidateMode}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -660,7 +862,26 @@ function RecipientDialog({
             </div>
             <div className="space-y-1.5">
               <Label>Destination ID</Label>
-              <Input value={destinationID} onChange={(e) => setDestinationID(e.target.value)} placeholder="U..., C..., R..." className="font-mono text-xs" />
+              <div className="flex gap-2">
+                <Input
+                  value={destinationID}
+                  onChange={(e) => setDestinationID(e.target.value)}
+                  placeholder="U..., C..., R..."
+                  className="font-mono text-xs"
+                  readOnly={isCandidateMode}
+                />
+                {isCandidateMode && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => copyText(destinationID, 'คัดลอก Destination ID แล้ว')}
+                    title="คัดลอก Destination ID"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
           <label className="flex items-center justify-between rounded-md border border-border bg-muted/35 px-3 py-2">

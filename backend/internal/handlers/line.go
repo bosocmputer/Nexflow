@@ -27,15 +27,16 @@ import (
 //
 // No AI, no auto-replies (except the optional configured greeting per-OA).
 type LineHandler struct {
-	registry  *lineservice.Registry
-	convRepo  *repository.ChatConversationRepo
-	msgRepo   *repository.ChatMessageRepo
-	mediaRepo *repository.ChatMediaRepo
-	auditRepo *repository.AuditLogRepo
-	pool      *worker.Pool
-	cfg       *config.Config
-	broker    *events.Broker
-	logger    *zap.Logger
+	registry             *lineservice.Registry
+	convRepo             *repository.ChatConversationRepo
+	msgRepo              *repository.ChatMessageRepo
+	mediaRepo            *repository.ChatMediaRepo
+	auditRepo            *repository.AuditLogRepo
+	lineNotificationRepo *repository.LineNotificationRepo
+	pool                 *worker.Pool
+	cfg                  *config.Config
+	broker               *events.Broker
+	logger               *zap.Logger
 }
 
 func NewLineHandler(
@@ -44,21 +45,23 @@ func NewLineHandler(
 	msgRepo *repository.ChatMessageRepo,
 	mediaRepo *repository.ChatMediaRepo,
 	auditRepo *repository.AuditLogRepo,
+	lineNotificationRepo *repository.LineNotificationRepo,
 	pool *worker.Pool,
 	cfg *config.Config,
 	broker *events.Broker,
 	logger *zap.Logger,
 ) *LineHandler {
 	return &LineHandler{
-		registry:  registry,
-		convRepo:  convRepo,
-		msgRepo:   msgRepo,
-		mediaRepo: mediaRepo,
-		auditRepo: auditRepo,
-		pool:      pool,
-		cfg:       cfg,
-		broker:    broker,
-		logger:    logger,
+		registry:             registry,
+		convRepo:             convRepo,
+		msgRepo:              msgRepo,
+		mediaRepo:            mediaRepo,
+		auditRepo:            auditRepo,
+		lineNotificationRepo: lineNotificationRepo,
+		pool:                 pool,
+		cfg:                  cfg,
+		broker:               broker,
+		logger:               logger,
 	}
 }
 
@@ -70,13 +73,13 @@ type linePayload struct {
 }
 
 type lineEvent struct {
-	Type            string              `json:"type"`
-	Timestamp       int64               `json:"timestamp"`
-	ReplyToken      string              `json:"replyToken"`
-	Source          lineSource          `json:"source"`
-	Message         *lineMessage        `json:"message,omitempty"`
-	DeliveryContext *lineDeliveryCtx    `json:"deliveryContext,omitempty"`
-	WebhookEventID  string              `json:"webhookEventId,omitempty"`
+	Type            string           `json:"type"`
+	Timestamp       int64            `json:"timestamp"`
+	ReplyToken      string           `json:"replyToken"`
+	Source          lineSource       `json:"source"`
+	Message         *lineMessage     `json:"message,omitempty"`
+	DeliveryContext *lineDeliveryCtx `json:"deliveryContext,omitempty"`
+	WebhookEventID  string           `json:"webhookEventId,omitempty"`
 }
 
 // lineDeliveryCtx — LINE marks isRedelivery=true when the same event is sent
@@ -87,8 +90,10 @@ type lineDeliveryCtx struct {
 }
 
 type lineSource struct {
-	Type   string `json:"type"`
-	UserID string `json:"userId"`
+	Type    string `json:"type"`
+	UserID  string `json:"userId"`
+	GroupID string `json:"groupId,omitempty"`
+	RoomID  string `json:"roomId,omitempty"`
 }
 
 type lineMessage struct {
@@ -105,10 +110,10 @@ type lineMessage struct {
 // POST /webhook/line          (legacy — falls back to Destination lookup)
 //
 // Resolution order for which OA to route to:
-//   1. URL param :oaId (new convention; admin pastes /webhook/line/<oa_id>
-//      into LINE Developer Console)
-//   2. payload.Destination (bot's own user ID) → registry.GetByBotUserID
-//   3. registry.Any() (single-OA fallback for legacy URL with no destination)
+//  1. URL param :oaId (new convention; admin pastes /webhook/line/<oa_id>
+//     into LINE Developer Console)
+//  2. payload.Destination (bot's own user ID) → registry.GetByBotUserID
+//  3. registry.Any() (single-OA fallback for legacy URL with no destination)
 func (h *LineHandler) Webhook(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -182,7 +187,98 @@ func (h *LineHandler) processEvent(ctx context.Context, event lineEvent, svc *li
 		// follow/unfollow/postback/join/leave — ignored in v1
 		return
 	}
+	h.captureNotificationCandidate(ctx, event, svc, oa)
 	h.processMessage(ctx, event, svc, oa)
+}
+
+func (h *LineHandler) captureNotificationCandidate(ctx context.Context, event lineEvent, svc *lineservice.Service, oa *models.LineOAAccount) {
+	if h == nil || h.lineNotificationRepo == nil || oa == nil || oa.ID == "" || event.Message == nil {
+		return
+	}
+	destinationType, destinationID := lineNotificationDestination(event.Source)
+	if destinationID == "" {
+		return
+	}
+	displayName := ""
+	if destinationType == "user" && svc != nil {
+		if profile, err := svc.GetProfile(destinationID); err == nil && profile != nil {
+			displayName = profile.DisplayName
+		} else if err != nil && h.logger != nil {
+			h.logger.Warn("get LINE profile for notification candidate failed",
+				zap.String("line_oa_id", oa.ID),
+				zap.String("destination_type", destinationType),
+				zap.String("destination", maskLineDestination(destinationID)),
+				zap.Error(err))
+		}
+	}
+	lastSeen := time.Now()
+	if event.Timestamp > 0 {
+		lastSeen = time.UnixMilli(event.Timestamp)
+	}
+	if _, err := h.lineNotificationRepo.UpsertContactCandidate(ctx, models.LineNotificationContactCandidateUpsert{
+		LineOAID:           oa.ID,
+		DestinationType:    destinationType,
+		DestinationID:      destinationID,
+		DisplayName:        displayName,
+		LastMessagePreview: lineNotificationMessagePreview(event.Message),
+		LastWebhookEventID: event.WebhookEventID,
+		LastSeenAt:         lastSeen,
+	}); err != nil && h.logger != nil {
+		h.logger.Warn("upsert LINE notification candidate failed",
+			zap.String("line_oa_id", oa.ID),
+			zap.String("destination_type", destinationType),
+			zap.String("destination", maskLineDestination(destinationID)),
+			zap.Error(err))
+	}
+}
+
+func lineNotificationDestination(source lineSource) (string, string) {
+	sourceType := strings.ToLower(strings.TrimSpace(source.Type))
+	switch sourceType {
+	case "group":
+		return "group", strings.TrimSpace(source.GroupID)
+	case "room":
+		return "room", strings.TrimSpace(source.RoomID)
+	default:
+		return "user", strings.TrimSpace(source.UserID)
+	}
+}
+
+func lineNotificationMessagePreview(msg *lineMessage) string {
+	if msg == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(msg.Type)) {
+	case "text":
+		text := strings.Join(strings.Fields(strings.TrimSpace(msg.Text)), " ")
+		if text == "" {
+			return "ส่งข้อความ"
+		}
+		return textPreview(text, 100)
+	case "image":
+		return "ส่งรูปภาพ"
+	case "file":
+		name := strings.TrimSpace(msg.FileName)
+		if name == "" {
+			return "ส่งไฟล์"
+		}
+		return textPreview("ส่งไฟล์: "+name, 100)
+	case "audio":
+		return "ส่งเสียง"
+	default:
+		if msg.Type == "" {
+			return "ส่งข้อความ"
+		}
+		return textPreview("ส่ง "+msg.Type, 100)
+	}
+}
+
+func maskLineDestination(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 10 {
+		return id
+	}
+	return id[:6] + "..." + id[len(id)-4:]
 }
 
 // processMessage stores the inbound message and (on first contact) hydrates

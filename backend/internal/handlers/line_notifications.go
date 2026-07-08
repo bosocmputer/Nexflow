@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -51,6 +52,11 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดประวัติการส่ง LINE ไม่สำเร็จ"})
 		return
 	}
+	candidates, err := h.repo.ListContactCandidates(c.Request.Context(), 50)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดรายชื่อผู้ที่ทัก LINE OA ไม่สำเร็จ"})
+		return
+	}
 	maskedSenders := make([]*models.LineOAAccount, 0, len(senders))
 	enabledSenders := 0
 	for _, sender := range senders {
@@ -68,6 +74,7 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"senders":     maskedSenders,
 		"recipients":  recipients,
+		"candidates":  candidates,
 		"deliveries":  deliveries,
 		"sample_text": h.sampleMessage(),
 		"readiness": gin.H{
@@ -174,7 +181,7 @@ func (h *LineNotificationHandler) CreateRecipient(c *gin.Context) {
 	}
 	row, err := h.repo.CreateRecipient(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "เพิ่มผู้รับแจ้งเตือนไม่สำเร็จ: " + err.Error()})
+		h.writeRecipientError(c, err, "เพิ่มผู้รับแจ้งเตือนไม่สำเร็จ")
 		return
 	}
 	h.audit(c, "line_notification_recipient_created", row.ID, gin.H{"name": row.Name, "destination_type": row.DestinationType})
@@ -194,7 +201,7 @@ func (h *LineNotificationHandler) UpdateRecipient(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "แก้ไขผู้รับแจ้งเตือนไม่สำเร็จ: " + err.Error()})
+		h.writeRecipientError(c, err, "แก้ไขผู้รับแจ้งเตือนไม่สำเร็จ")
 		return
 	}
 	h.audit(c, "line_notification_recipient_updated", row.ID, gin.H{"name": row.Name, "enabled": row.Enabled})
@@ -246,6 +253,54 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	_ = h.repo.MarkRecipientTest(c.Request.Context(), id, "sent", "")
 	h.audit(c, "line_notification_recipient_tested", id, gin.H{"name": recipient.Name})
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "ส่งข้อความทดสอบแล้ว"})
+}
+
+func (h *LineNotificationHandler) AddCandidateRecipient(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	var in models.LineNotificationCandidateAddRecipientInput
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	row, err := h.repo.AddCandidateAsRecipient(c.Request.Context(), id, in)
+	if err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบรายการ LINE ที่ทักเข้ามา อาจถูกซ่อนไปแล้ว"})
+		return
+	}
+	if err != nil {
+		h.writeRecipientError(c, err, "เพิ่มผู้รับจากรายการที่ทัก LINE OA ไม่สำเร็จ")
+		return
+	}
+	h.audit(c, "line_notification_candidate_added_as_recipient", id, gin.H{
+		"recipient_id":     row.ID,
+		"name":             row.Name,
+		"destination_type": row.DestinationType,
+	})
+	c.JSON(http.StatusCreated, row)
+}
+
+func (h *LineNotificationHandler) DeleteCandidate(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if err := h.repo.HideContactCandidate(c.Request.Context(), id); err == sql.ErrNoRows {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบรายการ LINE ที่ต้องการซ่อน"})
+		return
+	} else if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ซ่อนรายการนี้ไม่สำเร็จ: " + err.Error()})
+		return
+	}
+	h.audit(c, "line_notification_candidate_hidden", id, nil)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *LineNotificationHandler) writeRecipientError(c *gin.Context, err error, prefix string) {
+	switch {
+	case errors.Is(err, repository.ErrInvalidLineNotificationDestination):
+		c.JSON(http.StatusBadRequest, gin.H{"error": prefix + ": Destination ID ไม่ตรงกับประเภทที่เลือก เช่น User ต้องขึ้นต้นด้วย U, Group ต้องขึ้นต้นด้วย C, Room ต้องขึ้นต้นด้วย R"})
+	case errors.Is(err, repository.ErrLineNotificationRecipientExists):
+		c.JSON(http.StatusConflict, gin.H{"error": prefix + ": ผู้รับปลายทางนี้ถูกเพิ่มไว้แล้ว"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": prefix + ": " + err.Error()})
+	}
 }
 
 func (h *LineNotificationHandler) sampleMessage() string {

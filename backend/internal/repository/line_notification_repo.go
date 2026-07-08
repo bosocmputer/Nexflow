@@ -4,10 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/lib/pq"
 
 	"nexflow/internal/models"
+)
+
+var (
+	ErrLineNotificationRecipientExists    = errors.New("line notification recipient already exists")
+	ErrInvalidLineNotificationDestination = errors.New("invalid line notification destination")
 )
 
 type LineNotificationRepo struct {
@@ -53,6 +62,36 @@ func normalizeLineDestinationType(v string) string {
 	}
 }
 
+func ValidateLineNotificationDestination(destinationType, destinationID string) error {
+	destinationType = normalizeLineDestinationType(destinationType)
+	destinationID = strings.TrimSpace(destinationID)
+	if destinationID == "" {
+		return ErrInvalidLineNotificationDestination
+	}
+	switch destinationType {
+	case "user":
+		if !strings.HasPrefix(destinationID, "U") {
+			return ErrInvalidLineNotificationDestination
+		}
+	case "group":
+		if !strings.HasPrefix(destinationID, "C") {
+			return ErrInvalidLineNotificationDestination
+		}
+	case "room":
+		if !strings.HasPrefix(destinationID, "R") {
+			return ErrInvalidLineNotificationDestination
+		}
+	default:
+		return ErrInvalidLineNotificationDestination
+	}
+	return nil
+}
+
+func isLineNotificationUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
+
 func (r *LineNotificationRepo) ListRecipients(ctx context.Context) ([]models.LineNotificationRecipient, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+lineNotificationRecipientCols+`
@@ -95,6 +134,11 @@ func (r *LineNotificationRepo) CreateRecipient(ctx context.Context, in models.Li
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
+	in.DestinationType = normalizeLineDestinationType(in.DestinationType)
+	in.DestinationID = strings.TrimSpace(in.DestinationID)
+	if err := ValidateLineNotificationDestination(in.DestinationType, in.DestinationID); err != nil {
+		return nil, err
+	}
 	var id string
 	if err := r.db.QueryRowContext(ctx, `
 		INSERT INTO line_notification_recipients
@@ -102,8 +146,11 @@ func (r *LineNotificationRepo) CreateRecipient(ctx context.Context, in models.Li
 		VALUES ($1::uuid, $2, $3, $4, $5)
 		RETURNING id::text`,
 		strings.TrimSpace(in.LineOAID), strings.TrimSpace(in.Name),
-		normalizeLineDestinationType(in.DestinationType), strings.TrimSpace(in.DestinationID), enabled,
+		in.DestinationType, in.DestinationID, enabled,
 	).Scan(&id); err != nil {
+		if isLineNotificationUniqueViolation(err) {
+			return nil, ErrLineNotificationRecipientExists
+		}
 		return nil, fmt.Errorf("create line notification recipient: %w", err)
 	}
 	return r.GetRecipient(ctx, id)
@@ -121,6 +168,11 @@ func (r *LineNotificationRepo) UpdateRecipient(ctx context.Context, id string, i
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
+	in.DestinationType = normalizeLineDestinationType(in.DestinationType)
+	in.DestinationID = strings.TrimSpace(in.DestinationID)
+	if err := ValidateLineNotificationDestination(in.DestinationType, in.DestinationID); err != nil {
+		return nil, err
+	}
 	_, err = r.db.ExecContext(ctx, `
 		UPDATE line_notification_recipients
 		   SET line_oa_id = $1::uuid,
@@ -131,13 +183,184 @@ func (r *LineNotificationRepo) UpdateRecipient(ctx context.Context, id string, i
 		       updated_at = NOW()
 		 WHERE id = $6::uuid`,
 		strings.TrimSpace(in.LineOAID), strings.TrimSpace(in.Name),
-		normalizeLineDestinationType(in.DestinationType), strings.TrimSpace(in.DestinationID),
+		in.DestinationType, in.DestinationID,
 		enabled, strings.TrimSpace(id),
 	)
 	if err != nil {
+		if isLineNotificationUniqueViolation(err) {
+			return nil, ErrLineNotificationRecipientExists
+		}
 		return nil, fmt.Errorf("update line notification recipient: %w", err)
 	}
 	return r.GetRecipient(ctx, id)
+}
+
+const lineNotificationCandidateCols = `
+  c.id::text, c.line_oa_id::text, COALESCE(oa.name, '') AS line_oa_name,
+  c.destination_type, c.destination_id, c.display_name, c.last_message_preview,
+  c.last_webhook_event_id,
+  CASE WHEN r.id IS NULL THEN FALSE ELSE TRUE END AS is_recipient,
+  COALESCE(r.id::text, '') AS recipient_id,
+  c.last_seen_at, c.created_at, c.updated_at
+`
+
+func scanLineNotificationCandidate(s interface{ Scan(...any) error }) (models.LineNotificationContactCandidate, error) {
+	var out models.LineNotificationContactCandidate
+	if err := s.Scan(
+		&out.ID, &out.LineOAID, &out.LineOAName, &out.DestinationType,
+		&out.DestinationID, &out.DisplayName, &out.LastMessagePreview,
+		&out.LastWebhookEventID, &out.IsRecipient, &out.RecipientID,
+		&out.LastSeenAt, &out.CreatedAt, &out.UpdatedAt,
+	); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (r *LineNotificationRepo) ListContactCandidates(ctx context.Context, limit int) ([]models.LineNotificationContactCandidate, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+lineNotificationCandidateCols+`
+		  FROM line_notification_contact_candidates c
+		  JOIN line_oa_accounts oa ON oa.id = c.line_oa_id
+		  LEFT JOIN line_notification_recipients r
+		         ON r.line_oa_id = c.line_oa_id
+		        AND r.destination_id = c.destination_id
+		 WHERE c.hidden_at IS NULL
+		 ORDER BY c.last_seen_at DESC
+		 LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list line notification candidates: %w", err)
+	}
+	defer rows.Close()
+	out := []models.LineNotificationContactCandidate{}
+	for rows.Next() {
+		row, err := scanLineNotificationCandidate(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *LineNotificationRepo) GetContactCandidate(ctx context.Context, id string) (*models.LineNotificationContactCandidate, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT `+lineNotificationCandidateCols+`
+		  FROM line_notification_contact_candidates c
+		  JOIN line_oa_accounts oa ON oa.id = c.line_oa_id
+		  LEFT JOIN line_notification_recipients r
+		         ON r.line_oa_id = c.line_oa_id
+		        AND r.destination_id = c.destination_id
+		 WHERE c.id = $1::uuid
+		   AND c.hidden_at IS NULL`, strings.TrimSpace(id))
+	out, err := scanLineNotificationCandidate(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get line notification candidate: %w", err)
+	}
+	return &out, nil
+}
+
+func (r *LineNotificationRepo) UpsertContactCandidate(ctx context.Context, in models.LineNotificationContactCandidateUpsert) (*models.LineNotificationContactCandidate, error) {
+	in.LineOAID = strings.TrimSpace(in.LineOAID)
+	in.DestinationType = normalizeLineDestinationType(in.DestinationType)
+	in.DestinationID = strings.TrimSpace(in.DestinationID)
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	in.LastMessagePreview = trimRunes(strings.TrimSpace(in.LastMessagePreview), 100)
+	in.LastWebhookEventID = strings.TrimSpace(in.LastWebhookEventID)
+	if err := ValidateLineNotificationDestination(in.DestinationType, in.DestinationID); err != nil {
+		return nil, err
+	}
+	if in.LastSeenAt.IsZero() {
+		in.LastSeenAt = time.Now()
+	}
+
+	var id string
+	if err := r.db.QueryRowContext(ctx, `
+		INSERT INTO line_notification_contact_candidates
+		  (line_oa_id, destination_type, destination_id, display_name,
+		   last_message_preview, last_webhook_event_id, last_seen_at)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (line_oa_id, destination_type, destination_id)
+		DO UPDATE SET
+		  display_name = CASE
+		    WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
+		    ELSE line_notification_contact_candidates.display_name
+		  END,
+		  last_message_preview = EXCLUDED.last_message_preview,
+		  last_webhook_event_id = EXCLUDED.last_webhook_event_id,
+		  last_seen_at = EXCLUDED.last_seen_at,
+		  hidden_at = NULL,
+		  updated_at = NOW()
+		RETURNING id::text`,
+		in.LineOAID, in.DestinationType, in.DestinationID, in.DisplayName,
+		in.LastMessagePreview, in.LastWebhookEventID, in.LastSeenAt,
+	).Scan(&id); err != nil {
+		return nil, fmt.Errorf("upsert line notification candidate: %w", err)
+	}
+	return r.GetContactCandidate(ctx, id)
+}
+
+func (r *LineNotificationRepo) AddCandidateAsRecipient(ctx context.Context, id string, in models.LineNotificationCandidateAddRecipientInput) (*models.LineNotificationRecipient, error) {
+	candidate, err := r.GetContactCandidate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if candidate == nil {
+		return nil, sql.ErrNoRows
+	}
+	var existingID string
+	err = r.db.QueryRowContext(ctx, `
+		SELECT id::text
+		  FROM line_notification_recipients
+		 WHERE line_oa_id = $1::uuid
+		   AND destination_id = $2
+		 LIMIT 1`, candidate.LineOAID, candidate.DestinationID).Scan(&existingID)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("check line notification recipient duplicate: %w", err)
+	}
+	if existingID != "" {
+		return nil, ErrLineNotificationRecipientExists
+	}
+	enabled := true
+	if in.Enabled != nil {
+		enabled = *in.Enabled
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		name = strings.TrimSpace(candidate.DisplayName)
+	}
+	if name == "" {
+		name = "LINE " + destinationTypeName(candidate.DestinationType) + " " + shortLineDestination(candidate.DestinationID)
+	}
+	return r.CreateRecipient(ctx, models.LineNotificationRecipientUpsert{
+		LineOAID:        candidate.LineOAID,
+		Name:            name,
+		DestinationType: candidate.DestinationType,
+		DestinationID:   candidate.DestinationID,
+		Enabled:         &enabled,
+	})
+}
+
+func (r *LineNotificationRepo) HideContactCandidate(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE line_notification_contact_candidates
+		   SET hidden_at = NOW(),
+		       updated_at = NOW()
+		 WHERE id = $1::uuid
+		   AND hidden_at IS NULL`, strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("hide line notification candidate: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (r *LineNotificationRepo) DeleteRecipient(ctx context.Context, id string) error {
@@ -386,4 +609,34 @@ func normalizeLineNotificationMessageInput(in models.LineNotificationMessageInpu
 		in.PayloadVersion = 1
 	}
 	return in
+}
+
+func trimRunes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit])
+}
+
+func destinationTypeName(v string) string {
+	switch normalizeLineDestinationType(v) {
+	case "group":
+		return "group"
+	case "room":
+		return "room"
+	default:
+		return "user"
+	}
+}
+
+func shortLineDestination(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:8] + "..." + id[len(id)-4:]
 }
