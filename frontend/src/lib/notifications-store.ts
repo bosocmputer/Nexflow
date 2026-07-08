@@ -12,6 +12,7 @@ export interface AppNotification {
   action_url: string
   entity_type: string
   entity_id: string
+  dedupe_key?: string
   read_at?: string | null
   resolved_at?: string | null
   resolved_reason?: string | null

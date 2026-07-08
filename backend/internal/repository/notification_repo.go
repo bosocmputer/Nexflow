@@ -221,11 +221,13 @@ func (r *NotificationRepo) ResolveShopeeShopIssues(ctx context.Context, shopID i
 		    AND (
 		      dedupe_key LIKE $3
 		      OR dedupe_key LIKE $4
+		      OR dedupe_key LIKE $5
 		    )`,
 		shop,
 		reason,
 		fmt.Sprintf("shopee:sync_error:%d:%%", shopID),
 		fmt.Sprintf("shopee:token_error:%d:%%", shopID),
+		fmt.Sprintf("shopee:reconcile_error:%d:%%", shopID),
 	)
 	if err != nil {
 		return 0, err

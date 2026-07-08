@@ -105,6 +105,34 @@
   .hover\:text-primary:hover {
     color: hsl(var(--link));
   }
+
+  .notification-bell-attention {
+    box-shadow: 0 0 0 3px hsl(var(--warning) / 0.14);
+  }
+
+  .notification-bell-icon-attention {
+    animation: nexflow-bell-shake 0.9s ease-in-out infinite;
+    transform-origin: 50% 8%;
+  }
+
+  .notification-bell-pulse {
+    animation: nexflow-bell-pulse 1.8s ease-out infinite;
+  }
+}
+
+@keyframes nexflow-bell-shake {
+  0%, 48%, 100% { transform: rotate(0deg); }
+  8% { transform: rotate(13deg); }
+  16% { transform: rotate(-11deg); }
+  24% { transform: rotate(9deg); }
+  32% { transform: rotate(-6deg); }
+  40% { transform: rotate(3deg); }
+}
+
+@keyframes nexflow-bell-pulse {
+  0% { opacity: 0.55; transform: scale(1); }
+  70% { opacity: 0; transform: scale(1.45); }
+  100% { opacity: 0; transform: scale(1.45); }
 }
 
 /* Custom scrollbar — minimal, matches the muted/border tokens */
@@ -126,6 +154,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .notification-bell-icon-attention,
+  .notification-bell-pulse {
+    animation: none !important;
+  }
+
+  .notification-bell-attention {
+    box-shadow: 0 0 0 3px hsl(var(--warning) / 0.22);
+  }
+
   *,
   *::before,
   *::after {

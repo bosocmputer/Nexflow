@@ -25,7 +25,9 @@ type NotificationWriteResponse = {
 }
 
 const SOUND_STORAGE_KEY = 'nexflow.notifications.sound_enabled'
+const ORDER_ALERT_SEEN_STORAGE_KEY = 'nexflow.notifications.order_alert_seen_at'
 const SOUND_BURST_WINDOW_MS = 900
+const ORDER_ALARM_REPEAT_MS = 6000
 
 const severityMeta = {
   error: {
@@ -59,8 +61,17 @@ export function NotificationBell() {
       return true
     }
   })
+  const [orderAlertSeenAt, setOrderAlertSeenAt] = useState(() => {
+    if (typeof window === 'undefined') return 0
+    try {
+      return Math.max(0, Number(window.localStorage.getItem(ORDER_ALERT_SEEN_STORAGE_KEY)) || 0)
+    } catch {
+      return 0
+    }
+  })
   const audioCtxRef = useRef<AudioContext | null>(null)
   const lastSoundAtRef = useRef(0)
+  const alarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const subscribe = useEventsStore((s) => s.subscribe)
   const unread = useNotificationsStore((s) => s.unread)
   const items = useNotificationsStore((s) => s.items)
@@ -80,6 +91,13 @@ export function NotificationBell() {
       /* localStorage can be unavailable in private contexts. */
     }
   }, [soundEnabled])
+
+  const stopOrderAlarm = useCallback(() => {
+    if (alarmTimerRef.current) {
+      clearTimeout(alarmTimerRef.current)
+      alarmTimerRef.current = null
+    }
+  }, [])
 
   const getAudioContext = useCallback(() => {
     if (typeof window === 'undefined') return null
@@ -174,6 +192,52 @@ export function NotificationBell() {
     return groups
   }, [items])
 
+  const latestUnreadOrderAlertAt = useMemo(() => {
+    return items.reduce((latest, item) => {
+      if (item.read_at || item.resolved_at || !isOrderAlertNotification(item)) return latest
+      return Math.max(latest, notificationTimeMs(item.created_at))
+    }, 0)
+  }, [items])
+
+  const orderAttentionActive = latestUnreadOrderAlertAt > orderAlertSeenAt
+
+  const acknowledgeOrderAlerts = useCallback(() => {
+    const nextSeenAt = Math.max(Date.now(), latestUnreadOrderAlertAt)
+    setOrderAlertSeenAt(nextSeenAt)
+    stopOrderAlarm()
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(ORDER_ALERT_SEEN_STORAGE_KEY, String(nextSeenAt))
+    } catch {
+      /* localStorage can be unavailable in private contexts. */
+    }
+  }, [latestUnreadOrderAlertAt, stopOrderAlarm])
+
+  useEffect(() => {
+    if (!canUseNotifications || open || !soundEnabled || !orderAttentionActive) {
+      stopOrderAlarm()
+      return
+    }
+    let cancelled = false
+    const tick = () => {
+      if (cancelled) return
+      playNotificationSound(true)
+      alarmTimerRef.current = setTimeout(tick, ORDER_ALARM_REPEAT_MS)
+    }
+    stopOrderAlarm()
+    tick()
+    return () => {
+      cancelled = true
+      stopOrderAlarm()
+    }
+  }, [canUseNotifications, open, orderAttentionActive, playNotificationSound, soundEnabled, stopOrderAlarm])
+
+  useEffect(() => {
+    if (open && orderAttentionActive) {
+      acknowledgeOrderAlerts()
+    }
+  }, [acknowledgeOrderAlerts, open, orderAttentionActive])
+
   const loadNotifications = async () => {
     if (!canUseNotifications) return
     setLoading(true)
@@ -209,9 +273,8 @@ export function NotificationBell() {
       if (notification.severity === 'error') toast.error(notification.title, opts)
       else if (notification.severity === 'warning') toast.warning(notification.title, opts)
       else toast.info(notification.title, opts)
-      playNotificationSound()
     })
-  }, [canUseNotifications, playNotificationSound, setUnread, subscribe, unread, upsertFromEvent])
+  }, [canUseNotifications, setUnread, subscribe, unread, upsertFromEvent])
 
   const markOneRead = async (notification: AppNotification, navigateToAction: boolean) => {
     try {
@@ -230,6 +293,7 @@ export function NotificationBell() {
     try {
       const res = await client.post<NotificationWriteResponse>('/api/notifications/read-all')
       markAllReadLocal(res.data.unread_by_source)
+      acknowledgeOrderAlerts()
     } catch {
       toast.error('อ่าน notification ทั้งหมดไม่สำเร็จ')
     }
@@ -238,7 +302,11 @@ export function NotificationBell() {
   const toggleSound = () => {
     const next = !soundEnabled
     setSoundEnabled(next)
-    if (next) playNotificationSound(true)
+    if (!next) {
+      stopOrderAlarm()
+      return
+    }
+    if (orderAttentionActive) playNotificationSound(true)
   }
 
   if (!canUseNotifications) return null
@@ -246,15 +314,24 @@ export function NotificationBell() {
   return (
     <Popover open={open} onOpenChange={(next) => {
       setOpen(next)
-      if (next) void loadNotifications()
+      if (next) {
+        acknowledgeOrderAlerts()
+        void loadNotifications()
+      }
     }}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="relative inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-accent/70"
+          className={cn(
+            'relative inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-accent/70',
+            orderAttentionActive && 'notification-bell-attention border-warning/60 bg-warning/10 text-warning hover:bg-warning/15',
+          )}
           aria-label="เปิดการแจ้งเตือน"
         >
-          <Bell className="h-4 w-4" />
+          {orderAttentionActive && (
+            <span className="notification-bell-pulse pointer-events-none absolute inset-0 rounded-md border border-warning/50" />
+          )}
+          <Bell className={cn('h-4 w-4', orderAttentionActive && 'notification-bell-icon-attention')} />
           {unread > 0 && (
             <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground">
               {unread > 99 ? '99+' : unread}
@@ -267,7 +344,7 @@ export function NotificationBell() {
           <div>
             <div className="text-sm font-semibold text-foreground">การแจ้งเตือน</div>
             <div className="text-xs text-muted-foreground">
-              Shopee, NextStep Marketplace และงานที่ต้องตรวจ
+              ออเดอร์ใหม่และงานที่ต้องตรวจ
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -379,4 +456,15 @@ function formatNotificationTime(value: string): string {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(d)
+}
+
+function isOrderAlertNotification(notification: AppNotification): boolean {
+  const key = notification.dedupe_key?.trim() ?? ''
+  return key.startsWith('nextstep:new_order:') || key.startsWith('shopee:new_order:')
+}
+
+function notificationTimeMs(value: string): number {
+  if (!value) return 0
+  const n = new Date(value).getTime()
+  return Number.isFinite(n) ? n : 0
 }

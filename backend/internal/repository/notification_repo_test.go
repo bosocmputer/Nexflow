@@ -144,7 +144,7 @@ func TestNotificationRepoResolveShopeeShopIssues(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectExec("UPDATE notifications").
-		WithArgs("264993963", "shop sync recovered", "shopee:sync_error:264993963:%", "shopee:token_error:264993963:%").
+		WithArgs("264993963", "shop sync recovered", "shopee:sync_error:264993963:%", "shopee:token_error:264993963:%", "shopee:reconcile_error:264993963:%").
 		WillReturnResult(sqlmock.NewResult(0, 3))
 
 	repo := NewNotificationRepo(db)

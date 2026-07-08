@@ -99,7 +99,7 @@ interface Overview {
     enabled_sender_count: number
     recipient_count: number
     enabled_recipient_count: number
-    shopee_realtime_enabled: boolean
+    shopee_realtime_enabled?: boolean
   }
 }
 
@@ -143,7 +143,7 @@ export default function LineNotifications() {
   }, [])
 
   const readiness = data?.readiness
-  const ready = !!readiness?.enabled_sender_count && !!readiness.enabled_recipient_count && readiness.shopee_realtime_enabled
+  const ready = !!readiness?.enabled_sender_count && !!readiness.enabled_recipient_count
   const enabledRecipients = data?.recipients.filter((r) => r.enabled).length ?? 0
 
   const senderNameById = useMemo(() => {
@@ -216,7 +216,7 @@ export default function LineNotifications() {
     <div className="space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ Shopee ใหม่ ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
+        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่ ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
@@ -246,10 +246,9 @@ export default function LineNotifications() {
               </p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-3">
             <ReadinessChip label="LINE OA" value={`${readiness?.enabled_sender_count ?? 0}/${readiness?.sender_count ?? 0}`} ok={!!readiness?.enabled_sender_count} />
             <ReadinessChip label="ผู้รับ" value={`${enabledRecipients}`} ok={enabledRecipients > 0} />
-            <ReadinessChip label="คำสั่งซื้อ Shopee" value={readiness?.shopee_realtime_enabled ? 'เปิด' : 'ปิด'} ok={!!readiness?.shopee_realtime_enabled} />
             <ReadinessChip label="ล่าสุด" value={data?.deliveries[0]?.status ? deliveryStatusLabel(data.deliveries[0].status) : 'ยังไม่มี'} ok={data?.deliveries[0]?.status === 'sent'} />
           </div>
         </div>
@@ -497,7 +496,7 @@ export default function LineNotifications() {
             <h2 className="text-base font-semibold">ประวัติการส่งล่าสุด</h2>
             <div className="mt-3 space-y-2">
               {(data?.deliveries ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground">ยังไม่มีการส่ง LINE จากคำสั่งซื้อ Shopee</p>
+                <p className="text-sm text-muted-foreground">ยังไม่มีการส่ง LINE แจ้งเตือนออเดอร์</p>
               ) : (
                 data!.deliveries.slice(0, 8).map((d) => (
                   <div key={d.id} className="rounded-md border border-border/70 bg-background/60 p-3">
@@ -542,7 +541,7 @@ export default function LineNotifications() {
         open={!!testRecipient}
         onOpenChange={(open) => !open && setTestRecipient(null)}
         title="ส่ง Flex ทดสอบ"
-        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่างของออเดอร์ Shopee ใหม่ไปที่ ${testRecipient.name} เพื่อยืนยันว่า destination ID ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
+        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่างของออเดอร์ใหม่ไปที่ ${testRecipient.name} เพื่อยืนยันว่าปลายทาง LINE ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
         confirmLabel="ส่งทดสอบ"
         onConfirm={runRecipientTest}
       />
@@ -659,7 +658,7 @@ function SenderDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'แก้ไข LINE OA sender' : 'เพิ่ม LINE OA sender'}</DialogTitle>
           <DialogDescription>
-            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์ Shopee หลังบันทึกแล้วระบบจะแสดง Webhook URL ให้คัดลอกไป Verify และเปิด Use webhook ใน LINE Developers
+            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์ใหม่ หลังบันทึกแล้วระบบจะแสดง Webhook URL ให้คัดลอกไป Verify และเปิด Use webhook ใน LINE Developers
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

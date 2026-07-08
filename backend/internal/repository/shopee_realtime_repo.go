@@ -445,6 +445,25 @@ func (r *ShopeeRealtimeRepo) MarkReconcileJobFailed(ctx context.Context, id stri
 	return err
 }
 
+func (r *ShopeeRealtimeRepo) MarkReconcileJobTerminalFailed(ctx context.Context, id string, errMsg string) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	if len(errMsg) > 800 {
+		errMsg = errMsg[:800]
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE shopee_reconcile_jobs
+		    SET status = 'failed',
+		        next_run_at = NOW() + INTERVAL '1 hour',
+		        last_error = $2,
+		        updated_at = NOW()
+		  WHERE id = $1::uuid`,
+		strings.TrimSpace(id), strings.TrimSpace(errMsg),
+	)
+	return err
+}
+
 func (r *ShopeeRealtimeRepo) MarkPushEventsForOrder(ctx context.Context, shopID int64, orderSN, status, errMsg string) error {
 	if shopID <= 0 || strings.TrimSpace(orderSN) == "" {
 		return nil

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,6 +46,19 @@ var shopeeRealtimeSyncStatuses = []string{
 	"SHIPPED",
 	"COMPLETED",
 	"CANCELLED",
+}
+
+type shopeeRealtimeShopNotConfiguredError struct {
+	shopID int64
+}
+
+func (e shopeeRealtimeShopNotConfiguredError) Error() string {
+	return fmt.Sprintf("ไม่พบร้าน Shopee shop_id=%d ใน Nexflow", e.shopID)
+}
+
+func isShopeeRealtimeShopNotConfigured(err error) bool {
+	var target shopeeRealtimeShopNotConfiguredError
+	return errors.As(err, &target)
 }
 
 type ShopeeRealtimeHandler struct {
@@ -508,6 +522,14 @@ func (h *ShopeeRealtimeHandler) ProcessReconcileBatch(ctx context.Context, batch
 			return processed, ctx.Err()
 		}
 		if _, err := h.reconcileOrder(ctx, job.ShopID, job.OrderSN, job.Reason, false); err != nil {
+			if isShopeeRealtimeShopNotConfigured(err) {
+				msg := err.Error()
+				_ = h.repo.MarkReconcileJobTerminalFailed(ctx, job.ID, msg)
+				_ = h.repo.MarkPushEventsForOrder(ctx, job.ShopID, job.OrderSN, "failed", msg)
+				h.resolveShopeeShopIssues(ctx, job.ShopID, "shop not connected in Nexflow")
+				h.logger.Info("shopee_realtime: skipped reconcile notification for unconfigured shop", zap.String("job_id", job.ID), zap.Int64("shop_id", job.ShopID), zap.String("order_sn", job.OrderSN))
+				continue
+			}
 			msg := shopeeAPIErrorMessage(err, "reconcile Shopee order ไม่สำเร็จ").Message
 			_ = h.repo.MarkReconcileJobFailed(ctx, job.ID, msg)
 			_ = h.repo.MarkPushEventsForOrder(ctx, job.ShopID, job.OrderSN, "failed", msg)
@@ -2975,6 +2997,11 @@ func (h *ShopeeRealtimeHandler) reconcilePushedOrder(event parsedShopeePushEvent
 	defer cancel()
 	_, err := h.reconcileOrder(ctx, event.ShopID, event.OrderSN, fmt.Sprintf("push:%d", event.Code), false)
 	if err != nil {
+		if isShopeeRealtimeShopNotConfigured(err) {
+			h.resolveShopeeShopIssues(ctx, event.ShopID, "shop not connected in Nexflow")
+			h.logger.Info("shopee_realtime: skipped push notification for unconfigured shop", zap.Int64("shop_id", event.ShopID), zap.String("order_sn", event.OrderSN))
+			return
+		}
 		h.notifyShopeeIssue(ctx, event.ShopID, "", "error", "รับ push Shopee แล้วแต่ดึงรายละเอียดไม่สำเร็จ", shopeeAPIErrorMessage(err, "get_order_detail ไม่สำเร็จ").Message, fmt.Sprintf("push_detail_error:%d:%s:%s", event.ShopID, event.OrderSN, time.Now().Format("2006010215")))
 		h.logger.Warn("shopee_realtime: push get_order_detail failed", zap.Int64("shop_id", event.ShopID), zap.String("order_sn", event.OrderSN), zap.Error(err))
 		return
@@ -2987,9 +3014,16 @@ func (h *ShopeeRealtimeHandler) markConnectionSync(ctx context.Context, shopID i
 	}
 	h.repo.MarkConnectionSync(ctx, shopID, status, msg)
 	if status == "ok" && strings.TrimSpace(msg) == "" && h.notificationRepo != nil {
-		if _, err := h.notificationRepo.ResolveShopeeShopIssues(ctx, shopID, "shop sync recovered"); err != nil && h.logger != nil {
-			h.logger.Warn("shopee_realtime: resolve shop notifications failed", zap.Int64("shop_id", shopID), zap.Error(err))
-		}
+		h.resolveShopeeShopIssues(ctx, shopID, "shop sync recovered")
+	}
+}
+
+func (h *ShopeeRealtimeHandler) resolveShopeeShopIssues(ctx context.Context, shopID int64, reason string) {
+	if h == nil || h.notificationRepo == nil || shopID <= 0 {
+		return
+	}
+	if _, err := h.notificationRepo.ResolveShopeeShopIssues(ctx, shopID, reason); err != nil && h.logger != nil {
+		h.logger.Warn("shopee_realtime: resolve shop notifications failed", zap.Int64("shop_id", shopID), zap.Error(err))
 	}
 }
 
@@ -3003,7 +3037,7 @@ func (h *ShopeeRealtimeHandler) connectionForShop(ctx context.Context, shopID in
 			return h.importH.ensureShopeeAPIAccessToken(ctx, conns[i].ID)
 		}
 	}
-	return nil, fmt.Errorf("ไม่พบร้าน Shopee shop_id=%d ใน Nexflow", shopID)
+	return nil, shopeeRealtimeShopNotConfiguredError{shopID: shopID}
 }
 
 func (h *ShopeeRealtimeHandler) notifySnapshotChange(ctx context.Context, before, after *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, suppressNewOrder bool) {
