@@ -30,13 +30,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
@@ -127,7 +120,7 @@ export default function LineNotifications() {
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
   const [senderDialog, setSenderDialog] = useState<LineSender | 'new' | null>(null)
-  const [recipientDialog, setRecipientDialog] = useState<LineRecipient | 'new' | null>(null)
+  const [recipientDialog, setRecipientDialog] = useState<LineRecipient | null>(null)
   const [deleteRecipient, setDeleteRecipient] = useState<LineRecipient | null>(null)
   const [testRecipient, setTestRecipient] = useState<LineRecipient | null>(null)
   const [candidateToAdd, setCandidateToAdd] = useState<LineCandidate | null>(null)
@@ -233,16 +226,6 @@ export default function LineNotifications() {
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setSenderDialog('new')}>
               <Plus className="h-3.5 w-3.5" />
               เพิ่ม LINE OA
-            </Button>
-            <Button
-              size="sm"
-              className="gap-1.5"
-              onClick={() => setRecipientDialog('new')}
-              disabled={!data?.senders.length}
-              title={!data?.senders.length ? 'เพิ่ม LINE OA sender ก่อน' : undefined}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              เพิ่มด้วย Destination ID
             </Button>
           </>
         }
@@ -389,12 +372,9 @@ export default function LineNotifications() {
                 },
                 {
                   key: 'destination',
-                  header: 'Destination',
+                  header: 'ประเภท',
                   cell: (c) => (
-                    <div className="font-mono text-xs">
-                      <span className="text-muted-foreground">{destinationLabels[c.destination_type]} </span>
-                      {shortId(c.destination_id)}
-                    </div>
+                    <Badge variant="secondary">{destinationLabels[c.destination_type]}</Badge>
                   ),
                 },
                 {
@@ -438,12 +418,8 @@ export default function LineNotifications() {
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-base font-semibold">ผู้รับแจ้งเตือน</h2>
-                <p className="text-sm text-muted-foreground">เพิ่มจากรายการคนที่ทัก OA เพื่อลดพิมพ์ ID ผิด หรือเพิ่มด้วย Destination ID เองเมื่อมี ID อยู่แล้ว</p>
+                <p className="text-sm text-muted-foreground">เพิ่มผู้รับจากรายการคนที่ทัก LINE OA ล่าสุด ระบบจะจับปลายทางให้อัตโนมัติ</p>
               </div>
-              <Button size="sm" className="gap-1.5" disabled={!data?.senders.length} onClick={() => setRecipientDialog('new')}>
-                <Plus className="h-3.5 w-3.5" />
-                เพิ่มด้วย Destination ID
-              </Button>
             </div>
             <DataTable<LineRecipient>
               data={data?.recipients ?? []}
@@ -463,12 +439,9 @@ export default function LineNotifications() {
                 },
                 {
                   key: 'destination',
-                  header: 'ปลายทาง',
+                  header: 'ประเภท',
                   cell: (r) => (
-                    <div className="font-mono text-xs">
-                      <span className="text-muted-foreground">{destinationLabels[r.destination_type]} </span>
-                      {shortId(r.destination_id)}
-                    </div>
+                    <Badge variant="secondary">{destinationLabels[r.destination_type]}</Badge>
                   ),
                 },
                 {
@@ -551,7 +524,7 @@ export default function LineNotifications() {
       />
       <RecipientDialog
         open={!!recipientDialog}
-        recipient={recipientDialog === 'new' ? null : recipientDialog}
+        recipient={recipientDialog}
         candidate={null}
         senders={data?.senders ?? []}
         onOpenChange={(open) => !open && setRecipientDialog(null)}
@@ -609,17 +582,12 @@ function webhookURL(senderID: string) {
   return `${origin}/webhook/line/${senderID}`
 }
 
-async function copyText(value: string, message: string) {
-  try {
-    await navigator.clipboard.writeText(value)
-    toast.success(message)
-  } catch {
-    toast.error('คัดลอกไม่สำเร็จ กรุณาเลือกและคัดลอกเอง')
-  }
-}
-
 function candidateName(candidate: LineCandidate) {
   return candidate.display_name?.trim() || `${destinationLabels[candidate.destination_type]} ${shortId(candidate.destination_id)}`
+}
+
+function senderNameForDialog(senders: LineSender[], id: string) {
+  return senders.find((sender) => sender.id === id)?.name || ''
 }
 
 function SenderDialog({
@@ -691,7 +659,7 @@ function SenderDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'แก้ไข LINE OA sender' : 'เพิ่ม LINE OA sender'}</DialogTitle>
           <DialogDescription>
-            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์จากคำสั่งซื้อ Shopee เท่านั้น ไม่เปิดระบบแชทลูกค้า
+            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์ Shopee หลังบันทึกแล้วระบบจะแสดง Webhook URL ให้คัดลอกไป Verify และเปิด Use webhook ใน LINE Developers
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -783,7 +751,7 @@ function RecipientDialog({
 
   const submit = async () => {
     if (!lineOAID || !name.trim() || !destinationID.trim()) {
-      toast.error('กรุณากรอก LINE OA, ชื่อผู้รับ และ destination ID')
+      toast.error('ข้อมูลผู้รับไม่ครบ กรุณาเพิ่มจากรายการคนที่ทัก LINE OA ล่าสุดอีกครั้ง')
       return
     }
     setSaving(true)
@@ -803,7 +771,7 @@ function RecipientDialog({
       } else if (isEdit && recipient) {
         await client.put(`/api/settings/line-notifications/recipients/${recipient.id}`, body)
       } else {
-        await client.post('/api/settings/line-notifications/recipients', body)
+        throw new Error('กรุณาเพิ่มผู้รับจากรายการคนที่ทัก LINE OA ล่าสุด')
       }
       toast.success(isEdit ? 'บันทึกผู้รับแล้ว' : 'เพิ่มผู้รับแล้ว')
       onOpenChange(false)
@@ -819,70 +787,24 @@ function RecipientDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'แก้ไขผู้รับแจ้งเตือน' : isCandidateMode ? 'เพิ่มผู้รับจาก LINE OA ล่าสุด' : 'เพิ่มผู้รับแจ้งเตือน'}</DialogTitle>
+          <DialogTitle>{isEdit ? 'แก้ไขผู้รับแจ้งเตือน' : 'เพิ่มผู้รับจาก LINE OA ล่าสุด'}</DialogTitle>
           <DialogDescription>
             {isCandidateMode
-              ? 'ตรวจชื่อผู้รับแล้วกดบันทึก ระบบจะใช้ Destination ID ที่จับได้จาก Webhook เพื่อลดการพิมพ์ผิด'
-              : 'เลือกจากรายการคนที่ทัก LINE OA ได้ หรือกรอก Destination ID เองเมื่อมี ID อยู่แล้ว'}
+              ? 'ตรวจชื่อผู้รับแล้วกดบันทึก ระบบจะใช้ปลายทางที่จับได้จาก Webhook ให้อัตโนมัติ'
+              : 'แก้ชื่อหรือสถานะการรับแจ้งเตือน ปลายทาง LINE ถูกจับจาก Webhook แล้ว'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>LINE OA sender</Label>
-            <Select value={lineOAID} onValueChange={setLineOAID} disabled={isCandidateMode}>
-              <SelectTrigger disabled={isCandidateMode}>
-                <SelectValue placeholder="เลือก LINE OA" />
-              </SelectTrigger>
-              <SelectContent>
-                {senders.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}{s.enabled ? '' : ' (ปิดอยู่)'}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
+            <div className="text-xs text-muted-foreground">LINE OA</div>
+            <div className="mt-1 text-sm font-medium">
+              {senderNameForDialog(senders, lineOAID) || candidate?.line_oa_name || recipient?.line_oa_name || 'LINE OA'}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">ประเภทปลายทาง: {destinationLabels[destinationType]}</div>
           </div>
           <div className="space-y-1.5">
             <Label>ชื่อผู้รับ</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="เช่น คุณบอส, ทีมคลัง, แอดมินกลาง" />
-          </div>
-          <div className="grid gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
-            <div className="space-y-1.5">
-              <Label>ประเภท</Label>
-              <Select value={destinationType} onValueChange={(v: LineRecipient['destination_type']) => setDestinationType(v)} disabled={isCandidateMode}>
-                <SelectTrigger disabled={isCandidateMode}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="user">User ID</SelectItem>
-                  <SelectItem value="group">Group ID</SelectItem>
-                  <SelectItem value="room">Room ID</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Destination ID</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={destinationID}
-                  onChange={(e) => setDestinationID(e.target.value)}
-                  placeholder="U..., C..., R..."
-                  className="font-mono text-xs"
-                  readOnly={isCandidateMode}
-                />
-                {isCandidateMode && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => copyText(destinationID, 'คัดลอก Destination ID แล้ว')}
-                    title="คัดลอก Destination ID"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </div>
-            </div>
           </div>
           <label className="flex items-center justify-between rounded-md border border-border bg-muted/35 px-3 py-2">
             <span>
