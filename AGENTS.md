@@ -2,8 +2,10 @@
 
 > อ่านไฟล์นี้ให้ครบก่อนเริ่ม code ทุกครั้ง — ห้าม assume สิ่งที่ไม่ได้ระบุ
 > **local workspace:** `/Users/nontawatwongnuk/dev_bos/Nexflow`
-> **server folder:** `/home/bosscatdog/billflow-henna`
-> **runtime/ports/env:** ดู [docs/current-state.md](docs/current-state.md) | **deploy:** ดู [docs/deploy-instances.md](docs/deploy-instances.md)
+> **production server:** `10.121.20.83` (`ubuntu`)
+> **production folders:** `/mnt/data/nextstep-node-2/nexflow` (demo), `/mnt/data/nextstep-node-2/nexflow-aoy` (aoy)
+> **deploy flow:** ดู [docs/nextstep-server-deploy-flow.md](docs/nextstep-server-deploy-flow.md)
+> **legacy DEV only:** `192.168.2.109` / ngrok / `/home/bosscatdog/billflow-henna`
 
 ---
 
@@ -14,10 +16,15 @@ Backend:   Go 1.24 (Gin)  module: nexflow
 Frontend:  React + Vite + TypeScript
 Database:  PostgreSQL 16
 AI:        OpenRouter — gemini-2.5-flash-lite / gemini-2.5-flash / Mistral OCR / Whisper
-Deploy:    Docker Compose + ngrok (fixed: animal-galvanize-tameness.ngrok-free.dev)
+Deploy:    Docker Compose + Cloudflare proxied domains
 ```
 
-Ports: backend **8110**, frontend **3030**, postgres **5440**
+Production ports:
+
+| instance | frontend | backend | postgres |
+| --- | --- | --- | --- |
+| demo | **6323** | **8110** | **5440** |
+| aoy | **6324** | **8111** | **5441** |
 
 ---
 
@@ -98,7 +105,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 9. **`app_settings` vs `.env`** — `SeedFromEnv()` removed. Config via `/settings/instance` UI. Locked fields (guid, etc.) still read from `.env`.
 
-10. **sml-api-bybos** — use `--force-recreate` not `restart` after `.env` change. Docker gateway IP: `http://172.24.0.1:8200`, header `x-tenant: aoy`. Current Aoy DB is `nextstep.iszai.com:6843/aoy`; old demserver config is no longer current.
+10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through `app_settings.sml.database` (`demo` or `aoy`). Do not use the old `192.168.2.109` / ngrok deploy path for production.
 
 11. **Webhook URL per OA** — `/webhook/line/<oa_id>`. Must be set in LINE Developer Console per OA.
 
@@ -111,11 +118,12 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 ## 6. Deploy
 
 ```bash
-# on server
-cd ~/billflow-henna
-docker compose build backend frontend && docker compose up -d
-curl http://localhost:8110/health
-docker logs nexflow-backend --tail=50
+# deploy the same committed code to both production instances
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target all
+
+# deploy one instance only when intentionally isolated
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
 ```
 
 ---

@@ -1,5 +1,29 @@
 # Nexflow — Deploy Info
 
+> Current production moved to the NextStep server on 2026-07-08. Use
+> [nextstep-server-deploy-flow.md](nextstep-server-deploy-flow.md) for production.
+> The old `192.168.2.109` / ngrok deployment below is DEV/legacy only.
+
+## Current Production Summary
+
+| Instance | Public URL | Server folder | Frontend | Backend | Postgres |
+| --- | --- | --- | --- | --- | --- |
+| demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `6323` | `8110` | `5440` |
+| aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `6324` | `8111` | `5441` |
+
+Standard code deploy:
+
+```bash
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target all
+```
+
+The script syncs only `backend/` and `frontend/` and preserves each instance
+`.env`, `docker-compose.yml`, database volume, `backups/`, and `artifacts/`.
+
+---
+
+## Legacy DEV Deploy Info
+
 ```text
 Instance:  nexflow  (billflow-henna on server)
 Folder:    /home/bosscatdog/billflow-henna

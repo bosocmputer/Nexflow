@@ -1,23 +1,36 @@
 # Nexflow — Current State
 
-Updated: 2026-06-22
+Updated: 2026-07-08
 
 ---
 
 ## Runtime
 
 ```text
-Server:    192.168.2.109  (bosscatdog)
-Folder:    /home/bosscatdog/billflow-henna
-Backend:   nexflow-backend   :8110  → {"database":"ok","env":"production","status":"ok"}
-Frontend:  nexflow-frontend   :3030  → HTTP 200
-Postgres:  nexflow-postgres   :5440  → healthy
-sml-api:   sml-api-bybos      :8200  → {"database":"aoy","status":"ok"}
-Public:    https://animal-galvanize-tameness.ngrok-free.dev  (ngrok, fixed)
+Server:    10.121.20.83  (ubuntu)
+
+demo:
+  Folder:    /mnt/data/nextstep-node-2/nexflow
+  Public:    https://nexflow.nextstep-soft.com
+  Backend:   nexflow-backend       :8110  → {"database":"ok","env":"production","status":"ok"}
+  Frontend:  nexflow-frontend      :6323  → HTTP 200
+  Postgres:  nexflow-postgres      :5440  → healthy
+  SML DB:    demo
+
+aoy:
+  Folder:    /mnt/data/nextstep-node-2/nexflow-aoy
+  Public:    https://nexflow-aoy.nextstep-soft.com
+  Backend:   nexflow-aoy-backend   :8111  → {"database":"ok","env":"production","status":"ok"}
+  Frontend:  nexflow-aoy-frontend  :6324  → HTTP 200
+  Postgres:  nexflow-aoy-postgres  :5441  → healthy
+  SML DB:    aoy
+
+sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy
 ```
 
-Server folder `/home/bosscatdog/billflow-henna` currently has no git metadata,
-so deploy checks must compare files explicitly before replacing sources.
+The old `192.168.2.109` / ngrok deployment is DEV/legacy only. Production deploys
+use `scripts/deploy_nextstep_instances.py`; see
+`docs/nextstep-server-deploy-flow.md`.
 
 ---
 
