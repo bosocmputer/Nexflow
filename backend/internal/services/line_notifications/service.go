@@ -174,18 +174,16 @@ func (s *Service) EnqueueNextStepMarketplaceNewOrder(ctx context.Context, order 
 	altText := ""
 	var flexPayload json.RawMessage
 	payloadVersion := 0
-	if s.richFlexEnabled {
-		if alt, contents := BuildNextStepMarketplaceNewOrderLineFlex(order, s.publicBaseURL); contents != nil {
-			if raw, err := json.Marshal(contents); err == nil {
-				altText = alt
-				flexPayload = raw
-				payloadVersion = 1
-			} else if s.logger != nil {
-				s.logger.Warn("line nextstep flex marshal failed",
-					zap.String("doc_no", docNo),
-					zap.Error(err),
-				)
-			}
+	if alt, contents := BuildNextStepMarketplaceNewOrderLineFlex(order, s.publicBaseURL); contents != nil {
+		if raw, err := json.Marshal(contents); err == nil {
+			altText = alt
+			flexPayload = raw
+			payloadVersion = 1
+		} else if s.logger != nil {
+			s.logger.Warn("line nextstep flex marshal failed",
+				zap.String("doc_no", docNo),
+				zap.Error(err),
+			)
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
@@ -275,7 +273,7 @@ type linePusher interface {
 
 func (s *Service) pushDelivery(ctx context.Context, svc linePusher, job models.LineNotificationDeliveryJob) error {
 	_ = ctx
-	if s.richFlexEnabled && job.PayloadVersion > 0 && len(job.FlexPayload) > 0 {
+	if job.PayloadVersion > 0 && len(job.FlexPayload) > 0 {
 		altText, contents, err := flexPayloadFromDelivery(job)
 		if err == nil && contents != nil {
 			if pushErr := svc.PushFlex(job.DestinationID, altText, contents); pushErr == nil {
@@ -793,19 +791,35 @@ func BuildNextStepMarketplaceNewOrderLineFlex(order sml.NextStepMarketplaceOrder
 	if docNo == "" {
 		return "มีออเดอร์ NextStep Marketplace ใหม่", nil
 	}
-	amount := formatTHB(order.TotalAmount)
+	amount := formatTHBValue(order.TotalAmount)
 	title := "ออเดอร์ NextStep Marketplace ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, docNo, amount}), " · ")
 	body := []map[string]any{
 		flexText(title, "lg", "bold", "#0F172A", "", true),
-		flexText("เอกสาร MQT/PREQT ใน SML", "sm", "", "#64748B", "", true),
-		flexAmountRow("ยอดรวม", amount, "#2563EB"),
+		flexText("NextStep Marketplace · เอกสาร MQT/PREQT ใน SML", "sm", "", "#64748B", "", true),
+		flexAmountRow("ยอดรวมเอกสาร", amount, "#2563EB"),
 	}
 	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
 		{"เลขที่", docNo},
 		{"วันที่", formatNextStepDocDateTime(order)},
 		{"สถานะ", nextStepMarketplaceStatusLabel(order.Status)},
 	})
+	body = appendFlexSection(body, "ยอดขายใน SML", []flexKVRow{
+		{"Wallet", formatOptionalTHB(order.WalletAmount)},
+		{"ยอดก่อน VAT", formatOptionalTHB(order.TotalExceptVAT)},
+		{"VAT", formatOptionalTHB(order.TotalVATValue)},
+		{"ยอดหลัง VAT", formatOptionalTHB(order.TotalAfterVAT)},
+		{"ยอดคงเหลือ", formatOptionalTHB(order.Balance)},
+	})
+	body = appendFlexSection(body, "เอกสารต่อเนื่อง", []flexKVRow{
+		{"ใบขาย SML", strings.TrimSpace(order.InvDocNo)},
+		{"วันที่ใบขาย", formatDateDDMMYYYY(order.InvDocDate)},
+		{"ยอด CN", formatOptionalTHB(order.CNTotalAmount)},
+	})
+	body = append(body,
+		map[string]any{"type": "separator", "margin": "md"},
+		flexText("ไม่มีข้อมูลลูกค้าในข้อความแจ้งเตือน เพื่อความปลอดภัยของข้อมูล", "xs", "", "#94A3B8", "md", true),
+	)
 	contents := map[string]any{
 		"type": "bubble",
 		"size": "mega",
@@ -874,9 +888,7 @@ func formatNextStepDocDateTime(order sml.NextStepMarketplaceOrder) string {
 	if date == "" {
 		return timePart
 	}
-	if parsed, err := time.Parse("2006-01-02", date); err == nil {
-		date = parsed.Format("02/01/2006")
-	}
+	date = formatDateDDMMYYYY(date)
 	return strings.TrimSpace(strings.Join(filterNonEmpty([]string{date, timePart}), " "))
 }
 
@@ -1616,6 +1628,16 @@ func formatTHB(v float64) string {
 	return fmt.Sprintf("฿%.2f", v)
 }
 
+func formatOptionalTHB(v float64) string {
+	if math.Abs(v) < 0.000001 {
+		return ""
+	}
+	if v < 0 {
+		return formatSignedTHB(v)
+	}
+	return formatTHBValue(v)
+}
+
 func formatTHBValue(v float64) string {
 	return fmt.Sprintf("฿%.2f", roundMoney(v))
 }
@@ -1647,6 +1669,17 @@ func formatShopeeUnixTime(v int64) string {
 		return ""
 	}
 	return time.Unix(v, 0).In(shopeeLineTimeLocation).Format("02/01/2006 15:04")
+}
+
+func formatDateDDMMYYYY(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if parsed, err := time.Parse("2006-01-02", v); err == nil {
+		return parsed.Format("02/01/2006")
+	}
+	return v
 }
 
 func isAbsoluteHTTPURL(v string) bool {

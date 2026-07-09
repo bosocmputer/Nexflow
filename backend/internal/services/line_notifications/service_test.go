@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
 	"nexflow/internal/models"
+	"nexflow/internal/repository"
 	"nexflow/internal/services/sml"
 )
 
@@ -358,13 +361,20 @@ func TestBuildShopeeSettlementLineFlexShowsNetDeductionsAndEscrowFees(t *testing
 
 func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 	order := sml.NextStepMarketplaceOrder{
-		DocNo:       "MQT20260709-ABC12",
-		DocDate:     "2026-07-09",
-		DocTime:     "14:30",
-		Status:      "pending",
-		TotalAmount: 1280,
-		CustCode:    "CUST-SHOULD-NOT-BE-IN-LINE",
-		RemarkQT:    "private remark",
+		DocNo:          "MQT20260709-ABC12",
+		DocDate:        "2026-07-09",
+		DocTime:        "14:30",
+		Status:         "pending",
+		TotalAmount:    1280,
+		WalletAmount:   1280,
+		TotalExceptVAT: 1196.26,
+		TotalVATValue:  83.74,
+		TotalAfterVAT:  1280,
+		Balance:        -20,
+		InvDocNo:       "SI26070001",
+		InvDocDate:     "2026-07-09",
+		CustCode:       "CUST-SHOULD-NOT-BE-IN-LINE",
+		RemarkQT:       "private remark",
 	}
 	baseURL := "https://nexflow-aoy.nextstep-soft.com"
 	msg := BuildNextStepMarketplaceNewOrderLineText(order, baseURL)
@@ -398,9 +408,15 @@ func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 	body := string(buf)
 	for _, want := range []string{
 		"ออเดอร์ NextStep Marketplace ใหม่",
-		"เอกสาร MQT/PREQT ใน SML",
+		"NextStep Marketplace · เอกสาร MQT/PREQT ใน SML",
 		"MQT20260709-ABC12",
-		"ยอดรวม",
+		"ยอดรวมเอกสาร",
+		"ยอดขายใน SML",
+		"Wallet",
+		"฿1196.26",
+		"-฿20.00",
+		"เอกสารต่อเนื่อง",
+		"SI26070001",
 		"รอดำเนินการ",
 		"เปิดใน Nexflow",
 	} {
@@ -430,6 +446,45 @@ func TestBuildNextStepMarketplaceFlexOmitsRelativeButton(t *testing.T) {
 	}, "")
 	if !strings.Contains(msg, "เปิดใน Nexflow: /nextstep-marketplace?") {
 		t.Fatalf("text fallback should keep relative path:\n%s", msg)
+	}
+}
+
+func TestEnqueueNextStepMarketplaceNewOrderStoresFlexWhenLegacyFlagOff(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
+		WithArgs(
+			"nextstep_marketplace", "info", "มีออเดอร์ NextStep Marketplace ใหม่", sqlmock.AnyArg(),
+			"https://nexflow.nextstep-soft.com/nextstep-marketplace?from_date=2026-07-09&search=MQT20260709-QFG22&to_date=2026-07-09",
+			"nextstep_order", "MQT20260709-QFG22", "nextstep:new_order:MQT20260709-QFG22",
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("delivery-1"))
+
+	svc := &Service{
+		repo:            repository.NewLineNotificationRepo(db),
+		publicBaseURL:   "https://nexflow.nextstep-soft.com",
+		richFlexEnabled: false,
+	}
+	inserted, err := svc.EnqueueNextStepMarketplaceNewOrder(t.Context(), sml.NextStepMarketplaceOrder{
+		DocNo:       "MQT20260709-QFG22",
+		DocDate:     "2026-07-09",
+		DocTime:     "11:37",
+		Status:      "pending",
+		TotalAmount: 3245,
+	}, "")
+	if err != nil {
+		t.Fatalf("EnqueueNextStepMarketplaceNewOrder: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
 	}
 }
 
@@ -485,9 +540,9 @@ func TestServicePushDeliveryUsesPayloadAndFallsBackToText(t *testing.T) {
 	pusher = &fakeLinePusher{}
 	svc = &Service{richFlexEnabled: false}
 	if err := svc.pushDelivery(t.Context(), pusher, job); err != nil {
-		t.Fatalf("pushDelivery flag off: %v", err)
+		t.Fatalf("pushDelivery payload with legacy flag off: %v", err)
 	}
-	if pusher.flexCalls != 0 || pusher.textCalls != 1 || pusher.lastText != "fallback text" {
-		t.Fatalf("flag-off calls flex=%d text=%d text=%q", pusher.flexCalls, pusher.textCalls, pusher.lastText)
+	if pusher.flexCalls != 1 || pusher.textCalls != 0 {
+		t.Fatalf("payload should be honored even when enqueue flag is off: flex=%d text=%d text=%q", pusher.flexCalls, pusher.textCalls, pusher.lastText)
 	}
 }
