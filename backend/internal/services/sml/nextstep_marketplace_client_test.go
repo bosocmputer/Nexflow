@@ -30,11 +30,14 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 		if got := r.URL.Query().Get("search"); got != "MQT2607" {
 			t.Fatalf("search = %q", got)
 		}
+		if got := r.URL.Query().Get("status"); got != "packing" {
+			t.Fatalf("status = %q", got)
+		}
 		if got := r.URL.Query().Get("include_orders"); got != "false" {
 			t.Fatalf("include_orders = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"success":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"success"}],"trend":[{"date":"2026-07-01","total_amount":0},{"date":"2026-07-02","total_amount":0},{"date":"2026-07-03","total_amount":1200}],"meta":{"tenant":"aoy","doc_prefix":"MQT/PREQT","doc_prefixes":["MQT","PREQT"],"date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","page":1,"size":5,"total":1}}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"summary":{"total_orders":1,"total_amount":1200,"status_counts":{"packing":1}},"orders":[{"doc_no":"MQT26070001","doc_date":"2026-07-03","total_amount":1200,"status":"packing"}],"trend":[{"date":"2026-07-01","total_amount":0},{"date":"2026-07-02","total_amount":0},{"date":"2026-07-03","total_amount":1200}],"meta":{"tenant":"aoy","doc_prefix":"MQT/PREQT","doc_prefixes":["MQT","PREQT"],"date_from":"2026-07-01","date_to":"2026-07-03","date_basis":"ic_qt.doc_date","source":"sml.ic_trans","search":"MQT2607","status":"packing","page":1,"size":5,"total":1}}}`))
 	}))
 	defer srv.Close()
 
@@ -48,6 +51,7 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 		DateFrom:      "2026-07-01",
 		DateTo:        "2026-07-03",
 		Search:        "MQT2607",
+		Status:        "packing",
 		Page:          1,
 		Size:          5,
 		IncludeOrders: &includeOrders,
@@ -55,7 +59,7 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Summary.TotalOrders != 1 || got.Summary.StatusCounts["success"] != 1 {
+	if got.Summary.TotalOrders != 1 || got.Summary.StatusCounts["packing"] != 1 {
 		t.Fatalf("summary = %+v", got.Summary)
 	}
 	if len(got.Orders) != 1 || got.Orders[0].DocNo != "MQT26070001" {
@@ -66,6 +70,9 @@ func TestNextStepMarketplaceClientFetch(t *testing.T) {
 	}
 	if got.Meta.DocPrefix != "MQT/PREQT" || len(got.Meta.DocPrefixes) != 2 {
 		t.Fatalf("meta prefixes = %+v", got.Meta)
+	}
+	if got.Meta.Status != "packing" {
+		t.Fatalf("meta status = %q", got.Meta.Status)
 	}
 }
 

@@ -111,7 +111,7 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 	}
 	if c.Query("include_nextstep") == "1" {
 		from, to := dashboardDateRangeForNextStep(out, fromDate, toDate)
-		state := h.nextStepMarketplaceState(c.Request.Context(), from, to, 1, 5, "", false)
+		state := h.nextStepMarketplaceState(c.Request.Context(), from, to, 1, 5, "", "", false)
 		if state["available"] == true {
 			if previousFrom, previousTo := dashboardPreviousDateRange(out); previousFrom != "" && previousTo != "" {
 				h.attachPreviousNextStepMarketplaceState(c.Request.Context(), state, previousFrom, previousTo)
@@ -171,12 +171,13 @@ func (h *DashboardHandler) NextStepMarketplaceOrders(c *gin.Context) {
 		page,
 		size,
 		strings.TrimSpace(c.Query("search")),
+		strings.TrimSpace(c.Query("status")),
 		true,
 	)
 	c.JSON(http.StatusOK, state)
 }
 
-func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDate, toDate string, page, size int, search string, includeOrders bool) gin.H {
+func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDate, toDate string, page, size int, search, status string, includeOrders bool) gin.H {
 	state := gin.H{
 		"configured": false,
 		"available":  false,
@@ -199,6 +200,7 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 		DateFrom:      fromDate,
 		DateTo:        toDate,
 		Search:        search,
+		Status:        status,
 		Page:          page,
 		Size:          size,
 		IncludeOrders: &includeOrders,
@@ -208,6 +210,7 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 			zap.String("from_date", fromDate),
 			zap.String("to_date", toDate),
 			zap.String("search", search),
+			zap.String("status", status),
 			zap.Bool("include_orders", includeOrders),
 			zap.Error(err),
 		)
@@ -225,7 +228,7 @@ func (h *DashboardHandler) nextStepMarketplaceState(ctx context.Context, fromDat
 }
 
 func (h *DashboardHandler) attachPreviousNextStepMarketplaceState(ctx context.Context, state gin.H, fromDate, toDate string) {
-	previous := h.nextStepMarketplaceState(ctx, fromDate, toDate, 1, 1, "", false)
+	previous := h.nextStepMarketplaceState(ctx, fromDate, toDate, 1, 1, "", "", false)
 	state["previous_available"] = previous["available"] == true
 	if previous["available"] != true {
 		state["previous_error"] = previous["error"]

@@ -9,9 +9,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
-import type { NextStepMarketplaceOrder, NextStepMarketplaceState } from '@/types'
+import type { NextStepMarketplaceOrder, NextStepMarketplaceState, NextStepMarketplaceSummary } from '@/types'
 
 type DateRange = {
   from: string
@@ -24,6 +25,19 @@ type NotificationWriteResponse = {
 }
 
 const PAGE_SIZE = 20
+
+type NextStepStatusFilter = 'all' | 'pending' | 'packing' | 'payment' | 'success' | 'cancel'
+
+const STATUS_FILTER_TABS: Array<{ value: NextStepStatusFilter; label: string }> = [
+  { value: 'all', label: 'ทั้งหมด' },
+  { value: 'pending', label: 'รอดำเนินการ' },
+  { value: 'packing', label: 'จัดเตรียมสินค้า' },
+  { value: 'payment', label: 'รอชำระ' },
+  { value: 'success', label: 'สำเร็จ' },
+  { value: 'cancel', label: 'ยกเลิก' },
+]
+
+const STATUS_FILTER_VALUES = new Set<NextStepStatusFilter>(STATUS_FILTER_TABS.map((tab) => tab.value))
 
 export default function NextStepMarketplace() {
   const [params, setParams] = useSearchParams()
@@ -41,6 +55,7 @@ export default function NextStepMarketplace() {
   const markNotificationEntityReadLocal = useNotificationsStore((s) => s.markEntityReadLocal)
   const page = Math.max(1, Number(params.get('page') || '1') || 1)
   const committedSearch = params.get('search') || ''
+  const statusFilter = readStatusFilter(params)
   const rangeError = dateRangeError(dateRange)
   const rangeReady = Boolean(dateRange.from && dateRange.to && !rangeError)
 
@@ -84,6 +99,7 @@ export default function NextStepMarketplace() {
           from_date: dateRange.from,
           to_date: dateRange.to,
           search: committedSearch || undefined,
+          status: statusFilter === 'all' ? undefined : statusFilter,
           page,
           size: PAGE_SIZE,
         },
@@ -104,7 +120,7 @@ export default function NextStepMarketplace() {
     return () => {
       active = false
     }
-  }, [committedSearch, dateRange.from, dateRange.to, page, rangeReady, refreshTick])
+  }, [committedSearch, dateRange.from, dateRange.to, page, rangeReady, refreshTick, statusFilter])
 
   useEffect(() => {
     if (loading || !state?.available || !committedSearch.trim()) return
@@ -128,7 +144,7 @@ export default function NextStepMarketplace() {
   const orders = state?.orders ?? []
   const total = meta?.total ?? summary?.total_orders ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-  const statusCounts = summary?.status_counts ?? {}
+  const activeStatusLabel = statusTabLabel(statusFilter)
 
   const updateRange = (next: DateRange) => {
     setDateRange(next)
@@ -140,6 +156,14 @@ export default function NextStepMarketplace() {
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setQuery({ search: searchDraft.trim(), page: 1 })
+  }
+
+  const setStatusFilter = (value: string) => {
+    const nextStatus = readStatusFilterValue(value)
+    setQuery({
+      status: nextStatus === 'all' ? null : nextStatus,
+      page: 1,
+    })
   }
 
   return (
@@ -170,9 +194,9 @@ export default function NextStepMarketplace() {
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:min-w-[560px] xl:max-w-[680px]">
-              <SummaryMetric label="ยอดสุทธิ MQT/PREQT" value={loading ? '—' : formatCurrency(summary?.total_amount ?? 0)} />
+              <SummaryMetric label="ยอดสุทธิ MQT/PREQT" value={loading ? '—' : formatAmount(summary?.total_amount ?? 0)} />
               <SummaryMetric label="ออเดอร์" value={loading ? '—' : formatCount(summary?.total_orders ?? 0)} />
-              <SummaryMetric label="CN หักแล้ว" value={loading ? '—' : formatCurrency(summary?.cn_total_amount ?? 0)} />
+              <SummaryMetric label="CN หักแล้ว" value={loading ? '—' : formatAmount(summary?.cn_total_amount ?? 0)} />
               <SummaryMetric label="คงค้าง" value={loading ? '—' : formatCount(pendingStatusCount(summary))} />
             </div>
           </div>
@@ -237,22 +261,35 @@ export default function NextStepMarketplace() {
         </CardContent>
       </Card>
 
+      <div className="rounded-lg border border-border bg-card px-3 pt-2 shadow-sm">
+        <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+          <TabsList className="h-auto w-full justify-start overflow-x-auto rounded-none border-b border-border bg-transparent p-0">
+            {STATUS_FILTER_TABS.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="h-10 shrink-0 rounded-none border-b-2 border-transparent bg-transparent px-3 text-sm data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                <span>{tab.label}</span>
+                <Badge variant="outline" className="ml-2 h-5 bg-background px-1.5 text-[10px]">
+                  {formatCount(statusTabCount(summary, tab.value))}
+                </Badge>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+
       <Card className="rounded-lg border-border/70 shadow-sm">
         <CardContent className="space-y-3 p-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-foreground">รายการเอกสาร MQT/PREQT</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                {loading ? 'กำลังโหลด' : `${formatCount(total)} รายการ`}
+                {loading ? 'กำลังโหลด' : `${formatCount(total)} รายการ${statusFilter === 'all' ? '' : ` · ${activeStatusLabel}`}`}
               </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              <StatusBadge label="รอดำเนินการ" count={statusCounts.pending ?? summary?.pending_count ?? 0} tone="muted" />
-              <StatusBadge label="จัดเตรียมสินค้า" count={statusCounts.packing ?? summary?.packing_count ?? 0} tone="info" />
-              <StatusBadge label="รอชำระ" count={statusCounts.payment ?? summary?.payment_count ?? 0} tone="warning" />
-              <StatusBadge label="สำเร็จ" count={statusCounts.success ?? summary?.success_count ?? 0} tone="success" />
-              <StatusBadge label="ยกเลิก" count={statusCounts.cancel ?? summary?.cancel_count ?? 0} tone="danger" />
-            </div>
+            {statusFilter !== 'all' && <OrderStatus status={statusFilter} />}
           </div>
 
           {loading ? (
@@ -272,8 +309,8 @@ export default function NextStepMarketplace() {
             <StateMessage title="เชื่อมต่อ SML ไม่สำเร็จ" description={state.message || 'ตรวจ SML API แล้วลองรีเฟรชอีกครั้ง'} />
           ) : orders.length === 0 ? (
             <StateMessage
-              title="ไม่พบออเดอร์ในเงื่อนไขนี้"
-              description="ช่วงวันที่และคำค้นหานี้ยังไม่มีเอกสาร MQT/PREQT ที่ตรงกัน"
+              title={statusFilter === 'all' ? 'ไม่พบออเดอร์ในเงื่อนไขนี้' : `ไม่พบออเดอร์สถานะ${activeStatusLabel}`}
+              description="ช่วงวันที่ คำค้นหา และสถานะนี้ยังไม่มีเอกสาร MQT/PREQT ที่ตรงกัน"
             />
           ) : (
             <OrdersTable orders={orders} />
@@ -343,9 +380,9 @@ function OrdersTable({ orders }: { orders: NextStepMarketplaceOrder[] }) {
             <div>
               <OrderStatus status={order.status} />
             </div>
-            <div className="font-semibold tabular-nums text-foreground lg:text-right">{formatCurrency(order.total_amount, true)}</div>
-            <div className="tabular-nums text-muted-foreground lg:text-right">{formatCurrency(order.cn_total_amount ?? 0, true)}</div>
-            <div className="tabular-nums text-muted-foreground lg:text-right">{formatCurrency(order.balance ?? 0, true)}</div>
+            <div className="font-semibold tabular-nums text-foreground lg:text-right">{formatAmount(order.total_amount, true)}</div>
+            <div className="tabular-nums text-muted-foreground lg:text-right">{formatAmount(order.cn_total_amount ?? 0, true)}</div>
+            <div className="tabular-nums text-muted-foreground lg:text-right">{formatAmount(order.balance ?? 0, true)}</div>
           </div>
         ))}
       </div>
@@ -433,25 +470,48 @@ function pendingStatusCount(summary?: { pending_count?: number; packing_count?: 
   )
 }
 
-const currencyFormatter = new Intl.NumberFormat('th-TH', {
-  style: 'currency',
-  currency: 'THB',
+function statusTabCount(summary: NextStepMarketplaceSummary | undefined, status: NextStepStatusFilter): number {
+  if (!summary) return 0
+  if (status === 'all') {
+    const fromCounts = STATUS_FILTER_TABS
+      .filter((tab) => tab.value !== 'all')
+      .reduce((sum, tab) => sum + statusTabCount(summary, tab.value), 0)
+    return fromCounts || summary.total_orders || 0
+  }
+
+  const counts = summary.status_counts ?? {}
+  const fallback = `${status}_count` as keyof NextStepMarketplaceSummary
+  return counts[status] ?? Number(summary[fallback] ?? 0)
+}
+
+function statusTabLabel(status: NextStepStatusFilter): string {
+  return STATUS_FILTER_TABS.find((tab) => tab.value === status)?.label ?? 'ทั้งหมด'
+}
+
+function readStatusFilter(params: URLSearchParams): NextStepStatusFilter {
+  return readStatusFilterValue(params.get('status') || 'all')
+}
+
+function readStatusFilterValue(value: string): NextStepStatusFilter {
+  const normalized = value.trim().toLowerCase() as NextStepStatusFilter
+  return STATUS_FILTER_VALUES.has(normalized) ? normalized : 'all'
+}
+
+const amountFormatter = new Intl.NumberFormat('th-TH', {
   maximumFractionDigits: 0,
 })
 
-const compactCurrencyFormatter = new Intl.NumberFormat('th-TH', {
-  style: 'currency',
-  currency: 'THB',
+const compactAmountFormatter = new Intl.NumberFormat('th-TH', {
   notation: 'compact',
   maximumFractionDigits: 1,
 })
 
-function formatCurrency(value: number, compact = false): string {
+function formatAmount(value: number, compact = false): string {
   const n = Number(value || 0)
   if (compact && Math.abs(n) >= 100_000) {
-    return compactCurrencyFormatter.format(n)
+    return compactAmountFormatter.format(n)
   }
-  return currencyFormatter.format(n)
+  return amountFormatter.format(n)
 }
 
 function formatCount(value: number): string {

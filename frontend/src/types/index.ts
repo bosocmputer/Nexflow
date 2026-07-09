@@ -435,6 +435,7 @@ export interface NextStepMarketplaceMeta {
   date_basis: string
   source: string
   search?: string
+  status?: string
   page: number
   size: number
   total: number

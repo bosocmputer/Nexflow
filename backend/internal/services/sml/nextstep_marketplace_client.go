@@ -49,6 +49,7 @@ type NextStepMarketplaceRequest struct {
 	DateFrom      string
 	DateTo        string
 	Search        string
+	Status        string
 	Page          int
 	Size          int
 	IncludeOrders *bool
@@ -115,6 +116,7 @@ type NextStepMarketplaceMeta struct {
 	DateBasis   string   `json:"date_basis"`
 	Source      string   `json:"source"`
 	Search      string   `json:"search,omitempty"`
+	Status      string   `json:"status,omitempty"`
 	Page        int      `json:"page"`
 	Size        int      `json:"size"`
 	Total       int      `json:"total"`
@@ -156,6 +158,9 @@ func (c *NextStepMarketplaceClient) Fetch(ctx context.Context, req NextStepMarke
 	q.Set("date_to", strings.TrimSpace(req.DateTo))
 	if search := strings.TrimSpace(req.Search); search != "" {
 		q.Set("search", search)
+	}
+	if status := strings.TrimSpace(req.Status); status != "" {
+		q.Set("status", status)
 	}
 	q.Set("page", fmt.Sprintf("%d", page))
 	q.Set("size", fmt.Sprintf("%d", size))
