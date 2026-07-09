@@ -209,7 +209,7 @@ export default function Sidebar() {
 
   const navCollapsed = collapsed
   const sidebarWidth = navCollapsed ? 'w-14' : 'w-64'
-  const navGroups = visibleNavGroups(user?.role)
+  const navGroups = visibleNavGroups(user)
 
   return (
     <TooltipProvider delayDuration={0}>

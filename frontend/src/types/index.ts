@@ -5,6 +5,15 @@ export interface User {
   name: string
   role: 'admin' | 'staff' | 'viewer'
   created_at: string
+  menu_permissions?: UserMenuPermission[]
+}
+
+export interface UserMenuPermission {
+  menu_key: string
+  can_view: boolean
+  can_create: boolean
+  can_update: boolean
+  can_delete: boolean
 }
 
 // Live SML tenant DB readiness from sml-api-bybos /health/ready.

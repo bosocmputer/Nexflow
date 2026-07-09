@@ -501,16 +501,9 @@ const amountFormatter = new Intl.NumberFormat('th-TH', {
   maximumFractionDigits: 0,
 })
 
-const compactAmountFormatter = new Intl.NumberFormat('th-TH', {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
-
 function formatAmount(value: number, compact = false): string {
   const n = Number(value || 0)
-  if (compact && Math.abs(n) >= 100_000) {
-    return compactAmountFormatter.format(n)
-  }
+  void compact
   return amountFormatter.format(n)
 }
 

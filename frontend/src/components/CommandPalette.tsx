@@ -55,7 +55,7 @@ export function CommandPalette({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const isAdmin = user?.role === 'admin'
-  const navGroups = visibleNavGroups(user?.role)
+  const navGroups = visibleNavGroups(user)
 
   useEffect(() => {
     if (!open) return

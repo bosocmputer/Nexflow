@@ -12,6 +12,8 @@ import { useChordHotkeys, useHotkeys } from '@/hooks/useHotkeys'
 import { useAuth } from '@/hooks/useAuth'
 import { SMLReadinessProvider } from '@/hooks/useSMLReadiness'
 import { ENABLE_SHOPEE_EXCEL } from '@/lib/featureFlags'
+import client from '@/api/client'
+import type { User } from '@/types'
 
 // Routes that want a full-height, no-padding viewport (chat / inbox style).
 // On these routes the page handles its own scroll regions; the Layout
@@ -24,7 +26,7 @@ export default function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const { logout } = useAuth()
+  const { token, logout, setUser } = useAuth()
 
   // Open the SSE connection once per authenticated session. The store
   // multiplexes one EventSource across the whole app — child components
@@ -37,6 +39,22 @@ export default function Layout() {
     connectEvents()
     return () => disconnectEvents()
   }, [connectEvents, disconnectEvents])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    client.get<User>('/api/auth/me')
+      .then((res) => {
+        if (!cancelled) setUser(res.data)
+      })
+      .catch(() => {
+        // The global axios interceptor handles 401 logout. Other transient
+        // failures should not blank the current workspace shell.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token, setUser])
 
   const isFullHeight = FULL_HEIGHT_ROUTES.some((p) => location.pathname.startsWith(p))
   const isBillDetail = /^\/(bills|sales-orders|sale-invoices)\/[^/]+/.test(location.pathname)

@@ -695,6 +695,7 @@ func main() {
 		api.GET("/settings/users", middleware.RequireRole("admin"), userSettingsH.List)
 		api.POST("/settings/users", middleware.RequireRole("admin"), userSettingsH.Create)
 		api.PUT("/settings/users/:id", middleware.RequireRole("admin"), userSettingsH.Update)
+		api.PUT("/settings/users/:id/menu-permissions", middleware.RequireRole("admin"), userSettingsH.UpdateMenuPermissions)
 		api.DELETE("/settings/users/:id", middleware.RequireRole("admin"), userSettingsH.Delete)
 
 		// Catalog (SML product catalog + smart matching)

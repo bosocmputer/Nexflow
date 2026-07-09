@@ -685,7 +685,7 @@ function SalesTrendCard({
               <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
-                <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={72} />
+                <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={96} />
                 <Tooltip content={<SalesTrendTooltip visiblePlatforms={visiblePlatforms} />} />
                 {SALES_TREND_PLATFORMS.filter((platform) => visiblePlatforms[platform.key]).map((platform) => (
                   <Fragment key={platform.key}>
@@ -1112,18 +1112,9 @@ const currencyFormatter = new Intl.NumberFormat('th-TH', {
   maximumFractionDigits: 0,
 })
 
-const compactCurrencyFormatter = new Intl.NumberFormat('th-TH', {
-  style: 'currency',
-  currency: 'THB',
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
-
 function formatCurrency(value: number, compact = false): string {
   const n = Number(value || 0)
-  if (compact && Math.abs(n) >= 100_000) {
-    return compactCurrencyFormatter.format(n)
-  }
+  void compact
   return currencyFormatter.format(n)
 }
 

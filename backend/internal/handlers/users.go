@@ -111,8 +111,53 @@ func (h *UserSettingsHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
+	if current.Role != user.Role {
+		updatedBy := ""
+		if claims := middleware.GetClaims(c); claims != nil {
+			updatedBy = claims.UserID
+		}
+		perms, err := h.users.ResetMenuPermissionsToRole(user.ID, user.Role, updatedBy)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		user.MenuPermissions = perms
+	}
 	h.logAudit(c, "user_updated", user.ID, gin.H{"email": user.Email, "role": user.Role})
 	c.JSON(http.StatusOK, user)
+}
+
+func (h *UserSettingsHandler) UpdateMenuPermissions(c *gin.Context) {
+	id := c.Param("id")
+	var in models.UserMenuPermissionsUpdateRequest
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	current, err := h.users.FindByID(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if current == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	updatedBy := ""
+	if claims := middleware.GetClaims(c); claims != nil {
+		updatedBy = claims.UserID
+	}
+	perms, err := h.users.UpdateMenuPermissions(id, current.Role, updatedBy, in.Permissions)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	h.logAudit(c, "user_permissions_updated", current.ID, gin.H{
+		"email":            current.Email,
+		"role":             current.Role,
+		"permission_count": len(perms),
+	})
+	c.JSON(http.StatusOK, gin.H{"data": perms})
 }
 
 func (h *UserSettingsHandler) Delete(c *gin.Context) {
