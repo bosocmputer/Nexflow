@@ -47,6 +47,7 @@ WITH defaults(menu_key, admin_view, admin_create, admin_update, admin_delete, st
     ('shopee_connections', true, true, true, true, false, false, false, false, false, false, false, false),
     ('instance_settings', true, false, true, false, false, false, false, false, false, false, false, false),
     ('settings_users', true, true, true, true, false, false, false, false, false, false, false, false),
+    ('settings_menu_permissions', true, false, true, false, false, false, false, false, false, false, false, false),
     ('logs', true, false, false, false, true, false, false, false, false, false, false, false),
     ('ai_usage', true, false, false, false, false, false, false, false, false, false, false, false),
     ('old_data', true, false, true, true, false, false, false, false, false, false, false, false)

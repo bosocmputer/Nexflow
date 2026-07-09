@@ -11,6 +11,9 @@ func TestDefaultMenuPermissionsForRole(t *testing.T) {
 	if !permissionForKey(admin, "settings_users").CanView {
 		t.Fatal("admin must always see settings_users")
 	}
+	if !permissionForKey(admin, "settings_menu_permissions").CanView {
+		t.Fatal("admin must always see settings_menu_permissions")
+	}
 	if !permissionForKey(admin, "old_data").CanDelete {
 		t.Fatal("admin delete default should be true for old_data")
 	}
@@ -49,10 +52,13 @@ func TestNormalizeMenuPermissionsForRole(t *testing.T) {
 func TestNormalizeMenuPermissionsKeepsAdminUsersVisible(t *testing.T) {
 	perms := normalizeMenuPermissionsForRole("admin", []models.UserMenuPermission{
 		{MenuKey: "settings_users", CanView: false, CanCreate: false, CanUpdate: false, CanDelete: false},
+		{MenuKey: "settings_menu_permissions", CanView: false, CanCreate: false, CanUpdate: false, CanDelete: false},
 	})
-	got := permissionForKey(perms, "settings_users")
-	if !got.CanView {
-		t.Fatalf("admin settings_users can_view should be forced true: %+v", got)
+	for _, key := range []string{"settings_users", "settings_menu_permissions"} {
+		got := permissionForKey(perms, key)
+		if !got.CanView {
+			t.Fatalf("admin %s can_view should be forced true: %+v", key, got)
+		}
 	}
 }
 

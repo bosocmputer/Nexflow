@@ -50,6 +50,7 @@ var menuPermissionDefaults = []menuPermissionDefault{
 	{"shopee_connections", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"instance_settings", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"settings_users", true, true, true, true, false, false, false, false, false, false, false, false},
+	{"settings_menu_permissions", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"logs", true, false, false, false, true, false, false, false, false, false, false, false},
 	{"ai_usage", true, false, false, false, false, false, false, false, false, false, false, false},
 	{"old_data", true, false, true, true, false, false, false, false, false, false, false, false},
@@ -343,7 +344,7 @@ func normalizeMenuPermissionsForRole(role string, in []models.UserMenuPermission
 		if override, ok := byKey[p.MenuKey]; ok {
 			out[i] = override
 		}
-		if role == "admin" && out[i].MenuKey == "settings_users" {
+		if role == "admin" && isAdminLockedMenuKey(out[i].MenuKey) {
 			out[i].CanView = true
 		}
 		if !out[i].CanView {
@@ -385,6 +386,10 @@ func isKnownMenuKey(key string) bool {
 		}
 	}
 	return false
+}
+
+func isAdminLockedMenuKey(key string) bool {
+	return key == "settings_users" || key == "settings_menu_permissions"
 }
 
 func (r *UserRepo) CountAdmins(exceptID string) (int, error) {

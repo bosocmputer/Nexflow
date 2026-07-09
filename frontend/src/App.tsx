@@ -24,6 +24,7 @@ import ChannelDefaults from './pages/ChannelDefaults'
 import InstanceSettings from './pages/InstanceSettings'
 import AIUsage from './pages/AIUsage'
 import UserSettings from './pages/UserSettings'
+import MenuPermissions from './pages/MenuPermissions'
 import LineNotifications from './pages/LineNotifications'
 import LineMyShopSettings from './pages/LineMyShopSettings'
 import ChatTags from './pages/ChatTags'
@@ -121,6 +122,7 @@ export default function App() {
           <Route path="settings/instance" element={<RequireMenu menuKey="instance_settings"><InstanceSettings /></RequireMenu>} />
           <Route path="settings/ai-usage" element={<RequireMenu menuKey="ai_usage"><AIUsage /></RequireMenu>} />
           <Route path="settings/users" element={<RequireAdmin><RequireMenu menuKey="settings_users"><UserSettings /></RequireMenu></RequireAdmin>} />
+          <Route path="settings/menu-permissions" element={<RequireAdmin><RequireMenu menuKey="settings_menu_permissions"><MenuPermissions /></RequireMenu></RequireAdmin>} />
           <Route path="settings/line-notifications" element={<RequireAdmin><RequireMenu menuKey="line_notifications"><LineNotifications /></RequireMenu></RequireAdmin>} />
           <Route path="settings/line-oa" element={ENABLE_CHAT ? <RequireMenu menuKey="line_oa"><LineOA /></RequireMenu> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/quick-replies" element={ENABLE_CHAT ? <RequireMenu menuKey="quick_replies"><QuickReplies /></RequireMenu> : <Navigate to="/settings/instance" replace />} />

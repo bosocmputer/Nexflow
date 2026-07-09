@@ -15,6 +15,7 @@ import {
   ScrollText,
   Send,
   Settings2,
+  ShieldCheck,
   ShoppingBag,
   Store,
   Tag,
@@ -159,6 +160,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'ดูแลระบบ',
     items: [
       { menuKey: 'settings_users', to: '/settings/users', label: 'ผู้ใช้ระบบ', icon: UsersRound, hint: 'Roles and access', adminOnly: true },
+      { menuKey: 'settings_menu_permissions', to: '/settings/menu-permissions', label: 'สิทธิ์เมนู', icon: ShieldCheck, hint: 'กำหนดเมนูที่ผู้ใช้เห็น', adminOnly: true },
       { menuKey: 'logs', to: '/logs', label: 'ประวัติการทำงาน', icon: ScrollText, hint: 'ใครทำอะไรและผลลัพธ์' },
       { menuKey: 'ai_usage', to: '/settings/ai-usage', label: 'การใช้งาน AI', icon: Bot, hint: 'ค่าใช้จ่าย / รุ่น AI' },
       { menuKey: 'old_data', to: '/settings/old-data', label: 'จัดการข้อมูลเก่า', icon: Archive, hint: 'เก็บบิล / ลบถาวร' },
@@ -196,6 +198,7 @@ export function firstVisibleNavPath(userOrRole?: User | string | null): string {
 export function canViewMenu(userOrRole: User | string | null | undefined, menuKey: string): boolean {
   const role = typeof userOrRole === 'string' ? userOrRole : userOrRole?.role
   if (role === 'admin' && menuKey === 'settings_users') return true
+  if (role === 'admin' && menuKey === 'settings_menu_permissions') return true
 
   const permissions = typeof userOrRole === 'string' ? undefined : userOrRole?.menu_permissions
   if (permissions && permissions.length > 0) {
