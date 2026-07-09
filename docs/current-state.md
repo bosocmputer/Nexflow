@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-07-08
+Updated: 2026-07-09
 
 ---
 
@@ -25,8 +25,16 @@ aoy:
   Postgres:  nexflow-aoy-postgres  :5441  → healthy
   SML DB:    aoy
 
-edge:      nexflow-edge          :6323  → host-based routing for both domains
-sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy
+lanboon:
+  Folder:    /mnt/data/nextstep-node-2/nexflow-lanboon
+  Public:    https://nextflow-lanboon.nextstep-soft.com
+  Backend:   nexflow-lanboon-backend   :8112
+  Frontend:  nexflow-lanboon-frontend  :127.0.0.1:16325
+  Postgres:  nexflow-lanboon-postgres  :5442
+  SML DB:    lbk63
+
+edge:      nexflow-edge          :6323  → host-based routing for production domains
+sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy,lbk63
 ```
 
 The old `192.168.2.109` / ngrok deployment is DEV/legacy only. Production deploys
@@ -37,7 +45,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–067** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–071** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -103,8 +111,9 @@ SML #1 REST (saleinvoice v4):  http://192.168.2.213:8086
 SML #2 (Shopee REST):    http://192.168.2.248:8080
   provider=SMLGOH  db=SML1_2026  cust_code=AR00004  wh=WH-01  shelf=SH-01
 
-sml-api-bybos:  http://172.24.0.1:8200  x-tenant=aoy
+sml-api-bybos:  http://172.17.0.1:8200  x-tenant from app_settings.sml.database
   tenant aoy DB: nextstep.iszai.com:6843 / database aoy
+  tenant lbk63 DB: chk562595.totddns.com:12831 / database lbk63
   provider/config: NEXT / SMLConfigNEXT.xml
   stock_request_url: http://nextstep.iszai.com:8093
   health/ready: {"database":"aoy","status":"ok"}

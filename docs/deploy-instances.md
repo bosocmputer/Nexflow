@@ -10,6 +10,7 @@
 | --- | --- | --- | --- | --- | --- |
 | demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | edge `6323`, debug `127.0.0.1:16323` | `8110` | `5440` |
 | aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | edge `6323`, debug `127.0.0.1:16324` | `8111` | `5441` |
+| lanboon | `https://nextflow-lanboon.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-lanboon` | edge `6323`, debug `127.0.0.1:16325` | `8112` | `5442` |
 
 Standard code deploy:
 
@@ -18,7 +19,7 @@ NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target
 ```
 
 The script SSHes to the server, updates
-`/mnt/data/nextstep-node-2/nexflow-release` from GitHub, rebuilds both
+`/mnt/data/nextstep-node-2/nexflow-release` from GitHub, rebuilds production
 instances from that release clone, updates `nexflow-edge`, and preserves each
 instance `.env`, `docker-compose.yml`, database volume, `backups/`, and
 `artifacts/`.
@@ -157,11 +158,12 @@ Location:  ~/sml-api-bybos/
 Port:      8200
 ```
 
-Nexflow backend calls `http://172.24.0.1:8200` (Docker gateway IP) with header `x-tenant: aoy` to route to the Aoy customer SML DB.
+Nexflow backend calls `http://172.17.0.1:8200` (Docker host gateway) with header `x-tenant` from `app_settings.sml.database` to route to the customer SML DB.
 
 | Header | Value | DB |
 | --- | --- | --- |
-| `x-tenant` | `aoy` | `nextstep.iszai.com:6843/aoy` |
+| `x-tenant` | `aoy` | `sml-api-bybos` tenant `aoy` |
+| `x-tenant` | `lbk63` | `chk562595.totddns.com:12831/lbk63` |
 
 Current Aoy tenant config:
 
@@ -180,6 +182,9 @@ Readiness checks:
 ```bash
 curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
 # {"database":"aoy","status":"ok"}
+
+curl -s -H 'x-tenant: lbk63' http://localhost:8200/health/ready
+# {"database":"lbk63","status":"ok"}
 
 curl -s -o /dev/null -w '%{http_code}' http://nextstep.iszai.com:8093/
 # 200

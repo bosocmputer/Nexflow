@@ -3,7 +3,7 @@
 > อ่านไฟล์นี้ให้ครบก่อนเริ่ม code ทุกครั้ง — ห้าม assume สิ่งที่ไม่ได้ระบุ
 > **local workspace:** `/Users/nontawatwongnuk/dev_bos/Nexflow`
 > **production server:** `10.121.20.83` (`ubuntu`)
-> **production folders:** `/mnt/data/nextstep-node-2/nexflow` (demo), `/mnt/data/nextstep-node-2/nexflow-aoy` (aoy)
+> **production folders:** `/mnt/data/nextstep-node-2/nexflow` (demo), `/mnt/data/nextstep-node-2/nexflow-aoy` (aoy), `/mnt/data/nextstep-node-2/nexflow-lanboon` (lanboon)
 > **deploy flow:** ดู [docs/nextstep-server-deploy-flow.md](docs/nextstep-server-deploy-flow.md)
 > **legacy DEV only:** `192.168.2.109` / ngrok / `/home/bosscatdog/billflow-henna`
 
@@ -25,6 +25,7 @@ Production ports:
 | --- | --- | --- | --- |
 | demo | edge **6323**, debug **127.0.0.1:16323** | **8110** | **5440** |
 | aoy | edge **6323**, debug **127.0.0.1:16324** | **8111** | **5441** |
+| lanboon | edge **6323**, debug **127.0.0.1:16325** | **8112** | **5442** |
 
 ---
 
@@ -49,7 +50,7 @@ shopee_sml_cancellations       -- Shopee cancelled-after-SML CN tracking
 line_notification_deliveries   -- LINE notification outbox with Flex payload fallback
 ```
 
-Migrations: **001–066** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–071** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -105,7 +106,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 9. **`app_settings` vs `.env`** — `SeedFromEnv()` removed. Config via `/settings/instance` UI. Locked fields (guid, etc.) still read from `.env`.
 
-10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through `app_settings.sml.database` (`demo` or `aoy`). Do not use the old `192.168.2.109` / ngrok deploy path for production.
+10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy,lbk63`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through `app_settings.sml.database` (`demo`, `aoy`, or `lbk63`). The NextStep SQL uses `FROM ic_trans ic_qt`; `ic_qt` is an alias, not a physical table. Do not use the old `192.168.2.109` / ngrok deploy path for production.
 
 11. **Webhook URL per OA** — `/webhook/line/<oa_id>`. Must be set in LINE Developer Console per OA.
 
@@ -118,12 +119,13 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 ## 6. Deploy
 
 ```bash
-# deploy the same committed code to both production instances
+# deploy the same committed code to all production instances
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target all
 
 # deploy one instance only when intentionally isolated
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
 ```
 
 ---
@@ -198,4 +200,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-06-22 | Ports: 8110/3030/5440
+Last updated: 2026-07-09 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442

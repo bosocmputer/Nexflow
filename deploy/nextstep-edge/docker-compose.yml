@@ -9,10 +9,13 @@ services:
     networks:
       - nexflow_default
       - nexflow-aoy_default
+      - nexflow-lanboon_default
     restart: unless-stopped
 
 networks:
   nexflow_default:
     external: true
   nexflow-aoy_default:
+    external: true
+  nexflow-lanboon_default:
     external: true

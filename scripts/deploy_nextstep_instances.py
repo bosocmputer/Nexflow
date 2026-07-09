@@ -4,8 +4,9 @@
 Production layout:
 
 - release clone: /mnt/data/nextstep-node-2/nexflow-release
-- demo:          /mnt/data/nextstep-node-2/nexflow      frontend 6323, backend 8110
-- aoy:           /mnt/data/nextstep-node-2/nexflow-aoy  frontend 6324, backend 8111
+- demo:          /mnt/data/nextstep-node-2/nexflow          frontend edge, backend 8110
+- aoy:           /mnt/data/nextstep-node-2/nexflow-aoy      frontend edge, backend 8111
+- lanboon:       /mnt/data/nextstep-node-2/nexflow-lanboon  frontend edge, backend 8112
 - edge:          /mnt/data/nextstep-node-2/nexflow-edge public 6323
 
 The release clone is the only Git checkout used for Docker build contexts.
@@ -18,6 +19,7 @@ Usage:
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target all
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target demo
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target aoy
+  NX_PASS=... python scripts/deploy_nextstep_instances.py --target lanboon
   NX_PASS=... python scripts/deploy_nextstep_instances.py --ref d52de63
 """
 from __future__ import annotations
@@ -76,6 +78,17 @@ TARGETS: dict[str, Target] = {
         postgres_container="nexflow-aoy-postgres",
         backend_container="nexflow-aoy-backend",
         public_url="https://nexflow-aoy.nextstep-soft.com",
+    ),
+    "lanboon": Target(
+        name="lanboon",
+        remote=f"{SERVER_ROOT}/nexflow-lanboon",
+        hostname="nextflow-lanboon.nextstep-soft.com",
+        frontend_debug_port=16325,
+        previous_frontend_port=6325,
+        backend_port=8112,
+        postgres_container="nexflow-lanboon-postgres",
+        backend_container="nexflow-lanboon-backend",
+        public_url="https://nextflow-lanboon.nextstep-soft.com",
     ),
 }
 
@@ -318,7 +331,7 @@ def deploy_target(target: Target) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Deploy Nexflow to NextStep demo/aoy instances from server Git")
+    parser = argparse.ArgumentParser(description="Deploy Nexflow to NextStep production instances from server Git")
     parser.add_argument("--target", choices=["all", *TARGETS.keys()], default="all")
     parser.add_argument("--ref", default="origin/main", help="server git ref to deploy, default origin/main")
     return parser.parse_args()

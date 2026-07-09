@@ -1,6 +1,6 @@
 # Nexflow NextStep Production Deploy Flow
 
-Updated: 2026-07-08
+Updated: 2026-07-09
 
 This is the current production server topology. The old `192.168.2.109` /
 ngrok deployment is DEV/legacy only and must not be used for production deploys.
@@ -11,6 +11,7 @@ ngrok deployment is DEV/legacy only and must not be used for production deploys.
 | --- | --- | --- | --- | --- | --- | --- |
 | demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `127.0.0.1:16323 -> 80` | `8110 -> 8090` | `5440 -> 5432` | `demo` |
 | aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `127.0.0.1:16324 -> 80` | `8111 -> 8090` | `5441 -> 5432` | `aoy` |
+| lanboon | `https://nextflow-lanboon.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-lanboon` | `127.0.0.1:16325 -> 80` | `8112 -> 8090` | `5442 -> 5432` | `lbk63` |
 
 Public entrypoint:
 
@@ -26,12 +27,12 @@ Shared SML gateway:
 ```text
 container: nexflow-sml-api-bybos
 port:      8200
-tenants:   demo,aoy
+tenants:   demo,aoy,lbk63
 ```
 
 Each Nexflow instance has its own `.env`, Docker Compose file, Postgres volume,
 `app_settings`, LINE/Shopee settings, and user data. Code should normally be the
-same commit on both instances.
+same commit on all production instances.
 
 ## Diagram
 
@@ -63,22 +64,35 @@ flowchart TB
       AoyBE --> AoyDB
     end
 
-    SMLAPI["nexflow-sml-api-bybos<br/>8200<br/>ALLOWED_TENANTS=demo,aoy"]
+    subgraph Lanboon["lanboon instance"]
+      LanboonFE["nexflow-lanboon-frontend<br/>127.0.0.1:16325 -> nginx :80"]
+      LanboonBE["nexflow-lanboon-backend<br/>8112 -> Go :8090"]
+      LanboonDB["nexflow-lanboon-postgres<br/>5442 -> PostgreSQL"]
+      LanboonFE -->|"same-origin /api"| LanboonBE
+      LanboonBE --> LanboonDB
+    end
+
+    SMLAPI["nexflow-sml-api-bybos<br/>8200<br/>ALLOWED_TENANTS=demo,aoy,lbk63"]
     SMLDemo["SML database: demo"]
     SMLAoy["SML database: aoy"]
+    SMLLanboon["SML database: lbk63<br/>chk562595.totddns.com:12831"]
 
     DemoBE -->|"app_settings: sml.database=demo"| SMLAPI
     AoyBE -->|"app_settings: sml.database=aoy"| SMLAPI
+    LanboonBE -->|"app_settings: sml.database=lbk63"| SMLAPI
     SMLAPI --> SMLDemo
     SMLAPI --> SMLAoy
+    SMLAPI --> SMLLanboon
   end
 
   Cloudflare["Cloudflare proxied DNS / HTTPS"]
-  Cloudflare -->|"both hostnames to :6323"| Edge
+  Cloudflare -->|"all hostnames to :6323"| Edge
   Edge -->|"Host: nexflow.nextstep-soft.com"| DemoFE
   Edge -->|"Host: nexflow-aoy.nextstep-soft.com"| AoyFE
+  Edge -->|"Host: nextflow-lanboon.nextstep-soft.com"| LanboonFE
   Edge -->|"demo /api, /health, /webhook"| DemoBE
   Edge -->|"aoy /api, /health, /webhook"| AoyBE
+  Edge -->|"lanboon /api, /health, /webhook"| LanboonBE
 
   Script --> Release
   Release -->|"edge config"| Edge
@@ -86,11 +100,13 @@ flowchart TB
   Release -->|"Docker build context"| DemoBE
   Release -->|"Docker build context"| AoyFE
   Release -->|"Docker build context"| AoyBE
+  Release -->|"Docker build context"| LanboonFE
+  Release -->|"Docker build context"| LanboonBE
 ```
 
 ## Standard Code Deploy
 
-Use this when the code changes and both customer instances should run the same
+Use this when the code changes and all customer instances should run the same
 version.
 
 ```bash
@@ -110,6 +126,9 @@ docker compose up -d --build backend frontend
 cd /mnt/data/nextstep-node-2/nexflow-aoy
 docker compose up -d --build backend frontend
 
+cd /mnt/data/nextstep-node-2/nexflow-lanboon
+docker compose up -d --build backend frontend
+
 cd /mnt/data/nextstep-node-2/nexflow-edge
 docker compose up -d
 ```
@@ -119,6 +138,7 @@ Deploy only one instance when the change is intentionally isolated:
 ```bash
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --ref d52de63
 ```
 
@@ -134,7 +154,7 @@ The script:
 - backs up `.env` and Postgres before rebuilding
 - rebuilds and restarts `backend` + `frontend`
 - smoke-tests backend health and `/login`
-- smoke-tests both hostnames through edge port `6323`
+- smoke-tests selected hostnames through edge port `6323`
 - scans recent backend logs for severe errors
 
 It intentionally does not turn each instance folder into a Git checkout. The
@@ -153,7 +173,7 @@ customer-specific config by changing shared code.
 | SML tenant/database | per instance |
 | Users/passwords | per instance |
 | Feature flags in `.env` | per instance |
-| Backend/frontend code | normally both instances |
+| Backend/frontend code | normally all instances |
 
 Current AOY focus:
 
@@ -164,6 +184,17 @@ sml.provider=NEXT
 sml.config_file=SMLConfigNEXT.xml
 sml.rest_base_url=http://172.17.0.1:8200
 Shopee realtime/API disabled until explicitly enabled
+```
+
+Current Lanboon focus:
+
+```text
+PUBLIC_BASE_URL=https://nextflow-lanboon.nextstep-soft.com
+sml.database=lbk63
+sml.provider=NEXT
+sml.config_file=SMLConfigNEXT.xml
+sml.rest_base_url=http://172.17.0.1:8200
+Shopee/LINE settings are customer-specific and start unconfigured
 ```
 
 ## Smoke Checks
@@ -177,6 +208,7 @@ sudo docker ps --format '{{.Names}} {{.Status}} {{.Ports}}' | grep -E 'nexflow|s
 # Edge public entrypoint
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow.nextstep-soft.com' http://localhost:6323/login
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow-aoy.nextstep-soft.com' http://localhost:6323/login
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nextflow-lanboon.nextstep-soft.com' http://localhost:6323/login
 
 # Demo debug/direct
 curl -s http://localhost:8110/health
@@ -186,20 +218,26 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16323/login
 curl -s http://localhost:8111/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16324/login
 
+# Lanboon debug/direct
+curl -s http://localhost:8112/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16325/login
+
 # SML gateway
 curl -s -H 'x-tenant: demo' http://localhost:8200/health/ready
 curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
+curl -s -H 'x-tenant: lbk63' http://localhost:8200/health/ready
 ```
 
 ## Cloudflare / IT Routing
 
-The two domains can use the same CNAME target from IT when they land on the same
-server/router. Both hostnames should route to the same origin:
+The domains can use the same CNAME target from IT when they land on the same
+server/router. All hostnames should route to the same origin:
 
 | Hostname | Origin |
 | --- | --- |
 | `nexflow.nextstep-soft.com` | `http://10.121.20.83:6323` |
 | `nexflow-aoy.nextstep-soft.com` | `http://10.121.20.83:6323` |
+| `nextflow-lanboon.nextstep-soft.com` | `http://10.121.20.83:6323` |
 
 If Cloudflare returns 525, the origin/proxy SSL mode is wrong for the origin.
 Keep Cloudflare public HTTPS, but proxy to the internal HTTP port above unless
