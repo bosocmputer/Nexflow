@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"nexflow/internal/repository"
 	lineservice "nexflow/internal/services/line"
 	linenotify "nexflow/internal/services/line_notifications"
+	"nexflow/internal/services/sml"
 )
 
 type LineNotificationHandler struct {
@@ -77,6 +79,10 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 		"candidates":  candidates,
 		"deliveries":  deliveries,
 		"sample_text": h.sampleMessage(),
+		"sample_texts": gin.H{
+			"shopee":               h.sampleMessageForSource("shopee"),
+			"nextstep_marketplace": h.sampleMessageForSource("nextstep_marketplace"),
+		},
 		"readiness": gin.H{
 			"sender_count":             len(senders),
 			"enabled_sender_count":     enabledSenders,
@@ -220,6 +226,14 @@ func (h *LineNotificationHandler) DeleteRecipient(c *gin.Context) {
 
 func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
+	var in struct {
+		SampleSource string `json:"sample_source"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบข้อมูลทดสอบไม่ถูกต้อง"})
+		return
+	}
+	sampleSource := normalizeLineNotificationSampleSource(in.SampleSource)
 	recipient, err := h.repo.GetRecipient(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดผู้รับแจ้งเตือนไม่สำเร็จ"})
@@ -236,8 +250,8 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	}
 	svc, err := lineservice.New(a.ChannelSecret, a.ChannelAccessToken, "")
 	if err == nil {
-		message := h.sampleMessage()
-		altText, contents := linenotify.BuildShopeeNewOrderRichLineFlexWithPayment(sampleShopeeOrderSnapshot(), sampleShopeeOrderPayment(), h.publicBaseURL())
+		message := h.sampleMessageForSource(sampleSource)
+		altText, contents := h.sampleFlexForSource(sampleSource)
 		if contents != nil {
 			err = svc.PushFlex(recipient.DestinationID, altText, contents)
 		}
@@ -307,6 +321,33 @@ func (h *LineNotificationHandler) sampleMessage() string {
 	return linenotify.BuildShopeeNewOrderLineTextWithPayment(sampleShopeeOrderSnapshot(), sampleShopeeOrderPayment(), h.publicBaseURL())
 }
 
+func (h *LineNotificationHandler) sampleMessageForSource(source string) string {
+	switch normalizeLineNotificationSampleSource(source) {
+	case "nextstep_marketplace":
+		return linenotify.BuildNextStepMarketplaceNewOrderLineText(sampleNextStepMarketplaceOrder(), h.publicBaseURL())
+	default:
+		return h.sampleMessage()
+	}
+}
+
+func (h *LineNotificationHandler) sampleFlexForSource(source string) (string, map[string]any) {
+	switch normalizeLineNotificationSampleSource(source) {
+	case "nextstep_marketplace":
+		return linenotify.BuildNextStepMarketplaceNewOrderLineFlex(sampleNextStepMarketplaceOrder(), h.publicBaseURL())
+	default:
+		return linenotify.BuildShopeeNewOrderRichLineFlexWithPayment(sampleShopeeOrderSnapshot(), sampleShopeeOrderPayment(), h.publicBaseURL())
+	}
+}
+
+func normalizeLineNotificationSampleSource(source string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "nextstep", "nextstep_marketplace", "nextstep-marketplace":
+		return "nextstep_marketplace"
+	default:
+		return "shopee"
+	}
+}
+
 func sampleShopeeOrderSnapshot() *models.ShopeeOrderSnapshot {
 	return &models.ShopeeOrderSnapshot{
 		ShopID:          264993963,
@@ -343,6 +384,16 @@ func sampleShopeeOrderSnapshot() *models.ShopeeOrderSnapshot {
 		    }
 		  ]
 		}`),
+	}
+}
+
+func sampleNextStepMarketplaceOrder() sml.NextStepMarketplaceOrder {
+	return sml.NextStepMarketplaceOrder{
+		DocNo:       "MQT20260709-SAMPLE",
+		DocDate:     "2026-07-09",
+		DocTime:     "14:30",
+		Status:      "pending",
+		TotalAmount: 1280,
 	}
 }
 

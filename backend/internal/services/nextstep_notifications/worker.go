@@ -47,10 +47,15 @@ type EventPublisher interface {
 	Publish(events.Event)
 }
 
+type LineNotifier interface {
+	EnqueueNextStepMarketplaceNewOrder(context.Context, sml.NextStepMarketplaceOrder, string) (int, error)
+}
+
 type Worker struct {
 	client       MarketplaceClient
 	seenRepo     SeenRepository
 	notifyRepo   NotificationRepository
+	lineNotifier LineNotifier
 	broker       EventPublisher
 	logger       *zap.Logger
 	location     *time.Location
@@ -94,6 +99,13 @@ func NewWorker(client MarketplaceClient, seenRepo SeenRepository, notifyRepo Not
 		pageCap:     defaultPageCap,
 		now:         time.Now,
 	}
+}
+
+func (w *Worker) WithLineNotifier(notifier LineNotifier) *Worker {
+	if w != nil {
+		w.lineNotifier = notifier
+	}
+	return w
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -208,6 +220,7 @@ func (w *Worker) PollOnce(ctx context.Context) (PollResult, error) {
 				w.logger.Warn("nextstep notification mark notified failed", zap.String("doc_no", docNo), zap.Error(err))
 			}
 			result.Notifications += created
+			w.enqueueLineNotification(pollCtx, order)
 		}
 	}
 	if result.Baseline {
@@ -286,6 +299,22 @@ func (w *Worker) publishOrderNotification(ctx context.Context, order sml.NextSte
 		})
 	}
 	return len(created), nil
+}
+
+func (w *Worker) enqueueLineNotification(ctx context.Context, order sml.NextStepMarketplaceOrder) {
+	if w == nil || w.lineNotifier == nil {
+		return
+	}
+	docNo := strings.TrimSpace(order.DocNo)
+	if docNo == "" {
+		return
+	}
+	if _, err := w.lineNotifier.EnqueueNextStepMarketplaceNewOrder(ctx, order, "nextstep:new_order:"+docNo); err != nil {
+		w.logger.Warn("nextstep notification line enqueue failed",
+			zap.String("doc_no", docNo),
+			zap.Error(err),
+		)
+	}
 }
 
 func (w *Worker) beginPoll() bool {

@@ -405,8 +405,6 @@ func main() {
 	publicMediaH := handlers.NewPublicMediaHandler(chatMediaRepo, mediaSigner, logger)
 	sseH := handlers.NewSSEHandler(eventBroker, mediaSigner)
 	notificationH := handlers.NewNotificationHandler(notificationRepo, eventBroker)
-	nextStepNotificationWorker := nextstepnotifications.NewWorker(nextStepMarketplaceClient, nextStepNotificationRepo, notificationRepo, eventBroker, logger)
-	nextStepNotificationWorker.Start(appCtx)
 	lineNotificationSvc := linenotify.NewService(
 		lineNotificationRepo,
 		cfg.PublicBaseURL,
@@ -414,6 +412,9 @@ func main() {
 		cfg.ShopeeSettlementLineAlertsEnabled,
 		logger,
 	)
+	nextStepNotificationWorker := nextstepnotifications.NewWorker(nextStepMarketplaceClient, nextStepNotificationRepo, notificationRepo, eventBroker, logger).
+		WithLineNotifier(lineNotificationSvc)
+	nextStepNotificationWorker.Start(appCtx)
 	lineMyShopH := handlers.NewLineMyShopHandler(lineMyShopRepo, billRepo, channelDefaultRepo, auditLogRepo, lineNotificationSvc, cfg.PublicBaseURL, logger)
 	emailH := handlers.NewEmailHandler(aiClient, ocrClient, mapperSvc, anomalySvc, billRepo, auditLogRepo, lineSvc, cfg.AutoConfirmThreshold, logger)
 	emailH.SetCatalogServices(catalogSvc, embSvc, catalogIdx, catalogRepo)

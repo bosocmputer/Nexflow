@@ -20,6 +20,8 @@ func TestPollOnceSilentBaselineDoesNotNotify(t *testing.T) {
 		TotalAmount: 1200,
 	}})
 	w.seenRepo.(*fakeSeenRepo).baselineCompleted = false
+	line := &fakeLineNotifier{}
+	w.WithLineNotifier(line)
 
 	result, err := w.PollOnce(context.Background())
 	if err != nil {
@@ -30,6 +32,9 @@ func TestPollOnceSilentBaselineDoesNotNotify(t *testing.T) {
 	}
 	if got := len(w.notifyRepo.(*fakeNotificationRepo).inputs); got != 0 {
 		t.Fatalf("notifications created = %d, want 0", got)
+	}
+	if got := len(line.calls); got != 0 {
+		t.Fatalf("line calls = %d, want 0", got)
 	}
 	if !w.seenRepo.(*fakeSeenRepo).markBaseline {
 		t.Fatal("baseline was not marked complete")
@@ -77,12 +82,68 @@ func TestPollOnceNewActionableOrderCreatesNotification(t *testing.T) {
 	}
 }
 
+func TestPollOnceNewActionableOrderEnqueuesLineNotification(t *testing.T) {
+	w := testWorker([]sml.NextStepMarketplaceOrder{{
+		DocNo:       "MQT26070006",
+		DocDate:     "2026-07-07",
+		DocTime:     "12:34",
+		Status:      "pending",
+		TotalAmount: 900,
+	}})
+	w.seenRepo.(*fakeSeenRepo).baselineCompleted = true
+	line := &fakeLineNotifier{}
+	w.WithLineNotifier(line)
+
+	result, err := w.PollOnce(context.Background())
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if result.Notifications != 1 {
+		t.Fatalf("result = %+v, want one notification", result)
+	}
+	if len(line.calls) != 1 {
+		t.Fatalf("line calls = %d, want 1", len(line.calls))
+	}
+	if line.calls[0].order.DocNo != "MQT26070006" || line.calls[0].dedupeKey != "nextstep:new_order:MQT26070006" {
+		t.Fatalf("line call = %+v", line.calls[0])
+	}
+}
+
+func TestPollOnceLineNotificationFailureDoesNotFailPoll(t *testing.T) {
+	w := testWorker([]sml.NextStepMarketplaceOrder{{
+		DocNo:       "MQT26070007",
+		DocDate:     "2026-07-07",
+		Status:      "payment",
+		TotalAmount: 900,
+	}})
+	w.seenRepo.(*fakeSeenRepo).baselineCompleted = true
+	line := &fakeLineNotifier{err: errors.New("line queue down")}
+	w.WithLineNotifier(line)
+
+	result, err := w.PollOnce(context.Background())
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if result.Notifications != 1 {
+		t.Fatalf("result = %+v, want in-app notification preserved", result)
+	}
+	seen := w.seenRepo.(*fakeSeenRepo)
+	if len(seen.markNotified) != 1 || seen.markNotified[0] != "MQT26070007" {
+		t.Fatalf("markNotified = %+v", seen.markNotified)
+	}
+	if len(line.calls) != 1 {
+		t.Fatalf("line calls = %d, want attempted once", len(line.calls))
+	}
+}
+
 func TestPollOnceSkipsSuccessAndCancel(t *testing.T) {
 	w := testWorker([]sml.NextStepMarketplaceOrder{
 		{DocNo: "MQT26070003", DocDate: "2026-07-07", Status: "success"},
 		{DocNo: "PREQT26070004", DocDate: "2026-07-07", Status: "cancel"},
 	})
 	w.seenRepo.(*fakeSeenRepo).baselineCompleted = true
+	line := &fakeLineNotifier{}
+	w.WithLineNotifier(line)
 
 	result, err := w.PollOnce(context.Background())
 	if err != nil {
@@ -90,6 +151,9 @@ func TestPollOnceSkipsSuccessAndCancel(t *testing.T) {
 	}
 	if result.Notifications != 0 || result.SkippedInactive != 2 {
 		t.Fatalf("result = %+v, want inactive skips", result)
+	}
+	if got := len(line.calls); got != 0 {
+		t.Fatalf("line calls = %d, want 0", got)
 	}
 }
 
@@ -217,4 +281,22 @@ type fakePublisher struct {
 
 func (f *fakePublisher) Publish(ev events.Event) {
 	f.events = append(f.events, ev)
+}
+
+type fakeLineNotifier struct {
+	calls []fakeLineCall
+	err   error
+}
+
+type fakeLineCall struct {
+	order     sml.NextStepMarketplaceOrder
+	dedupeKey string
+}
+
+func (f *fakeLineNotifier) EnqueueNextStepMarketplaceNewOrder(_ context.Context, order sml.NextStepMarketplaceOrder, dedupeKey string) (int, error) {
+	f.calls = append(f.calls, fakeLineCall{order: order, dedupeKey: dedupeKey})
+	if f.err != nil {
+		return 0, f.err
+	}
+	return 1, nil
 }

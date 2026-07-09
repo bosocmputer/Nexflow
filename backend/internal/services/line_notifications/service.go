@@ -14,6 +14,7 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	lineservice "nexflow/internal/services/line"
+	"nexflow/internal/services/sml"
 )
 
 const (
@@ -152,6 +153,49 @@ func (s *Service) EnqueueShopeeSettlementReady(ctx context.Context, run models.S
 		ActionURL:      ShopeeSettlementActionURL(s.publicBaseURL),
 		EntityType:     "shopee_settlement",
 		EntityID:       strings.TrimSpace(run.ID),
+		DedupeKey:      dedupeKey,
+		MessageText:    message,
+		AltText:        altText,
+		FlexPayload:    flexPayload,
+		PayloadVersion: payloadVersion,
+	})
+}
+
+func (s *Service) EnqueueNextStepMarketplaceNewOrder(ctx context.Context, order sml.NextStepMarketplaceOrder, dedupeKey string) (int, error) {
+	if s == nil || s.repo == nil || strings.TrimSpace(order.DocNo) == "" {
+		return 0, nil
+	}
+	docNo := strings.TrimSpace(order.DocNo)
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		dedupeKey = "nextstep:new_order:" + docNo
+	}
+	message := BuildNextStepMarketplaceNewOrderLineText(order, s.publicBaseURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := BuildNextStepMarketplaceNewOrderLineFlex(order, s.publicBaseURL); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText = alt
+				flexPayload = raw
+				payloadVersion = 1
+			} else if s.logger != nil {
+				s.logger.Warn("line nextstep flex marshal failed",
+					zap.String("doc_no", docNo),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source:         "nextstep_marketplace",
+		Severity:       "info",
+		Title:          "มีออเดอร์ NextStep Marketplace ใหม่",
+		Body:           nextStepMarketplaceLineNotificationBody(order),
+		ActionURL:      NextStepMarketplaceOrderActionURL(s.publicBaseURL, order),
+		EntityType:     "nextstep_order",
+		EntityID:       docNo,
 		DedupeKey:      dedupeKey,
 		MessageText:    message,
 		AltText:        altText,
@@ -718,6 +762,122 @@ func BuildShopeeSettlementLineFlex(run models.ShopeeSettlementLineRun, publicBas
 		contents["footer"] = flexButtonFooter("เปิดรับชำระ Shopee", url)
 	}
 	return alt, contents
+}
+
+func BuildNextStepMarketplaceNewOrderLineText(order sml.NextStepMarketplaceOrder, publicBaseURL string) string {
+	docNo := strings.TrimSpace(order.DocNo)
+	if docNo == "" {
+		return "มีออเดอร์ NextStep Marketplace ใหม่"
+	}
+	parts := []string{
+		"มีออเดอร์ NextStep Marketplace ใหม่",
+		"เอกสาร: " + docNo,
+	}
+	if dt := formatNextStepDocDateTime(order); dt != "" {
+		parts = append(parts, "วันที่: "+dt)
+	}
+	if status := nextStepMarketplaceStatusLabel(order.Status); status != "" {
+		parts = append(parts, "สถานะ: "+status)
+	}
+	if order.TotalAmount > 0 {
+		parts = append(parts, "ยอดรวม: "+formatTHB(order.TotalAmount))
+	}
+	if url := NextStepMarketplaceOrderActionURL(publicBaseURL, order); url != "" {
+		parts = append(parts, "เปิดใน Nexflow: "+url)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func BuildNextStepMarketplaceNewOrderLineFlex(order sml.NextStepMarketplaceOrder, publicBaseURL string) (string, map[string]any) {
+	docNo := strings.TrimSpace(order.DocNo)
+	if docNo == "" {
+		return "มีออเดอร์ NextStep Marketplace ใหม่", nil
+	}
+	amount := formatTHB(order.TotalAmount)
+	title := "ออเดอร์ NextStep Marketplace ใหม่"
+	alt := strings.Join(filterNonEmpty([]string{title, docNo, amount}), " · ")
+	body := []map[string]any{
+		flexText(title, "lg", "bold", "#0F172A", "", true),
+		flexText("เอกสาร MQT/PREQT ใน SML", "sm", "", "#64748B", "", true),
+		flexAmountRow("ยอดรวม", amount, "#2563EB"),
+	}
+	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
+		{"เลขที่", docNo},
+		{"วันที่", formatNextStepDocDateTime(order)},
+		{"สถานะ", nextStepMarketplaceStatusLabel(order.Status)},
+	})
+	contents := map[string]any{
+		"type": "bubble",
+		"size": "mega",
+		"body": map[string]any{
+			"type":     "box",
+			"layout":   "vertical",
+			"spacing":  "sm",
+			"contents": body,
+		},
+	}
+	if url := NextStepMarketplaceOrderActionURL(publicBaseURL, order); isAbsoluteHTTPURL(url) {
+		contents["footer"] = flexButtonFooter("เปิดใน Nexflow", url)
+	}
+	return alt, contents
+}
+
+func NextStepMarketplaceOrderActionURL(publicBaseURL string, order sml.NextStepMarketplaceOrder) string {
+	docNo := strings.TrimSpace(order.DocNo)
+	docDate := strings.TrimSpace(order.DocDate)
+	if docDate == "" {
+		docDate = time.Now().In(shopeeLineTimeLocation).Format("2006-01-02")
+	}
+	q := url.Values{}
+	q.Set("from_date", docDate)
+	q.Set("to_date", docDate)
+	if docNo != "" {
+		q.Set("search", docNo)
+	}
+	path := "/nextstep-marketplace?" + q.Encode()
+	base := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+	if base == "" {
+		return path
+	}
+	return base + path
+}
+
+func nextStepMarketplaceLineNotificationBody(order sml.NextStepMarketplaceOrder) string {
+	return strings.Join(filterNonEmpty([]string{
+		strings.TrimSpace(order.DocNo),
+		nextStepMarketplaceStatusLabel(order.Status),
+		formatTHB(order.TotalAmount),
+		strings.TrimSpace(order.DocTime),
+	}), " · ")
+}
+
+func nextStepMarketplaceStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pending":
+		return "รอดำเนินการ"
+	case "packing":
+		return "แพ็กของ"
+	case "payment":
+		return "รอชำระ"
+	case "success":
+		return "สำเร็จ"
+	case "cancel":
+		return "ยกเลิก"
+	default:
+		return strings.TrimSpace(status)
+	}
+}
+
+func formatNextStepDocDateTime(order sml.NextStepMarketplaceOrder) string {
+	date := strings.TrimSpace(order.DocDate)
+	timePart := strings.TrimSpace(order.DocTime)
+	if date == "" {
+		return timePart
+	}
+	if parsed, err := time.Parse("2006-01-02", date); err == nil {
+		date = parsed.Format("02/01/2006")
+	}
+	return strings.TrimSpace(strings.Join(filterNonEmpty([]string{date, timePart}), " "))
 }
 
 type settlementAmountTotals struct {

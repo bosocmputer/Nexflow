@@ -94,6 +94,7 @@ interface Overview {
   candidates: LineCandidate[]
   deliveries: LineDelivery[]
   sample_text: string
+  sample_texts?: Partial<Record<LineSampleSource, string>>
   readiness: {
     sender_count: number
     enabled_sender_count: number
@@ -102,6 +103,8 @@ interface Overview {
     shopee_realtime_enabled?: boolean
   }
 }
+
+type LineSampleSource = 'shopee' | 'nextstep_marketplace'
 
 const destinationLabels: Record<LineRecipient['destination_type'], string> = {
   user: 'User ID',
@@ -125,6 +128,7 @@ export default function LineNotifications() {
   const [testRecipient, setTestRecipient] = useState<LineRecipient | null>(null)
   const [candidateToAdd, setCandidateToAdd] = useState<LineCandidate | null>(null)
   const [candidateToHide, setCandidateToHide] = useState<LineCandidate | null>(null)
+  const [sampleSource, setSampleSource] = useState<LineSampleSource>('shopee')
 
   const load = async () => {
     setLoading(true)
@@ -145,6 +149,7 @@ export default function LineNotifications() {
   const readiness = data?.readiness
   const ready = !!readiness?.enabled_sender_count && !!readiness.enabled_recipient_count
   const enabledRecipients = data?.recipients.filter((r) => r.enabled).length ?? 0
+  const sampleText = data?.sample_texts?.[sampleSource] || data?.sample_text || 'กำลังโหลดตัวอย่างข้อความ'
 
   const senderNameById = useMemo(() => {
     const map = new Map<string, string>()
@@ -178,7 +183,9 @@ export default function LineNotifications() {
     if (!testRecipient) return
     const id = toast.loading('กำลังส่ง LINE ทดสอบ')
     try {
-      await client.post(`/api/settings/line-notifications/recipients/${testRecipient.id}/test`)
+      await client.post(`/api/settings/line-notifications/recipients/${testRecipient.id}/test`, {
+        sample_source: sampleSource,
+      })
       toast.success('ส่งข้อความทดสอบแล้ว', { id })
       setTestRecipient(null)
       await load()
@@ -216,7 +223,7 @@ export default function LineNotifications() {
     <div className="space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่ ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
+        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
@@ -242,7 +249,7 @@ export default function LineNotifications() {
                 {ready ? 'พร้อมส่ง LINE เมื่อมีออเดอร์ใหม่' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                เพิ่ม LINE OA, copy Webhook URL ไปเปิด Use webhook ใน LINE Developers, ให้ผู้รับทัก OA แล้วเพิ่มเป็นผู้รับแจ้งเตือน
+                เพิ่ม LINE OA, copy Webhook URL ไปเปิด Use webhook ใน LINE Developers, ให้ผู้รับทัก OA แล้วเพิ่มเป็นผู้รับแจ้งเตือนสำหรับ Shopee และ NextStep Marketplace
               </p>
             </div>
           </div>
@@ -486,9 +493,23 @@ export default function LineNotifications() {
         <aside className="space-y-5">
           <div className="rounded-lg border border-border/80 bg-card/95 p-4">
             <h2 className="text-base font-semibold">ตัวอย่างข้อความสำรอง</h2>
-            <p className="mt-1 text-sm text-muted-foreground">ปุ่มทดสอบจะส่ง Flex รูปแบบใหม่ก่อน ข้อความด้านล่างใช้เป็น fallback เมื่อ LINE Flex ส่งไม่สำเร็จ และไม่ใส่ข้อมูลลูกค้า</p>
+            <div className="mt-2 flex rounded-md border border-border bg-muted/30 p-1">
+              {(['shopee', 'nextstep_marketplace'] as LineSampleSource[]).map((source) => (
+                <Button
+                  key={source}
+                  type="button"
+                  variant={sampleSource === source ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-8 flex-1 text-xs"
+                  onClick={() => setSampleSource(source)}
+                >
+                  {sampleSourceLabel(source)}
+                </Button>
+              ))}
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">ปุ่มทดสอบจะส่ง Flex ของ {sampleSourceLabel(sampleSource)} ก่อน ข้อความด้านล่างใช้เป็น fallback เมื่อ LINE Flex ส่งไม่สำเร็จ และไม่ใส่ข้อมูลลูกค้า</p>
             <pre className="mt-3 whitespace-pre-wrap rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-foreground">
-              {data?.sample_text || 'กำลังโหลดตัวอย่างข้อความ'}
+              {sampleText}
             </pre>
           </div>
 
@@ -541,7 +562,7 @@ export default function LineNotifications() {
         open={!!testRecipient}
         onOpenChange={(open) => !open && setTestRecipient(null)}
         title="ส่ง Flex ทดสอบ"
-        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่างของออเดอร์ใหม่ไปที่ ${testRecipient.name} เพื่อยืนยันว่าปลายทาง LINE ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
+        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่าง ${sampleSourceLabel(sampleSource)} ไปที่ ${testRecipient.name} เพื่อยืนยันว่าปลายทาง LINE ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
         confirmLabel="ส่งทดสอบ"
         onConfirm={runRecipientTest}
       />
@@ -845,5 +866,14 @@ function deliveryStatusLabel(status: string) {
       return 'ล้มเหลว'
     default:
       return status || '-'
+  }
+}
+
+function sampleSourceLabel(source: LineSampleSource) {
+  switch (source) {
+    case 'nextstep_marketplace':
+      return 'NextStep Marketplace'
+    default:
+      return 'Shopee'
   }
 }

@@ -37,6 +37,25 @@ func TestLineNotificationSampleMessageMatchesRichShopeeFallback(t *testing.T) {
 	}
 }
 
+func TestLineNotificationNextStepSampleMessage(t *testing.T) {
+	h := &LineNotificationHandler{cfg: &config.Config{PublicBaseURL: "https://nexflow-aoy.nextstep-soft.com"}}
+
+	msg := h.sampleMessageForSource("nextstep_marketplace")
+
+	for _, want := range []string{
+		"มีออเดอร์ NextStep Marketplace ใหม่",
+		"MQT20260709-SAMPLE",
+		"วันที่: 09/07/2026 14:30",
+		"สถานะ: รอดำเนินการ",
+		"ยอดรวม: ฿1280.00",
+		"https://nexflow-aoy.nextstep-soft.com/nextstep-marketplace?from_date=2026-07-09",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("nextstep sample missing %q:\n%s", want, msg)
+		}
+	}
+}
+
 func TestLineNotificationDestinationFromWebhookSource(t *testing.T) {
 	tests := []struct {
 		name     string

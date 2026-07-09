@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"nexflow/internal/models"
+	"nexflow/internal/services/sml"
 )
 
 func TestBuildShopeeNewOrderLineTextShowsProductAndOmitsStatusNoise(t *testing.T) {
@@ -352,6 +353,83 @@ func TestBuildShopeeSettlementLineFlexShowsNetDeductionsAndEscrowFees(t *testing
 		if !strings.Contains(body, want) {
 			t.Fatalf("settlement flex missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
+	order := sml.NextStepMarketplaceOrder{
+		DocNo:       "MQT20260709-ABC12",
+		DocDate:     "2026-07-09",
+		DocTime:     "14:30",
+		Status:      "pending",
+		TotalAmount: 1280,
+		CustCode:    "CUST-SHOULD-NOT-BE-IN-LINE",
+		RemarkQT:    "private remark",
+	}
+	baseURL := "https://nexflow-aoy.nextstep-soft.com"
+	msg := BuildNextStepMarketplaceNewOrderLineText(order, baseURL)
+	for _, want := range []string{
+		"มีออเดอร์ NextStep Marketplace ใหม่",
+		"เอกสาร: MQT20260709-ABC12",
+		"วันที่: 09/07/2026 14:30",
+		"สถานะ: รอดำเนินการ",
+		"ยอดรวม: ฿1280.00",
+		"https://nexflow-aoy.nextstep-soft.com/nextstep-marketplace?from_date=2026-07-09",
+		"search=MQT20260709-ABC12",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message missing %q:\n%s", want, msg)
+		}
+	}
+	for _, leak := range []string{"CUST-SHOULD-NOT-BE-IN-LINE", "private remark"} {
+		if strings.Contains(msg, leak) {
+			t.Fatalf("message leaked %q:\n%s", leak, msg)
+		}
+	}
+
+	alt, flex := BuildNextStepMarketplaceNewOrderLineFlex(order, baseURL)
+	if !strings.Contains(alt, "MQT20260709-ABC12") || !strings.Contains(alt, "฿1280.00") {
+		t.Fatalf("alt text not useful: %q", alt)
+	}
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal flex: %v", err)
+	}
+	body := string(buf)
+	for _, want := range []string{
+		"ออเดอร์ NextStep Marketplace ใหม่",
+		"เอกสาร MQT/PREQT ใน SML",
+		"MQT20260709-ABC12",
+		"ยอดรวม",
+		"รอดำเนินการ",
+		"เปิดใน Nexflow",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("flex missing %q:\n%s", want, body)
+		}
+	}
+	for _, leak := range []string{"CUST-SHOULD-NOT-BE-IN-LINE", "private remark"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("flex leaked %q:\n%s", leak, body)
+		}
+	}
+}
+
+func TestBuildNextStepMarketplaceFlexOmitsRelativeButton(t *testing.T) {
+	_, flex := BuildNextStepMarketplaceNewOrderLineFlex(sml.NextStepMarketplaceOrder{
+		DocNo:       "MQT20260709-ABC12",
+		DocDate:     "2026-07-09",
+		TotalAmount: 100,
+	}, "")
+	if _, ok := flex["footer"]; ok {
+		t.Fatalf("relative action URL should not be used as LINE Flex button: %#v", flex["footer"])
+	}
+	msg := BuildNextStepMarketplaceNewOrderLineText(sml.NextStepMarketplaceOrder{
+		DocNo:   "MQT20260709-ABC12",
+		DocDate: "2026-07-09",
+	}, "")
+	if !strings.Contains(msg, "เปิดใน Nexflow: /nextstep-marketplace?") {
+		t.Fatalf("text fallback should keep relative path:\n%s", msg)
 	}
 }
 
