@@ -335,7 +335,7 @@ func BuildShopeeNewOrderLineTextWithPayment(snap *models.ShopeeOrderSnapshot, pa
 	}
 	amount := ""
 	if snap.TotalAmount > 0 {
-		amount = fmt.Sprintf("ยอดรวม: ฿%.2f", snap.TotalAmount)
+		amount = "ยอดรวม: " + formatLineMoneyValue(snap.TotalAmount)
 	}
 	paymentLabel := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
 	items := shopeeProductLines(detail.Items, snap.ItemCount, 3)
@@ -552,7 +552,7 @@ func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot
 	}
 	paymentLabel := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
 	actionURL := ShopeeOrderActionURL(publicBaseURL, orderSN)
-	amountLabel := formatTHB(total)
+	amountLabel := formatLineMoneyValue(total)
 	title := "ออเดอร์ Shopee ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, shop, amountLabel}), " · ")
 	if alt == "" {
@@ -778,7 +778,7 @@ func BuildNextStepMarketplaceNewOrderLineText(order sml.NextStepMarketplaceOrder
 		parts = append(parts, "สถานะ: "+status)
 	}
 	if order.TotalAmount > 0 {
-		parts = append(parts, "ยอดรวม: "+formatTHB(order.TotalAmount))
+		parts = append(parts, "ยอดรวม: "+formatLineMoneyValue(order.TotalAmount))
 	}
 	if url := NextStepMarketplaceOrderActionURL(publicBaseURL, order); url != "" {
 		parts = append(parts, "เปิดใน Nexflow: "+url)
@@ -791,7 +791,7 @@ func BuildNextStepMarketplaceNewOrderLineFlex(order sml.NextStepMarketplaceOrder
 	if docNo == "" {
 		return "มีออเดอร์ NextStep Marketplace ใหม่", nil
 	}
-	amount := formatTHBValue(order.TotalAmount)
+	amount := formatLineMoneyValue(order.TotalAmount)
 	title := "ออเดอร์ NextStep Marketplace ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, docNo, amount}), " · ")
 	body := []map[string]any{
@@ -805,16 +805,16 @@ func BuildNextStepMarketplaceNewOrderLineFlex(order sml.NextStepMarketplaceOrder
 		{"สถานะ", nextStepMarketplaceStatusLabel(order.Status)},
 	})
 	body = appendFlexSection(body, "ยอดขายใน SML", []flexKVRow{
-		{"Wallet", formatOptionalTHB(order.WalletAmount)},
-		{"ยอดก่อน VAT", formatOptionalTHB(order.TotalExceptVAT)},
-		{"VAT", formatOptionalTHB(order.TotalVATValue)},
-		{"ยอดหลัง VAT", formatOptionalTHB(order.TotalAfterVAT)},
-		{"ยอดคงเหลือ", formatOptionalTHB(order.Balance)},
+		{"Wallet", formatOptionalLineMoneyValue(order.WalletAmount)},
+		{"ยอดก่อน VAT", formatOptionalLineMoneyValue(order.TotalExceptVAT)},
+		{"VAT", formatOptionalLineMoneyValue(order.TotalVATValue)},
+		{"ยอดหลัง VAT", formatOptionalLineMoneyValue(order.TotalAfterVAT)},
+		{"ยอดคงเหลือ", formatOptionalLineMoneyValue(order.Balance)},
 	})
 	body = appendFlexSection(body, "เอกสารต่อเนื่อง", []flexKVRow{
 		{"ใบขาย SML", strings.TrimSpace(order.InvDocNo)},
 		{"วันที่ใบขาย", formatDateDDMMYYYY(order.InvDocDate)},
-		{"ยอด CN", formatOptionalTHB(order.CNTotalAmount)},
+		{"ยอด CN", formatOptionalLineMoneyValue(order.CNTotalAmount)},
 	})
 	body = append(body,
 		map[string]any{"type": "separator", "margin": "md"},
@@ -860,7 +860,7 @@ func nextStepMarketplaceLineNotificationBody(order sml.NextStepMarketplaceOrder)
 	return strings.Join(filterNonEmpty([]string{
 		strings.TrimSpace(order.DocNo),
 		nextStepMarketplaceStatusLabel(order.Status),
-		formatTHB(order.TotalAmount),
+		formatLineMoneyValue(order.TotalAmount),
 		strings.TrimSpace(order.DocTime),
 	}), " · ")
 }
@@ -870,7 +870,7 @@ func nextStepMarketplaceStatusLabel(status string) string {
 	case "pending":
 		return "รอดำเนินการ"
 	case "packing":
-		return "แพ็กของ"
+		return "จัดเตรียมสินค้า"
 	case "payment":
 		return "รอชำระ"
 	case "success":
@@ -1271,7 +1271,7 @@ func shopeeRichItemRows(items []shopeeRawOrderItem, itemCount, limit int) []stri
 		}
 		line := fmt.Sprintf("%d. %s x%s", i+1, name, formatShopeeQty(item.Qty))
 		if price > 0 {
-			line += " · " + formatTHB(price)
+			line += " · " + formatLineMoneyValue(price)
 		}
 		out = append(out, line)
 	}
@@ -1285,15 +1285,15 @@ func shopeePaymentRows(payment string, detail shopeeRawOrderDetail, total float6
 	rows := []flexKVRow{
 		{"ช่องทาง", payment},
 		{"COD", boolThai(detail.COD)},
-		{"ยอดลูกค้าชำระ", formatTHB(total)},
+		{"ยอดลูกค้าชำระ", formatLineMoneyValue(total)},
 	}
 	if detail.ActualShippingFee > 0 {
-		rows = append(rows, flexKVRow{"ค่าส่งจริง", formatTHB(detail.ActualShippingFee)})
+		rows = append(rows, flexKVRow{"ค่าส่งจริง", formatLineMoneyValue(detail.ActualShippingFee)})
 	} else if detail.EstimatedShippingFee > 0 {
-		rows = append(rows, flexKVRow{"ค่าส่งประมาณการ", formatTHB(detail.EstimatedShippingFee)})
+		rows = append(rows, flexKVRow{"ค่าส่งประมาณการ", formatLineMoneyValue(detail.EstimatedShippingFee)})
 	}
 	if detail.ReverseShippingFee > 0 {
-		rows = append(rows, flexKVRow{"ค่าส่งคืน", formatTHB(detail.ReverseShippingFee)})
+		rows = append(rows, flexKVRow{"ค่าส่งคืน", formatLineMoneyValue(detail.ReverseShippingFee)})
 	}
 	return rows
 }
@@ -1307,8 +1307,8 @@ func shopeeOrderPaymentTextLines(payment *models.ShopeeOrderPaymentSnapshot) []s
 		return nil
 	}
 	lines := []string{
-		"ยอดสุทธิตาม Shopee escrow: " + formatTHBValue(payment.EscrowAmount),
-		"ส่วนต่างจากยอดลูกค้าชำระ: " + formatSignedTHB(payment.DeductionAmount),
+		"ยอดสุทธิตาม Shopee escrow: " + formatLineMoneyValue(payment.EscrowAmount),
+		"ส่วนต่างจากยอดลูกค้าชำระ: " + formatLineMoneyValue(payment.DeductionAmount),
 	}
 	for _, row := range shopeeOrderPaymentFeeRows(payment) {
 		lines = append(lines, row.Label+": "+row.Value)
@@ -1321,9 +1321,9 @@ func shopeeOrderPaymentRows(payment *models.ShopeeOrderPaymentSnapshot) []flexKV
 		return nil
 	}
 	rows := []flexKVRow{
-		{"ยอดลูกค้าชำระ", formatTHBValue(payment.BuyerTotalAmount)},
-		{"ยอดสุทธิตาม Shopee escrow", formatTHBValue(payment.EscrowAmount)},
-		{"ส่วนต่างจากยอดลูกค้าชำระ", formatSignedTHB(payment.DeductionAmount)},
+		{"ยอดลูกค้าชำระ", formatLineMoneyValue(payment.BuyerTotalAmount)},
+		{"ยอดสุทธิตาม Shopee escrow", formatLineMoneyValue(payment.EscrowAmount)},
+		{"ส่วนต่างจากยอดลูกค้าชำระ", formatLineMoneyValue(payment.DeductionAmount)},
 	}
 	rows = append(rows, shopeeOrderPaymentFeeRows(payment)...)
 	return rows
@@ -1358,7 +1358,7 @@ func shopeeOrderPaymentFeeRows(payment *models.ShopeeOrderPaymentSnapshot) []fle
 		if roundMoney(candidate.value) == 0 {
 			continue
 		}
-		rows = append(rows, flexKVRow{candidate.label, formatTHBValue(candidate.value)})
+		rows = append(rows, flexKVRow{candidate.label, formatLineMoneyValue(candidate.value)})
 		if len(rows) >= 8 {
 			break
 		}
@@ -1384,10 +1384,10 @@ func shopeeShippingRows(snap *models.ShopeeOrderSnapshot, detail shopeeRawOrderD
 
 func shopeeShippingFeeText(detail shopeeRawOrderDetail) string {
 	if detail.ActualShippingFee > 0 {
-		return "ค่าส่งจริง: " + formatTHB(detail.ActualShippingFee)
+		return "ค่าส่งจริง: " + formatLineMoneyValue(detail.ActualShippingFee)
 	}
 	if detail.EstimatedShippingFee > 0 {
-		return "ค่าส่งประมาณการ: " + formatTHB(detail.EstimatedShippingFee)
+		return "ค่าส่งประมาณการ: " + formatLineMoneyValue(detail.EstimatedShippingFee)
 	}
 	return ""
 }
@@ -1636,6 +1636,38 @@ func formatOptionalTHB(v float64) string {
 		return formatSignedTHB(v)
 	}
 	return formatTHBValue(v)
+}
+
+func formatLineMoneyValue(v float64) string {
+	v = roundMoney(v)
+	sign := ""
+	if v < 0 {
+		sign = "-"
+		v = math.Abs(v)
+	}
+	parts := strings.Split(fmt.Sprintf("%.2f", v), ".")
+	whole := parts[0]
+	frac := "00"
+	if len(parts) > 1 {
+		frac = parts[1]
+	}
+	if len(whole) > 3 {
+		var grouped []string
+		for len(whole) > 3 {
+			grouped = append([]string{whole[len(whole)-3:]}, grouped...)
+			whole = whole[:len(whole)-3]
+		}
+		grouped = append([]string{whole}, grouped...)
+		whole = strings.Join(grouped, ",")
+	}
+	return sign + whole + "." + frac
+}
+
+func formatOptionalLineMoneyValue(v float64) string {
+	if math.Abs(v) < 0.000001 {
+		return ""
+	}
+	return formatLineMoneyValue(v)
 }
 
 func formatTHBValue(v float64) string {

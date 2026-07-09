@@ -16,11 +16,11 @@ func TestLineNotificationSampleMessageMatchesRichShopeeFallback(t *testing.T) {
 		"มีออเดอร์ Shopee ใหม่",
 		"Henna.milkford",
 		"260621NDVGSKMA",
-		"ยอดรวม: ฿245.00",
+		"ยอดรวม: 245.00",
 		"Credit Card/Debit Card",
-		"ยอดสุทธิตาม Shopee escrow: ฿263.00",
-		"ส่วนต่างจากยอดลูกค้าชำระ: -฿18.00",
-		"ค่าส่งประมาณการ: ฿35.00",
+		"ยอดสุทธิตาม Shopee escrow: 263.00",
+		"ส่วนต่างจากยอดลูกค้าชำระ: -18.00",
+		"ค่าส่งประมาณการ: 35.00",
 		"EMS - Thailand Post",
 		"OFG235736492235190",
 		"21/06/2026 17:21",
@@ -35,6 +35,9 @@ func TestLineNotificationSampleMessageMatchesRichShopeeFallback(t *testing.T) {
 			t.Fatalf("sample message leaked %q:\n%s", leak, msg)
 		}
 	}
+	if strings.Contains(msg, "฿") {
+		t.Fatalf("sample message should use LINE money format without currency symbol:\n%s", msg)
+	}
 }
 
 func TestLineNotificationNextStepSampleMessage(t *testing.T) {
@@ -47,12 +50,15 @@ func TestLineNotificationNextStepSampleMessage(t *testing.T) {
 		"MQT20260709-SAMPLE",
 		"วันที่: 09/07/2026 14:30",
 		"สถานะ: รอดำเนินการ",
-		"ยอดรวม: ฿1280.00",
+		"ยอดรวม: 1,280.00",
 		"https://nexflow-aoy.nextstep-soft.com/nextstep-marketplace?from_date=2026-07-09",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("nextstep sample missing %q:\n%s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "฿") {
+		t.Fatalf("nextstep sample should use LINE money format without currency symbol:\n%s", msg)
 	}
 }
 

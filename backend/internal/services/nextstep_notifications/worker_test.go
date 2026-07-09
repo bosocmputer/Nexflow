@@ -157,6 +157,12 @@ func TestPollOnceSkipsSuccessAndCancel(t *testing.T) {
 	}
 }
 
+func TestNextStepStatusLabelUsesCustomerFriendlyPackingCopy(t *testing.T) {
+	if got := nextStepStatusLabel("packing"); got != "จัดเตรียมสินค้า" {
+		t.Fatalf("nextStepStatusLabel(packing) = %q, want จัดเตรียมสินค้า", got)
+	}
+}
+
 func TestPollOnceNotificationFailureAllowsRetry(t *testing.T) {
 	w := testWorker([]sml.NextStepMarketplaceOrder{{
 		DocNo:   "MQT26070005",

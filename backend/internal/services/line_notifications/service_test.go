@@ -44,7 +44,7 @@ func TestBuildShopeeNewOrderLineTextShowsProductAndOmitsStatusNoise(t *testing.T
 		"มีออเดอร์ Shopee ใหม่",
 		"ร้าน: Henna.milkford",
 		"Order SN: 26060232BJHG4E",
-		"ยอดรวม: ฿165.00",
+		"ยอดรวม: 165.00",
 		"ชำระเงิน: เก็บเงินปลายทาง",
 		"สินค้า:",
 		"สีเฟ้นคิ้วเฮนน่า",
@@ -54,6 +54,9 @@ func TestBuildShopeeNewOrderLineTextShowsProductAndOmitsStatusNoise(t *testing.T
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message missing %q:\n%s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "฿165.00") {
+		t.Fatalf("message should use LINE money format without currency symbol:\n%s", msg)
 	}
 	if strings.Contains(msg, "buyer-secret") {
 		t.Fatalf("message leaked buyer username:\n%s", msg)
@@ -165,7 +168,7 @@ func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 			MessageText: msg,
 		},
 	})
-	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "฿165.00") {
+	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "165.00") || strings.Contains(altText, "฿") {
 		t.Fatalf("alt text not useful: %q", altText)
 	}
 	buf, err := json.Marshal(flex)
@@ -176,7 +179,7 @@ func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 	for _, want := range []string{
 		"ออเดอร์ Shopee ใหม่",
 		"Henna.milkford",
-		"฿165.00",
+		"165.00",
 		"สีเฟ้นคิ้วเฮนน่า",
 		"เก็บเงินปลายทาง",
 		"เปิดใน Nexflow",
@@ -188,6 +191,9 @@ func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 	}
 	if strings.Contains(body, "buyer-secret") || strings.Contains(body, "สถานะ Shopee") || strings.Contains(body, "สถานะ ERP") {
 		t.Fatalf("flex leaked PII or noisy status:\n%s", body)
+	}
+	if strings.Contains(body, "฿") {
+		t.Fatalf("new-order flex should use LINE money format without currency symbol:\n%s", body)
 	}
 }
 
@@ -214,7 +220,7 @@ func TestBuildShopeeNewOrderRichLineFlexShowsPaymentShippingAndOmitsPII(t *testi
 		}`),
 	}, "https://animal-galvanize-tameness.ngrok-free.dev")
 
-	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "฿245.00") {
+	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "245.00") || strings.Contains(altText, "฿") {
 		t.Fatalf("alt text not useful: %q", altText)
 	}
 	buf, err := json.Marshal(flex)
@@ -239,6 +245,9 @@ func TestBuildShopeeNewOrderRichLineFlexShowsPaymentShippingAndOmitsPII(t *testi
 		if strings.Contains(body, leak) {
 			t.Fatalf("rich flex leaked %q:\n%s", leak, body)
 		}
+	}
+	if strings.Contains(body, "฿") {
+		t.Fatalf("rich new-order flex should use LINE money format without currency symbol:\n%s", body)
 	}
 }
 
@@ -273,7 +282,7 @@ func TestBuildShopeeNewOrderRichLineFlexWithPaymentShowsEscrowBreakdown(t *testi
 		}`),
 	}, payment, "https://animal-galvanize-tameness.ngrok-free.dev")
 
-	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "฿245.00") {
+	if !strings.Contains(altText, "Henna.milkford") || !strings.Contains(altText, "245.00") || strings.Contains(altText, "฿") {
 		t.Fatalf("alt text not useful: %q", altText)
 	}
 	buf, err := json.Marshal(flex)
@@ -285,7 +294,7 @@ func TestBuildShopeeNewOrderRichLineFlexWithPaymentShowsEscrowBreakdown(t *testi
 		"ข้อมูลการชำระเงิน Shopee",
 		"ยอดสุทธิตาม Shopee escrow",
 		"ส่วนต่างจากยอดลูกค้าชำระ",
-		"-฿18.00",
+		"-18.00",
 		"Commission",
 		"Transaction fee",
 		"Voucher Shopee",
@@ -299,6 +308,9 @@ func TestBuildShopeeNewOrderRichLineFlexWithPaymentShowsEscrowBreakdown(t *testi
 		if strings.Contains(body, leak) {
 			t.Fatalf("payment flex leaked %q:\n%s", leak, body)
 		}
+	}
+	if strings.Contains(body, "฿") {
+		t.Fatalf("payment new-order flex should use LINE money format without currency symbol:\n%s", body)
 	}
 }
 
@@ -364,7 +376,7 @@ func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 		DocNo:          "MQT20260709-ABC12",
 		DocDate:        "2026-07-09",
 		DocTime:        "14:30",
-		Status:         "pending",
+		Status:         "packing",
 		TotalAmount:    1280,
 		WalletAmount:   1280,
 		TotalExceptVAT: 1196.26,
@@ -382,8 +394,8 @@ func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 		"มีออเดอร์ NextStep Marketplace ใหม่",
 		"เอกสาร: MQT20260709-ABC12",
 		"วันที่: 09/07/2026 14:30",
-		"สถานะ: รอดำเนินการ",
-		"ยอดรวม: ฿1280.00",
+		"สถานะ: จัดเตรียมสินค้า",
+		"ยอดรวม: 1,280.00",
 		"https://nexflow-aoy.nextstep-soft.com/nextstep-marketplace?from_date=2026-07-09",
 		"search=MQT20260709-ABC12",
 	} {
@@ -396,9 +408,12 @@ func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 			t.Fatalf("message leaked %q:\n%s", leak, msg)
 		}
 	}
+	if strings.Contains(msg, "฿") {
+		t.Fatalf("NextStep text should use LINE money format without currency symbol:\n%s", msg)
+	}
 
 	alt, flex := BuildNextStepMarketplaceNewOrderLineFlex(order, baseURL)
-	if !strings.Contains(alt, "MQT20260709-ABC12") || !strings.Contains(alt, "฿1280.00") {
+	if !strings.Contains(alt, "MQT20260709-ABC12") || !strings.Contains(alt, "1,280.00") || strings.Contains(alt, "฿") {
 		t.Fatalf("alt text not useful: %q", alt)
 	}
 	buf, err := json.Marshal(flex)
@@ -413,11 +428,11 @@ func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 		"ยอดรวมเอกสาร",
 		"ยอดขายใน SML",
 		"Wallet",
-		"฿1196.26",
-		"-฿20.00",
+		"1,196.26",
+		"-20.00",
 		"เอกสารต่อเนื่อง",
 		"SI26070001",
-		"รอดำเนินการ",
+		"จัดเตรียมสินค้า",
 		"เปิดใน Nexflow",
 	} {
 		if !strings.Contains(body, want) {
@@ -427,6 +442,24 @@ func TestBuildNextStepMarketplaceNewOrderLineTextAndFlex(t *testing.T) {
 	for _, leak := range []string{"CUST-SHOULD-NOT-BE-IN-LINE", "private remark"} {
 		if strings.Contains(body, leak) {
 			t.Fatalf("flex leaked %q:\n%s", leak, body)
+		}
+	}
+	if strings.Contains(body, "฿") {
+		t.Fatalf("NextStep flex should use LINE money format without currency symbol:\n%s", body)
+	}
+}
+
+func TestLineMoneyFormattingUsesCommaTwoDecimalsAndNoCurrencySymbol(t *testing.T) {
+	for _, tc := range []struct {
+		value float64
+		want  string
+	}{
+		{3775, "3,775.00"},
+		{-18, "-18.00"},
+		{1234567.891, "1,234,567.89"},
+	} {
+		if got := formatLineMoneyValue(tc.value); got != tc.want {
+			t.Fatalf("formatLineMoneyValue(%v) = %q, want %q", tc.value, got, tc.want)
 		}
 	}
 }

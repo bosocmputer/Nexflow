@@ -384,7 +384,7 @@ func nextStepStatusLabel(status string) string {
 	case "pending":
 		return "รอดำเนินการ"
 	case "packing":
-		return "แพ็กของ"
+		return "จัดเตรียมสินค้า"
 	case "payment":
 		return "รอชำระ"
 	case "success":

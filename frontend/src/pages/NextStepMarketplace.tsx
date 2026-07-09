@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search, Store } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, RefreshCw, Search, Store } from 'lucide-react'
 
 import client from '@/api/client'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
@@ -143,24 +143,24 @@ export default function NextStepMarketplace() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card className="rounded-lg border-border/70 shadow-sm">
-        <CardContent className="space-y-4 p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <CardContent className="space-y-3 p-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0">
-              <Button asChild variant="ghost" size="sm" className="-ml-2 h-8 px-2">
+              <Button asChild variant="ghost" size="sm" className="-ml-2 h-7 px-2 text-xs">
                 <Link to={`/dashboard?from_date=${encodeURIComponent(dateRange.from)}&to_date=${encodeURIComponent(dateRange.to)}`}>
-                  <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                  <ArrowLeft className="mr-1.5 h-3 w-3" />
                   กลับ Dashboard
                 </Link>
               </Button>
-              <div className="mt-2 flex min-w-0 items-center gap-3">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-background">
-                  <Store className="h-7 w-7 text-primary" />
+              <div className="mt-1.5 flex min-w-0 items-center gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+                  <Store className="h-5 w-5 text-primary" />
                 </span>
                 <div className="min-w-0">
-                  <h1 className="truncate text-lg font-semibold leading-6 text-foreground">NextStep Marketplace</h1>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <h1 className="truncate text-base font-semibold leading-5 text-foreground">NextStep Marketplace</h1>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <span>ยอดจากเอกสาร MQT/PREQT ใน SML</span>
                     {meta && <span>{formatShortDate(meta.date_from)} - {formatShortDate(meta.date_to)}</span>}
                     {meta && <span>{meta.date_basis}</span>}
@@ -169,77 +169,77 @@ export default function NextStepMarketplace() {
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
-              <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9"
-                  onClick={() => setRefreshTick((tick) => tick + 1)}
-                  disabled={loading || Boolean(rangeError)}
-                  aria-label="รีเฟรช NextStep Marketplace"
-                  title="รีเฟรช NextStep Marketplace"
-                >
-                  <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-                </Button>
-                <DateRangePicker
-                  from={dateRange.from}
-                  to={dateRange.to}
-                  onFromChange={(from) => updateRange({ ...dateRange, from })}
-                  onToChange={(to) => updateRange({ ...dateRange, to })}
-                  onRangeChange={updateRange}
-                  className="w-full sm:w-[250px]"
-                  title="ช่วงวันที่ NextStep Marketplace"
-                  description="กรองเอกสาร MQT/PREQT ตามวันที่เอกสารใน SML"
-                  clearLabel="ล้างช่วงวันที่"
-                />
-              </div>
-              {rangeError && <div className="text-xs text-destructive">{rangeError}</div>}
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:min-w-[560px] xl:max-w-[680px]">
+              <SummaryMetric label="ยอดสุทธิ MQT/PREQT" value={loading ? '—' : formatCurrency(summary?.total_amount ?? 0)} />
+              <SummaryMetric label="ออเดอร์" value={loading ? '—' : formatCount(summary?.total_orders ?? 0)} />
+              <SummaryMetric label="CN หักแล้ว" value={loading ? '—' : formatCurrency(summary?.cn_total_amount ?? 0)} />
+              <SummaryMetric label="คงค้าง" value={loading ? '—' : formatCount(pendingStatusCount(summary))} />
             </div>
           </div>
 
-          <form onSubmit={handleSearch} className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
-            <div className="relative min-w-0">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={searchDraft}
-                onChange={(event) => setSearchDraft(event.target.value)}
-                placeholder="ค้นหา MQT, PREQT, invoice, sale code, remark"
-                className="h-10 pl-9"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button type="submit" className="min-w-24" disabled={loading || Boolean(rangeError)}>
-                ค้นหา
-              </Button>
-              {committedSearch && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setSearchDraft('')
-                    setQuery({ search: null, page: 1 })
-                  }}
-                >
-                  ล้าง
+          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <form onSubmit={handleSearch} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="relative min-w-0">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchDraft}
+                  onChange={(event) => setSearchDraft(event.target.value)}
+                  placeholder="ค้นหา MQT, PREQT, invoice, sale code, remark"
+                  className="h-9 pl-9"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" className="min-w-20" disabled={loading || Boolean(rangeError)}>
+                  ค้นหา
                 </Button>
-              )}
+                {committedSearch && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setSearchDraft('')
+                      setQuery({ search: null, page: 1 })
+                    }}
+                  >
+                    ล้าง
+                  </Button>
+                )}
+              </div>
+            </form>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              <DateRangePicker
+                from={dateRange.from}
+                to={dateRange.to}
+                onFromChange={(from) => updateRange({ ...dateRange, from })}
+                onToChange={(to) => updateRange({ ...dateRange, to })}
+                onRangeChange={updateRange}
+                className="w-full sm:w-[250px]"
+                title="ช่วงวันที่ NextStep Marketplace"
+                description="กรองเอกสาร MQT/PREQT ตามวันที่เอกสารใน SML"
+                clearLabel="ล้างช่วงวันที่"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                onClick={() => setRefreshTick((tick) => tick + 1)}
+                disabled={loading || Boolean(rangeError)}
+                aria-label="รีเฟรช NextStep Marketplace"
+                title="รีเฟรช NextStep Marketplace"
+              >
+                <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+              </Button>
             </div>
-          </form>
+          </div>
+          {rangeError && <div className="text-xs text-destructive">{rangeError}</div>}
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="ยอดสุทธิ MQT/PREQT" value={loading ? '—' : formatCurrency(summary?.total_amount ?? 0)} icon={<Database className="h-4 w-4" />} />
-        <MetricCard label="ออเดอร์" value={loading ? '—' : formatCount(summary?.total_orders ?? 0)} />
-        <MetricCard label="CN หักแล้ว" value={loading ? '—' : formatCurrency(summary?.cn_total_amount ?? 0)} />
-        <MetricCard label="คงค้าง" value={loading ? '—' : formatCount(pendingStatusCount(summary))} />
-      </div>
-
       <Card className="rounded-lg border-border/70 shadow-sm">
-        <CardContent className="space-y-4 p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardContent className="space-y-3 p-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-foreground">รายการเอกสาร MQT/PREQT</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
@@ -248,7 +248,7 @@ export default function NextStepMarketplace() {
             </div>
             <div className="flex flex-wrap gap-1.5">
               <StatusBadge label="รอดำเนินการ" count={statusCounts.pending ?? summary?.pending_count ?? 0} tone="muted" />
-              <StatusBadge label="แพ็กของ" count={statusCounts.packing ?? summary?.packing_count ?? 0} tone="info" />
+              <StatusBadge label="จัดเตรียมสินค้า" count={statusCounts.packing ?? summary?.packing_count ?? 0} tone="info" />
               <StatusBadge label="รอชำระ" count={statusCounts.payment ?? summary?.payment_count ?? 0} tone="warning" />
               <StatusBadge label="สำเร็จ" count={statusCounts.success ?? summary?.success_count ?? 0} tone="success" />
               <StatusBadge label="ยกเลิก" count={statusCounts.cancel ?? summary?.cancel_count ?? 0} tone="danger" />
@@ -257,8 +257,8 @@ export default function NextStepMarketplace() {
 
           {loading ? (
             <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, index) => (
-                <div key={index} className="h-16 rounded-md bg-muted/35" />
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="h-12 rounded-md bg-muted/35" />
               ))}
             </div>
           ) : networkError ? (
@@ -319,7 +319,7 @@ export default function NextStepMarketplace() {
 function OrdersTable({ orders }: { orders: NextStepMarketplaceOrder[] }) {
   return (
     <div className="overflow-hidden rounded-md border border-border/70">
-      <div className="hidden grid-cols-[1.15fr_0.8fr_0.8fr_0.75fr_0.75fr_0.75fr] gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
+      <div className="hidden grid-cols-[1.15fr_0.8fr_0.8fr_0.75fr_0.75fr_0.75fr] gap-3 border-b border-border bg-muted/30 px-3 py-1.5 text-xs font-medium text-muted-foreground lg:grid">
         <div>เอกสาร MQT/PREQT</div>
         <div>วันที่</div>
         <div>สถานะ</div>
@@ -329,7 +329,7 @@ function OrdersTable({ orders }: { orders: NextStepMarketplaceOrder[] }) {
       </div>
       <div className="divide-y divide-border/70">
         {orders.map((order) => (
-          <div key={order.doc_no} className="grid gap-2 px-3 py-3 text-sm lg:grid-cols-[1.15fr_0.8fr_0.8fr_0.75fr_0.75fr_0.75fr] lg:items-center lg:gap-3">
+          <div key={order.doc_no} className="grid gap-2 px-3 py-2 text-sm lg:grid-cols-[1.15fr_0.8fr_0.8fr_0.75fr_0.75fr_0.75fr] lg:items-center lg:gap-3">
             <div className="min-w-0">
               <div className="truncate font-semibold text-foreground">{order.doc_no}</div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -353,17 +353,12 @@ function OrdersTable({ orders }: { orders: NextStepMarketplaceOrder[] }) {
   )
 }
 
-function MetricCard({ label, value, icon }: { label: string; value: string; icon?: ReactNode }) {
+function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
-    <Card className="rounded-lg border-border/70 shadow-sm">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs font-medium text-muted-foreground">{label}</div>
-          {icon && <span className="text-primary">{icon}</span>}
-        </div>
-        <div className="mt-2 truncate text-2xl font-semibold tabular-nums text-foreground">{value}</div>
-      </CardContent>
-    </Card>
+    <div className="min-w-0 rounded-md border border-border/70 bg-muted/25 px-3 py-2">
+      <div className="truncate text-[11px] font-medium leading-4 text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{value}</div>
+    </div>
   )
 }
 
@@ -420,7 +415,7 @@ function ConfigMessage({ message }: { message: string }) {
 
 function StateMessage({ title, description }: { title: string; description: string }) {
   return (
-    <div className="flex min-h-[220px] items-center justify-center rounded-md border border-dashed border-border bg-muted/20 px-4 text-center">
+    <div className="flex min-h-[160px] items-center justify-center rounded-md border border-dashed border-border bg-muted/20 px-4 text-center">
       <div>
         <div className="text-sm font-semibold text-foreground">{title}</div>
         <div className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">{description}</div>
@@ -470,7 +465,7 @@ function formatShortDate(value: string): string {
 }
 
 function statusLabel(value: string): string {
-  if (value === 'packing') return 'แพ็กของ'
+  if (value === 'packing') return 'จัดเตรียมสินค้า'
   if (value === 'payment') return 'รอชำระ'
   if (value === 'success') return 'สำเร็จ'
   if (value === 'cancel') return 'ยกเลิก'
