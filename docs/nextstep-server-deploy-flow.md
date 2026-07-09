@@ -161,6 +161,95 @@ It intentionally does not turn each instance folder into a Git checkout. The
 instance folders remain config/runtime folders; the release clone is the source
 of code truth.
 
+## New Customer Onboarding
+
+Use this flow for customers like Lanboon where the customer owns an external
+PostgreSQL/SML server and Nexflow reads it through `sml-api-bybos`.
+
+1. Collect customer inputs:
+   - customer key, such as `lanboon`
+   - public hostname, such as `nextflow-lanboon.nextstep-soft.com`
+   - SML PostgreSQL host, port, database/tenant, user, password, sslmode
+
+2. Confirm the production server can reach the customer DB before adding the app:
+
+   ```bash
+   ssh ubuntu@10.121.20.83
+   timeout 5 bash -lc '</dev/tcp/<customer-pg-host>/<customer-pg-port>' && echo reachable
+   ```
+
+3. Add the instance registry row locally. The helper picks the next backend,
+   local Postgres, and frontend debug ports when omitted.
+
+   ```bash
+   python3 scripts/nextstep_instance_registry.py suggest
+   python3 scripts/nextstep_instance_registry.py add \
+     --name <shop-key> \
+     --hostname nextflow-<shop-key>.nextstep-soft.com \
+     --sml-tenant <tenant-or-db-name> \
+     --sml-host <customer-pg-host> \
+     --sml-port <customer-pg-port>
+   ```
+
+   This updates `deploy/nextstep-instances.json` and re-renders the edge
+   snapshots. It does not store the customer PG password.
+
+4. Commit and push the registry/tooling change.
+
+5. Bootstrap the server runtime folder using the registry values:
+   - create `/mnt/data/nextstep-node-2/nexflow-<shop-key>`
+   - create unique containers `nexflow-<shop-key>-postgres/backend/frontend`
+   - create a fresh local Nexflow database volume, not a copy of another shop
+   - generate fresh `DB_PASSWORD`, `JWT_SECRET`, `MEDIA_SIGNING_KEY`
+   - set `PUBLIC_BASE_URL=https://nextflow-<shop-key>.nextstep-soft.com`
+   - set `SHOPEE_SML_URL=http://172.17.0.1:8200`
+   - set `SHOPEE_SML_PROVIDER=NEXT`, `SHOPEE_SML_CONFIG_FILE=SMLConfigNEXT.xml`
+   - set `SHOPEE_SML_DATABASE=<tenant-or-db-name>`
+   - keep Shopee/LINE disabled until configured per customer
+
+6. Add the customer tenant to `/mnt/data/nextstep-node-2/sml-api-bybos-nexflow/.env`
+   and `nexflow-sml-api-bybos.runtime.env`:
+
+   ```text
+   ALLOWED_TENANTS=demo,aoy,lbk63,<new-tenant>
+   SML_DB_HOST_<TENANT>=<customer-pg-host>
+   SML_DB_PORT_<TENANT>=<customer-pg-port>
+   SML_DB_USER_<TENANT>=<customer-pg-user>
+   SML_DB_PASSWORD_<TENANT>=<customer-pg-password>
+   SML_DB_SSLMODE_<TENANT>=disable
+   ```
+
+   Store the password only on the server. For read-only NextStep usage, ask the
+   customer for a read-only PG user instead of `postgres`.
+
+7. Test the tenant before exposing it:
+
+   ```bash
+   curl -s -H 'x-tenant: <tenant>' http://localhost:8200/health/ready
+   curl -s -H 'x-tenant: <tenant>' -H 'x-api-key: smlx' \
+     'http://localhost:8200/api/v1/marketplace/nextstep/orders?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&include_orders=false&page_size=5'
+   ```
+
+8. Deploy the registered target:
+
+   ```bash
+   NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target <shop-key>
+   ```
+
+9. Send IT the Cloudflare message printed by:
+
+   ```bash
+   python3 scripts/nextstep_instance_registry.py it-message --hostname nextflow-<shop-key>.nextstep-soft.com
+   ```
+
+10. Smoke after DNS/proxy:
+    - `/login`
+    - `/health`
+    - `/dashboard`
+    - `/nextstep-marketplace`
+    - local Nexflow DB has no bills from other shops
+    - `app_settings.sml.database` equals the customer tenant
+
 ## Per-Instance Config
 
 Use the UI or `app_settings` for customer-specific settings. Do not solve

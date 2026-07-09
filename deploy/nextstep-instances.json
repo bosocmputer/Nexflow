@@ -1,0 +1,49 @@
+{
+  "instances": [
+    {
+      "name": "demo",
+      "hostname": "nexflow.nextstep-soft.com",
+      "folder": "nexflow",
+      "frontend_container": "nexflow-frontend",
+      "backend_container": "nexflow-backend",
+      "postgres_container": "nexflow-postgres",
+      "frontend_debug_port": 16323,
+      "previous_frontend_port": 6323,
+      "backend_port": 8110,
+      "postgres_port": 5440,
+      "public_url": "https://nexflow.nextstep-soft.com",
+      "sml_tenant": "demo"
+    },
+    {
+      "name": "aoy",
+      "hostname": "nexflow-aoy.nextstep-soft.com",
+      "folder": "nexflow-aoy",
+      "frontend_container": "nexflow-aoy-frontend",
+      "backend_container": "nexflow-aoy-backend",
+      "postgres_container": "nexflow-aoy-postgres",
+      "frontend_debug_port": 16324,
+      "previous_frontend_port": 6324,
+      "backend_port": 8111,
+      "postgres_port": 5441,
+      "public_url": "https://nexflow-aoy.nextstep-soft.com",
+      "sml_tenant": "aoy"
+    },
+    {
+      "name": "lanboon",
+      "hostname": "nextflow-lanboon.nextstep-soft.com",
+      "folder": "nexflow-lanboon",
+      "frontend_container": "nexflow-lanboon-frontend",
+      "backend_container": "nexflow-lanboon-backend",
+      "postgres_container": "nexflow-lanboon-postgres",
+      "frontend_debug_port": 16325,
+      "previous_frontend_port": 6325,
+      "backend_port": 8112,
+      "postgres_port": 5442,
+      "public_url": "https://nextflow-lanboon.nextstep-soft.com",
+      "sml_tenant": "lbk63",
+      "sml_host": "chk562595.totddns.com",
+      "sml_port": 12831,
+      "sml_database": "lbk63"
+    }
+  ]
+}

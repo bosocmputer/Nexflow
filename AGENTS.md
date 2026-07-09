@@ -128,6 +128,22 @@ NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
 ```
 
+Adding the next customer instance uses the registry helper first:
+
+```bash
+python3 scripts/nextstep_instance_registry.py suggest
+python3 scripts/nextstep_instance_registry.py add \
+  --name <shop-key> \
+  --hostname nextflow-<shop-key>.nextstep-soft.com \
+  --sml-tenant <sml-db-or-tenant> \
+  --sml-host <customer-pg-host> \
+  --sml-port <customer-pg-port>
+```
+
+Commit/push the registry change, then bootstrap the server runtime folder and
+SML API env with secrets stored only on the server. Never commit customer PG
+passwords.
+
 ---
 
 ## 6b. Graphify Auto-Lite

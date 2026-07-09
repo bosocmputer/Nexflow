@@ -9,6 +9,10 @@ Production layout:
 - lanboon:       /mnt/data/nextstep-node-2/nexflow-lanboon  frontend edge, backend 8112
 - edge:          /mnt/data/nextstep-node-2/nexflow-edge public 6323
 
+Instance definitions live in deploy/nextstep-instances.json. Use
+scripts/nextstep_instance_registry.py to add future customers and render edge
+snapshots.
+
 The release clone is the only Git checkout used for Docker build contexts.
 Each instance keeps its own docker-compose.yml, .env, Postgres volume, backups,
 and artifacts. The script updates instance compose files once so backend/frontend
@@ -21,16 +25,19 @@ Usage:
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target aoy
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target lanboon
   NX_PASS=... python scripts/deploy_nextstep_instances.py --ref d52de63
+  python scripts/deploy_nextstep_instances.py --list-targets
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 
 DEFAULT_HOST = "10.121.20.83"
@@ -41,6 +48,8 @@ RELEASE_DIR = f"{SERVER_ROOT}/nexflow-release"
 BACKUP_DIR = f"{SERVER_ROOT}/nexflow-backups"
 EDGE_DIR = f"{SERVER_ROOT}/nexflow-edge"
 EDGE_PORT = 6323
+ROOT = Path(__file__).resolve().parents[1]
+REGISTRY_PATH = ROOT / "deploy" / "nextstep-instances.json"
 
 
 @dataclass(frozen=True)
@@ -51,51 +60,68 @@ class Target:
     frontend_debug_port: int
     previous_frontend_port: int
     backend_port: int
+    postgres_port: int
     postgres_container: str
     backend_container: str
+    frontend_container: str
     public_url: str
-
-
-TARGETS: dict[str, Target] = {
-    "demo": Target(
-        name="demo",
-        remote=f"{SERVER_ROOT}/nexflow",
-        hostname="nexflow.nextstep-soft.com",
-        frontend_debug_port=16323,
-        previous_frontend_port=6323,
-        backend_port=8110,
-        postgres_container="nexflow-postgres",
-        backend_container="nexflow-backend",
-        public_url="https://nexflow.nextstep-soft.com",
-    ),
-    "aoy": Target(
-        name="aoy",
-        remote=f"{SERVER_ROOT}/nexflow-aoy",
-        hostname="nexflow-aoy.nextstep-soft.com",
-        frontend_debug_port=16324,
-        previous_frontend_port=6324,
-        backend_port=8111,
-        postgres_container="nexflow-aoy-postgres",
-        backend_container="nexflow-aoy-backend",
-        public_url="https://nexflow-aoy.nextstep-soft.com",
-    ),
-    "lanboon": Target(
-        name="lanboon",
-        remote=f"{SERVER_ROOT}/nexflow-lanboon",
-        hostname="nextflow-lanboon.nextstep-soft.com",
-        frontend_debug_port=16325,
-        previous_frontend_port=6325,
-        backend_port=8112,
-        postgres_container="nexflow-lanboon-postgres",
-        backend_container="nexflow-lanboon-backend",
-        public_url="https://nextflow-lanboon.nextstep-soft.com",
-    ),
-}
+    folder: str
+    sml_tenant: str
 
 
 def fail(message: str) -> None:
     print(f"ERROR: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def load_targets(registry_path: Path = REGISTRY_PATH) -> dict[str, Target]:
+    raw = json.loads(registry_path.read_text())
+    targets: dict[str, Target] = {}
+    seen_values: dict[str, set[str | int]] = {
+        "name": set(),
+        "hostname": set(),
+        "backend_port": set(),
+        "postgres_port": set(),
+        "frontend_debug_port": set(),
+        "folder": set(),
+    }
+    for item in raw.get("instances", []):
+        name = str(item["name"]).strip()
+        folder = str(item["folder"]).strip()
+        target = Target(
+            name=name,
+            folder=folder,
+            remote=f"{SERVER_ROOT}/{folder}",
+            hostname=str(item["hostname"]).strip(),
+            frontend_debug_port=int(item["frontend_debug_port"]),
+            previous_frontend_port=int(item.get("previous_frontend_port", item["frontend_debug_port"])),
+            backend_port=int(item["backend_port"]),
+            postgres_port=int(item["postgres_port"]),
+            postgres_container=str(item["postgres_container"]).strip(),
+            backend_container=str(item["backend_container"]).strip(),
+            frontend_container=str(item["frontend_container"]).strip(),
+            public_url=str(item.get("public_url") or f"https://{item['hostname']}").strip(),
+            sml_tenant=str(item["sml_tenant"]).strip(),
+        )
+        values = {
+            "name": target.name,
+            "hostname": target.hostname,
+            "backend_port": target.backend_port,
+            "postgres_port": target.postgres_port,
+            "frontend_debug_port": target.frontend_debug_port,
+            "folder": target.folder,
+        }
+        for key, value in values.items():
+            if value in seen_values[key]:
+                fail(f"duplicate {key} in {registry_path}: {value}")
+            seen_values[key].add(value)
+        targets[target.name] = target
+    if not targets:
+        fail(f"no instances found in {registry_path}")
+    return targets
+
+
+TARGETS: dict[str, Target] = load_targets()
 
 
 def require_tool(name: str) -> None:
@@ -224,12 +250,109 @@ PY
     sudo(script, label=f"ensure instance compose {target.name}", timeout=60)
 
 
+def edge_network_name(target: Target) -> str:
+    return f"{target.folder}_default"
+
+
+def render_edge_nginx(targets: dict[str, Target] | None = None) -> str:
+    targets = targets or TARGETS
+    parts = [
+        "server {",
+        "    listen 80 default_server;",
+        "    server_name _;",
+        "    return 444;",
+        "}",
+        "",
+    ]
+    for target in targets.values():
+        parts.extend(
+            [
+                "server {",
+                "    listen 80;",
+                f"    server_name {target.hostname};",
+                "",
+                "    location = /api/admin/events {",
+                f"        proxy_pass http://{target.backend_container}:8090;",
+                "        proxy_http_version 1.1;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                '        proxy_set_header Connection "";',
+                "        proxy_buffering off;",
+                "        proxy_cache off;",
+                "        proxy_read_timeout 1h;",
+                "        proxy_send_timeout 1h;",
+                '        add_header X-Accel-Buffering "no" always;',
+                "    }",
+                "",
+                "    location /api/ {",
+                f"        proxy_pass http://{target.backend_container}:8090;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "",
+                "    location /webhook/ {",
+                f"        proxy_pass http://{target.backend_container}:8090;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "",
+                "    location /health {",
+                f"        proxy_pass http://{target.backend_container}:8090;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "",
+                "    location / {",
+                f"        proxy_pass http://{target.frontend_container}:80;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "}",
+                "",
+            ]
+        )
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def render_edge_compose(targets: dict[str, Target] | None = None) -> str:
+    targets = targets or TARGETS
+    network_lines = "\n".join(f"      - {edge_network_name(target)}" for target in targets.values())
+    external_lines = "\n".join(
+        f"  {edge_network_name(target)}:\n    external: true" for target in targets.values()
+    )
+    return f"""services:
+  edge:
+    image: nginx:1.27-alpine
+    container_name: nexflow-edge
+    ports:
+      - "${{EDGE_BIND:-6323:80}}"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+{network_lines}
+    restart: unless-stopped
+
+networks:
+{external_lines}
+"""
+
+
 def ensure_edge_config() -> None:
     sudo(
         "set -euo pipefail; "
         f"mkdir -p {shlex.quote(EDGE_DIR)}; "
-        f"cp -f {shlex.quote(RELEASE_DIR)}/deploy/nextstep-edge/docker-compose.yml {shlex.quote(EDGE_DIR)}/docker-compose.yml; "
-        f"cp -f {shlex.quote(RELEASE_DIR)}/deploy/nextstep-edge/nginx.conf {shlex.quote(EDGE_DIR)}/nginx.conf; "
+        f"python3 {shlex.quote(RELEASE_DIR)}/scripts/deploy_nextstep_instances.py --print-edge-compose > {shlex.quote(EDGE_DIR)}/docker-compose.yml; "
+        f"python3 {shlex.quote(RELEASE_DIR)}/scripts/deploy_nextstep_instances.py --print-edge-nginx > {shlex.quote(EDGE_DIR)}/nginx.conf; "
         f"touch {shlex.quote(EDGE_DIR)}/.env; "
         f"grep -q '^EDGE_BIND=' {shlex.quote(EDGE_DIR)}/.env "
         f"&& sed -i 's#^EDGE_BIND=.*#EDGE_BIND={EDGE_PORT}:80#' {shlex.quote(EDGE_DIR)}/.env "
@@ -334,12 +457,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Deploy Nexflow to NextStep production instances from server Git")
     parser.add_argument("--target", choices=["all", *TARGETS.keys()], default="all")
     parser.add_argument("--ref", default="origin/main", help="server git ref to deploy, default origin/main")
+    parser.add_argument("--print-edge-nginx", action="store_true", help="render edge nginx.conf from registry and exit")
+    parser.add_argument("--print-edge-compose", action="store_true", help="render edge docker-compose.yml from registry and exit")
+    parser.add_argument("--list-targets", action="store_true", help="list deploy targets from registry and exit")
     return parser.parse_args()
 
 
 def main() -> None:
-    require_tool("sshpass")
     args = parse_args()
+    if args.print_edge_nginx:
+        print(render_edge_nginx(), end="")
+        return
+    if args.print_edge_compose:
+        print(render_edge_compose(), end="")
+        return
+    if args.list_targets:
+        for target in TARGETS.values():
+            print(f"{target.name}\t{target.hostname}\t{target.remote}\t{target.sml_tenant}")
+        return
+
+    require_tool("sshpass")
     selected = list(TARGETS.values()) if args.target == "all" else [TARGETS[args.target]]
     deployed_commit = ensure_release_clone(args.ref)
     print(f"Deploying commit: {deployed_commit}")
