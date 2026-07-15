@@ -50,7 +50,7 @@ shopee_sml_cancellations       -- Shopee cancelled-after-SML CN tracking
 line_notification_deliveries   -- LINE notification outbox with Flex payload fallback
 ```
 
-Migrations: **001–071** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–072** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -114,7 +114,9 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 13. **Shopee payment breakdown** — `shopee_order_payment_snapshots` is populated by worker/manual refresh from `get_escrow_detail`. Page render and LINE worker must read cached snapshots only, never call Shopee live APIs inline.
 
-14. **Shopee Open Platform per customer** — production default is `1 Nexflow instance = 1 Shopee Open Platform App = 1 customer/shop`. The existing `Nexflow` app / Partner ID `2034838` is demo or temporary fallback only because Shopee Console has one live redirect domain and one live push callback per app. Use `scripts/shopee-live-cutover.py --target <instance>` with hidden prompts for Partner Key / Push Partner Key, and do not cut over until the customer app is Online, OAuth works, token/sync are OK, and push smoke passes.
+14. **Central Shopee gateway** — production target is `nexflow-shopee-gateway` at `shopee-gateway.nextstep-soft.com`. Gateway mode stores Partner Key and encrypted access/refresh tokens only in the gateway DB. Tenant `.env` uses `SHOPEE_OPEN_API_MODE=gateway` plus derived HMAC credentials; direct mode remains rollback. Push is authenticated/deduped centrally and tenant reconciliation still fetches order detail as source of truth. See `docs/shopee-gateway-runbook.md`.
+
+15. **Shopee direct mode is rollback only** — do not create a new Shopee Open Platform App for each customer. The old per-customer cutover helper and direct Partner credentials are retained only for an explicit rollback while gateway rollout is incomplete.
 
 ---
 
@@ -128,6 +130,7 @@ NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target gateway
 ```
 
 Adding the next customer instance uses the registry helper first:

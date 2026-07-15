@@ -8,6 +8,7 @@ Production layout:
 - aoy:           /mnt/data/nextstep-node-2/nexflow-aoy      frontend edge, backend 8111
 - lanboon:       /mnt/data/nextstep-node-2/nexflow-lanboon  frontend edge, backend 8112
 - edge:          /mnt/data/nextstep-node-2/nexflow-edge public 6323
+- Shopee gateway:/mnt/data/nextstep-node-2/nexflow-shopee-gateway
 
 Instance definitions live in deploy/nextstep-instances.json. Use
 scripts/nextstep_instance_registry.py to add future customers and render edge
@@ -24,6 +25,7 @@ Usage:
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target demo
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target aoy
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target lanboon
+  NX_PASS=... python scripts/deploy_nextstep_instances.py --target gateway
   NX_PASS=... python scripts/deploy_nextstep_instances.py --ref d52de63
   python scripts/deploy_nextstep_instances.py --list-targets
 """
@@ -47,6 +49,11 @@ SERVER_ROOT = "/mnt/data/nextstep-node-2"
 RELEASE_DIR = f"{SERVER_ROOT}/nexflow-release"
 BACKUP_DIR = f"{SERVER_ROOT}/nexflow-backups"
 EDGE_DIR = f"{SERVER_ROOT}/nexflow-edge"
+GATEWAY_DIR = f"{SERVER_ROOT}/nexflow-shopee-gateway"
+GATEWAY_HOSTNAME = "shopee-gateway.nextstep-soft.com"
+GATEWAY_CONTAINER = "nexflow-shopee-gateway"
+GATEWAY_POSTGRES_CONTAINER = "nexflow-shopee-gateway-postgres"
+GATEWAY_NETWORK = "nexflow-shopee-gateway_default"
 EDGE_PORT = 6323
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = ROOT / "deploy" / "nextstep-instances.json"
@@ -321,15 +328,51 @@ def render_edge_nginx(targets: dict[str, Target] | None = None) -> str:
                 "",
             ]
         )
+    parts.extend(
+        [
+            "server {",
+            "    listen 80;",
+            f"    server_name {GATEWAY_HOSTNAME};",
+            "",
+            "    location /internal/ { return 404; }",
+            "",
+            "    location = /health {",
+            f"        proxy_pass http://{GATEWAY_CONTAINER}:8091;",
+            "        proxy_set_header Host $host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Forwarded-Proto $scheme;",
+            "    }",
+            "",
+            "    location = /api/shopee/callback {",
+            f"        proxy_pass http://{GATEWAY_CONTAINER}:8091;",
+            "        proxy_set_header Host $host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Forwarded-Proto $scheme;",
+            "    }",
+            "",
+            "    location = /webhook/shopee {",
+            f"        proxy_pass http://{GATEWAY_CONTAINER}:8091;",
+            "        proxy_set_header Host $host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Forwarded-Proto $scheme;",
+            "    }",
+            "",
+            "    location / { return 404; }",
+            "}",
+            "",
+        ]
+    )
     return "\n".join(parts).rstrip() + "\n"
 
 
 def render_edge_compose(targets: dict[str, Target] | None = None) -> str:
     targets = targets or TARGETS
-    network_lines = "\n".join(f"      - {edge_network_name(target)}" for target in targets.values())
-    external_lines = "\n".join(
-        f"  {edge_network_name(target)}:\n    external: true" for target in targets.values()
-    )
+    networks = [*(edge_network_name(target) for target in targets.values()), GATEWAY_NETWORK]
+    network_lines = "\n".join(f"      - {network}" for network in networks)
+    external_lines = "\n".join(f"  {network}:\n    external: true" for network in networks)
     return f"""services:
   edge:
     image: nginx:1.27-alpine
@@ -392,6 +435,20 @@ def smoke_edge(targets: list[Target]) -> None:
         label="edge unknown host status",
         timeout=30,
     )
+    gateway_health = ssh(
+        f"curl -s -m 10 -H 'Host: {GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/health",
+        label="edge health Shopee gateway",
+        timeout=30,
+    )
+    if '"status":"ok"' not in gateway_health:
+        fail("Shopee gateway edge health check failed")
+    internal_status = ssh(
+        f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Host: {GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/internal/v1/shopee/execute",
+        label="edge blocks Shopee gateway internal API",
+        timeout=30,
+    )
+    if internal_status.strip() != "404":
+        fail(f"Shopee gateway internal API is publicly reachable: {internal_status!r}")
 
 
 def backup_target(target: Target) -> None:
@@ -407,6 +464,75 @@ def backup_target(target: Target) -> None:
         label=f"backup {target.name}",
         timeout=300,
     )
+
+
+def ensure_gateway_runtime() -> None:
+    script = f"""
+set -euo pipefail
+mkdir -p {shlex.quote(GATEWAY_DIR)}
+if [ -f {shlex.quote(GATEWAY_DIR)}/docker-compose.yml ]; then
+  cp -p {shlex.quote(GATEWAY_DIR)}/docker-compose.yml {shlex.quote(GATEWAY_DIR)}/docker-compose.yml.bak.$(date +%Y%m%d-%H%M%S)
+fi
+cp {shlex.quote(RELEASE_DIR)}/deploy/shopee-gateway/docker-compose.yml {shlex.quote(GATEWAY_DIR)}/docker-compose.yml
+test -f {shlex.quote(GATEWAY_DIR)}/.env || {{
+  echo 'Missing {GATEWAY_DIR}/.env. Provision gateway secrets before deploy.' >&2
+  exit 1
+}}
+chmod 600 {shlex.quote(GATEWAY_DIR)}/.env
+cd {shlex.quote(GATEWAY_DIR)}
+docker compose config >/dev/null
+"""
+    sudo(script, label="ensure Shopee gateway runtime", timeout=60)
+
+
+def backup_gateway() -> None:
+    script = f"""
+set -euo pipefail
+ts=$(date +%Y%m%d-%H%M%S)
+mkdir -p {shlex.quote(BACKUP_DIR)}/gateway
+cp -p {shlex.quote(GATEWAY_DIR)}/.env {shlex.quote(BACKUP_DIR)}/gateway/.env.bak.$ts
+if docker inspect {shlex.quote(GATEWAY_POSTGRES_CONTAINER)} >/dev/null 2>&1; then
+  docker exec {shlex.quote(GATEWAY_POSTGRES_CONTAINER)} pg_dump -U nexflow_gateway -d nexflow_shopee_gateway \
+    | gzip > {shlex.quote(BACKUP_DIR)}/gateway/pre-deploy-$ts.sql.gz
+fi
+"""
+    sudo(script, label="backup Shopee gateway", timeout=300)
+
+
+def deploy_gateway() -> None:
+    ensure_gateway_runtime()
+    backup_gateway()
+    sudo(
+        f"cd {shlex.quote(GATEWAY_DIR)} && docker compose up -d --build",
+        label="docker up Shopee gateway",
+        timeout=1200,
+    )
+    health = sudo(
+        f"docker run --rm --network {shlex.quote(GATEWAY_NETWORK)} curlimages/curl:8.12.1 -fsS http://{shlex.quote(GATEWAY_CONTAINER)}:8091/health",
+        label="Shopee gateway internal health",
+        timeout=60,
+    )
+    if '"status":"ok"' not in health:
+        sudo(f"docker logs {shlex.quote(GATEWAY_CONTAINER)} --tail=150", label="Shopee gateway logs", timeout=30)
+        fail("Shopee gateway health check failed")
+
+
+def connect_target_to_gateway(target: Target) -> None:
+    script = f"""
+set -euo pipefail
+mode=$(sed -n 's/^SHOPEE_OPEN_API_MODE=//p' {shlex.quote(target.remote)}/.env | tail -n 1)
+if ! docker network inspect {shlex.quote(GATEWAY_NETWORK)} >/dev/null 2>&1; then
+  if [ "$mode" = "gateway" ]; then
+    echo 'Shopee gateway network is missing for a gateway-mode tenant' >&2
+    exit 1
+  fi
+  exit 0
+fi
+if ! docker inspect {shlex.quote(target.backend_container)} --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{GATEWAY_NETWORK}"'; then
+  docker network connect {shlex.quote(GATEWAY_NETWORK)} {shlex.quote(target.backend_container)}
+fi
+"""
+    sudo(script, label=f"connect {target.name} backend to Shopee gateway network", timeout=30)
 
 
 def deploy_target(target: Target) -> None:
@@ -427,6 +553,7 @@ def deploy_target(target: Target) -> None:
         label=f"docker up {target.name}",
         timeout=1200,
     )
+    connect_target_to_gateway(target)
     health = ssh(
         f"curl -s -m 10 http://localhost:{target.backend_port}/health",
         label=f"backend health {target.name}",
@@ -455,7 +582,7 @@ def deploy_target(target: Target) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Deploy Nexflow to NextStep production instances from server Git")
-    parser.add_argument("--target", choices=["all", *TARGETS.keys()], default="all")
+    parser.add_argument("--target", choices=["all", "gateway", *TARGETS.keys()], default="all")
     parser.add_argument("--ref", default="origin/main", help="server git ref to deploy, default origin/main")
     parser.add_argument("--print-edge-nginx", action="store_true", help="render edge nginx.conf from registry and exit")
     parser.add_argument("--print-edge-compose", action="store_true", help="render edge docker-compose.yml from registry and exit")
@@ -472,14 +599,17 @@ def main() -> None:
         print(render_edge_compose(), end="")
         return
     if args.list_targets:
+        print(f"gateway\t{GATEWAY_HOSTNAME}\t{GATEWAY_DIR}\t-")
         for target in TARGETS.values():
             print(f"{target.name}\t{target.hostname}\t{target.remote}\t{target.sml_tenant}")
         return
 
     require_tool("sshpass")
-    selected = list(TARGETS.values()) if args.target == "all" else [TARGETS[args.target]]
+    selected = list(TARGETS.values()) if args.target == "all" else ([] if args.target == "gateway" else [TARGETS[args.target]])
     deployed_commit = ensure_release_clone(args.ref)
     print(f"Deploying commit: {deployed_commit}")
+    if args.target in {"all", "gateway"}:
+        deploy_gateway()
     for target in selected:
         deploy_target(target)
     ensure_edge_config()

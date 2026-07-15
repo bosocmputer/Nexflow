@@ -1,7 +1,8 @@
-# Shopee Open API Live Cutover
+# Shopee Open API Direct-Mode Rollback (Legacy)
 
 > Updated: 2026-07-15
-> Goal: operate Nexflow Shopee Open API in live mode per customer instance while keeping Excel import and the previous app config as rollback.
+> The production default is now the central Shopee gateway. This document is
+> retained only for direct-mode rollback. See `docs/shopee-gateway-runbook.md`.
 
 ## Current State
 
@@ -12,9 +13,10 @@
   - demo: `https://nexflow.nextstep-soft.com`
   - AOY: `https://nexflow-aoy.nextstep-soft.com`
   - Lanboon: `https://nextflow-lanboon.nextstep-soft.com`
-- Production rule: `1 Nexflow instance = 1 Shopee Open Platform App = 1 customer/shop`.
-- Shopee Console stores one live redirect domain and one live push callback per app. Do not put multiple customer domains on the same Shopee app unless Nexflow later adds a central OAuth/webhook broker.
-- AOY currently works on the shared app as a fallback. Do not cut it over until the dedicated AOY app is `Online`, OAuth succeeds, token is OK, latest sync is OK, and order preview works.
+- Production rule: one central Shopee Open Platform App routes shops to isolated
+  Nexflow tenants through `nexflow-shopee-gateway`.
+- Shopee Console stores one live redirect domain and one live push callback per app. Nexflow now routes those central callbacks through `nexflow-shopee-gateway`; tenant domains must not be entered into the central Shopee App.
+- AOY currently works on the shared direct app as a fallback. Keep it in direct mode until the central gateway canary passes OAuth, token, latest sync, order preview, and real push checks.
 - Nexflow has OAuth callback, token tables, preview-only import, readiness status, multi-shop connection management, user-facing error UX, Shopee API preview hardening, realtime operations, and push webhook handling deployed.
 - Current shared-app IP whitelist includes `58.136.190.202` and the observed Shopee-reported source IP `210.1.1.52`.
 - Shopee live OAuth has been observed returning `code` and `shop_id` without `state`. Nexflow now allows a guarded fallback only when exactly one unconsumed, unexpired OAuth state exists for the current live environment and redirect URL.
