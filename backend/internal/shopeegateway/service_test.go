@@ -212,6 +212,52 @@ func TestServiceExecuteUsesGatewayOwnedAccessToken(t *testing.T) {
 	}
 }
 
+func TestServiceRefreshesExpiringTokenAndQueuesMetadata(t *testing.T) {
+	var refreshRequests atomic.Int32
+	shopee := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != shopeeapi.PathAccessTokenGet {
+			http.NotFound(w, r)
+			return
+		}
+		refreshRequests.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "rotated-access-token",
+			"refresh_token": "rotated-refresh-token",
+			"expire_in":     14400,
+			"shop_id":       123,
+		})
+	}))
+	defer shopee.Close()
+
+	service := newGatewayTestService(t, shopee.URL)
+	now := time.Unix(1784070000, 0)
+	service.now = func() time.Time { return now }
+	accessCipher, accessNonce, _ := service.cipher.Encrypt("old-access-token", tokenAAD("aoy", 123, "access"))
+	refreshCipher, refreshNonce, _ := service.cipher.Encrypt("old-refresh-token", tokenAAD("aoy", 123, "refresh"))
+	store := service.store.(*fakeGatewayStore)
+	store.connection = EncryptedConnection{
+		ID: "conn-1", TenantID: store.tenant.ID, TenantSlug: "aoy", ShopID: 123, Environment: "live",
+		AccessTokenCipher: accessCipher, AccessTokenNonce: accessNonce,
+		RefreshTokenCipher: refreshCipher, RefreshTokenNonce: refreshNonce,
+		AccessExpiresAt: now.Add(5 * time.Minute), RefreshExpiresAt: now.Add(24 * time.Hour),
+	}
+
+	conn, token, err := service.accessToken(t.Context(), "aoy", 123, false)
+	if err != nil {
+		t.Fatalf("accessToken() error = %v", err)
+	}
+	if token != "rotated-access-token" || conn.AccessExpiresAt.Before(now.Add(3*time.Hour)) {
+		t.Fatalf("token=%q expires=%s", token, conn.AccessExpiresAt)
+	}
+	if refreshRequests.Load() != 1 || store.updateCount != 1 || len(store.deliveries) != 1 {
+		t.Fatalf("refresh_requests=%d updates=%d deliveries=%d", refreshRequests.Load(), store.updateCount, len(store.deliveries))
+	}
+	storedRefresh, err := service.cipher.Decrypt(store.connection.RefreshTokenCipher, store.connection.RefreshTokenNonce, tokenAAD("aoy", 123, "refresh"))
+	if err != nil || storedRefresh != "rotated-refresh-token" {
+		t.Fatalf("stored refresh token=%q error=%v", storedRefresh, err)
+	}
+}
+
 func TestServiceRejectsMissingOAuthStateWithoutFallback(t *testing.T) {
 	store := &fakeGatewayStore{tenant: Tenant{ID: "tenant-1", Slug: "aoy", Enabled: true}}
 	cfg := testGatewayConfig("https://partner.shopeemobile.com")
@@ -224,6 +270,44 @@ func TestServiceRejectsMissingOAuthStateWithoutFallback(t *testing.T) {
 	var serviceErr *ServiceError
 	if !errors.As(err, &serviceErr) || serviceErr.Code != "invalid_oauth_callback" {
 		t.Fatalf("CompleteOAuth() error = %#v", err)
+	}
+}
+
+func TestServiceRejectsOAuthTokenForDifferentShop(t *testing.T) {
+	shopee := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case shopeeapi.PathTokenGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token": "access", "refresh_token": "refresh", "expire_in": 14400, "shop_id": 999,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer shopee.Close()
+
+	store := &fakeGatewayStore{tenant: Tenant{
+		ID: "11111111-1111-1111-1111-111111111111", Slug: "aoy", Enabled: true,
+		PublicBaseURL: "https://nexflow-aoy.nextstep-soft.com",
+	}}
+	cfg := testGatewayConfig(shopee.URL)
+	provider := shopeeapi.New(shopeeapi.Config{BaseURL: shopee.URL, PartnerID: cfg.ShopeePartnerID, PartnerKey: cfg.ShopeePartnerKey})
+	service, err := NewService(cfg, store, provider, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	service.now = func() time.Time { return time.Unix(1784070000, 0) }
+	auth, err := service.CreateAuthURL(t.Context(), "aoy", "user-1", "https://nexflow-aoy.nextstep-soft.com/settings/shopee-connections")
+	if err != nil {
+		t.Fatalf("CreateAuthURL() error = %v", err)
+	}
+	_, err = service.CompleteOAuth(t.Context(), "code", queryValue(t, auth.AuthURL, "state"), 123)
+	var serviceErr *ServiceError
+	if !errors.As(err, &serviceErr) || serviceErr.Code != "token_shop_mismatch" {
+		t.Fatalf("CompleteOAuth() error = %#v", err)
+	}
+	if store.connection.ShopID != 0 || len(store.deliveries) != 0 {
+		t.Fatalf("mismatched shop was stored: connection=%+v deliveries=%d", store.connection, len(store.deliveries))
 	}
 }
 

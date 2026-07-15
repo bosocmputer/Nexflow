@@ -177,6 +177,12 @@ func (s *Service) CompleteOAuth(ctx context.Context, code, state string, callbac
 	if err != nil {
 		return nil, serviceError("token_exchange_failed", "แลก Shopee token ไม่สำเร็จ", 502, isRetryableShopeeError(err), err)
 	}
+	if token == nil || strings.TrimSpace(token.AccessToken) == "" || strings.TrimSpace(token.RefreshToken) == "" {
+		return nil, serviceError("invalid_token_response", "Shopee ส่งข้อมูล token ไม่ครบ กรุณาเชื่อมร้านใหม่", 502, false, nil)
+	}
+	if token.ShopID > 0 && token.ShopID != callbackShopID {
+		return nil, serviceError("token_shop_mismatch", "ร้าน Shopee ใน token ไม่ตรงกับ OAuth callback", 409, false, nil)
+	}
 	shopID := callbackShopID
 	if token.ShopID > 0 {
 		shopID = token.ShopID
@@ -440,16 +446,23 @@ func (s *Service) accessToken(ctx context.Context, tenantSlug string, shopID int
 	if err != nil {
 		return nil, "", serviceError("token_refresh_failed", "ต่ออายุ Shopee token ไม่สำเร็จ", 502, isRetryableShopeeError(err), err)
 	}
+	if token == nil || strings.TrimSpace(token.AccessToken) == "" {
+		return nil, "", serviceError("invalid_token_response", "Shopee ส่ง access token ใหม่ไม่ครบ", 502, false, nil)
+	}
 	conn.AccessExpiresAt = s.now().Add(time.Duration(token.ExpireIn) * time.Second)
 	if token.ExpireIn <= 0 {
 		conn.AccessExpiresAt = s.now().Add(4 * time.Hour)
 	}
-	conn.RefreshExpiresAt = s.now().Add(refreshTokenTTL)
+	rotatedRefreshToken := strings.TrimSpace(token.RefreshToken)
+	if rotatedRefreshToken != "" {
+		refreshToken = rotatedRefreshToken
+		conn.RefreshExpiresAt = s.now().Add(refreshTokenTTL)
+	}
 	conn.AccessTokenCipher, conn.AccessTokenNonce, err = s.cipher.Encrypt(token.AccessToken, tokenAAD(conn.TenantSlug, conn.ShopID, "access"))
 	if err != nil {
 		return nil, "", serviceError("token_encryption_failed", "เข้ารหัส Shopee token ไม่สำเร็จ", 500, false, err)
 	}
-	conn.RefreshTokenCipher, conn.RefreshTokenNonce, err = s.cipher.Encrypt(token.RefreshToken, tokenAAD(conn.TenantSlug, conn.ShopID, "refresh"))
+	conn.RefreshTokenCipher, conn.RefreshTokenNonce, err = s.cipher.Encrypt(refreshToken, tokenAAD(conn.TenantSlug, conn.ShopID, "refresh"))
 	if err != nil {
 		return nil, "", serviceError("token_encryption_failed", "เข้ารหัส Shopee token ไม่สำเร็จ", 500, false, err)
 	}
