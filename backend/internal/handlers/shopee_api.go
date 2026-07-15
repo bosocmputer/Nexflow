@@ -48,6 +48,7 @@ type ShopeeAPIReadinessCheck struct {
 }
 
 type ShopeeAPIStatus struct {
+	Mode             string                    `json:"mode"`
 	Enabled          bool                      `json:"enabled"`
 	Configured       bool                      `json:"configured"`
 	Environment      string                    `json:"environment"`
@@ -279,6 +280,18 @@ func (h *ShopeeImportHandler) CreateAPIAuthURL(c *gin.Context) {
 		})
 		return
 	}
+	if h.shopeeGatewayMode() {
+		returnURL := strings.TrimRight(strings.TrimSpace(h.cfg.PublicBaseURL), "/") + "/settings/shopee-connections"
+		response, err := h.shopeeGatewayClient().CreateAuthURL(c.Request.Context(), shopeeapi.GatewayAuthURLRequest{
+			UserID: userID, ReturnURL: returnURL,
+		})
+		if err != nil {
+			respondShopeeAPIError(c, http.StatusBadGateway, err, "สร้างลิงก์ Shopee OAuth ผ่าน gateway ไม่สำเร็จ")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"auth_url": response.AuthURL, "redirect_url": response.RedirectURL})
+		return
+	}
 	if err := h.expirePendingShopeeOAuthStates(c.Request.Context(), userID, status.Environment, redirectURL); err != nil {
 		h.logger.Warn("shopee_api: expire pending oauth states failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "เตรียม OAuth state ไม่ได้"})
@@ -372,6 +385,10 @@ func shopeeOAuthUserStatusMessage(status string) string {
 
 // APICallback exchanges Shopee's one-time auth code for access/refresh tokens.
 func (h *ShopeeImportHandler) APICallback(c *gin.Context) {
+	if h.shopeeGatewayMode() {
+		h.renderShopeeCallback(c, http.StatusBadRequest, "เชื่อมต่อ Shopee ไม่สำเร็จ", "Gateway mode ต้องรับ callback ที่ Shopee Gateway กรุณากลับไปกดเชื่อมต่อใหม่")
+		return
+	}
 	code := strings.TrimSpace(c.Query("code"))
 	state := strings.TrimSpace(c.Query("state"))
 	shopID, _ := strconv.ParseInt(strings.TrimSpace(c.Query("shop_id")), 10, 64)
@@ -666,7 +683,8 @@ func (h *ShopeeImportHandler) shopeeAPIStatus() ShopeeAPIStatus {
 	if env == "" {
 		env = "sandbox"
 	}
-	return ShopeeAPIStatus{
+	status := ShopeeAPIStatus{
+		Mode:        "direct",
 		Enabled:     h.cfg.ShopeeOpenAPIEnabled,
 		Configured:  h.cfg.ShopeeOpenAPIPartnerID > 0 && strings.TrimSpace(h.cfg.ShopeeOpenAPIPartnerKey) != "",
 		Environment: env,
@@ -674,6 +692,13 @@ func (h *ShopeeImportHandler) shopeeAPIStatus() ShopeeAPIStatus {
 		PartnerID:   h.cfg.ShopeeOpenAPIPartnerID,
 		RedirectURL: h.shopeeAPIRedirectURL(),
 	}
+	if h.shopeeGatewayMode() {
+		status.Mode = "gateway"
+		status.Configured = h.shopeeGatewayClient().Configured() && strings.TrimSpace(h.cfg.ShopeeGatewayPublicURL) != ""
+		status.BaseURL = h.cfg.ShopeeGatewayPublicURL
+		status.PartnerID = 0
+	}
+	return status
 }
 
 func (s *ShopeeAPIStatus) finalizeReadiness(now time.Time) {
@@ -700,13 +725,24 @@ func (s *ShopeeAPIStatus) finalizeReadiness(now time.Time) {
 	}
 
 	add("enabled", "เปิด Shopee Open API บน server", s.Enabled, "ตั้งค่า SHOPEE_OPEN_API_ENABLED=true")
-	add("partner_key", "ตั้งค่า Partner ID / Key", s.Configured, "ใส่ Partner ID และ Partner Key ให้ครบใน server env")
+	credentialLabel := "ตั้งค่า Partner ID / Key"
+	credentialDetail := "ใส่ Partner ID และ Partner Key ให้ครบใน server env"
+	if s.Mode == "gateway" {
+		credentialLabel = "เชื่อมต่อ Shopee Gateway"
+		credentialDetail = "ตั้งค่า gateway URL, tenant และ internal secret ให้ครบ"
+	}
+	add("partner_key", credentialLabel, s.Configured, credentialDetail)
 
 	redirectOK, redirectDetail := shopeeRedirectReady(s.RedirectURL)
 	add("redirect_url", "Redirect URL พร้อมใช้งาน", redirectOK, redirectDetail)
 
 	baseOK, baseDetail := shopeeBaseURLMatchesEnvironment(s.Environment, s.BaseURL)
-	add("base_url", "Base URL ตรงกับ sandbox/live", baseOK, baseDetail)
+	baseLabel := "Base URL ตรงกับ sandbox/live"
+	if s.Mode == "gateway" {
+		baseOK, baseDetail = httpsURLReady(s.BaseURL)
+		baseLabel = "Shopee Gateway URL พร้อมใช้งาน"
+	}
+	add("base_url", baseLabel, baseOK, baseDetail)
 
 	if strings.EqualFold(s.Environment, "live") {
 		s.Checks = append(s.Checks, ShopeeAPIReadinessCheck{
@@ -792,10 +828,18 @@ func shopeeRedirectReady(raw string) (bool, string) {
 	if u.Scheme != "https" {
 		return false, "Shopee OAuth ต้องใช้ HTTPS redirect URL"
 	}
-	if !strings.HasSuffix(u.Path, "/api/shopee-api/callback") {
-		return false, "Redirect URL ต้องชี้ไปที่ /api/shopee-api/callback"
+	if !strings.HasSuffix(u.Path, "/api/shopee-api/callback") && !strings.HasSuffix(u.Path, "/api/shopee/callback") {
+		return false, "Redirect URL ต้องชี้ไปที่ Shopee OAuth callback"
 	}
 	return true, "Redirect URL พร้อม"
+}
+
+func httpsURLReady(raw string) (bool, string) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return false, "Shopee Gateway public URL ต้องเป็น HTTPS"
+	}
+	return true, "Gateway URL พร้อม"
 }
 
 func shopeeBaseURLMatchesEnvironment(env, raw string) (bool, string) {
@@ -875,7 +919,10 @@ func shopeeAPIErrorMessage(err error, fallback string) shopeeAPIErrorView {
 	return shopeeAPIErrorView{Code: "unknown", Message: raw}
 }
 
-func (h *ShopeeImportHandler) shopeeAPIClient() *shopeeapi.Client {
+func (h *ShopeeImportHandler) shopeeAPIClient() shopeeapi.APIClient {
+	if h.shopeeGatewayMode() {
+		return h.shopeeGatewayClient()
+	}
 	baseURL := h.cfg.ShopeeOpenAPIBaseURL
 	if strings.TrimSpace(baseURL) == "" {
 		if strings.EqualFold(h.cfg.ShopeeOpenAPIEnv, "live") {
@@ -891,7 +938,27 @@ func (h *ShopeeImportHandler) shopeeAPIClient() *shopeeapi.Client {
 	})
 }
 
+func (h *ShopeeImportHandler) shopeeGatewayMode() bool {
+	return h != nil && h.cfg != nil && strings.EqualFold(strings.TrimSpace(h.cfg.ShopeeOpenAPIMode), "gateway")
+}
+
+func (h *ShopeeImportHandler) shopeeGatewayClient() *shopeeapi.GatewayClient {
+	return shopeeapi.NewGateway(shopeeapi.GatewayConfig{
+		BaseURL:      h.cfg.ShopeeGatewayBaseURL,
+		Tenant:       h.cfg.ShopeeGatewayTenant,
+		SharedSecret: h.cfg.ShopeeGatewayInternalSecret,
+		HTTPClient:   &http.Client{Timeout: 35 * time.Second},
+	})
+}
+
 func (h *ShopeeImportHandler) shopeeAPIRedirectURL() string {
+	if h.shopeeGatewayMode() {
+		base := strings.TrimRight(strings.TrimSpace(h.cfg.ShopeeGatewayPublicURL), "/")
+		if base == "" {
+			return ""
+		}
+		return base + "/api/shopee/callback"
+	}
 	if strings.TrimSpace(h.cfg.ShopeeOpenAPIRedirect) != "" {
 		return strings.TrimSpace(h.cfg.ShopeeOpenAPIRedirect)
 	}
@@ -973,8 +1040,12 @@ func (h *ShopeeImportHandler) getShopeeAPIConnection(ctx context.Context) (*Shop
 func (h *ShopeeImportHandler) resolveShopeeAPIConnection(ctx context.Context, connectionID string) (*ShopeeAPIConnection, error) {
 	connectionID = strings.TrimSpace(connectionID)
 	var c ShopeeAPIConnection
+	expiresSelect := "access_expires_at, refresh_expires_at"
+	if h.shopeeGatewayMode() {
+		expiresSelect = "COALESCE(gateway_access_expires_at, access_expires_at), COALESCE(gateway_refresh_expires_at, refresh_expires_at)"
+	}
 	baseSelect := `SELECT id::text, shop_id, merchant_id, shop_name, label, access_token, refresh_token,
-		        access_expires_at, refresh_expires_at, environment, disabled_at,
+		        ` + expiresSelect + `, environment, disabled_at,
 		        last_sync_at, last_sync_status, last_sync_error, last_error_code,
 		        connected_at, updated_at
 		   FROM shopee_api_connections`
@@ -983,8 +1054,9 @@ func (h *ShopeeImportHandler) resolveShopeeAPIConnection(ctx context.Context, co
 		err = h.billRepo.DB().QueryRowContext(ctx,
 			baseSelect+`
 			  WHERE id = $1::uuid
-			    AND environment = $2`,
-			connectionID, defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv),
+			    AND environment = $2
+			    AND credential_mode = $3`,
+			connectionID, defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv), h.shopeeCredentialMode(),
 		).Scan(
 			&c.ID, &c.ShopID, &c.MerchantID, &c.ShopName, &c.Label, &c.AccessToken, &c.RefreshToken,
 			&c.AccessExpiresAt, &c.RefreshExpiresAt, &c.Environment, &c.DisabledAt,
@@ -995,10 +1067,11 @@ func (h *ShopeeImportHandler) resolveShopeeAPIConnection(ctx context.Context, co
 		rows, queryErr := h.billRepo.DB().QueryContext(ctx,
 			baseSelect+`
 			  WHERE environment = $1
+			    AND credential_mode = $2
 			    AND disabled_at IS NULL
 			  ORDER BY updated_at DESC
 			  LIMIT 2`,
-			defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv),
+			defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv), h.shopeeCredentialMode(),
 		)
 		if queryErr != nil {
 			return nil, queryErr
@@ -1039,15 +1112,20 @@ func (h *ShopeeImportHandler) listShopeeAPIConnections(ctx context.Context, incl
 	if includeDisabled {
 		whereDisabled = ""
 	}
+	expiresSelect := "access_expires_at, refresh_expires_at"
+	if h.shopeeGatewayMode() {
+		expiresSelect = "COALESCE(gateway_access_expires_at, access_expires_at), COALESCE(gateway_refresh_expires_at, refresh_expires_at)"
+	}
 	rows, err := h.billRepo.DB().QueryContext(ctx,
 		`SELECT id::text, shop_id, merchant_id, shop_name, label, access_token, refresh_token,
-		        access_expires_at, refresh_expires_at, environment, disabled_at,
+		        `+expiresSelect+`, environment, disabled_at,
 		        last_sync_at, last_sync_status, last_sync_error, last_error_code,
 		        connected_at, updated_at
 		   FROM shopee_api_connections
-		  WHERE environment = $1 `+whereDisabled+`
+		  WHERE environment = $1
+		    AND credential_mode = $2 `+whereDisabled+`
 		  ORDER BY disabled_at NULLS FIRST, updated_at DESC`,
-		defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv),
+		defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv), h.shopeeCredentialMode(),
 	)
 	if err != nil {
 		return nil, err
@@ -1075,6 +1153,10 @@ func (h *ShopeeImportHandler) listShopeeAPIConnections(ctx context.Context, incl
 
 func (h *ShopeeImportHandler) patchShopeeAPIConnection(ctx context.Context, id, label string, labelSet bool, disabled bool, disabledSet bool) (*ShopeeAPIConnection, error) {
 	var c ShopeeAPIConnection
+	expiresSelect := "access_expires_at, refresh_expires_at"
+	if h.shopeeGatewayMode() {
+		expiresSelect = "COALESCE(gateway_access_expires_at, access_expires_at), COALESCE(gateway_refresh_expires_at, refresh_expires_at)"
+	}
 	err := h.billRepo.DB().QueryRowContext(ctx,
 		`UPDATE shopee_api_connections
 		    SET label = CASE WHEN $2 THEN $3 ELSE label END,
@@ -1086,11 +1168,12 @@ func (h *ShopeeImportHandler) patchShopeeAPIConnection(ctx context.Context, id, 
 		        updated_at = NOW()
 		  WHERE id = $1::uuid
 		    AND environment = $6
+		    AND credential_mode = $7
 		  RETURNING id::text, shop_id, merchant_id, shop_name, label, access_token, refresh_token,
-		        access_expires_at, refresh_expires_at, environment, disabled_at,
+		        `+expiresSelect+`, environment, disabled_at,
 		        last_sync_at, last_sync_status, last_sync_error, last_error_code,
 		        connected_at, updated_at`,
-		id, labelSet, label, disabledSet, disabled, defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv),
+		id, labelSet, label, disabledSet, disabled, defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv), h.shopeeCredentialMode(),
 	).Scan(
 		&c.ID, &c.ShopID, &c.MerchantID, &c.ShopName, &c.Label, &c.AccessToken, &c.RefreshToken,
 		&c.AccessExpiresAt, &c.RefreshExpiresAt, &c.Environment, &c.DisabledAt,
@@ -1128,6 +1211,11 @@ func (h *ShopeeImportHandler) upsertShopeeAPIConnection(ctx context.Context, sho
 		        access_expires_at = EXCLUDED.access_expires_at,
 		        refresh_expires_at = EXCLUDED.refresh_expires_at,
 		        environment = EXCLUDED.environment,
+		        credential_mode = 'direct',
+		        gateway_connection_id = NULL,
+		        gateway_token_state = '',
+		        gateway_access_expires_at = NULL,
+		        gateway_refresh_expires_at = NULL,
 		        connected_by = EXCLUDED.connected_by,
 		        connected_at = NOW(),
 		        disabled_at = NULL,
@@ -1139,6 +1227,13 @@ func (h *ShopeeImportHandler) upsertShopeeAPIConnection(ctx context.Context, sho
 		defaultShopeeAPIEnv(env), userID, defaultLabel,
 	)
 	return err
+}
+
+func (h *ShopeeImportHandler) shopeeCredentialMode() string {
+	if h.shopeeGatewayMode() {
+		return "gateway"
+	}
+	return "direct"
 }
 
 func (h *ShopeeImportHandler) fetchShopeeShopName(ctx context.Context, accessToken string, shopID int64) string {
@@ -1227,6 +1322,9 @@ func (h *ShopeeImportHandler) ensureShopeeAPIAccessToken(ctx context.Context, co
 	if conn.DisabledAt.Valid {
 		return nil, fmt.Errorf("ร้าน Shopee นี้ถูกปิดใช้งาน กรุณาเลือกหรือเชื่อมร้านอื่น")
 	}
+	if h.shopeeGatewayMode() {
+		return conn, nil
+	}
 	if time.Now().Before(conn.AccessExpiresAt.Add(-shopeeAPIAccessTokenSkew)) {
 		return conn, nil
 	}
@@ -1303,7 +1401,7 @@ func (h *ShopeeImportHandler) markShopeeAPISync(ctx context.Context, shopID *int
 	}
 }
 
-func fetchShopeeAPIOrderSNs(ctx context.Context, client *shopeeapi.Client, accessToken string, shopID int64, baseReq shopeeapi.OrderListRequest, statusFilters []string) ([]string, bool, string, error) {
+func fetchShopeeAPIOrderSNs(ctx context.Context, client shopeeapi.APIClient, accessToken string, shopID int64, baseReq shopeeapi.OrderListRequest, statusFilters []string) ([]string, bool, string, error) {
 	if len(statusFilters) == 0 {
 		list, err := client.GetOrderList(ctx, accessToken, shopID, baseReq)
 		if err != nil {

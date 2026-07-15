@@ -76,6 +76,21 @@ type GatewayAuthURLResponse struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
+type GatewayConnectionPayload struct {
+	GatewayConnectionID string `json:"gateway_connection_id"`
+	ShopID              int64  `json:"shop_id"`
+	MerchantID          *int64 `json:"merchant_id,omitempty"`
+	ShopName            string `json:"shop_name"`
+	Environment         string `json:"environment"`
+	AccessExpiresAt     string `json:"access_expires_at"`
+	RefreshExpiresAt    string `json:"refresh_expires_at"`
+}
+
+type GatewayPushDelivery struct {
+	ShopID     int64           `json:"shop_id"`
+	RawPayload json.RawMessage `json:"raw_payload"`
+}
+
 type gatewayDownloadResponse struct {
 	ContentType string `json:"content_type"`
 	Content     string `json:"content_base64"`

@@ -140,20 +140,20 @@ func (c *Client) RefreshToken(ctx context.Context, refreshToken string, shopID i
 }
 
 type OrderListRequest struct {
-	TimeRangeField         string
-	TimeFrom               int64
-	TimeTo                 int64
-	PageSize               int
-	Cursor                 string
-	OrderStatus            string
-	ResponseOptionalFields string
+	TimeRangeField         string `json:"time_range_field"`
+	TimeFrom               int64  `json:"time_from"`
+	TimeTo                 int64  `json:"time_to"`
+	PageSize               int    `json:"page_size"`
+	Cursor                 string `json:"cursor,omitempty"`
+	OrderStatus            string `json:"order_status,omitempty"`
+	ResponseOptionalFields string `json:"response_optional_fields,omitempty"`
 }
 
 type EscrowListRequest struct {
-	ReleaseTimeFrom int64
-	ReleaseTimeTo   int64
-	PageNo          int
-	PageSize        int
+	ReleaseTimeFrom int64 `json:"release_time_from"`
+	ReleaseTimeTo   int64 `json:"release_time_to"`
+	PageNo          int   `json:"page_no"`
+	PageSize        int   `json:"page_size"`
 }
 
 type ShopInfoResponse struct {

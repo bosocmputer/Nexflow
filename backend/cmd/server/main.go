@@ -439,6 +439,7 @@ func main() {
 	shopeeRealtimeH := handlers.NewShopeeRealtimeHandler(shopeeRealtimeRepo, notificationRepo, eventBroker, shopeeH, billH, cfg, logger)
 	shopeeRealtimeH.SetLineNotifier(lineNotificationSvc)
 	shopeeRealtimeH.SetSMLCancelClient(saleInvoiceCancelClient)
+	shopeeGatewayInternalH := handlers.NewShopeeGatewayInternalHandler(db, cfg, shopeeRealtimeH, logger)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogSvc, embSvc, catalogIdx, catalogRepo, logger)
 	lazadaH.SetArtifactService(artifactSvc)
@@ -463,6 +464,7 @@ func main() {
 	r.POST("/webhook/line/:oaId", lineH.Webhook)
 	r.POST("/webhook/line", lineH.Webhook)
 	r.POST("/webhook/shopee", shopeeRealtimeH.Webhook)
+	shopeeGatewayInternalH.Register(r)
 	if cfg.LineMyShopEnabled {
 		r.POST("/webhook/line-myshop/:connection_id", lineMyShopH.Webhook)
 	}

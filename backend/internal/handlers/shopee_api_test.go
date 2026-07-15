@@ -173,6 +173,25 @@ func TestShopeeAPIReadinessAllowsRefreshRequiredToken(t *testing.T) {
 	}
 }
 
+func TestShopeeAPIStatusGatewayModeDoesNotRequireTenantPartnerKey(t *testing.T) {
+	handler := &ShopeeImportHandler{cfg: &config.Config{
+		ShopeeOpenAPIEnabled:        true,
+		ShopeeOpenAPIEnv:            "live",
+		ShopeeOpenAPIMode:           "gateway",
+		ShopeeGatewayBaseURL:        "http://nexflow-shopee-gateway:8091",
+		ShopeeGatewayPublicURL:      "https://shopee-gateway.nextstep-soft.com",
+		ShopeeGatewayTenant:         "aoy",
+		ShopeeGatewayInternalSecret: "tenant-secret",
+	}}
+	status := handler.shopeeAPIStatus()
+	if status.Mode != "gateway" || !status.Configured || status.PartnerID != 0 {
+		t.Fatalf("status=%+v", status)
+	}
+	if status.RedirectURL != "https://shopee-gateway.nextstep-soft.com/api/shopee/callback" {
+		t.Fatalf("redirect=%q", status.RedirectURL)
+	}
+}
+
 func TestShopeeAPIErrorMessageMapsRateLimit(t *testing.T) {
 	got := shopeeAPIErrorMessage(nil, "shopee http 429: too many requests")
 	if got.Code != "rate_limited" || !got.Retryable {
@@ -402,7 +421,7 @@ func TestResolveShopeeAPIConnectionRequiresSelectionWhenMultipleActive(t *testin
 
 	now := time.Date(2026, 5, 21, 9, 0, 0, 0, time.UTC)
 	mock.ExpectQuery("FROM shopee_api_connections").
-		WithArgs("live").
+		WithArgs("live", "direct").
 		WillReturnRows(newShopeeConnectionRows().
 			AddRow("11111111-1111-1111-1111-111111111111", int64(1001), nil, "Shop A", "Shop A", "access-a", "refresh-a", now.Add(time.Hour), now.Add(24*time.Hour), "live", nil, nil, "", "", "", now, now).
 			AddRow("22222222-2222-2222-2222-222222222222", int64(1002), nil, "Shop B", "Shop B", "access-b", "refresh-b", now.Add(time.Hour), now.Add(24*time.Hour), "live", nil, nil, "", "", "", now, now))
@@ -432,7 +451,7 @@ func TestResolveShopeeAPIConnectionByIDReturnsSelectedShop(t *testing.T) {
 	now := time.Date(2026, 5, 21, 9, 0, 0, 0, time.UTC)
 	connectionID := "33333333-3333-3333-3333-333333333333"
 	mock.ExpectQuery("WHERE id = \\$1::uuid").
-		WithArgs(connectionID, "live").
+		WithArgs(connectionID, "live", "direct").
 		WillReturnRows(newShopeeConnectionRows().
 			AddRow(connectionID, int64(1029622928), int64(555), "semicolon.con", "Semicolon Main", "access", "refresh", now.Add(time.Hour), now.Add(24*time.Hour), "live", nil, now, "ok", "", "", now, now))
 

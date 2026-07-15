@@ -25,6 +25,7 @@ import (
 	"nexflow/internal/repository"
 	"nexflow/internal/services/events"
 	"nexflow/internal/services/shopeeapi"
+	"nexflow/internal/services/shopeepush"
 	"nexflow/internal/services/sml"
 )
 
@@ -198,9 +199,17 @@ func (h *ShopeeRealtimeHandler) Readiness(c *gin.Context) {
 }
 
 func (h *ShopeeRealtimeHandler) pushReadiness(ctx context.Context) gin.H {
+	gatewayMode := h.importH != nil && h.importH.shopeeGatewayMode()
+	pushURL := strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/webhook/shopee"
+	configured := strings.TrimSpace(h.cfg.ShopeeRealtimeWebhookSecret) != ""
+	if gatewayMode {
+		pushURL = strings.TrimRight(h.cfg.ShopeeGatewayPublicURL, "/") + "/webhook/shopee"
+		configured = h.importH.shopeeGatewayClient().Configured()
+	}
 	out := gin.H{
-		"configured":                   strings.TrimSpace(h.cfg.ShopeeRealtimeWebhookSecret) != "",
-		"url":                          strings.TrimRight(h.cfg.PublicBaseURL, "/") + "/webhook/shopee",
+		"configured":                   configured,
+		"url":                          pushURL,
+		"mode":                         map[bool]string{true: "gateway", false: "direct"}[gatewayMode],
 		"message":                      shopeePushReadinessMessage(h.cfg),
 		"deployment_service_area_hint": "Singapore",
 		"console_status":               "not_verified",
@@ -2714,6 +2723,10 @@ func (h *ShopeeRealtimeHandler) Webhook(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Shopee Realtime ยังไม่เปิดใช้งาน"})
 		return
 	}
+	if h.importH != nil && h.importH.shopeeGatewayMode() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Shopee push รับผ่าน central gateway ในโหมดนี้"})
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "อ่าน webhook payload ไม่สำเร็จ"})
@@ -2723,9 +2736,34 @@ func (h *ShopeeRealtimeHandler) Webhook(c *gin.Context) {
 		return
 	}
 	headers, _ := json.Marshal(safeShopeeWebhookHeaders(c))
+	result, err := h.ingestAuthenticatedPush(c.Request.Context(), body, headers, true)
+	if err != nil {
+		h.logger.Warn("shopee_realtime: store push failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึก push event ไม่สำเร็จ"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "queued": result.Queued, "diagnostic": result.Diagnostic})
+}
+
+type ShopeePushIngestResult struct {
+	Inserted   bool
+	Queued     bool
+	Diagnostic bool
+}
+
+// IngestGatewayPush accepts a payload already authenticated by the central
+// gateway. It still deduplicates locally before queueing reconciliation.
+func (h *ShopeeRealtimeHandler) IngestGatewayPush(ctx context.Context, body []byte) (ShopeePushIngestResult, error) {
+	if h == nil || h.repo == nil || h.cfg == nil || !h.cfg.ShopeeRealtimeOpsEnabled {
+		return ShopeePushIngestResult{}, errors.New("Shopee Realtime ยังไม่เปิดใช้งาน")
+	}
+	return h.ingestAuthenticatedPush(ctx, body, nil, false)
+}
+
+func (h *ShopeeRealtimeHandler) ingestAuthenticatedPush(ctx context.Context, body, headers []byte, immediate bool) (ShopeePushIngestResult, error) {
 	event, err := parseShopeePushPayload(body)
 	if err != nil {
-		inserted, storeErr := h.repo.InsertPushEvent(c.Request.Context(), repository.ShopeePushEventInput{
+		inserted, storeErr := h.repo.InsertPushEvent(ctx, repository.ShopeePushEventInput{
 			ShopID:      0,
 			OrderSN:     "",
 			PushCode:    0,
@@ -2736,15 +2774,12 @@ func (h *ShopeeRealtimeHandler) Webhook(c *gin.Context) {
 			Headers:     headers,
 		})
 		if storeErr != nil {
-			h.logger.Warn("shopee_realtime: store unparsed push failed", zap.Error(storeErr))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึก push diagnostic ไม่สำเร็จ"})
-			return
+			return ShopeePushIngestResult{}, storeErr
 		}
 		h.logger.Warn("shopee_realtime: accepted authenticated unparsed push", zap.String("error", err.Error()), zap.Bool("inserted", inserted))
-		c.JSON(http.StatusOK, gin.H{"success": true, "queued": false, "diagnostic": true})
-		return
+		return ShopeePushIngestResult{Inserted: inserted, Diagnostic: true}, nil
 	}
-	inserted, err := h.repo.InsertPushEvent(c.Request.Context(), repository.ShopeePushEventInput{
+	inserted, err := h.repo.InsertPushEvent(ctx, repository.ShopeePushEventInput{
 		ShopID:      event.ShopID,
 		OrderSN:     event.OrderSN,
 		PushCode:    event.Code,
@@ -2757,19 +2792,23 @@ func (h *ShopeeRealtimeHandler) Webhook(c *gin.Context) {
 		Headers:     headers,
 	})
 	if err != nil {
-		h.logger.Warn("shopee_realtime: store push failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึก push event ไม่สำเร็จ"})
-		return
+		return ShopeePushIngestResult{}, err
 	}
+	queued := false
 	if inserted && isShopeeOrderReconcilePush(event.Code) && strings.TrimSpace(event.OrderSN) != "" {
-		_ = h.repo.EnqueueReconcileJob(c.Request.Context(), event.ShopID, event.OrderSN, fmt.Sprintf("push:%d", event.Code))
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.ProcessReconcileBatch(ctx, 5); err != nil {
-				h.logger.Warn("shopee_realtime: immediate reconcile batch failed", zap.Error(err))
-			}
-		}()
+		if err := h.repo.EnqueueReconcileJob(ctx, event.ShopID, event.OrderSN, fmt.Sprintf("push:%d", event.Code)); err != nil {
+			return ShopeePushIngestResult{}, err
+		}
+		queued = true
+		if immediate {
+			go func() {
+				callCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if _, err := h.ProcessReconcileBatch(callCtx, 5); err != nil {
+					h.logger.Warn("shopee_realtime: immediate reconcile batch failed", zap.Error(err))
+				}
+			}()
+		}
 	} else if inserted && isShopeeShopLevelPush(event.Code) {
 		severity := "warning"
 		title := "Shopee แจ้งเตือนสิทธิ์ร้าน"
@@ -2781,9 +2820,9 @@ func (h *ShopeeRealtimeHandler) Webhook(c *gin.Context) {
 			severity = "error"
 			title = "ร้าน Shopee ยกเลิกสิทธิ์เชื่อมต่อ"
 		}
-		h.notifyShopeeIssue(c.Request.Context(), event.ShopID, "", severity, title, event.PushName, fmt.Sprintf("shop_push:%d:%d:%s", event.ShopID, event.Code, time.Now().Format("20060102")))
+		h.notifyShopeeIssue(ctx, event.ShopID, "", severity, title, event.PushName, fmt.Sprintf("shop_push:%d:%d:%s", event.ShopID, event.Code, time.Now().Format("20060102")))
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "queued": inserted})
+	return ShopeePushIngestResult{Inserted: inserted, Queued: queued}, nil
 }
 
 func (h *ShopeeRealtimeHandler) syncConnection(ctx context.Context, conn *ShopeeAPIConnection, from, to time.Time) (gin.H, error) {
@@ -3396,95 +3435,13 @@ func shopeePushRawPayloadForStorage(body []byte) json.RawMessage {
 	return json.RawMessage(payload)
 }
 
-type parsedShopeePushEvent struct {
-	ShopID     int64
-	OrderSN    string
-	Code       int
-	PushName   string
-	Status     string
-	UpdateTime time.Time
-	Timestamp  time.Time
-	DedupeKey  string
-}
+type parsedShopeePushEvent = shopeepush.Event
+type shopeePushMeta = shopeepush.Meta
 
-type shopeePushMeta struct {
-	Name            string
-	RequiresOrderSN bool
-	ShopLevel       bool
-}
-
-var shopeePushCodeMeta = map[int]shopeePushMeta{
-	1:  {Name: "shop_authorization_push", ShopLevel: true},
-	2:  {Name: "shop_authorization_canceled_push", ShopLevel: true},
-	3:  {Name: "order_status_push", RequiresOrderSN: true},
-	4:  {Name: "order_trackingno_push", RequiresOrderSN: true},
-	12: {Name: "open_api_authorization_expiry", ShopLevel: true},
-	15: {Name: "shipping_document_status_push", RequiresOrderSN: true},
-	23: {Name: "booking_status_push", RequiresOrderSN: true},
-	24: {Name: "booking_trackingno_push", RequiresOrderSN: true},
-	25: {Name: "booking_shipping_document_status_push", RequiresOrderSN: true},
-	30: {Name: "package_fulfillment_status_push", RequiresOrderSN: true},
-	47: {Name: "package_info_push", RequiresOrderSN: true},
-}
+var shopeePushCodeMeta = shopeepush.CodeMeta
 
 func parseShopeePushPayload(body []byte) (parsedShopeePushEvent, error) {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return parsedShopeePushEvent{}, fmt.Errorf("payload ไม่ใช่ JSON")
-	}
-	data, _ := raw["data"].(map[string]interface{})
-	shopID := int64FromAny(raw["shop_id"])
-	if shopID <= 0 {
-		shopID = int64FromAny(data["shop_id"])
-	}
-	orderSN := firstNonEmptyString(data["ordersn"], data["order_sn"], raw["ordersn"], raw["order_sn"])
-	code := int(int64FromAny(raw["code"]))
-	meta := shopeePushCodeMeta[code]
-	status := firstNonEmptyString(data["status"], data["order_status"], raw["status"], raw["order_status"])
-	updateTime := unixTimeFromAny(data["update_time"])
-	timestamp := unixTimeFromAny(raw["timestamp"])
-	if shopID <= 0 {
-		return parsedShopeePushEvent{}, fmt.Errorf("payload ไม่มี shop_id")
-	}
-	if orderSN == "" && meta.RequiresOrderSN {
-		return parsedShopeePushEvent{}, fmt.Errorf("payload ไม่มี order_sn")
-	}
-	sum := sha256.Sum256(body)
-	baseKey := fmt.Sprintf("%d:%s:%d:%s:%d:%d:%s", shopID, orderSN, code, status, updateTime.Unix(), timestamp.Unix(), hex.EncodeToString(sum[:]))
-	return parsedShopeePushEvent{
-		ShopID:     shopID,
-		OrderSN:    orderSN,
-		Code:       code,
-		PushName:   shopeePushName(code),
-		Status:     strings.ToUpper(status),
-		UpdateTime: updateTime,
-		Timestamp:  timestamp,
-		DedupeKey:  baseKey,
-	}, nil
-}
-
-func int64FromAny(v interface{}) int64 {
-	switch n := v.(type) {
-	case float64:
-		return int64(n)
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case string:
-		out, _ := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
-		return out
-	default:
-		return 0
-	}
-}
-
-func unixTimeFromAny(v interface{}) time.Time {
-	n := int64FromAny(v)
-	if n <= 0 {
-		return time.Time{}
-	}
-	return time.Unix(n, 0)
+	return shopeepush.Parse(body)
 }
 
 func firstNonEmptyString(values ...interface{}) string {
@@ -3497,18 +3454,15 @@ func firstNonEmptyString(values ...interface{}) string {
 }
 
 func isShopeeShopLevelPush(code int) bool {
-	return shopeePushCodeMeta[code].ShopLevel
+	return shopeepush.IsShopLevel(code)
 }
 
 func isShopeeOrderReconcilePush(code int) bool {
-	return shopeePushCodeMeta[code].RequiresOrderSN
+	return shopeepush.IsOrder(code)
 }
 
 func shopeePushName(code int) string {
-	if meta, ok := shopeePushCodeMeta[code]; ok {
-		return meta.Name
-	}
-	return "unknown"
+	return shopeepush.Name(code)
 }
 
 func safeShopeeWebhookHeaders(c *gin.Context) map[string]string {
