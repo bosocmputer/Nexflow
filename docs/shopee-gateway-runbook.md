@@ -28,6 +28,14 @@ sudo python3 scripts/provision_shopee_gateway.py --partner-id <CENTRAL_PARTNER_I
 NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target gateway
 ```
 
+When the working shared app credentials already exist in a production tenant,
+copy them without exposing secrets in shell history:
+
+```bash
+sudo python3 scripts/provision_shopee_gateway.py \
+  --source-env /mnt/data/nextstep-node-2/nexflow-aoy/.env
+```
+
 The runtime folder is `/mnt/data/nextstep-node-2/nexflow-shopee-gateway`.
 Back up its `.env`, PostgreSQL volume, and encrypted token database together.
 Losing the token encryption key makes existing ciphertext unrecoverable.

@@ -56,7 +56,11 @@ def key32() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--partner-id", required=True, type=int)
+    parser.add_argument("--partner-id", type=int)
+    parser.add_argument(
+        "--source-env",
+        help="Read existing Partner ID/Key and push secret from a server env without printing them",
+    )
     parser.add_argument("--env-file", default=str(DEFAULT_ENV))
     parser.add_argument("--public-url", default="https://shopee-gateway.nextstep-soft.com")
     return parser.parse_args()
@@ -64,13 +68,31 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.partner_id <= 0:
-        raise SystemExit("--partner-id must be positive")
+    source: dict[str, str] = {}
+    if args.source_env:
+        source_path = Path(args.source_env)
+        if not source_path.is_file():
+            raise SystemExit(f"source env not found: {source_path}")
+        _, source = read_env(source_path)
+    partner_id_raw = str(args.partner_id or source.get("SHOPEE_OPEN_API_PARTNER_ID", "")).strip()
+    try:
+        partner_id = int(partner_id_raw)
+    except ValueError as exc:
+        raise SystemExit("--partner-id must be positive, or provide a valid --source-env") from exc
+    if partner_id <= 0:
+        raise SystemExit("--partner-id must be positive, or provide a valid --source-env")
     path = Path(args.env_file)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines, existing = read_env(path)
-    partner_key = getpass.getpass("Shopee Partner Key: ").strip()
-    push_secret = getpass.getpass("Shopee Push Partner Key / callback secret: ").strip()
+    partner_key = source.get("SHOPEE_OPEN_API_PARTNER_KEY", "").strip()
+    push_secret = (
+        source.get("SHOPEE_GATEWAY_PUSH_SECRET", "").strip()
+        or source.get("SHOPEE_REALTIME_WEBHOOK_SECRET", "").strip()
+    )
+    if not partner_key:
+        partner_key = getpass.getpass("Shopee Partner Key: ").strip()
+    if not push_secret:
+        push_secret = getpass.getpass("Shopee Push Partner Key / callback secret: ").strip()
     if len(partner_key) < 20 or len(push_secret) < 20:
         raise SystemExit("Partner Key and Push secret look too short")
     updates = {
@@ -78,7 +100,7 @@ def main() -> int:
         "PUBLIC_BASE_URL": args.public_url.rstrip("/"),
         "SHOPEE_OPEN_API_ENV": "live",
         "SHOPEE_OPEN_API_BASE_URL": "https://partner.shopeemobile.com",
-        "SHOPEE_OPEN_API_PARTNER_ID": str(args.partner_id),
+        "SHOPEE_OPEN_API_PARTNER_ID": str(partner_id),
         "SHOPEE_OPEN_API_PARTNER_KEY": partner_key,
         "SHOPEE_GATEWAY_PUSH_SECRET": push_secret,
         "SHOPEE_GATEWAY_DB_PASSWORD": existing.get("SHOPEE_GATEWAY_DB_PASSWORD") or secrets.token_urlsafe(32),
