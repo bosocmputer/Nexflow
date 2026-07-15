@@ -272,7 +272,8 @@ sml.database=aoy
 sml.provider=NEXT
 sml.config_file=SMLConfigNEXT.xml
 sml.rest_base_url=http://172.17.0.1:8200
-Shopee realtime/API disabled until explicitly enabled
+Shopee realtime/API is enabled as AOY's temporary shared-app fallback until a
+dedicated Shopee Open Platform app passes OAuth, token, sync, and preview smoke.
 ```
 
 Current Lanboon focus:
@@ -285,6 +286,84 @@ sml.config_file=SMLConfigNEXT.xml
 sml.rest_base_url=http://172.17.0.1:8200
 Shopee/LINE settings are customer-specific and start unconfigured
 ```
+
+## Shopee Open Platform Per-Customer App
+
+Production default:
+
+```text
+1 Nexflow instance = 1 Shopee Open Platform App = 1 customer/shop
+```
+
+The existing `Nexflow` app / Partner ID `2034838` is a demo or temporary
+fallback only. Do not point multiple production customer domains at the same
+Shopee app unless a central OAuth/webhook broker exists, because Shopee Console
+stores a single live redirect domain and a single live push callback per app.
+
+### Shopee Console Checklist
+
+For each customer app, configure:
+
+| Field | Value pattern |
+| --- | --- |
+| App name | `Nexflow <Customer>` such as `Nexflow AOY` |
+| Redirect domain | customer domain, e.g. `https://nexflow-aoy.nextstep-soft.com` |
+| Business product URL | same customer domain |
+| IP whitelist | `58.136.190.202` plus any IP returned by Shopee `source_ip_undeclared` |
+| Push callback | `https://<customer-domain>/webhook/shopee?token=<customer-push-key>` |
+| Push topics | enable only required topics first, such as order status and authorization events |
+
+If Shopee returns `source_ip_undeclared`, add the reported source IP to the app
+IP whitelist before retrying. The observed extra source IP for the current
+production route was `210.1.1.52`.
+
+### Instance Cutover
+
+Run the helper on the production server only after the customer Shopee app is
+approved/online and the live Partner ID/Key is available:
+
+```bash
+cd /mnt/data/nextstep-node-2/nexflow-release
+python3 scripts/shopee-live-cutover.py \
+  --target aoy \
+  --partner-id <AOY_LIVE_PARTNER_ID> \
+  --enable-realtime \
+  --prompt-push-secret
+```
+
+The helper:
+
+- resolves `/mnt/data/nextstep-node-2/<instance>/.env` from
+  `deploy/nextstep-instances.json`
+- reads Partner Key and Push Partner Key via hidden prompts
+- writes a timestamped `.env` backup before changing anything
+- sets the OAuth callback to `<PUBLIC_BASE_URL>/api/shopee-api/callback`
+- prints the Shopee push callback format without revealing the token
+
+Then restart only the target instance:
+
+```bash
+cd /mnt/data/nextstep-node-2/nexflow-aoy
+docker compose up -d --build backend frontend
+```
+
+The cutover is not complete until all gates pass:
+
+- `/health` returns OK
+- `/settings/shopee-connections` shows live config ready
+- OAuth returns to the same customer domain
+- token status is OK
+- latest sync succeeds
+- `/shopee-operations` loads orders
+- `/import/shopee` API preview works for a small date range
+- a real push event updates notification/badge
+
+Do not delete the old shop connection or token until the dedicated app passes
+the gates above. If any gate fails, restore the `.env` backup and restart the
+same target instance. Do not change demo or Lanboon during an AOY cutover.
+
+After completing Shopee Console work, change the Shopee Open Platform account
+password if credentials were shared in chat or tickets.
 
 ## Smoke Checks
 

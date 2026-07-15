@@ -1,16 +1,22 @@
 # Shopee Open API Live Cutover
 
-> Updated: 2026-05-21
-> Goal: operate Nexflow Shopee Open API in live mode while keeping Excel/email import as rollback.
+> Updated: 2026-07-15
+> Goal: operate Nexflow Shopee Open API in live mode per customer instance while keeping Excel import and the previous app config as rollback.
 
 ## Current State
 
-- App ID: `231867`
-- Current Shopee status: `Online`
-- Current server public URL: `https://animal-galvanize-tameness.ngrok-free.dev`
-- Nexflow is cut over to live Shopee Open API on the main server with Partner ID `2034838`.
-- Nexflow has OAuth callback, token tables, preview-only import, readiness status, multi-shop connection management, user-facing error UX, and Shopee API preview hardening deployed.
-- Current connected shops include `Henna.milkford` (`shop_id=264993963`) and `Semicolon Constructions` (`shop_id=1029622928`); token state is usable and `can_fetch=true` when an active shop is selected.
+- Existing shared app: `Nexflow` / App ID `231867` / live Partner ID `2034838`.
+- Shared app status: `Online`; keep it as demo or temporary fallback only.
+- Production server: `10.121.20.83`, root `/mnt/data/nextstep-node-2`, edge port `6323`.
+- Production customer URLs:
+  - demo: `https://nexflow.nextstep-soft.com`
+  - AOY: `https://nexflow-aoy.nextstep-soft.com`
+  - Lanboon: `https://nextflow-lanboon.nextstep-soft.com`
+- Production rule: `1 Nexflow instance = 1 Shopee Open Platform App = 1 customer/shop`.
+- Shopee Console stores one live redirect domain and one live push callback per app. Do not put multiple customer domains on the same Shopee app unless Nexflow later adds a central OAuth/webhook broker.
+- AOY currently works on the shared app as a fallback. Do not cut it over until the dedicated AOY app is `Online`, OAuth succeeds, token is OK, latest sync is OK, and order preview works.
+- Nexflow has OAuth callback, token tables, preview-only import, readiness status, multi-shop connection management, user-facing error UX, Shopee API preview hardening, realtime operations, and push webhook handling deployed.
+- Current shared-app IP whitelist includes `58.136.190.202` and the observed Shopee-reported source IP `210.1.1.52`.
 - Shopee live OAuth has been observed returning `code` and `shop_id` without `state`. Nexflow now allows a guarded fallback only when exactly one unconsumed, unexpired OAuth state exists for the current live environment and redirect URL.
 
 ## Readiness Gate
@@ -49,13 +55,16 @@ Shopee API failures return structured JSON:
 
 Known mapped cases include token expiry, rate limit, duplicate/in-flight request, timeout, and Shopee business errors. The frontend displays the action the admin should take instead of a raw Go/Shopee error.
 
-## Preconditions Before Live Cutover
+## Preconditions Before Customer Cutover
 
-1. Shopee Go-Live is approved. Completed 2026-05-21.
-2. Console shows Live Partner ID and Live Partner Key.
-3. Shopee Console `Live Redirect URL Domain` matches the current public Nexflow URL.
-4. If ngrok/cloudflare quick tunnel changed URL, update both Shopee Console and Nexflow `.env` before connecting.
-5. Keep Shopee Excel/email import enabled as rollback path.
+1. Customer Nexflow hostname is live over HTTPS and routes to the correct instance.
+2. Shopee Console has a customer-specific app, such as `Nexflow AOY`.
+3. Customer app status is `Online` or otherwise approved for the needed live APIs.
+4. Shopee Console live redirect domain equals the customer Nexflow domain.
+5. Shopee Console business product URL equals the customer Nexflow domain.
+6. Shopee Console IP whitelist contains `58.136.190.202` plus any IP from `source_ip_undeclared` errors.
+7. Shopee Console push callback is `https://<customer-domain>/webhook/shopee?token=<customer-push-key>`.
+8. Keep Excel import and the previous `.env` backup as rollback paths.
 
 ## Verified
 
@@ -76,12 +85,18 @@ Known mapped cases include token expiry, rate limit, duplicate/in-flight request
 
 ## Server Cutover
 
-Run this on `192.168.2.109` after approval:
+Run this on `10.121.20.83` after approval:
 
 ```bash
-cd /home/bosscatdog/billflow
-python3 scripts/shopee-live-cutover.py --partner-id LIVE_PARTNER_ID
-docker compose up -d backend
+cd /mnt/data/nextstep-node-2/nexflow-release
+python3 scripts/shopee-live-cutover.py \
+  --target aoy \
+  --partner-id LIVE_PARTNER_ID \
+  --enable-realtime \
+  --prompt-push-secret
+
+cd /mnt/data/nextstep-node-2/nexflow-aoy
+docker compose up -d --build backend frontend
 ```
 
 The script reads the Live Partner Key via hidden prompt, writes a timestamped `.env` backup, and sets:
@@ -93,16 +108,21 @@ SHOPEE_OPEN_API_BASE_URL=https://partner.shopeemobile.com
 SHOPEE_OPEN_API_PARTNER_ID=<live partner id>
 SHOPEE_OPEN_API_PARTNER_KEY=<live partner key>
 SHOPEE_OPEN_API_REDIRECT_URL=<PUBLIC_BASE_URL>/api/shopee-api/callback
+ENABLE_SHOPEE_REALTIME_OPS=true
+VITE_ENABLE_SHOPEE_REALTIME_OPS=true
+SHOPEE_REALTIME_WEBHOOK_SECRET=<push partner key>
 ```
 
-Latest live cutover backup on main: `/home/bosscatdog/billflow/.env.bak.20260521-101021`.
+The helper resolves the target `.env` from `deploy/nextstep-instances.json`.
+It never prints Partner Key, Push Partner Key, access token, refresh token, or
+webhook secret.
 
 ## Validation
 
-1. Backend health:
+1. Backend health for the target instance:
 
 ```bash
-curl -sS http://localhost:8090/health
+curl -sS http://localhost:8111/health
 ```
 
 Expected:
@@ -111,7 +131,7 @@ Expected:
 {"database":"ok","env":"production","status":"ok"}
 ```
 
-2. In Nexflow `/import/shopee`, Shopee Open API card should show:
+2. In Nexflow `/settings/shopee-connections`, Shopee Open API card should show:
 
 - Environment: `live`
 - Configured: complete
@@ -123,14 +143,18 @@ Expected:
 
 5. Create Nexflow bills only after preview looks correct and Shopee does not report more pages. Do not enable auto-send to SML for the first live run.
 
+6. For realtime push, verify `/settings/shopee-connections` push readiness and
+confirm a real Shopee event updates `/shopee-operations` and the notification
+badge.
+
 ## Rollback
 
 If live OAuth or API fetch fails:
 
 ```bash
-cd /home/bosscatdog/billflow
+cd /mnt/data/nextstep-node-2/nexflow-aoy
 cp .env.bak.YYYYMMDD-HHMMSS .env
-docker compose up -d backend
+docker compose up -d --build backend frontend
 ```
 
 Fast disable without restoring everything:

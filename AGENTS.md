@@ -114,6 +114,8 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 13. **Shopee payment breakdown** — `shopee_order_payment_snapshots` is populated by worker/manual refresh from `get_escrow_detail`. Page render and LINE worker must read cached snapshots only, never call Shopee live APIs inline.
 
+14. **Shopee Open Platform per customer** — production default is `1 Nexflow instance = 1 Shopee Open Platform App = 1 customer/shop`. The existing `Nexflow` app / Partner ID `2034838` is demo or temporary fallback only because Shopee Console has one live redirect domain and one live push callback per app. Use `scripts/shopee-live-cutover.py --target <instance>` with hidden prompts for Partner Key / Push Partner Key, and do not cut over until the customer app is Online, OAuth works, token/sync are OK, and push smoke passes.
+
 ---
 
 ## 6. Deploy
