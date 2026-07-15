@@ -93,6 +93,11 @@ type Config struct {
 	ShopeeOpenAPIPartnerID             int64
 	ShopeeOpenAPIPartnerKey            string
 	ShopeeOpenAPIRedirect              string
+	ShopeeOpenAPIMode                  string
+	ShopeeGatewayBaseURL               string
+	ShopeeGatewayPublicURL             string
+	ShopeeGatewayTenant                string
+	ShopeeGatewayInternalSecret        string
 	ShopeeRealtimeOpsEnabled           bool
 	ShopeeAdvancedDropoffEnabled       bool
 	ShopeeShippingActionsEnabled       bool
@@ -172,6 +177,11 @@ func Load() *Config {
 		ShopeeOpenAPIPartnerID:             getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
 		ShopeeOpenAPIPartnerKey:            getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
 		ShopeeOpenAPIRedirect:              getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
+		ShopeeOpenAPIMode:                  getEnv("SHOPEE_OPEN_API_MODE", "direct"),
+		ShopeeGatewayBaseURL:               getEnv("SHOPEE_GATEWAY_BASE_URL", ""),
+		ShopeeGatewayPublicURL:             getEnv("SHOPEE_GATEWAY_PUBLIC_URL", ""),
+		ShopeeGatewayTenant:                getEnv("SHOPEE_GATEWAY_TENANT", ""),
+		ShopeeGatewayInternalSecret:        getEnv("SHOPEE_GATEWAY_INTERNAL_SECRET", ""),
 		ShopeeRealtimeOpsEnabled:           getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:       getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:       getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
