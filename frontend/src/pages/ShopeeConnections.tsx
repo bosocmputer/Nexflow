@@ -21,6 +21,7 @@ interface ReadinessCheck {
 }
 
 interface ShopeeAPIStatus {
+  mode?: 'direct' | 'gateway'
   enabled: boolean
   configured: boolean
   environment: string
@@ -59,8 +60,6 @@ interface ShopeeAPIConnection {
   can_fetch: boolean
   updated_at?: string
 }
-
-const CANONICAL_PUBLIC_URL = 'https://animal-galvanize-tameness.ngrok-free.dev'
 
 export default function ShopeeConnections() {
   const apiAuthPollRef = useRef<number | null>(null)
@@ -167,9 +166,13 @@ export default function ShopeeConnections() {
   const readiness = status ? shopeeReadiness(status) : null
   const active = connections.filter((c) => !c.disabled_at)
   const currentHost = typeof window !== 'undefined' ? window.location.host : ''
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+  const redirectOrigin = originFromURL(status?.redirect_url)
+  const gatewayMode = status?.mode === 'gateway'
+  const canonicalPublicURL = gatewayMode ? currentOrigin : redirectOrigin || currentOrigin
   const redirectHost = hostFromURL(status?.redirect_url)
-  const canonicalHost = hostFromURL(CANONICAL_PUBLIC_URL)
-  const domainMismatch = Boolean(status?.enabled && redirectHost && currentHost && currentHost !== redirectHost)
+  const canonicalHost = hostFromURL(canonicalPublicURL)
+  const domainMismatch = Boolean(!gatewayMode && status?.enabled && redirectHost && currentHost && currentHost !== redirectHost)
 
   return (
     <div className="space-y-5">
@@ -233,7 +236,7 @@ export default function ShopeeConnections() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>ตรวจ domain ก่อนเชื่อมร้าน</AlertTitle>
           <AlertDescription>
-            หน้านี้เปิดจาก {currentHost} แต่ Shopee redirect ชี้ไปที่ {redirectHost}. สำหรับ production ให้ใช้ {canonicalHost} เพื่อกัน OAuth callback ผิด domain.
+            หน้านี้เปิดจาก {currentHost} แต่ Shopee redirect ชี้ไปที่ {redirectHost}. สำหรับ production ให้ใช้ {canonicalHost || redirectHost} เพื่อกัน OAuth callback ผิด domain.
           </AlertDescription>
         </Alert>
       )}
@@ -321,7 +324,7 @@ export default function ShopeeConnections() {
           <CardTitle className="text-sm">ข้อมูลสำหรับตรวจระบบ</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-2 text-xs text-muted-foreground md:grid-cols-3">
-          <InfoBlock label="Partner" value={status?.partner_id ? String(status.partner_id) : 'ยังไม่ได้ตั้งค่า'} />
+          <InfoBlock label="การเชื่อมต่อ" value={gatewayMode ? 'Central Shopee Gateway' : status?.partner_id ? `Partner ${status.partner_id}` : 'ยังไม่ได้ตั้งค่า'} />
           <InfoBlock label="Base URL" value={status?.base_url || '—'} />
           <InfoBlock label="Redirect" value={status?.redirect_url || '—'} />
         </CardContent>
@@ -331,7 +334,7 @@ export default function ShopeeConnections() {
         open={confirmConnectOpen}
         onOpenChange={setConfirmConnectOpen}
         title="เปิด Shopee OAuth?"
-        description={`ระบบจะเปิดหน้าต่าง Shopee เพื่อเชื่อมร้านเข้ากับ Nexflow\n\nCurrent domain: ${currentHost || '—'}\nCanonical domain: ${CANONICAL_PUBLIC_URL}\nRedirect domain: ${status?.redirect_url || '—'}\n\nหลังเชื่อมสำเร็จ หน้าต่าง Shopee จะปิดเองหรือกลับมาที่ callback ของ Nexflow`}
+        description={`ระบบจะเปิดหน้าต่าง Shopee เพื่อเชื่อมร้านเข้ากับ Nexflow\n\nCurrent domain: ${currentHost || '—'}\nCanonical domain: ${canonicalPublicURL || '—'}\nRedirect domain: ${status?.redirect_url || '—'}\n\nหลังเชื่อมสำเร็จ หน้าต่าง Shopee จะปิดเองหรือกลับมาที่ callback ของ Nexflow`}
         confirmLabel={active.length > 0 ? 'เชื่อมร้านเพิ่ม' : 'เชื่อมต่อร้าน Shopee'}
         onConfirm={connect}
       />
@@ -366,10 +369,12 @@ function shopeeReadiness(status: ShopeeAPIStatus) {
     return { title: 'Shopee API ปิดใช้งาน', description: status.blocking_reason || 'เปิดใช้งานบน server ก่อนเชื่อมร้าน', tone: 'danger' as const }
   }
   if (!status.configured) {
-    return { title: 'ยังไม่ได้ตั้งค่า Partner ID / Key', description: 'ต้องตั้งค่า Shopee Open API ให้ครบก่อนสร้าง OAuth URL', tone: 'warning' as const }
+    return status.mode === 'gateway'
+      ? { title: 'ยังไม่ได้ตั้งค่า Shopee Gateway', description: 'ต้องตั้งค่า gateway URL, tenant และ internal secret ให้ครบ', tone: 'warning' as const }
+      : { title: 'ยังไม่ได้ตั้งค่า Partner ID / Key', description: 'ต้องตั้งค่า Shopee Open API ให้ครบก่อนสร้าง OAuth URL', tone: 'warning' as const }
   }
   if (!status.connected) {
-    return { title: 'พร้อมเชื่อมร้าน', description: 'ตรวจ redirect domain ให้ตรงกับ ngrok production แล้วเริ่ม OAuth', tone: 'success' as const }
+    return { title: 'พร้อมเชื่อมร้าน', description: 'ตรวจ redirect domain ให้ตรงกับ production domain แล้วเริ่ม OAuth', tone: 'success' as const }
   }
   if (status.last_sync_status === 'ok' && !status.last_sync_error) {
     return { title: 'ร้าน Shopee พร้อมใช้งาน', description: 'Token และ sync ล่าสุดกลับมา OK แล้ว ใช้ได้ทั้งคำสั่งซื้อ Shopee และนำเข้าย้อนหลัง', tone: 'success' as const }
@@ -409,6 +414,15 @@ function hostFromURL(value?: string) {
   if (!value) return ''
   try {
     return new URL(value).host
+  } catch {
+    return ''
+  }
+}
+
+function originFromURL(value?: string) {
+  if (!value) return ''
+  try {
+    return new URL(value).origin
   } catch {
     return ''
   }
