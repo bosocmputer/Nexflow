@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	GatewayExecutePath = "/internal/v1/shopee/execute"
-	GatewayOAuthPath   = "/internal/v1/shopee/oauth/auth-url"
+	GatewayExecutePath      = "/internal/v1/shopee/execute"
+	GatewayOAuthPath        = "/internal/v1/shopee/oauth/auth-url"
+	GatewayTenantRoutesPath = "/internal/v1/shopee-gateway/routes"
 )
 
 var ErrGatewayManagedCredentials = errors.New("Shopee credentials are managed by the gateway")
@@ -89,6 +90,10 @@ type GatewayConnectionPayload struct {
 type GatewayPushDelivery struct {
 	ShopID     int64           `json:"shop_id"`
 	RawPayload json.RawMessage `json:"raw_payload"`
+}
+
+type GatewayTenantRoutesResponse struct {
+	ShopIDs []int64 `json:"shop_ids"`
 }
 
 type gatewayDownloadResponse struct {

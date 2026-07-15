@@ -114,7 +114,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 13. **Shopee payment breakdown** — `shopee_order_payment_snapshots` is populated by worker/manual refresh from `get_escrow_detail`. Page render and LINE worker must read cached snapshots only, never call Shopee live APIs inline.
 
-14. **Central Shopee gateway** — production target is `nexflow-shopee-gateway` at `shopee-gateway.nextstep-soft.com`. Gateway mode stores Partner Key and encrypted access/refresh tokens only in the gateway DB. Tenant `.env` uses `SHOPEE_OPEN_API_MODE=gateway` plus derived HMAC credentials; direct mode remains rollback. Push is authenticated/deduped centrally and tenant reconciliation still fetches order detail as source of truth. See `docs/shopee-gateway-runbook.md`.
+14. **Central Shopee gateway** — production target is `nexflow-shopee-gateway` at `shopee-gateway.nextstep-soft.com`. Gateway mode stores Partner Key and encrypted access/refresh tokens only in the gateway DB. Every tenant receives a derived HMAC identity even while in direct mode so the gateway can discover active shop routes and deliver the one app-wide push callback during staged rollout; legacy tokens are never copied. Tenant `.env` uses `SHOPEE_OPEN_API_MODE=gateway` only after explicit cutover, while direct mode remains rollback. Push is authenticated/deduped centrally and tenant reconciliation still fetches order detail as source of truth. See `docs/shopee-gateway-runbook.md`.
 
 15. **Shopee direct mode is rollback only** — do not create a new Shopee Open Platform App for each customer. The old per-customer cutover helper and direct Partner credentials are retained only for an explicit rollback while gateway rollout is incomplete.
 

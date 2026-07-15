@@ -301,7 +301,10 @@ NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target
 ```
 
 `--target all` deploys/checks the gateway and then all instances. Per-tenant
-cutover remains explicit and starts with AOY. See
+deploys also install a derived HMAC identity used for route discovery while
+preserving each instance's current Shopee mode. Per-tenant cutover remains
+explicit and starts with AOY. Verify `shop_routes` covers every active direct
+shop before changing the global Shopee callback. See
 `docs/shopee-gateway-runbook.md` for Shopee Console values, provisioning,
 canary checks, and direct-mode rollback.
 

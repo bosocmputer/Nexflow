@@ -36,6 +36,32 @@ CREATE TABLE IF NOT EXISTS shop_connections (
 CREATE INDEX IF NOT EXISTS shop_connections_tenant_updated_idx
   ON shop_connections(tenant_id, updated_at DESC);
 
+-- Push routing is separate from gateway-owned credentials so existing direct
+-- shops can keep receiving events during a staged tenant-by-tenant cutover.
+CREATE TABLE IF NOT EXISTS shop_routes (
+  shop_id       BIGINT PRIMARY KEY,
+  tenant_id     UUID NOT NULL REFERENCES tenants(id),
+  route_source  TEXT NOT NULL CHECK (route_source IN ('legacy_sync', 'gateway_oauth')),
+  active        BOOLEAN NOT NULL DEFAULT TRUE,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS shop_routes_tenant_active_idx
+  ON shop_routes(tenant_id, active, updated_at DESC);
+
+INSERT INTO shop_routes (shop_id, tenant_id, route_source, active)
+SELECT shop_id, tenant_id, 'gateway_oauth', TRUE
+  FROM shop_connections
+ WHERE disabled_at IS NULL
+ON CONFLICT (shop_id) DO UPDATE
+   SET route_source = 'gateway_oauth',
+       active = TRUE,
+       last_seen_at = NOW(),
+       updated_at = NOW()
+ WHERE shop_routes.tenant_id = EXCLUDED.tenant_id;
+
 CREATE TABLE IF NOT EXISTS oauth_states (
   state_hash   TEXT PRIMARY KEY,
   tenant_id    UUID NOT NULL REFERENCES tenants(id),

@@ -24,6 +24,10 @@ before ACK, then delivered through an outbox to the tenant selected by `shop_id`
 
 Tenant databases store connection metadata only in gateway mode. The existing
 direct mode and credentials remain available as a per-instance rollback path.
+During staged migration, the gateway discovers active direct-mode shop IDs over
+the same signed internal channel and stores routing separately from credentials.
+This lets the one global Shopee push callback serve both migrated and unmigrated
+tenants without copying legacy tokens. Credential writes remain gateway-only.
 
 ## Consequences
 
@@ -34,5 +38,7 @@ direct mode and credentials remain available as a per-instance rollback path.
   outbox delivery, encrypted tokens, and explicit rollback.
 - A `shop_id` can belong to only one tenant at a time. Cross-tenant OAuth cannot
   silently move ownership.
+- Push delivery is accepted by signed tenant endpoints in both modes so canary
+  rollout and direct-mode rollback do not interrupt the app-wide callback.
 - Shipping mutations are never automatically retried by the gateway.
 - SML, bill creation, LINE, and tenant business workflows remain unchanged.

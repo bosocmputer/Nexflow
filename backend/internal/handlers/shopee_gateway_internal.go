@@ -72,10 +72,11 @@ func NewShopeeGatewayInternalHandler(db *sql.DB, cfg *config.Config, realtime *S
 func (h *ShopeeGatewayInternalHandler) Register(r *gin.Engine) {
 	r.POST("/internal/v1/shopee-gateway/connections/upsert", h.UpsertConnection)
 	r.POST("/internal/v1/shopee-gateway/push", h.Push)
+	r.POST(shopeeapi.GatewayTenantRoutesPath, h.Routes)
 }
 
 func (h *ShopeeGatewayInternalHandler) UpsertConnection(c *gin.Context) {
-	body, ok := h.authenticate(c)
+	body, ok := h.authenticate(c, true)
 	if !ok {
 		return
 	}
@@ -144,7 +145,9 @@ func (h *ShopeeGatewayInternalHandler) UpsertConnection(c *gin.Context) {
 }
 
 func (h *ShopeeGatewayInternalHandler) Push(c *gin.Context) {
-	body, ok := h.authenticate(c)
+	// Signed gateway push remains available in direct mode so tenants that have
+	// not moved their API credentials yet still receive the app-wide callback.
+	body, ok := h.authenticate(c, false)
 	if !ok {
 		return
 	}
@@ -171,8 +174,53 @@ func (h *ShopeeGatewayInternalHandler) Push(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "queued": result.Queued})
 }
 
-func (h *ShopeeGatewayInternalHandler) authenticate(c *gin.Context) ([]byte, bool) {
-	if h == nil || h.db == nil || h.cfg == nil || !strings.EqualFold(strings.TrimSpace(h.cfg.ShopeeOpenAPIMode), "gateway") {
+func (h *ShopeeGatewayInternalHandler) Routes(c *gin.Context) {
+	_, ok := h.authenticate(c, false)
+	if !ok {
+		return
+	}
+	rows, err := h.db.QueryContext(c.Request.Context(),
+		`SELECT DISTINCT shop_id
+		   FROM shopee_api_connections
+		  WHERE shop_id > 0
+		    AND environment = $1
+		    AND disabled_at IS NULL
+		  ORDER BY shop_id
+		  LIMIT 1001`,
+		defaultShopeeAPIEnv(h.cfg.ShopeeOpenAPIEnv),
+	)
+	if err != nil {
+		h.logger.Warn("shopee_gateway_routes_query_failed", zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "routes_query_failed", "อ่านเส้นทางร้าน Shopee ไม่สำเร็จ")
+		return
+	}
+	defer rows.Close()
+	shopIDs := make([]int64, 0)
+	for rows.Next() {
+		var shopID int64
+		if err := rows.Scan(&shopID); err != nil {
+			h.error(c, http.StatusInternalServerError, "routes_query_failed", "อ่านเส้นทางร้าน Shopee ไม่สำเร็จ")
+			return
+		}
+		shopIDs = append(shopIDs, shopID)
+	}
+	if err := rows.Err(); err != nil {
+		h.error(c, http.StatusInternalServerError, "routes_query_failed", "อ่านเส้นทางร้าน Shopee ไม่สำเร็จ")
+		return
+	}
+	if len(shopIDs) > 1000 {
+		h.error(c, http.StatusConflict, "route_limit_exceeded", "จำนวนร้าน Shopee ของ tenant เกินขีดจำกัด")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": shopeeapi.GatewayTenantRoutesResponse{ShopIDs: shopIDs}})
+}
+
+func (h *ShopeeGatewayInternalHandler) authenticate(c *gin.Context, requireGatewayMode bool) ([]byte, bool) {
+	if h == nil || h.db == nil || h.cfg == nil || strings.TrimSpace(h.cfg.ShopeeGatewayTenant) == "" || strings.TrimSpace(h.cfg.ShopeeGatewayInternalSecret) == "" {
+		h.error(c, http.StatusNotFound, "gateway_identity_disabled", "tenant นี้ยังไม่ได้ตั้งค่า Shopee gateway identity")
+		return nil, false
+	}
+	if requireGatewayMode && !strings.EqualFold(strings.TrimSpace(h.cfg.ShopeeOpenAPIMode), "gateway") {
 		h.error(c, http.StatusNotFound, "gateway_mode_disabled", "tenant นี้ยังไม่ได้เปิด Shopee gateway mode")
 		return nil, false
 	}

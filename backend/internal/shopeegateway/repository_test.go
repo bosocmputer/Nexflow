@@ -48,8 +48,10 @@ func TestRepositoryUpsertConnectionRejectsCrossTenantOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO shop_connections").
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
 	repo := NewRepository(db)
 	err = repo.UpsertConnection(t.Context(), EncryptedConnection{
 		TenantID: "11111111-1111-1111-1111-111111111111", ShopID: 99,
@@ -60,6 +62,30 @@ func TestRepositoryUpsertConnectionRejectsCrossTenantOwnership(t *testing.T) {
 	})
 	if !errors.Is(err, ErrShopAlreadyOwned) {
 		t.Fatalf("error=%v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositorySyncTenantRoutesRejectsCrossTenantOwnership(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tenantID := "11111111-1111-1111-1111-111111111111"
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE shop_routes").WithArgs(tenantID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO shop_routes").WithArgs(int64(99), tenantID).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	repo := NewRepository(db)
+	err = repo.SyncTenantRoutes(t.Context(), tenantID, []int64{99})
+	if !errors.Is(err, ErrShopAlreadyOwned) {
+		t.Fatalf("error=%v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -43,7 +43,9 @@ Losing the token encryption key makes existing ciphertext unrecoverable.
 ## Add a Customer
 
 Adding a Nexflow instance to `deploy/nextstep-instances.json` automatically adds
-it to the gateway tenant registry. No new Shopee App is needed.
+it to the gateway tenant registry. No new Shopee App is needed. Every deploy
+also provisions a derived tenant HMAC identity without changing that tenant's
+current `direct` or `gateway` mode.
 
 After the customer instance/domain is ready:
 
@@ -62,13 +64,30 @@ owned by another tenant.
 Do not change Shopee Console or AOY mode until gateway health is green.
 
 1. Deploy gateway without changing AOY (`direct` remains active).
-2. Add Cloudflare hostname and update the central Shopee app redirect/push URLs.
-3. Confirm gateway `/health` and that public `/internal/*` returns 404.
-4. Switch only AOY to gateway mode using the helper.
-5. Reconnect AOY through OAuth. Old direct credentials remain in AOY DB.
-6. Verify connection metadata, latest sync, operations list, historical preview,
+2. Deploy all tenant backends once. The gateway polls each signed internal
+   route endpoint every minute and records active `shop_id -> tenant` routes.
+3. Verify every active direct shop has exactly one active route before changing
+   the global Shopee push callback:
+
+   ```bash
+   docker exec nexflow-shopee-gateway-postgres \
+     psql -U nexflow_gateway -d nexflow_shopee_gateway \
+     -c "SELECT t.slug, r.route_source, COUNT(*) FROM shop_routes r JOIN tenants t ON t.id=r.tenant_id WHERE r.active GROUP BY 1,2 ORDER BY 1,2;"
+   ```
+
+4. Add the Cloudflare hostname and confirm gateway `/health`; public
+   `/internal/*` must return 404.
+5. Update the central Shopee app redirect and push callback. Signed central push
+   delivery works for both direct and gateway tenants during the migration.
+6. Switch only AOY to gateway mode using the helper.
+7. Reconnect AOY through OAuth. Old direct credentials remain in AOY DB.
+8. Verify connection metadata, latest sync, operations list, historical preview,
    escrow/payment, tracking, shipping parameter, and one real push notification.
-7. Observe gateway and AOY logs before moving demo or Lanboon.
+9. Observe gateway and AOY logs before moving demo or Lanboon.
+
+Never switch the global Shopee push callback while an active shop is missing
+from `shop_routes`; a push arriving during that gap is retained as unknown but
+cannot be delivered retroactively.
 
 ## Rollback
 
@@ -91,6 +110,10 @@ without reconnecting only while their retained direct refresh token is valid.
 - Push is a trigger only. Tenant reconciliation fetches order detail as source
   of truth before updating snapshots or business workflows.
 - Unknown `shop_id` push events are retained as diagnostics and never routed.
+- Legacy route discovery returns only active shop IDs. It never copies direct
+  access tokens or refresh tokens into the gateway.
+- A route conflict never reassigns a shop between tenants; fix the conflicting
+  tenant connection before changing the Shopee callback.
 - Token, Partner Key, Push secret, buyer PII, and raw API payloads must not be
   logged.
 - Read APIs retry only bounded transient failures. `ship_order` and shipping

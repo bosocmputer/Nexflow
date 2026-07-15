@@ -535,6 +535,15 @@ fi
     sudo(script, label=f"connect {target.name} backend to Shopee gateway network", timeout=30)
 
 
+def provision_target_gateway_identity(target: Target) -> None:
+    sudo(
+        f"cd {shlex.quote(RELEASE_DIR)} && "
+        f"python3 scripts/shopee_gateway_tenant_mode.py --target {shlex.quote(target.name)} --identity-only",
+        label=f"provision {target.name} Shopee gateway identity",
+        timeout=60,
+    )
+
+
 def deploy_target(target: Target) -> None:
     ssh(
         f"test -d {shlex.quote(target.remote)} && test -f {shlex.quote(target.remote)}/docker-compose.yml && test -f {shlex.quote(target.remote)}/.env",
@@ -547,6 +556,7 @@ def deploy_target(target: Target) -> None:
         timeout=30,
     )
     ensure_instance_compose(target)
+    provision_target_gateway_identity(target)
     backup_target(target)
     sudo(
         f"cd {shlex.quote(target.remote)} && docker compose up -d --build backend frontend",

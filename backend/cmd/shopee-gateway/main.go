@@ -67,9 +67,11 @@ func main() {
 	handler := shopeegateway.NewHandler(service, verifier, repo, repo, cfg, logger)
 	handler.Register(router)
 	worker := shopeegateway.NewDeliveryWorker(cfg, repo, logger)
+	routeSyncWorker := shopeegateway.NewRouteSyncWorker(cfg, repo, logger)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	go worker.Start(workerCtx, 2*time.Second, 20)
+	go routeSyncWorker.Start(workerCtx, time.Minute)
 	server := &http.Server{Addr: ":" + cfg.Port, Handler: router, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 45 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		logger.Info("shopee_gateway_started", zap.String("port", cfg.Port), zap.String("environment", cfg.Environment), zap.Int("tenant_count", len(tenants)))

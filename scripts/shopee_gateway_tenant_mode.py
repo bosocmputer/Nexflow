@@ -54,7 +54,9 @@ def derive(master: str, tenant: str) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True)
-    parser.add_argument("--mode", choices=["gateway", "direct"], required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--mode", choices=["gateway", "direct"])
+    mode.add_argument("--identity-only", action="store_true", help="provision signed gateway identity without changing mode")
     parser.add_argument("--registry", default=str(REGISTRY))
     parser.add_argument("--server-root", default=str(ROOT))
     return parser.parse_args()
@@ -68,30 +70,39 @@ def main() -> int:
         raise SystemExit(f"unknown target: {args.target}")
     env_path = Path(args.server_root) / str(row["folder"]) / ".env"
     lines, _ = read_env(env_path)
-    updates = {"SHOPEE_OPEN_API_MODE": args.mode}
+    _, gateway = read_env(GATEWAY_ENV)
+    master = gateway.get("SHOPEE_GATEWAY_INTERNAL_MASTER_KEY", "")
+    updates = {
+        "SHOPEE_GATEWAY_BASE_URL": "http://nexflow-shopee-gateway:8091",
+        "SHOPEE_GATEWAY_PUBLIC_URL": gateway.get("PUBLIC_BASE_URL", "https://shopee-gateway.nextstep-soft.com").rstrip("/"),
+        "SHOPEE_GATEWAY_TENANT": args.target,
+        "SHOPEE_GATEWAY_INTERNAL_SECRET": derive(master, args.target),
+    }
+    if args.mode:
+        updates["SHOPEE_OPEN_API_MODE"] = args.mode
     if args.mode == "gateway":
-        _, gateway = read_env(GATEWAY_ENV)
-        master = gateway.get("SHOPEE_GATEWAY_INTERNAL_MASTER_KEY", "")
         updates.update(
             {
                 "SHOPEE_OPEN_API_ENABLED": "true",
                 "SHOPEE_OPEN_API_ENV": gateway.get("SHOPEE_OPEN_API_ENV", "live"),
-                "SHOPEE_GATEWAY_BASE_URL": "http://nexflow-shopee-gateway:8091",
-                "SHOPEE_GATEWAY_PUBLIC_URL": gateway.get("PUBLIC_BASE_URL", "https://shopee-gateway.nextstep-soft.com").rstrip("/"),
-                "SHOPEE_GATEWAY_TENANT": args.target,
-                "SHOPEE_GATEWAY_INTERNAL_SECRET": derive(master, args.target),
                 "ENABLE_SHOPEE_REALTIME_OPS": "true",
                 "VITE_ENABLE_SHOPEE_REALTIME_OPS": "true",
             }
         )
+    output = upsert(lines, updates)
+    if output == lines:
+        print(f"Gateway identity already configured for {args.target}.")
+        return 0
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = env_path.with_name(f"{env_path.name}.bak-shopee-gateway-{stamp}")
     shutil.copy2(env_path, backup)
     os.chmod(backup, 0o600)
-    env_path.write_text("\n".join(upsert(lines, updates)) + "\n")
+    env_path.write_text("\n".join(output) + "\n")
     os.chmod(env_path, 0o600)
-    print(f"Updated {args.target} to {args.mode} mode; backup created.")
-    print(f"Restart with deploy_nextstep_instances.py --target {args.target}")
+    action = f"{args.mode} mode" if args.mode else "gateway identity"
+    print(f"Updated {args.target} {action}; backup created.")
+    if args.mode:
+        print(f"Restart with deploy_nextstep_instances.py --target {args.target}")
     return 0
 
 

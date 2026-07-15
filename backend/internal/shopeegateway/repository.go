@@ -148,16 +148,92 @@ func (r *Repository) TenantByShopID(ctx context.Context, shopID int64) (*Tenant,
 	var out Tenant
 	err := r.db.QueryRowContext(ctx,
 		`SELECT t.id::text, t.slug, t.public_base_url, t.backend_url, t.enabled
-		   FROM shop_connections c
-		   JOIN tenants t ON t.id = c.tenant_id
-		  WHERE c.shop_id = $1
-		    AND c.disabled_at IS NULL`,
+		   FROM shop_routes r
+		   JOIN tenants t ON t.id = r.tenant_id
+		  WHERE r.shop_id = $1
+		    AND r.active = TRUE`,
 		shopID,
 	).Scan(&out.ID, &out.Slug, &out.PublicBaseURL, &out.BackendURL, &out.Enabled)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (r *Repository) ActiveTenants(ctx context.Context) ([]Tenant, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id::text, slug, public_base_url, backend_url, enabled
+		   FROM tenants
+		  WHERE enabled = TRUE
+		  ORDER BY slug`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	output := make([]Tenant, 0)
+	for rows.Next() {
+		var tenant Tenant
+		if err := rows.Scan(&tenant.ID, &tenant.Slug, &tenant.PublicBaseURL, &tenant.BackendURL, &tenant.Enabled); err != nil {
+			return nil, err
+		}
+		output = append(output, tenant)
+	}
+	return output, rows.Err()
+}
+
+// SyncTenantRoutes replaces only legacy-discovered routes for one tenant.
+// Gateway OAuth routes are preserved, and a shop already owned by another
+// tenant is never reassigned.
+func (r *Repository) SyncTenantRoutes(ctx context.Context, tenantID string, shopIDs []int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE shop_routes
+		    SET active = FALSE, updated_at = NOW()
+		  WHERE tenant_id = $1::uuid
+		    AND route_source = 'legacy_sync'`, tenantID,
+	); err != nil {
+		return err
+	}
+	seen := make(map[int64]struct{}, len(shopIDs))
+	for _, shopID := range shopIDs {
+		if shopID <= 0 {
+			return errors.New("invalid Shopee shop route")
+		}
+		if _, exists := seen[shopID]; exists {
+			continue
+		}
+		seen[shopID] = struct{}{}
+		result, err := tx.ExecContext(ctx,
+			`INSERT INTO shop_routes (shop_id, tenant_id, route_source)
+			 VALUES ($1, $2::uuid, 'legacy_sync')
+			 ON CONFLICT (shop_id) DO UPDATE
+			    SET active = TRUE,
+			        last_seen_at = NOW(),
+			        updated_at = NOW(),
+			        route_source = CASE
+			          WHEN shop_routes.route_source = 'gateway_oauth' THEN 'gateway_oauth'
+			          ELSE 'legacy_sync'
+			        END
+			  WHERE shop_routes.tenant_id = EXCLUDED.tenant_id`,
+			shopID, tenantID,
+		)
+		if err != nil {
+			return err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return ErrShopAlreadyOwned
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) CreateOAuthState(ctx context.Context, record OAuthStateRecord) error {
@@ -253,7 +329,12 @@ func (r *Repository) Connection(ctx context.Context, tenantSlug string, shopID i
 }
 
 func (r *Repository) UpsertConnection(ctx context.Context, conn EncryptedConnection) error {
-	result, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx,
 		`INSERT INTO shop_connections
 		   (tenant_id, shop_id, merchant_id, shop_name, environment,
 		    access_token_cipher, access_token_nonce, refresh_token_cipher, refresh_token_nonce,
@@ -290,7 +371,26 @@ func (r *Repository) UpsertConnection(ctx context.Context, conn EncryptedConnect
 	if rows != 1 {
 		return ErrShopAlreadyOwned
 	}
-	return nil
+	result, err = tx.ExecContext(ctx,
+		`INSERT INTO shop_routes (shop_id, tenant_id, route_source)
+		 VALUES ($1, $2::uuid, 'gateway_oauth')
+		 ON CONFLICT (shop_id) DO UPDATE
+		    SET route_source = 'gateway_oauth', active = TRUE,
+		        last_seen_at = NOW(), updated_at = NOW()
+		  WHERE shop_routes.tenant_id = EXCLUDED.tenant_id`,
+		conn.ShopID, conn.TenantID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err = result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrShopAlreadyOwned
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) UpdateConnectionTokens(ctx context.Context, conn EncryptedConnection) error {
@@ -343,10 +443,10 @@ func (r *Repository) AcceptPushEvent(ctx context.Context, input PushEventInput) 
 	var tenant Tenant
 	tenantErr := tx.QueryRowContext(ctx,
 		`SELECT t.id::text, t.slug, t.public_base_url, t.backend_url, t.enabled
-		   FROM shop_connections c
-		   JOIN tenants t ON t.id = c.tenant_id
-		  WHERE c.shop_id = $1
-		    AND c.disabled_at IS NULL
+		   FROM shop_routes r
+		   JOIN tenants t ON t.id = r.tenant_id
+		  WHERE r.shop_id = $1
+		    AND r.active = TRUE
 		    AND t.enabled = TRUE`,
 		input.ShopID,
 	).Scan(&tenant.ID, &tenant.Slug, &tenant.PublicBaseURL, &tenant.BackendURL, &tenant.Enabled)
