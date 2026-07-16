@@ -140,7 +140,10 @@ func TestServiceOAuthStoresEncryptedTokensAndQueuesMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAuthURL() error = %v", err)
 	}
-	state := queryValue(t, auth.AuthURL, "state")
+	state := authRedirectState(t, auth.AuthURL)
+	if outerState := queryValue(t, auth.AuthURL, "state"); outerState != state {
+		t.Fatalf("outer state does not match redirect state")
+	}
 	result, err := service.CompleteOAuth(t.Context(), "one-time-code", state, 264993963)
 	if err != nil {
 		t.Fatalf("CompleteOAuth() error = %v", err)
@@ -301,7 +304,7 @@ func TestServiceRejectsOAuthTokenForDifferentShop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAuthURL() error = %v", err)
 	}
-	_, err = service.CompleteOAuth(t.Context(), "code", queryValue(t, auth.AuthURL, "state"), 123)
+	_, err = service.CompleteOAuth(t.Context(), "code", authRedirectState(t, auth.AuthURL), 123)
 	var serviceErr *ServiceError
 	if !errors.As(err, &serviceErr) || serviceErr.Code != "token_shop_mismatch" {
 		t.Fatalf("CompleteOAuth() error = %#v", err)
@@ -404,4 +407,9 @@ func queryValue(t *testing.T, rawURL, key string) string {
 		t.Fatalf("missing query %s in %s", key, rawURL)
 	}
 	return value
+}
+
+func authRedirectState(t *testing.T, authURL string) string {
+	t.Helper()
+	return queryValue(t, queryValue(t, authURL, "redirect"), "state")
 }

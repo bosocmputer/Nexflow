@@ -145,11 +145,32 @@ func (s *Service) CreateAuthURL(ctx context.Context, tenantSlug, userID, returnU
 	}); err != nil {
 		return nil, serviceError("oauth_state_store_error", "บันทึก OAuth state ไม่สำเร็จ", 500, false, err)
 	}
-	authURL, err := s.provider.AuthURL(s.cfg.OAuthCallbackURL(), state, s.now())
+	callbackURL, err := oauthCallbackURLWithState(s.cfg.OAuthCallbackURL(), state)
+	if err != nil {
+		return nil, serviceError("oauth_state_error", "เตรียม Shopee OAuth callback ไม่สำเร็จ", 500, false, err)
+	}
+	// Shopee does not echo the top-level state query parameter on the shop OAuth
+	// callback. Carry the same signed, one-time state in redirect as well so the
+	// callback can identify a tenant without falling back to a guessed pending row.
+	authURL, err := s.provider.AuthURL(callbackURL, state, s.now())
 	if err != nil {
 		return nil, serviceError("shopee_auth_url_error", "สร้าง Shopee OAuth URL ไม่สำเร็จ", 502, isRetryableShopeeError(err), err)
 	}
 	return &shopeeapi.GatewayAuthURLResponse{AuthURL: authURL, RedirectURL: s.cfg.OAuthCallbackURL()}, nil
+}
+
+func oauthCallbackURLWithState(callbackURL, state string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(callbackURL))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return "", errors.New("OAuth callback URL must be an absolute HTTPS URL")
+	}
+	if strings.TrimSpace(state) == "" {
+		return "", ErrInvalidOAuthState
+	}
+	query := u.Query()
+	query.Set("state", state)
+	u.RawQuery = query.Encode()
+	return u.String(), nil
 }
 
 func (s *Service) CompleteOAuth(ctx context.Context, code, state string, callbackShopID int64) (*OAuthCallbackResult, error) {
