@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,11 @@ from pathlib import Path
 ROOT = Path("/mnt/data/nextstep-node-2")
 REGISTRY = Path("deploy/nextstep-instances.json")
 GATEWAY_ENV = ROOT / "nexflow-shopee-gateway" / ".env"
+DIRECT_ROLLBACK_ENV = ".shopee-direct-rollback.env"
+DIRECT_CREDENTIAL_KEYS = (
+    "SHOPEE_OPEN_API_PARTNER_ID",
+    "SHOPEE_OPEN_API_PARTNER_KEY",
+)
 
 
 def read_env(path: Path) -> tuple[list[str], dict[str, str]]:
@@ -51,6 +57,57 @@ def derive(master: str, tenant: str) -> str:
     return hmac.new(key, f"nexflow-shopee-gateway/tenant/{tenant}".encode(), hashlib.sha256).hexdigest()
 
 
+def write_env_atomic(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        handle.write("\n".join(lines) + "\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def direct_credential_values(values: dict[str, str]) -> dict[str, str]:
+    return {key: values.get(key, "").strip() for key in DIRECT_CREDENTIAL_KEYS}
+
+
+def credentials_complete(values: dict[str, str]) -> bool:
+    return all(values.get(key, "").strip() for key in DIRECT_CREDENTIAL_KEYS)
+
+
+def prepare_mode_updates(mode: str, current: dict[str, str], rollback_path: Path) -> dict[str, str]:
+    if mode == "gateway":
+        active_credentials = direct_credential_values(current)
+        if any(active_credentials.values()) and not credentials_complete(active_credentials):
+            raise SystemExit("active direct credentials are incomplete; repair or remove them before gateway cutover")
+        if credentials_complete(active_credentials):
+            write_env_atomic(
+                rollback_path,
+                [f"{key}={active_credentials[key]}" for key in DIRECT_CREDENTIAL_KEYS],
+            )
+        return {
+            "SHOPEE_OPEN_API_MODE": "gateway",
+            **{key: "" for key in DIRECT_CREDENTIAL_KEYS},
+        }
+
+    if mode == "direct":
+        rollback_credentials: dict[str, str] = {}
+        if rollback_path.exists():
+            _, rollback_credentials = read_env(rollback_path)
+        credentials = direct_credential_values(rollback_credentials)
+        if not credentials_complete(credentials):
+            credentials = direct_credential_values(current)
+        if not credentials_complete(credentials):
+            raise SystemExit(
+                "direct rollback credentials are unavailable; restore the tenant backup or reconnect explicitly"
+            )
+        return {
+            "SHOPEE_OPEN_API_MODE": "direct",
+            **credentials,
+        }
+
+    return {}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True)
@@ -69,7 +126,7 @@ def main() -> int:
     if row is None:
         raise SystemExit(f"unknown target: {args.target}")
     env_path = Path(args.server_root) / str(row["folder"]) / ".env"
-    lines, _ = read_env(env_path)
+    lines, current = read_env(env_path)
     _, gateway = read_env(GATEWAY_ENV)
     master = gateway.get("SHOPEE_GATEWAY_INTERNAL_MASTER_KEY", "")
     updates = {
@@ -79,7 +136,7 @@ def main() -> int:
         "SHOPEE_GATEWAY_INTERNAL_SECRET": derive(master, args.target),
     }
     if args.mode:
-        updates["SHOPEE_OPEN_API_MODE"] = args.mode
+        updates.update(prepare_mode_updates(args.mode, current, env_path.with_name(DIRECT_ROLLBACK_ENV)))
     if args.mode == "gateway":
         updates.update(
             {
@@ -97,8 +154,7 @@ def main() -> int:
     backup = env_path.with_name(f"{env_path.name}.bak-shopee-gateway-{stamp}")
     shutil.copy2(env_path, backup)
     os.chmod(backup, 0o600)
-    env_path.write_text("\n".join(output) + "\n")
-    os.chmod(env_path, 0o600)
+    write_env_atomic(env_path, output)
     action = f"{args.mode} mode" if args.mode else "gateway identity"
     print(f"Updated {args.target} {action}; backup created.")
     if args.mode:

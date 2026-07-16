@@ -1,6 +1,6 @@
 # Central Shopee Gateway Runbook
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 
 ## Public Contract
 
@@ -57,7 +57,10 @@ NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --targe
 
 Then the customer admin opens `/settings/shopee-connections`, clicks connect,
 and authorizes that customer's Shopee shop. The gateway rejects a shop already
-owned by another tenant.
+owned by another tenant. Switching to gateway mode moves any legacy Partner ID
+and Partner Key out of the active tenant `.env` into the server-only
+`.shopee-direct-rollback.env` file with mode `600`. They are restored only by
+an explicit `--mode direct` rollback.
 
 ## AOY Canary Rollout
 
@@ -99,10 +102,12 @@ sudo python3 scripts/shopee_gateway_tenant_mode.py --target aoy --mode direct
 NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target aoy
 ```
 
-This does not delete gateway data or existing direct credentials. A shop first
-connected through gateway mode has no usable direct token, so it must reconnect
-to the old direct app after switching mode. Existing direct shops can roll back
-without reconnecting only while their retained direct refresh token is valid.
+This does not delete gateway data or existing direct credentials. The helper
+restores the legacy Partner credentials from `.shopee-direct-rollback.env` only
+for direct mode. A shop first connected through gateway mode has no usable
+direct token, so it must reconnect to the old direct app after switching mode.
+Existing direct shops can roll back without reconnecting only while their
+retained direct refresh token is valid.
 
 ## Operations
 
