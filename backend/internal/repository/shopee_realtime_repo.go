@@ -324,13 +324,21 @@ func (r *ShopeeRealtimeRepo) InsertPushEvent(ctx context.Context, in ShopeePushE
 		 ON CONFLICT (dedupe_key) DO NOTHING`,
 		in.ShopID, strings.TrimSpace(in.OrderSN), in.PushCode, strings.TrimSpace(in.PushName),
 		strings.ToUpper(strings.TrimSpace(in.EventStatus)), nullableTime(in.UpdateTime), nullableTime(in.Timestamp),
-		dedupeKey, string(in.RawPayload), string(in.Headers),
+		dedupeKey, jsonTextOrEmptyObject(in.RawPayload), jsonTextOrEmptyObject(in.Headers),
 	)
 	if err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+func jsonTextOrEmptyObject(value json.RawMessage) string {
+	text := strings.TrimSpace(string(value))
+	if text == "" || text == "null" {
+		return "{}"
+	}
+	return text
 }
 
 func (r *ShopeeRealtimeRepo) EnqueueReconcileJob(ctx context.Context, shopID int64, orderSN, reason string) error {

@@ -1,11 +1,46 @@
 package repository
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
 	"nexflow/internal/models"
 )
+
+func TestInsertPushEventNormalizesEmptyJSONHeaders(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	raw := json.RawMessage(`{"shop_id":99,"code":3,"data":{"ordersn":"ORDER-1"}}`)
+	mock.ExpectExec("INSERT INTO shopee_push_events").
+		WithArgs(
+			int64(99), "ORDER-1", 3, "order_status_push", "READY_TO_SHIP",
+			nil, nil, "dedupe-1", string(raw), "{}",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewShopeeRealtimeRepo(db)
+	inserted, err := repo.InsertPushEvent(context.Background(), ShopeePushEventInput{
+		ShopID: 99, OrderSN: "ORDER-1", PushCode: 3, PushName: "order_status_push",
+		EventStatus: "ready_to_ship", DedupeKey: "dedupe-1", RawPayload: raw,
+	})
+	if err != nil {
+		t.Fatalf("InsertPushEvent() error = %v", err)
+	}
+	if !inserted {
+		t.Fatal("InsertPushEvent() inserted = false, want true")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestShopeeSnapshotStatusGroupWhere(t *testing.T) {
 	tests := []struct {
