@@ -1,7 +1,11 @@
+import io
 import stat
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import shopee_gateway_tenant_mode as tenant_mode
 
@@ -76,6 +80,42 @@ class ShopeeGatewayTenantModeTest(unittest.TestCase):
             rollback = Path(directory) / tenant_mode.DIRECT_ROLLBACK_ENV
             with self.assertRaises(SystemExit):
                 tenant_mode.prepare_mode_updates("direct", {}, rollback)
+
+    def test_gateway_feature_can_be_prepared_but_disabled(self) -> None:
+        updates = tenant_mode.gateway_feature_updates(False, "live")
+
+        self.assertEqual(updates["SHOPEE_OPEN_API_ENABLED"], "false")
+        self.assertEqual(updates["ENABLE_SHOPEE_REALTIME_OPS"], "false")
+        self.assertEqual(updates["VITE_ENABLE_SHOPEE_REALTIME_OPS"], "false")
+        self.assertEqual(updates["SHOPEE_OPEN_API_ENV"], "live")
+
+    def test_gateway_feature_enable_turns_on_backend_and_frontend(self) -> None:
+        updates = tenant_mode.gateway_feature_updates(True, "live")
+
+        self.assertEqual(updates["SHOPEE_OPEN_API_ENABLED"], "true")
+        self.assertEqual(updates["ENABLE_SHOPEE_REALTIME_OPS"], "true")
+        self.assertEqual(updates["VITE_ENABLE_SHOPEE_REALTIME_OPS"], "true")
+
+    def test_gateway_mode_requires_explicit_feature_state(self) -> None:
+        with patch.object(sys, "argv", ["tenant-mode", "--target", "aoy", "--mode", "gateway"]):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                tenant_mode.parse_args()
+
+    def test_gateway_mode_accepts_disabled_feature_state(self) -> None:
+        argv = [
+            "tenant-mode",
+            "--target",
+            "demo",
+            "--mode",
+            "gateway",
+            "--open-api-enabled",
+            "false",
+        ]
+        with patch.object(sys, "argv", argv):
+            args = tenant_mode.parse_args()
+
+        self.assertEqual(args.mode, "gateway")
+        self.assertEqual(args.open_api_enabled, "false")
 
 
 if __name__ == "__main__":

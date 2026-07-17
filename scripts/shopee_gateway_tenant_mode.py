@@ -108,15 +108,35 @@ def prepare_mode_updates(mode: str, current: dict[str, str], rollback_path: Path
     return {}
 
 
+def gateway_feature_updates(enabled: bool, environment: str) -> dict[str, str]:
+    value = "true" if enabled else "false"
+    return {
+        "SHOPEE_OPEN_API_ENABLED": value,
+        "SHOPEE_OPEN_API_ENV": environment,
+        "ENABLE_SHOPEE_REALTIME_OPS": value,
+        "VITE_ENABLE_SHOPEE_REALTIME_OPS": value,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--mode", choices=["gateway", "direct"])
     mode.add_argument("--identity-only", action="store_true", help="provision signed gateway identity without changing mode")
+    parser.add_argument(
+        "--open-api-enabled",
+        choices=["true", "false"],
+        help="explicitly enable or disable the tenant Shopee feature in gateway mode",
+    )
     parser.add_argument("--registry", default=str(REGISTRY))
     parser.add_argument("--server-root", default=str(ROOT))
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.mode == "gateway" and args.open_api_enabled is None:
+        parser.error("--open-api-enabled is required with --mode gateway")
+    if args.open_api_enabled is not None and args.mode != "gateway":
+        parser.error("--open-api-enabled is valid only with --mode gateway")
+    return args
 
 
 def main() -> int:
@@ -139,12 +159,10 @@ def main() -> int:
         updates.update(prepare_mode_updates(args.mode, current, env_path.with_name(DIRECT_ROLLBACK_ENV)))
     if args.mode == "gateway":
         updates.update(
-            {
-                "SHOPEE_OPEN_API_ENABLED": "true",
-                "SHOPEE_OPEN_API_ENV": gateway.get("SHOPEE_OPEN_API_ENV", "live"),
-                "ENABLE_SHOPEE_REALTIME_OPS": "true",
-                "VITE_ENABLE_SHOPEE_REALTIME_OPS": "true",
-            }
+            gateway_feature_updates(
+                args.open_api_enabled == "true",
+                gateway.get("SHOPEE_OPEN_API_ENV", "live"),
+            )
         )
     output = upsert(lines, updates)
     if output == lines:
@@ -155,7 +173,11 @@ def main() -> int:
     shutil.copy2(env_path, backup)
     os.chmod(backup, 0o600)
     write_env_atomic(env_path, output)
-    action = f"{args.mode} mode" if args.mode else "gateway identity"
+    if args.mode == "gateway":
+        feature_state = "enabled" if args.open_api_enabled == "true" else "disabled"
+        action = f"gateway mode with Shopee feature {feature_state}"
+    else:
+        action = f"{args.mode} mode" if args.mode else "gateway identity"
     print(f"Updated {args.target} {action}; backup created.")
     if args.mode:
         print(f"Restart with deploy_nextstep_instances.py --target {args.target}")

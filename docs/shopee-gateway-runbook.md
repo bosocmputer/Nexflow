@@ -51,7 +51,8 @@ After the customer instance/domain is ready:
 
 ```bash
 cd /mnt/data/nextstep-node-2/nexflow-release
-sudo python3 scripts/shopee_gateway_tenant_mode.py --target <tenant> --mode gateway
+sudo python3 scripts/shopee_gateway_tenant_mode.py \
+  --target <tenant> --mode gateway --open-api-enabled true
 NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target <tenant>
 ```
 
@@ -61,6 +62,24 @@ owned by another tenant. Switching to gateway mode moves any legacy Partner ID
 and Partner Key out of the active tenant `.env` into the server-only
 `.shopee-direct-rollback.env` file with mode `600`. They are restored only by
 an explicit `--mode direct` rollback.
+
+For a customer whose Shopee add-on has not been activated yet, provision the
+same gateway identity and network path but keep the feature unavailable:
+
+```bash
+sudo python3 scripts/shopee_gateway_tenant_mode.py \
+  --target <tenant> --mode gateway --open-api-enabled false
+NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target <tenant>
+```
+
+After activation, enable the feature and deploy that tenant again. No new
+Shopee App, hostname, port, or gateway identity is required:
+
+```bash
+sudo python3 scripts/shopee_gateway_tenant_mode.py \
+  --target <tenant> --mode gateway --open-api-enabled true
+NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target <tenant>
+```
 
 ## AOY Canary Rollout
 
