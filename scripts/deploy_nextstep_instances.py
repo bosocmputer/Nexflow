@@ -576,6 +576,12 @@ def deploy_target(target: Target) -> None:
             timeout=30,
         )
         fail(f"{target.name} backend health check failed")
+    sudo(
+        f"docker exec {shlex.quote(target.backend_container)} "
+        "sh -lc 'psql \"$DATABASE_URL\" -Atc \"SELECT 1\"'",
+        label=f"fresh database authentication {target.name}",
+        timeout=30,
+    )
     ssh(
         f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{target.frontend_debug_port}/login",
         label=f"frontend debug login status {target.name}",

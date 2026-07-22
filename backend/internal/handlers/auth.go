@@ -61,7 +61,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	user, err := h.userRepo.FindByID(userID.(string))
-	if err != nil || user == nil {
+	if err != nil {
+		h.log.Error("FindByID", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	if user == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not found"})
 		return
 	}
