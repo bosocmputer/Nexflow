@@ -242,6 +242,7 @@ text = path.read_text()
 new = text
 new = new.replace("build: ./backend", "build: {RELEASE_DIR}/backend")
 new = new.replace("context: ./frontend", "context: {RELEASE_DIR}/frontend")
+new = new.replace("@postgres:5432/nexflow", "@{target.postgres_container}:5432/nexflow")
 new = new.replace('      - "{target.previous_frontend_port}:80"', '      - "127.0.0.1:{target.frontend_debug_port}:80"')
 new = new.replace('      - "0.0.0.0:{target.previous_frontend_port}:80"', '      - "127.0.0.1:{target.frontend_debug_port}:80"')
 new = new.replace('      - "127.0.0.1:{target.previous_frontend_port}:80"', '      - "127.0.0.1:{target.frontend_debug_port}:80"')
