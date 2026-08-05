@@ -246,17 +246,13 @@ dedupe keys must remain untouched.
 
 ---
 
-## Active IMAP Inboxes
+## Archived IMAP Schema
 
-Managed via `/settings/email` (DB-driven, `imap_accounts` table):
-
-Production currently has **0 IMAP accounts**. `/settings/email` must therefore
-render the empty state and remain actionable for adding a Gmail App Password
-inbox later.
-
-Poll interval is still constrained to ≥ 300s (5 min). Routing rules remain:
-`ถูกจัดส่งแล้ว` / `ยืนยันการชำระเงิน` → purchaseorder (SML #2); other Shopee
-email → configured sales route; general email → AI pipeline.
+Production has **0 enabled IMAP accounts**. The coordinator is not started,
+`/settings/email` redirects to the dashboard, and `/api/settings/imap-accounts*`
+returns `410 Gone`. Tables and historical rows remain only for audit and a
+possible future purchase-flow redesign. See `docs/email.md` for the archived
+implementation notes; do not configure an inbox in the current release.
 
 ---
 
@@ -268,8 +264,8 @@ email → configured sales route; general email → AI pipeline.
 - **Production marketplace route** — Shopee Realtime, Lazada, and TikTok current
   production sale data is primarily `saleinvoice`; legacy Shopee import may still
   create `saleorder` documents through its own `channel_defaults` route.
-- **ngrok** — URL is fixed (`animal-galvanize-tameness.ngrok-free.dev`). If it ever changes, update `PUBLIC_BASE_URL` in `.env` and rebuild.
-- **IMAP Gmail** — requires App Password, not real password. Min poll 5 min.
+- **legacy dev/ngrok** — `192.168.2.109` and ngrok are retired for production; do not deploy or configure callbacks there.
+- **IMAP** — runtime and APIs are disabled in sales-only mode; retained tables are historical only.
 - **LINE chat** — disabled (`VITE_ENABLE_CHAT=false`). Backend code is present but UI is hidden.
 - **sml-api-bybos** — must use `--force-recreate` (not `restart`) when changing `.env`.
   Current Aoy tenant points to `nextstep.iszai.com:6843`, not the old demserver

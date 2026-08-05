@@ -1,6 +1,12 @@
 # Nexflow Behavior Inventory
 
-Updated: 2026-06-22
+Updated: 2026-08-05
+
+> **Archived pre-sales-only inventory.** This document preserves the previous
+> behavior for historical reference only. AI, embedding, IMAP, LINE chat, and
+> purchase rows below are not active requirements. Current runtime behavior is
+> defined by `docs/sales-only-no-ai.md`, `docs/current-state.md`, and the route
+> registrations in `backend/cmd/server/main.go` and `frontend/src/App.tsx`.
 
 Purpose: this file is the behavior-preservation checklist for the UX redesign.
 Visual changes must keep these routes, API calls, permissions, states, and

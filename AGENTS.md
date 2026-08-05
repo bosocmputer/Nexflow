@@ -56,7 +56,7 @@ Migrations: **001–073** (all idempotent/re-runnable). Full schema in `docs/cur
 
 ## 3. SML Sales Routing (bills.go)
 
-4-way dispatch on `source` + `bill_type` + `channel_defaults.endpoint`:
+3-way sales dispatch on `source` + `bill_type` + `channel_defaults.endpoint`:
 
 | source | bill_type | default route | client |
 | --- | --- | --- | --- |
@@ -93,7 +93,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 2. **doc_no SML bug** — pattern `prefix-YYYY` or `prefix-YY` silently drops docs in SML UI (never appears). Use `YYMM####` counter with no hyphen before year: `BF-SO260400001` ✅ vs `BF-SO-2026...` ❌. `doc_no` reuse on retry: bills.go saves to DB before SML call; retry reuses existing doc_no.
 
-3. **channel_defaults empty** — all 4 retry paths fail with "ยังไม่ได้ตั้งค่า". Run Quick Setup at `/settings/channels`. `applyChannelOverrides()` overlays wh_code/shelf_code/vat_type/vat_rate per channel.
+3. **channel_defaults empty** — sales retry routes fail with "ยังไม่ได้ตั้งค่า". Run Quick Setup at `/settings/channels`. `applyChannelOverrides()` overlays wh_code/shelf_code/vat_type/vat_rate per channel.
 
 4. **Sales-only capability guard** — AI, embedding, OCR, IMAP, LINE chat, and purchase runtime are disabled. Run `bash scripts/check_sales_only_runtime.sh` before deploy; compatibility APIs return `410 Gone`.
 
@@ -184,7 +184,7 @@ Rules:
 POST /api/auth/login
 GET  /api/bills                   -- cursor: status, source, bill_type, date, archived
 GET  /api/bills/:id               -- includes route preview
-POST /api/bills/:id/retry         -- 4-way SML dispatch
+POST /api/bills/:id/retry         -- sales SML dispatch; purchase returns 410
 POST /api/bills/bulk-send-jobs    -- async bulk (cap 100)
 PUT  /api/bills/:id/items/:iid    -- edit + F1 auto-learn
 POST /api/bills/:id/archive | DEL /api/bills/:id
@@ -193,9 +193,10 @@ GET/POST/PUT/DEL /api/mappings
 GET  /api/mappings/stats
 
 GET  /api/catalog | /api/catalog/search?q=
-POST /api/catalog/sync | /api/catalog/embed-all
+POST /api/catalog/sync
+POST /api/catalog/embed-all       -- compatibility only, returns 410 Gone
 
-GET  /api/settings/imap-accounts  | POST ... | POST .../:id/poll
+ANY  /api/settings/imap-accounts* -- compatibility only, returns 410 Gone
 GET  /api/settings/channel-defaults | PUT ...
 GET  /api/settings/instance | PUT ...
 GET  /api/settings/line-oa  | POST ...
@@ -212,7 +213,7 @@ GET  /api/shopee-operations/:shop_id/:order_sn/timeline
 POST /api/shopee-operations/:shop_id/:order_sn/payment-breakdown/refresh
 GET/POST /api/shopee-operations/:shop_id/:order_sn/cancel-sml-document(/preview)
 
-POST /api/admin/conversations/:user/messages
+ANY  /api/admin/conversations*    -- compatibility only, returns 410 Gone
 POST /api/admin/events/token | GET /api/admin/events  -- SSE
 
 POST /webhook/line/:oaId
