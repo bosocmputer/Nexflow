@@ -16,8 +16,7 @@ export const ENABLE_TIKTOK_EXCEL =
 export const ENABLE_LINE_MYSHOP =
   import.meta.env.VITE_ENABLE_LINE_MYSHOP !== 'false'
 
-export const ENABLE_CHAT =
-  import.meta.env.VITE_ENABLE_CHAT !== 'false'
+export const ENABLE_CHAT = false
 
 export const ENABLE_REMARK2 =
   import.meta.env.VITE_ENABLE_REMARK2 === 'true'

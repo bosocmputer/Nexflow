@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard'
 import NextStepMarketplace from './pages/NextStepMarketplace'
 import Bills from './pages/Bills'
 import BillDetail from './pages/BillDetail'
-import Import from './pages/Import'
 import ShopeeImport from './pages/ShopeeImport'
 import ShopeeConnections from './pages/ShopeeConnections'
 import ShopeeOperations from './pages/ShopeeOperations'
@@ -95,7 +94,7 @@ export default function App() {
           <Route path="sales-orders/:id" element={ENABLE_SALES_ORDERS ? <RequireMenu menuKey="sales_orders"><BillDetail /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="sale-invoices/:id" element={ENABLE_SALES_ORDERS ? <RequireMenu menuKey="sale_invoices"><BillDetail /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="messages" element={<Navigate to="/dashboard" replace />} />
-          <Route path="import" element={<RequireMenu menuKey="import_shopee"><Import /></RequireMenu>} />
+          <Route path="import" element={<Navigate to="/import/shopee" replace />} />
           <Route path="import/shopee" element={ENABLE_SHOPEE_EXCEL ? <RequireMenu menuKey="import_shopee"><ShopeeImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="shopee-operations" element={ENABLE_SHOPEE_REALTIME_OPS ? <RequireMenu menuKey="shopee_operations"><ShopeeOperations /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="shopee-settlements" element={ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="shopee_settlements"><ShopeeSettlement /></RequireMenu> : <Navigate to="/dashboard" replace />} />

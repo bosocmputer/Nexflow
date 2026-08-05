@@ -6,8 +6,6 @@ import {
   LogOut,
 } from 'lucide-react'
 
-import { useChatEvents } from '@/hooks/useChatEvents'
-import { useEventsStore, type EventsConnectionState } from '@/lib/events-store'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,14 +38,9 @@ import { type NotificationUnreadBySource, useNotificationsStore } from '@/lib/no
 import { useUIStore } from '@/lib/ui-store'
 import { cn } from '@/lib/utils'
 import { WORK_QUEUE_CHANGED_EVENT } from '@/lib/work-queue-events'
-import { ENABLE_CHAT, ENABLE_SALES_ORDERS } from '@/lib/featureFlags'
+import { ENABLE_SALES_ORDERS } from '@/lib/featureFlags'
 import { visibleNavGroups, type NavGroup } from '@/lib/navigation'
 import client from '@/api/client'
-
-// VITE_PHASE controls which nav items are visible.
-//   1  = Phase 1 only (Email → PO) — hides LINE chat, marketplace imports
-//   99 = all features (default when unset)
-const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
 async function countDocumentQueue(base: Record<string, string>) {
   const statuses = ['pending', 'needs_review', 'failed']
@@ -82,7 +75,6 @@ const ROLE_LABEL: Record<string, string> = {
 }
 
 type QueueCounts = {
-  purchase: number
   saleorder: number
   saleinvoice: number
   marketplaceAliases: number
@@ -91,18 +83,14 @@ type QueueCounts = {
 function navBadgeCount(
   badgeKind: string | boolean | null | undefined,
   queueCounts: QueueCounts,
-  unreadMessages: number,
   unreadBySource: NotificationUnreadBySource,
 ) {
   const kind = badgeKind === true ? 'bills' : badgeKind || null
-  if (kind === 'messages') return unreadMessages
   if (kind === 'shopee_realtime') return unreadBySource.shopee_realtime ?? 0
   if (kind === 'nextstep_marketplace') return unreadBySource.nextstep_marketplace ?? 0
-  if (kind === 'purchase') return queueCounts.purchase
   if (kind === 'saleorder') return queueCounts.saleorder
   if (kind === 'saleinvoice') return queueCounts.saleinvoice
   if (kind === 'marketplace_aliases') return queueCounts.marketplaceAliases
-  if (kind === 'bills') return queueCounts.purchase
   return 0
 }
 
@@ -114,29 +102,22 @@ export default function Sidebar() {
   const mobileOpen = useUIStore((s) => s.mobileNavOpen)
   const setMobileOpen = useUIStore((s) => s.setMobileNavOpen)
   const unreadBySource = useNotificationsStore((s) => s.unreadBySource)
-  const [queueCounts, setQueueCounts] = useState({ purchase: 0, saleorder: 0, saleinvoice: 0, marketplaceAliases: 0 })
-  const [unreadMessages, setUnreadMessages] = useState(0)
+  const [queueCounts, setQueueCounts] = useState({ saleorder: 0, saleinvoice: 0, marketplaceAliases: 0 })
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Document queue counts + unread messages. SSE pushes unread changes
-  // (UnreadChanged event) so the badge updates instantly when admin opens
-  // a thread or a customer messages in. The 60s poll exists as a safety
-  // net to refresh pending count (which has no SSE source) and to recover
-  // if the SSE stream silently drops.
+  // Sales queue counts use a 60s poll as a safety net. Notification badges
+  // update separately through the shared SSE notification store.
   const fetchStats = useCallback(async () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       return
     }
     try {
-      const [stats, purchase, saleorder, saleinvoice, marketplaceAliases] = await Promise.all([
-        client.get<{ unread_messages?: number }>('/api/dashboard/stats'),
-        countDocumentQueue({ source: 'shopee_shipped', bill_type: 'purchase' }),
+      const [saleorder, saleinvoice, marketplaceAliases] = await Promise.all([
         countDocumentQueue({ bill_type: 'sale', document_route: 'saleorder' }),
         countDocumentQueue({ bill_type: 'sale', document_route: 'saleinvoice' }),
         countMarketplaceAliasQueue(),
       ])
-      setQueueCounts({ purchase, saleorder, saleinvoice, marketplaceAliases })
-      setUnreadMessages(stats.data.unread_messages ?? 0)
+      setQueueCounts({ saleorder, saleinvoice, marketplaceAliases })
     } catch {
       /* silent */
     }
@@ -166,14 +147,6 @@ export default function Sidebar() {
     window.addEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
     return () => window.removeEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
   }, [fetchStats])
-
-  // SSE — instant unread badge updates. Server publishes UnreadChanged on
-  // mark-read + on every inbound webhook.
-  useChatEvents({
-    onUnreadChanged: useCallback((p: { total: number }) => {
-      setUnreadMessages(p.total ?? 0)
-    }, []),
-  })
 
   // Hotkey [ to toggle sidebar
   useEffect(() => {
@@ -218,7 +191,6 @@ export default function Sidebar() {
         onOpenChange={setMobileOpen}
         navGroups={navGroups}
         queueCounts={queueCounts}
-        unreadMessages={unreadMessages}
         unreadBySource={unreadBySource}
         userEmail={user?.email}
         userRole={user?.role}
@@ -267,7 +239,7 @@ export default function Sidebar() {
                 const Icon = item.icon
                 const badgeKind =
                   item.hasBadge === true ? 'bills' : item.hasBadge || null
-                const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadBySource)
+                const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadBySource)
                 const showBadge = !!badgeKind && badgeCount > 0
 
                 const linkInner = (active: boolean) => (
@@ -343,16 +315,6 @@ export default function Sidebar() {
         </nav>
 
         <Separator />
-
-        {/* Real-time connection state indicator. Reads from the shared
-            events-store; tooltip explains what each state means. Hidden
-            when sidebar collapsed — the dot still shows so admins notice
-            'reconnecting' / 'offline'. */}
-        {ENABLE_CHAT && PHASE >= 2 && (
-          <div className={cn('px-2 py-1.5', navCollapsed ? 'flex justify-center' : '')}>
-            <ConnectionDot collapsed={navCollapsed} />
-          </div>
-        )}
 
         {/* Collapse toggle */}
         <div className="px-2 py-2">
@@ -430,7 +392,6 @@ function MobileNavDrawer({
   onOpenChange,
   navGroups,
   queueCounts,
-  unreadMessages,
   unreadBySource,
   userEmail,
   userRole,
@@ -441,7 +402,6 @@ function MobileNavDrawer({
   onOpenChange: (open: boolean) => void
   navGroups: NavGroup[]
   queueCounts: QueueCounts
-  unreadMessages: number
   unreadBySource: NotificationUnreadBySource
   userEmail?: string
   userRole?: string
@@ -473,7 +433,7 @@ function MobileNavDrawer({
                 {group.items.map((item) => {
                   const Icon = item.icon
                   const badgeKind = item.hasBadge === true ? 'bills' : item.hasBadge || null
-                  const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadMessages, unreadBySource)
+                  const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadBySource)
                   return (
                     <NavLink
                       key={item.to}
@@ -550,71 +510,5 @@ function MobileNavDrawer({
         </div>
       </SheetContent>
     </Sheet>
-  )
-}
-
-// ConnectionDot renders the live SSE connection status as a small colored
-// dot ± label. Reading from the events-store keeps state in one place;
-// every page that uses Layout (i.e. all authenticated routes) sees the
-// same indicator.
-const STATE_META: Record<EventsConnectionState, { label: string; cls: string; tip: string }> = {
-  connecting: {
-    label: 'กำลังเชื่อมต่อ…',
-    cls: 'bg-muted-foreground/40',
-    tip: 'กำลังเปิดการเชื่อมต่อ real-time',
-  },
-  live: {
-    label: 'เชื่อมต่อแล้ว',
-    cls: 'bg-success',
-    tip: 'รับข้อความ real-time แล้ว — ไม่ต้องรีเฟรช',
-  },
-  reconnecting: {
-    label: 'กำลังเชื่อมต่อใหม่',
-    cls: 'bg-warning',
-    tip: 'การเชื่อมต่อหลุด — ระบบกำลังลองใหม่ (ระหว่างนี้จะใช้ polling สำรอง)',
-  },
-  offline: {
-    label: 'ออฟไลน์',
-    cls: 'bg-destructive',
-    tip: 'ขาดการเชื่อมต่อ real-time — ใช้ polling สำรอง (อัปเดตทุก 60 วินาที)',
-  },
-}
-
-function ConnectionDot({ collapsed }: { collapsed: boolean }) {
-  const status = useEventsStore((s) => s.status)
-  const meta = STATE_META[status]
-  const dot = (
-    <span
-      className={cn(
-        'inline-block h-2 w-2 shrink-0 rounded-full',
-        meta.cls,
-        status === 'connecting' || status === 'reconnecting' ? 'animate-pulse' : '',
-      )}
-    />
-  )
-  if (collapsed) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="cursor-help">{dot}</span>
-        </TooltipTrigger>
-        <TooltipContent side="right" className="text-xs">
-          {meta.tip}
-        </TooltipContent>
-      </Tooltip>
-    )
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="flex w-full cursor-help items-center gap-1.5 px-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-          {dot}
-          <span>{meta.label}</span>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="right" className="text-xs">
-        {meta.tip}
-      </TooltipContent>
-    </Tooltip>
   )
 }
