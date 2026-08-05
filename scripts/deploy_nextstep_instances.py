@@ -532,12 +532,14 @@ for line in path.read_text().splitlines():
     kept.append(line)
 kept.extend(['', '# Nexflow production capability guard', 'PURCHASE_FLOW_ENABLED=false'])
 tmp = path.with_name('.env.sales-only.tmp')
-tmp.write_text('\n'.join(kept).rstrip() + '\n')
+tmp.write_text('\\n'.join(kept).rstrip() + '\\n')
 os.chmod(tmp, 0o600)
 tmp.replace(path)
 print('disabled runtime keys removed: ' + ','.join(sorted(set(removed))))
 PY
 """
+    python_source = script.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    compile(python_source, f"sanitize-{target.name}.py", "exec")
     sudo(script, label=f"sanitize disabled runtime env {target.name}", timeout=30)
 
 
