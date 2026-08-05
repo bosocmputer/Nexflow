@@ -27,14 +27,6 @@ func (s *stubRepo) FindByRawName(raw string) (*models.Mapping, error) {
 	return nil, nil
 }
 
-func (s *stubRepo) ListAll() ([]models.Mapping, error) {
-	out := make([]models.Mapping, 0, len(s.data))
-	for _, m := range s.data {
-		out = append(out, *m)
-	}
-	return out, nil
-}
-
 func (s *stubRepo) IncrementUsage(id string) error { return nil }
 
 func (s *stubRepo) Upsert(rawName, itemCode, unitCode, source string, billID *string) error {
@@ -72,9 +64,9 @@ func TestMatch_ExactHit(t *testing.T) {
 	}
 }
 
-// ── Match: fuzzy high score → auto-confirm ────────────────────────────────────
+// ── Match: similar but non-exact text stays unmapped ─────────────────────────
 
-func TestMatch_FuzzyAutoConfirm(t *testing.T) {
+func TestMatch_SimilarTextStaysUnmapped(t *testing.T) {
 	repo := newStub(models.Mapping{
 		ID:       "2",
 		RawName:  "ปูนซีเมนต์ตราช้าง",
@@ -82,15 +74,11 @@ func TestMatch_FuzzyAutoConfirm(t *testing.T) {
 		UnitCode: "ถุง",
 	})
 	svc := New(repo)
-	// Very close string — expect high score
+	// Similar text must never be auto-confirmed in deterministic mode.
 	result := svc.Match("ปูนซีเมนต์ตราช้าง 50กก")
 
-	if result.Unmapped {
-		t.Fatal("expected fuzzy match, got unmapped")
-	}
-	if result.NeedsReview {
-		// Score just below auto-confirm is acceptable depending on string diff
-		t.Logf("fuzzy score %.3f — needs review (acceptable if score < %.2f)", result.Score, AutoConfirmScore)
+	if !result.Unmapped || result.Mapping != nil {
+		t.Fatalf("expected unmapped exact-only result, got %+v", result)
 	}
 }
 

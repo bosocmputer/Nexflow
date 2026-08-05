@@ -27,15 +27,12 @@ import (
 // CatalogHandler serves /api/catalog/* endpoints
 type CatalogHandler struct {
 	catalogSvc    *catalog.SMLCatalogService
-	embSvc        *catalog.EmbeddingService
-	catalogIdx    *catalog.CatalogIndex
 	catalogRepo   *repository.SMLCatalogRepo
 	productClient *sml.ProductClient
 	auditRepo     *repository.AuditLogRepo
 	appSettings   *repository.AppSettingsRepo
 	cfg           *config.Config
 	logger        *zap.Logger
-	threshold     float64 // auto-confirm threshold
 }
 
 type catalogImageMeta struct {
@@ -92,26 +89,20 @@ type hiddenCatalogCodesResponse struct {
 
 func NewCatalogHandler(
 	svc *catalog.SMLCatalogService,
-	emb *catalog.EmbeddingService,
-	idx *catalog.CatalogIndex,
 	repo *repository.SMLCatalogRepo,
 	productClient *sml.ProductClient,
 	auditRepo *repository.AuditLogRepo,
 	appSettings *repository.AppSettingsRepo,
 	cfg *config.Config,
-	threshold float64,
 	logger *zap.Logger,
 ) *CatalogHandler {
 	return &CatalogHandler{
 		catalogSvc:    svc,
-		embSvc:        emb,
-		catalogIdx:    idx,
 		catalogRepo:   repo,
 		productClient: productClient,
 		auditRepo:     auditRepo,
 		appSettings:   appSettings,
 		cfg:           cfg,
-		threshold:     threshold,
 		logger:        logger,
 	}
 }
@@ -120,8 +111,8 @@ func NewCatalogHandler(
 func (h *CatalogHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
-	status := c.Query("status") // "pending" | "done" | "error" | ""
-	q := c.Query("q")           // free-text search on item_code / item_name
+	status := ""
+	q := c.Query("q") // free-text search on item_code / item_name
 	if page < 1 {
 		page = 1
 	}
@@ -146,7 +137,7 @@ func (h *CatalogHandler) List(c *gin.Context) {
 
 // GET /api/catalog/stats
 func (h *CatalogHandler) Stats(c *gin.Context) {
-	total, done, pending, errCount, err := h.catalogRepo.Stats()
+	total, _, _, _, err := h.catalogRepo.Stats()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -156,16 +147,15 @@ func (h *CatalogHandler) Stats(c *gin.Context) {
 		h.logger.Warn("catalog hidden code count", zap.Error(hiddenErr))
 	}
 	syncStatus := h.catalogSvc.SyncStatus()
-	embedStatus := h.catalogSvc.EmbedStatus()
 	c.JSON(http.StatusOK, gin.H{
 		"total":             total,
-		"embedded":          done,
-		"pending":           pending,
-		"error":             errCount,
+		"embedded":          0,
+		"pending":           0,
+		"error":             0,
 		"hidden_code_count": hiddenCount,
-		"index_size":        h.catalogIdx.Size(),
-		"embed_running":     h.catalogSvc.IsEmbedRunning(),
-		"embed_status":      embedStatus,
+		"index_size":        0,
+		"embed_running":     false,
+		"ai_enabled":        false,
 		"sync_running":      syncStatus.Running,
 		"sync_status":       syncStatus,
 	})
@@ -216,13 +206,6 @@ func (h *CatalogHandler) SyncFromAPI(c *gin.Context) {
 		if err != nil {
 			h.logger.Error("catalog sync", zap.Error(err))
 		}
-		if err == nil {
-			// Reload in-memory index so /api/catalog/search reflects the new rows
-			// without waiting for the next embed batch.
-			if reloadErr := h.catalogIdx.Reload(h.catalogRepo); reloadErr != nil {
-				h.logger.Warn("catalog: reload index after sync", zap.Error(reloadErr))
-			}
-		}
 		h.catalogSvc.FinishSync(count, err)
 	}()
 	c.JSON(http.StatusAccepted, gin.H{"message": "catalog sync started", "sync_running": true})
@@ -241,7 +224,7 @@ func (h *CatalogHandler) hasPendingRestart(c *gin.Context) bool {
 		return false
 	}
 	c.JSON(http.StatusConflict, gin.H{
-		"error":                    "มีการเปลี่ยนค่า SML/AI ที่ยังไม่ได้เริ่มใช้ กรุณากดรีสตาร์ท backend ในหน้าการเชื่อมต่อระบบก่อน Sync สินค้า",
+		"error":                    "มีการเปลี่ยนค่า SML ที่ยังไม่ได้เริ่มใช้ กรุณากดรีสตาร์ท backend ในหน้าการเชื่อมต่อระบบก่อน Sync สินค้า",
 		"pending_restart":          true,
 		"pending_restart_settings": keys,
 	})
@@ -268,9 +251,6 @@ func (h *CatalogHandler) RefreshOne(c *gin.Context) {
 			"not_found": true,
 		})
 		return
-	}
-	if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-		h.logger.Warn("catalog: reload index after refresh", zap.Error(err))
 	}
 	if item != nil {
 		item.ImageURL = catalogImageURL(item.ItemCode, item.ImageCount, item.PrimaryImageRoworder)
@@ -396,11 +376,6 @@ func (h *CatalogHandler) RefreshBatch(c *gin.Context) {
 		results = append(results, result)
 	}
 
-	if successCount > 0 && h.catalogIdx != nil && h.catalogRepo != nil {
-		if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-			h.logger.Warn("catalog: reload index after refresh batch", zap.Error(err))
-		}
-	}
 	if h.auditRepo != nil {
 		var userID *string
 		if uid := c.GetString("user_id"); uid != "" {
@@ -469,9 +444,6 @@ func (h *CatalogHandler) DeleteOne(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-		h.logger.Warn("catalog: reload index after delete", zap.Error(err))
-	}
 	if h.auditRepo != nil {
 		var userID *string
 		if uid := c.GetString("user_id"); uid != "" {
@@ -512,141 +484,43 @@ func (h *CatalogHandler) ImportCSV(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"imported": count, "message": fmt.Sprintf("imported %d items from CSV", count)})
 }
 
-// POST /api/catalog/:code/embed  — embed a single product
+// EmbedOne is retained temporarily for stale clients after AI removal.
 func (h *CatalogHandler) EmbedOne(c *gin.Context) {
-	code := c.Param("code")
-	if code == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "item code required"})
-		return
-	}
-	if !h.embSvc.IsConfigured() {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "GEMINI_API_KEY not configured"})
-		return
-	}
-	if err := h.catalogSvc.EmbedProduct(h.embSvc, code); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	// Reload index
-	if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-		h.logger.Warn("catalog: reload index after single embed", zap.Error(err))
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	featureGone(c, "AI และ embedding ถูกปิดใช้งานแล้ว")
 }
 
-// POST /api/catalog/embed-all  — background embed all pending items
+// EmbedAll is retained temporarily for stale clients after AI removal.
 func (h *CatalogHandler) EmbedAll(c *gin.Context) {
-	started, err := h.StartEmbedAll("manual")
-	if err != nil {
-		if errors.Is(err, errCatalogEmbedNotConfigured) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "GEMINI_API_KEY not configured"})
-			return
-		}
-		if errors.Is(err, errCatalogEmbedAlreadyRunning) {
-			c.JSON(http.StatusConflict, gin.H{"error": "embedding already running"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if !started {
-		c.JSON(http.StatusOK, gin.H{"message": "no pending items"})
-		return
-	}
-	c.JSON(http.StatusAccepted, gin.H{"message": "embedding started in background"})
+	featureGone(c, "AI และ embedding ถูกปิดใช้งานแล้ว")
 }
 
-var (
-	errCatalogEmbedNotConfigured  = errors.New("embedding service not configured")
-	errCatalogEmbedAlreadyRunning = errors.New("embedding already running")
-)
-
-func (h *CatalogHandler) StartEmbedAll(reason string) (bool, error) {
-	if !h.embSvc.IsConfigured() {
-		return false, errCatalogEmbedNotConfigured
-	}
-	if h.catalogSvc.IsEmbedRunning() {
-		return false, errCatalogEmbedAlreadyRunning
-	}
-	pending, err := h.catalogRepo.CountPending()
-	if err != nil {
-		return false, err
-	}
-	if pending == 0 {
-		return false, nil
-	}
-
-	// Run in background goroutine
-	go func() {
-		h.logger.Info("catalog: embed-all started", zap.String("reason", reason), zap.Int("pending", pending))
-		done, errs, err := h.catalogSvc.EmbedAllPending(h.embSvc)
-		if err != nil {
-			h.logger.Error("catalog: embed-all background", zap.Error(err))
-		}
-		// Reload memory index after embedding
-		if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-			h.logger.Warn("catalog: reload index after embed-all", zap.Error(err))
-		}
-		h.logger.Info("catalog: embed-all done", zap.Int("done", done), zap.Int("errors", errs))
-	}()
-	return true, nil
-}
-
-// POST /api/catalog/reload-index  — manually reload in-memory index
+// ReloadIndex is retained temporarily for stale clients after AI removal.
 func (h *CatalogHandler) ReloadIndex(c *gin.Context) {
-	if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"size": h.catalogIdx.Size()})
+	featureGone(c, "AI และ embedding ถูกปิดใช้งานแล้ว")
 }
 
-// GET /api/catalog/search?q=...&top=5  — similarity search (for testing)
+// GET /api/catalog/search?q=...&top=20 -- deterministic database search.
 func (h *CatalogHandler) Search(c *gin.Context) {
-	q := c.Query("q")
-	if q == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "q required"})
+	q := strings.TrimSpace(c.Query("q"))
+	if len([]rune(q)) < 2 || len([]rune(q)) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "คำค้นต้องมี 2-100 ตัวอักษร"})
 		return
 	}
-	top, _ := strconv.Atoi(c.DefaultQuery("top", "5"))
+	top, _ := strconv.Atoi(c.DefaultQuery("top", "20"))
 	if top < 1 || top > 20 {
-		top = 5
+		top = 20
 	}
-
-	var results []models.CatalogMatch
-	var method string
-
-	textResults, textErr := h.catalogSvc.SearchByText(q, top)
-	if textErr == nil && len(textResults) > 0 && textResults[0].Score >= 0.95 {
-		results = textResults
-		method = "text"
-	}
-
-	if len(results) == 0 && h.embSvc.IsConfigured() && h.catalogIdx.Size() > 0 {
-		// Embedding search
-		queryEmb, err := h.embSvc.EmbedText(q)
-		if err == nil {
-			results = h.catalogIdx.Search(queryEmb, top)
-			method = "embedding"
-		} else {
-			h.logger.Warn("catalog search: embed query failed, fallback to text", zap.Error(err))
-		}
-	}
-
-	if len(results) == 0 {
-		// Fallback: text similarity
-		if textErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": textErr.Error()})
-			return
-		}
-		results = textResults
-		method = "text"
+	results, err := h.catalogRepo.SearchActive(q, top)
+	if err != nil {
+		h.logger.Error("catalog database search", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ค้นหาสินค้าไม่สำเร็จ"})
+		return
 	}
 	attachCatalogMatchImageURLs(results)
 
 	c.JSON(http.StatusOK, gin.H{
 		"query":   q,
-		"method":  method,
+		"method":  "database",
 		"results": results,
 	})
 }
@@ -1095,9 +969,8 @@ type createProductRequest struct {
 //     (saves a round-trip to SML for an obvious duplicate).
 //  2. Call SML POST /SMLJavaRESTService/v3/api/product. SML may return its
 //     own assigned code in response.data.code (overrides the requested one).
-//  3. Upsert into sml_catalog with status='pending' so embed runs.
-//  4. Trigger embedding in background (non-blocking) + reload index.
-//  5. Audit log.
+//  3. Upsert into the local deterministic catalog.
+//  4. Audit the product creation.
 //
 // Returns the canonical code (from SML response) so the frontend can fill
 // the bill_item with it.
@@ -1181,7 +1054,7 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 		finalCode = req.Code
 	}
 
-	// 5. Upsert into local catalog with status='pending' — embed will fill later
+	// 5. Upsert into the local deterministic catalog.
 	priceVal := req.Price
 	whCode := req.WHCode
 	shelfCode := req.ShelfCode
@@ -1192,29 +1065,14 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 		WHCode:          whCode,
 		ShelfCode:       shelfCode,
 		Price:           &priceVal,
-		EmbeddingStatus: "pending",
+		EmbeddingStatus: "disabled",
 	}); err != nil {
 		h.logger.Error("create_product: catalog upsert failed",
 			zap.String("code", finalCode), zap.Error(err))
 		// SML already accepted — return success, just log the local-sync miss
 	}
 
-	// 6. Trigger embedding in background (non-blocking); reload index after
-	go func(code string) {
-		if !h.embSvc.IsConfigured() {
-			return
-		}
-		if err := h.catalogSvc.EmbedProduct(h.embSvc, code); err != nil {
-			h.logger.Warn("create_product: embed failed",
-				zap.String("code", code), zap.Error(err))
-			return
-		}
-		if err := h.catalogIdx.Reload(h.catalogRepo); err != nil {
-			h.logger.Warn("create_product: index reload failed", zap.Error(err))
-		}
-	}(finalCode)
-
-	// 7. Audit log
+	// 6. Audit log
 	if h.auditRepo != nil {
 		_ = h.auditRepo.Log(models.AuditEntry{
 			Action: "product_created",
@@ -1236,7 +1094,7 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 		"unit_code":  req.UnitCode,
 		"wh_code":    whCode,
 		"shelf_code": shelfCode,
-		"message":    "product created and queued for embedding",
+		"message":    "product created and synced to catalog",
 	})
 }
 

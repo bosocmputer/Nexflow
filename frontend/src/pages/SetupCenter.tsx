@@ -11,7 +11,6 @@ import {
   FileClock,
   History,
   Loader2,
-  Mail,
   PackageCheck,
   RefreshCw,
   ReceiptText,
@@ -19,7 +18,6 @@ import {
   ServerCog,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
   Upload,
 } from 'lucide-react'
 
@@ -61,11 +59,9 @@ type SetupSystem = {
   sml_rest_url: string
   sml_database: string
   public_base_url: string
-  openrouter_model: string
   pending_restart: boolean
   pending_restart_settings?: string[]
   last_catalog_sync?: string
-  last_email_poll?: string
   last_import_run?: string
 }
 
@@ -75,7 +71,6 @@ type SetupCounters = {
   needs_review: number
   failed: number
   sent: number
-  purchase: number
   saleorder: number
   saleinvoice: number
 }
@@ -84,7 +79,6 @@ type ImportCounters = {
   shopee_runs: number
   shopee_running: number
   shopee_failed: number
-  email_dedup_keys: number
   audit_logs: number
 }
 
@@ -106,9 +100,7 @@ type SetupStatus = {
 const iconByStep: Record<string, typeof ServerCog> = {
   instance: ServerCog,
   channels: FileClock,
-  email: Mail,
   catalog: Database,
-  ai: Sparkles,
   uat: ClipboardCheck,
   operations: ClipboardCheck,
 }
@@ -213,7 +205,6 @@ export default function SetupCenter() {
   const [resetBusy, setResetBusy] = useState(false)
   const [confirmText, setConfirmText] = useState('')
   const [resetDocCounter, setResetDocCounter] = useState(false)
-  const [resetEmailDedup, setResetEmailDedup] = useState(false)
 
   const load = async (forceSML = false) => {
     setLoading(true)
@@ -272,18 +263,11 @@ export default function SetupCenter() {
       await client.post('/api/setup/reset-test-data', {
         confirm: confirmText,
         reset_doc_counter: resetDocCounter,
-        reset_email_dedup: resetEmailDedup,
       })
-      toast.success(
-        resetEmailDedup
-          ? 'ล้างข้อมูลแล้ว ระบบจะอ่านอีเมลเก่าในรอบ poll ถัดไป'
-          : 'รีเซ็ตข้อมูลชั่วคราวแล้ว',
-        { id },
-      )
+      toast.success('รีเซ็ตข้อมูลชั่วคราวแล้ว', { id })
       setResetOpen(false)
       setConfirmText('')
       setResetDocCounter(false)
-      setResetEmailDedup(false)
       await load()
     } catch (e: any) {
       toast.error('รีเซ็ตข้อมูลไม่สำเร็จ: ' + (e?.response?.data?.error ?? e?.message ?? 'unknown'), { id })
@@ -465,8 +449,7 @@ export default function SetupCenter() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 text-xs">
-                <div className="grid grid-cols-3 gap-2">
-                  <StatTile label="ใบสั่งซื้อ" value={n(docs?.purchase)} />
+                <div className="grid grid-cols-2 gap-2">
                   <StatTile label="ใบสั่งขาย" value={n(docs?.saleorder)} />
                   <StatTile label="ขายสินค้าฯ" value={n(docs?.saleinvoice)} />
                 </div>
@@ -474,7 +457,6 @@ export default function SetupCenter() {
                 <InfoRow label="ร้าน" value={status?.system?.instance_name ?? 'Nexflow'} />
                 <InfoRow label="รหัสร้าน" value={status?.system?.instance_slug ?? 'default'} />
                 <InfoRow label="Public URL" value={status?.system?.public_base_url ?? '-'} />
-                <InfoRow label="AI ที่ใช้งาน" value={status?.system?.openrouter_model ?? '-'} />
               </CardContent>
             </Card>
 
@@ -488,10 +470,8 @@ export default function SetupCenter() {
               <CardContent className="space-y-2 text-xs">
                 <InfoRow label="รอบนำเข้า Shopee" value={n(imports?.shopee_runs)} />
                 <InfoRow label="กำลังนำเข้า / ไม่สำเร็จ" value={`${n(imports?.shopee_running)} / ${n(imports?.shopee_failed)}`} />
-                <InfoRow label="อีเมลที่เคยอ่านแล้ว" value={n(imports?.email_dedup_keys)} />
                 <Separator />
                 <InfoRow label="ดึงสินค้า SML" value={fmtDate(status?.system?.last_catalog_sync)} />
-                <InfoRow label="อ่านอีเมลล่าสุด" value={fmtDate(status?.system?.last_email_poll)} />
                 <InfoRow label="นำเข้า Shopee ล่าสุด" value={fmtDate(status?.system?.last_import_run)} />
               </CardContent>
             </Card>
@@ -527,8 +507,6 @@ export default function SetupCenter() {
         setConfirmText={setConfirmText}
         resetDocCounter={resetDocCounter}
         setResetDocCounter={setResetDocCounter}
-        resetEmailDedup={resetEmailDedup}
-        setResetEmailDedup={setResetEmailDedup}
         onConfirm={resetTestData}
       />
     </div>
@@ -552,8 +530,6 @@ function ResetDialog({
   setConfirmText,
   resetDocCounter,
   setResetDocCounter,
-  resetEmailDedup,
-  setResetEmailDedup,
   onConfirm,
 }: {
   open: boolean
@@ -563,8 +539,6 @@ function ResetDialog({
   setConfirmText: (value: string) => void
   resetDocCounter: boolean
   setResetDocCounter: (value: boolean) => void
-  resetEmailDedup: boolean
-  setResetEmailDedup: (value: boolean) => void
   onConfirm: () => void
 }) {
   return (
@@ -576,7 +550,7 @@ function ResetDialog({
             รีเซ็ตข้อมูลชั่วคราว
           </DialogTitle>
           <DialogDescription className="leading-relaxed">
-            ล้างเอกสาร, รายการสินค้าในเอกสาร, ไฟล์แนบ, รอบนำเข้า Shopee และประวัติการทำงาน แต่จะเก็บการตั้งค่า, สินค้าใน SML, ตารางจับคู่สินค้า และประวัติการใช้ AI ไว้
+            ล้างเอกสาร, รายการสินค้าในเอกสาร, ไฟล์แนบ, รอบนำเข้า Shopee และประวัติการทำงาน แต่จะเก็บการตั้งค่า, สินค้าใน SML และการจับคู่สินค้าไว้
           </DialogDescription>
         </DialogHeader>
 
@@ -594,20 +568,7 @@ function ResetDialog({
               />
               <span>
                 <span className="block font-medium">รีเซ็ตเลขรันเอกสาร</span>
-                <span className="text-muted-foreground">ใช้เมื่อต้องการเริ่ม NX-PO/NX-SO/NX-INV ใหม่ใน workspace ที่ไม่ใช่ production เท่านั้น</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-3 text-xs">
-              <Checkbox
-                checked={resetEmailDedup}
-                onCheckedChange={(v) => setResetEmailDedup(v === true)}
-                className="mt-0.5"
-              />
-              <span>
-                <span className="block font-medium">ล้างประวัติอีเมลและย้อนกลับไปอ่านเมลเก่า</span>
-                <span className="text-muted-foreground">
-                  เปิดเมื่อล้างเอกสารชั่วคราวแล้วต้องการให้ระบบดูดอีเมลเดิมกลับมาอีกครั้ง ระบบจะ reset ตำแหน่งอ่านล่าสุดของ inbox ด้วย
-                </span>
+                <span className="text-muted-foreground">ใช้เมื่อต้องการเริ่มเลขเอกสารขายใหม่ใน workspace ที่ไม่ใช่ production เท่านั้น</span>
               </span>
             </label>
           </div>

@@ -1,6 +1,6 @@
 # Nexflow
 
-ระบบช่วยลดเวลาคีย์บิล โดยใช้ AI extract ข้อมูลจากหลาย channel แล้วส่งเข้า SML ERP โดยอัตโนมัติ
+ระบบบริหารยอดขายหลาย marketplace และส่งเอกสารขายเข้า SML ERP ด้วยการจับคู่ SKU แบบ deterministic โดยไม่ใช้ AI
 
 ---
 
@@ -8,14 +8,15 @@
 
 | Channel | ประเภทบิล | สถานะ |
 | --- | --- | --- |
-| Email (IMAP multi-account) | ขาย/ซื้อตาม routing | ✅ deployed |
 | Shopee Excel | บิลขาย | ✅ deployed |
 | Lazada Excel | บิลขาย | ✅ deployed |
 | TikTok Excel/CSV | บิลขาย | ✅ deployed |
 | Shopee Open API (OAuth) | บิลขาย | ✅ live |
 | Shopee Realtime Operations | คำสั่งซื้อ/สร้างเอกสาร/Timeline | ✅ live |
 | LINE Shopee Notifications | แจ้งทีมงานด้วย rich Flex | ✅ live |
-| LINE OA (human chat) | บิลขาย | disabled (`VITE_ENABLE_CHAT=false`) |
+| NextStep Marketplace | dashboard, order detail, notification | ✅ live |
+| LINE OA (human chat) | แชท/สกัดเอกสาร | ปิดใช้งาน |
+| Email / Purchase Order | ฝั่งซื้อ | ปิดใช้งาน |
 
 ---
 
@@ -25,8 +26,8 @@
 Backend:   Go 1.24 (Gin)  —  module: nexflow
 Frontend:  React + Vite + TypeScript
 Database:  PostgreSQL 16
-AI:        OpenRouter (gemini-2.5-flash-lite / gemini-2.5-flash / Mistral OCR / Whisper)
-Deploy:    Docker Compose + ngrok (fixed domain)
+Matching:  exact SKU → confirmed alias → verified exact name (no SKU only)
+Deploy:    Docker Compose + Cloudflare + host-based edge Nginx
 ```
 
 ---
@@ -34,17 +35,18 @@ Deploy:    Docker Compose + ngrok (fixed domain)
 ## Server
 
 ```
-Host:    192.168.2.109  (user: bosscatdog)
-Folder:  /home/bosscatdog/billflow-henna
+Host:    10.121.20.83 (user: ubuntu)
+Folders: /mnt/data/nextstep-node-2/nexflow*
 ```
 
 | Service | Container | Port |
 | --- | --- | --- |
-| backend | nexflow-backend | 8110 |
-| frontend | nexflow-frontend | 3030 |
-| postgres | nexflow-postgres | 5440 |
+| edge | nexflow-edge | 6323 |
+| demo backend / postgres | nexflow-backend / nexflow-postgres | 8110 / 5440 |
+| AOY backend / postgres | nexflow-aoy-backend / nexflow-aoy-postgres | 8111 / 5441 |
+| Lanboon backend / postgres | nexflow-lanboon-backend / nexflow-lanboon-postgres | 8112 / 5442 |
 
-Public URL: `https://animal-galvanize-tameness.ngrok-free.dev`
+Production domains are registered in `deploy/nextstep-instances.json` and routed through public port `6323`.
 
 ---
 
@@ -70,12 +72,13 @@ Default admin credentials: retrieve from the local/deploy secret source. Do not 
 ## Deploy to Server
 
 ```bash
-python scripts/release_guard.py --local
-NX_PASS='<server-password>' python scripts/deploy.py
-curl http://192.168.2.109:8110/health
+bash scripts/check_sales_only_runtime.sh
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
 ```
 
-`scripts/deploy.py` backs up production, syncs frontend/backend with `rsync --delete`, rebuilds containers, and runs the production Nexflow brand guard so stale BillFlow/Henna assets do not remain on the server.
+Deploy uses the committed Git revision, backs up `.env` and PostgreSQL, removes disabled runtime secrets, rebuilds containers, validates health, and smoke-tests each hostname through the edge.
 
 ---
 
@@ -83,14 +86,14 @@ curl http://192.168.2.109:8110/health
 
 | ไฟล์ | เนื้อหา |
 | --- | --- |
-| [CLAUDE.md](CLAUDE.md) | Blueprint สำหรับ Claude Code — architecture, gotchas, env vars |
 | [docs/current-state.md](docs/current-state.md) | สถานะ deploy ล่าสุด |
+| [docs/sales-only-no-ai.md](docs/sales-only-no-ai.md) | runtime และ release guard แบบ sales-only |
+| [docs/nextstep-server-deploy-flow.md](docs/nextstep-server-deploy-flow.md) | production deploy flow |
 | [docs/shopee-import.md](docs/shopee-import.md) | Shopee Excel + Open API flow |
 | [docs/shopee-realtime-uat.md](docs/shopee-realtime-uat.md) | Shopee Realtime UAT/checklist |
-| [docs/email.md](docs/email.md) | IMAP multi-account pipeline |
-| [docs/line-oa.md](docs/line-oa.md) | LINE OA chat + LINE Shopee notifications |
+| [docs/line-oa.md](docs/line-oa.md) | LINE OA สำหรับ Push notification |
 | [docs/deploy-instances.md](docs/deploy-instances.md) | Production deploy, SML gateway, feature flags |
 
 ---
 
-Last updated: 2026-06-22 | Ports: 8110 / 3030 / 5440
+Last updated: 2026-08-05 | Public edge: 6323

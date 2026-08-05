@@ -3,7 +3,6 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Toaster } from '@/components/ui/sonner'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
-import { EmailPollProgressBar } from '@/components/EmailPollProgressBar'
 import { SMLReadinessBanner } from '@/components/SMLReadinessBanner'
 import { CommandPalette } from '@/components/CommandPalette'
 import { BreadcrumbProvider } from '@/lib/breadcrumbs'
@@ -19,7 +18,7 @@ import type { User } from '@/types'
 // On these routes the page handles its own scroll regions; the Layout
 // removes the default padded wrapper so the page can fill 100% of the area
 // under the topbar.
-const FULL_HEIGHT_ROUTES = ['/messages']
+const FULL_HEIGHT_ROUTES: string[] = []
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
 export default function Layout() {
@@ -71,14 +70,14 @@ export default function Layout() {
 
   useChordHotkeys({
     'g d': () => navigate('/dashboard'),
-    'g b': () => navigate('/bills'),
+    'g b': () => navigate('/sale-invoices'),
     ...(PHASE >= 2
       ? {
-          'g i': () => navigate('/import'),
+          'g i': () => navigate('/import/shopee'),
           ...(ENABLE_SHOPEE_EXCEL ? { 'g s': () => navigate('/import/shopee') } : {}),
         }
       : {}),
-    'g m': () => navigate('/mappings'),
+    'g m': () => navigate('/marketplace-aliases'),
     'g l': () => navigate('/logs'),
     'g c': () => navigate('/settings/catalog'),
     'g x': () => {
@@ -94,7 +93,6 @@ export default function Layout() {
           <Sidebar />
           <div className="flex min-w-0 flex-1 flex-col">
             <Topbar onOpenPalette={() => setPaletteOpen(true)} />
-            <EmailPollProgressBar />
             <SMLReadinessBanner />
             {isFullHeight ? (
               // Full-height pages (chat, inbox) handle their own scroll regions.

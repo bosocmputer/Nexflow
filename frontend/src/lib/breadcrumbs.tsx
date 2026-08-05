@@ -16,13 +16,8 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม' }, { label: 'ยอดขายตามแพลตฟอร์ม' }] },
   { pattern: '/nextstep-marketplace', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม', href: '/dashboard' }, { label: 'NextStep Marketplace' }] },
   { pattern: '/setup', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'สถานะพร้อมใช้งาน' }] },
-  { pattern: '/bills', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งซื้อ' }] },
   { pattern: '/sales-orders', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย' }] },
   { pattern: '/sale-invoices', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ขายสินค้าและบริการ' }] },
-  {
-    pattern: '/bills/:id',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งซื้อ', href: '/bills' }, { label: ':id', dynamic: true }],
-  },
   {
     pattern: '/sales-orders/:id',
     crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย', href: '/sales-orders' }, { label: ':id', dynamic: true }],
@@ -58,7 +53,7 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   { pattern: '/mappings', crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'ตารางจับคู่สินค้า' }] },
   {
     pattern: '/marketplace-aliases',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'สินค้ารอยืนยัน' }],
+    crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'การจับคู่สินค้า' }],
   },
   { pattern: '/settings', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ตั้งค่าทั่วไป' }] },
   {
@@ -74,16 +69,8 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ร้าน Shopee' }],
   },
   {
-    pattern: '/settings/ai-usage',
-    crumbs: [{ label: 'ดูแลระบบ' }, { label: 'การใช้งาน AI' }],
-  },
-  {
     pattern: '/settings/instance',
     crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'การเชื่อมต่อระบบ' }],
-  },
-  {
-    pattern: '/settings/email',
-    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'กล่องอีเมลรับบิล' }],
   },
   {
     pattern: '/settings/line-notifications',

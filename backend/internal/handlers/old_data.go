@@ -115,18 +115,23 @@ func (h *OldDataHandler) Archive(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "archived": n})
 }
 
-// Purge hard-deletes old data from bills, audit_logs, and/or chat_messages.
+// Purge hard-deletes selected operational data. Historical legacy runtime
+// usage is deliberately read-only and cannot be purged through the API.
 // POST /api/bills/old-data/purge
 func (h *OldDataHandler) Purge(c *gin.Context) {
 	var body struct {
-		PurgeDays  int  `json:"purge_days"`
-		PurgeBills bool `json:"purge_bills"`
-		PurgeAudit bool `json:"purge_audit"`
-		PurgeAI    bool `json:"purge_ai"`
-		PurgeChat  bool `json:"purge_chat"`
+		PurgeDays        int  `json:"purge_days"`
+		PurgeBills       bool `json:"purge_bills"`
+		PurgeAudit       bool `json:"purge_audit"`
+		PurgeLegacyUsage bool `json:"purge_ai"`
+		PurgeChat        bool `json:"purge_chat"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || body.PurgeDays < 90 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "purge_days ต้องมากกว่า 90"})
+		return
+	}
+	if body.PurgeLegacyUsage {
+		featureGone(c, "ประวัติระบบเดิมเก็บไว้อ่านอย่างเดียวสำหรับ audit")
 		return
 	}
 
@@ -150,16 +155,6 @@ func (h *OldDataHandler) Purge(c *gin.Context) {
 			return
 		}
 		result["purged_audit_logs"] = n
-	}
-
-	if body.PurgeAI {
-		n, err := h.batchDelete("ai_usage_logs", body.PurgeDays, 1000)
-		if err != nil {
-			h.log.Error("purge ai_usage_logs", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "purge AI usage ไม่สำเร็จ"})
-			return
-		}
-		result["purged_ai_usage_logs"] = n
 	}
 
 	if body.PurgeChat {

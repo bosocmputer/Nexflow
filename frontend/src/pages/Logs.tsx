@@ -12,13 +12,11 @@ import {
   Code2,
   Copy,
   Database,
-  FileText,
   Filter,
   Layers3,
   RotateCw,
   ScrollText,
   ShieldAlert,
-  Sparkles,
   UserRound,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -190,7 +188,7 @@ function guidanceFor(log: AuditLog): LogGuidance | null {
     return {
       title: 'ไม่ใช่ error: มีการรีเซ็ตข้อมูลชั่วคราว',
       description:
-        'รายการนี้เกิดจากผู้ดูแลกดรีเซ็ตข้อมูลในหน้าเริ่มต้นใช้งาน ระบบลบเฉพาะบิล/import/log เดิม และเก็บการตั้งค่า สินค้า SML ตารางจับคู่ และประวัติ AI ไว้ตามค่าเริ่มต้น',
+        'รายการนี้เกิดจากผู้ดูแลกดรีเซ็ตข้อมูลในหน้าเริ่มต้นใช้งาน ระบบลบเฉพาะเอกสารนำเข้าและประวัติเดิม โดยยังเก็บการตั้งค่า สินค้า SML และตารางจับคู่ไว้',
       tone: 'info',
     }
   }
@@ -298,18 +296,14 @@ function guidanceFor(log: AuditLog): LogGuidance | null {
   }
 
   if (log.level === 'error') {
-    if (errorText.includes('authenticationfailed') || errorText.includes('invalid credentials') || errorText.includes('app password')) {
+    if (
+      errorText.includes('authenticationfailed') ||
+      errorText.includes('app password')
+    ) {
       return {
-        title: 'ผู้ดูแลแก้ได้: รหัสผ่านอีเมลหรือ App Password ไม่ถูกต้อง',
-        description: 'ไปที่กล่องอีเมลรับบิล ตรวจ 2-Step Verification, Gmail App Password 16 ตัว และสถานะ IMAP ก่อนทดสอบเชื่อมต่อใหม่',
-        tone: 'warning',
-      }
-    }
-    if (errorText.includes('openrouter') || errorText.includes('ai') || errorText.includes('quota') || errorText.includes('credit')) {
-      return {
-        title: 'ผู้ดูแลแก้ได้: ตรวจเครดิตหรือการเชื่อมต่อ AI',
-        description: 'ไปที่การเชื่อมต่อระบบหรือการใช้งาน AI แล้วตรวจ API key, model, quota/credit และ retry งานที่อ่านไม่สำเร็จ',
-        tone: 'warning',
+        title: 'เหตุการณ์จากระบบเดิม',
+        description: 'การเชื่อมต่อนี้ถูกปิดใช้งานใน Nexflow เวอร์ชันปัจจุบัน รายการนี้เก็บไว้เพื่อการตรวจสอบย้อนหลังเท่านั้น',
+        tone: 'info',
       }
     }
     return {
@@ -322,7 +316,7 @@ function guidanceFor(log: AuditLog): LogGuidance | null {
   if (log.level === 'warn' || String(d.error ?? '').includes('ถูกข้าม')) {
     return {
       title: 'ควรตรวจการตั้งค่า',
-      description: 'ระบบยังทำงานได้ แต่มีข้อมูลบางส่วนถูกข้ามหรืออ่านไม่ครบ ให้ตรวจ filter, ผู้ส่งอีเมล หรือไฟล์ต้นทาง',
+      description: 'ระบบยังทำงานได้ แต่มีข้อมูลบางส่วนถูกข้ามหรืออ่านไม่ครบ ให้ตรวจตัวกรองและไฟล์ต้นทาง',
       tone: 'warning',
     }
   }
@@ -387,12 +381,12 @@ function actorName(log: AuditLog): string {
   if (log.actor?.name) {
     const normalized = log.actor.name.toLowerCase()
     if (normalized === 'system') return 'ระบบ'
-    if (normalized === 'email worker') return 'ระบบอ่านอีเมล'
+    if (normalized === 'email worker') return 'ระบบเดิม'
     if (normalized === 'unknown user') return 'ผู้ใช้ไม่ทราบชื่อ'
     return displayOperatorName(log.actor.name, log.actor.email)
   }
   if (log.user_id) return 'ผู้ใช้ไม่ทราบชื่อ'
-  if (log.source === 'email' || log.source === 'shopee_email' || log.source === 'shopee_shipped') return 'ระบบอ่านอีเมล'
+  if (log.source === 'email' || log.source === 'shopee_email' || log.source === 'shopee_shipped') return 'ระบบเดิม'
   return 'ระบบ'
 }
 
@@ -450,8 +444,6 @@ function makeFacts(log: AuditLog): LogFact[] {
     facts.push({ label: 'ปลายทาง SML', value: smlRouteLabel(route), mono: false })
   }
   if (d.via) facts.push({ label: 'วิธีส่ง', value: viaLabel(d.via), mono: false })
-  if (d.subject) facts.push({ label: 'หัวข้ออีเมล', value: compact(d.subject, 140) })
-  if (d.message_id) facts.push({ label: 'Message ID', value: compact(d.message_id, 64), mono: true, copyValue: String(d.message_id) })
   if (d.raw_name) facts.push({ label: 'ชื่อจากบิล', value: compact(d.raw_name, 140) })
   if (d.item_code ?? d.code) facts.push({ label: 'รหัสสินค้า', value: d.item_code ?? d.code, mono: true, copyValue: String(d.item_code ?? d.code) })
   if (d.unit_code) facts.push({ label: 'หน่วย', value: d.unit_code })
@@ -466,7 +458,6 @@ function makeFacts(log: AuditLog): LogFact[] {
     const beforeDocuments = d.before_documents && typeof d.before_documents === 'object' ? d.before_documents : {}
     const beforeImports = d.before_imports && typeof d.before_imports === 'object' ? d.before_imports : {}
     const beforeTotal = Number(beforeDocuments.total ?? 0)
-    const beforePurchase = Number(beforeDocuments.purchase ?? 0)
     const beforeSaleOrder = Number(beforeDocuments.saleorder ?? 0)
     const beforeSaleInvoice = Number(beforeDocuments.saleinvoice ?? 0)
     const beforeLogs = Number(d.before_logs ?? beforeImports.audit_logs ?? 0)
@@ -474,18 +465,15 @@ function makeFacts(log: AuditLog): LogFact[] {
     if (d.preserved_settings) preserved.push('การตั้งค่า')
     if (d.preserved_catalog) preserved.push('สินค้า SML')
     if (d.preserved_mappings) preserved.push('ตารางจับคู่')
-    if (d.preserved_ai_usage_log) preserved.push('ประวัติ AI')
 
     facts.push({ label: 'บิลก่อนล้าง', value: `${beforeTotal.toLocaleString()} ใบ` })
     facts.push({
       label: 'แยกตามงาน',
-      value: `ซื้อ ${beforePurchase.toLocaleString()} · ใบสั่งขาย ${beforeSaleOrder.toLocaleString()} · ขายสินค้า ${beforeSaleInvoice.toLocaleString()}`,
+      value: `ใบสั่งขาย ${beforeSaleOrder.toLocaleString()} · ขายสินค้า ${beforeSaleInvoice.toLocaleString()}`,
     })
     facts.push({ label: 'ประวัติเดิม', value: `${beforeLogs.toLocaleString()} รายการ` })
     facts.push({ label: 'เก็บข้อมูลไว้', value: preserved.length ? preserved.join(', ') : 'ไม่มีข้อมูลที่ระบุ' })
     facts.push({ label: 'เลขรันเอกสาร', value: d.reset_doc_counter ? 'รีเซ็ตแล้ว' : 'ไม่ได้รีเซ็ต' })
-    facts.push({ label: 'ประวัติอีเมลซ้ำ', value: d.reset_email_dedup ? 'ล้างแล้ว' : 'ไม่ได้ล้าง' })
-    facts.push({ label: 'ตำแหน่งอ่านอีเมล', value: d.reset_email_cursor ? 'ย้อนกลับไปอ่านเมลเก่าได้' : 'ไม่ได้รีเซ็ต' })
   }
 
   if (isShopeeSettlementLog(log)) {
@@ -627,18 +615,6 @@ function LogExpandedSummary({
                 ส่งให้ DEV
               </Button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {!isSmlSent && !isSmlFailed && (log.action.includes('email') || log.action.includes('shopee')) && (
-        <div className="flex items-start gap-2 rounded-md border bg-background px-3 py-2">
-          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-info" />
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground">ข้อมูลจากช่องทางต้นทาง</div>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              ใช้ดูว่าอีเมลหรือไฟล์ใดเป็นต้นทางของบิล และใช้ trace กลับตอนตรวจซ้ำ
-            </p>
           </div>
         </div>
       )}
@@ -1353,7 +1329,7 @@ export default function Logs() {
       <div className="space-y-4">
         <PageHeader
           title="ประวัติการทำงาน"
-          description="ตรวจย้อนหลังว่าระบบดึงอีเมล สร้างบิล และส่งเข้า SML สำเร็จหรือไม่"
+          description="ตรวจย้อนหลังว่าระบบนำเข้ารายการขาย จับคู่สินค้า และส่งเข้า SML สำเร็จหรือไม่"
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex h-9 items-center gap-2 rounded-md border bg-card px-2.5">
@@ -1431,9 +1407,6 @@ export default function Logs() {
                 <SelectContent>
                   <SelectItem value={ALL}>ทั้งหมด</SelectItem>
                   {PHASE >= 2 && <SelectItem value="line">LINE</SelectItem>}
-                  <SelectItem value="email">อีเมล</SelectItem>
-                  <SelectItem value="shopee_email">Shopee Email</SelectItem>
-	                  <SelectItem value="shopee_shipped">Shopee Shipped</SelectItem>
 	                  {PHASE >= 2 && <SelectItem value="shopee_excel">Shopee Excel</SelectItem>}
 	                  <SelectItem value="shopee_settlement">รับชำระ Shopee</SelectItem>
 	                  <SelectItem value="line_myshop">LINE MyShop</SelectItem>

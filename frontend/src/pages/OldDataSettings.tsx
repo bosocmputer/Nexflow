@@ -107,7 +107,6 @@ export default function OldDataSettings() {
   const [purgeConfirmText, setPurgeConfirmText] = useState('')
   const [purgeBills, setPurgeBills] = useState(false)
   const [purgeAudit, setPurgeAudit] = useState(false)
-  const [purgeAI, setPurgeAI] = useState(false)
   const [purgeChat, setPurgeChat] = useState(false)
 
   const fetchSummary = async () => {
@@ -151,13 +150,11 @@ export default function OldDataSettings() {
         purge_days: purgeDays,
         purge_bills: purgeBills,
         purge_audit: purgeAudit,
-        purge_ai: purgeAI,
         purge_chat: purgeChat,
       })
       const parts: string[] = []
       if (res.data.purged_bills != null) parts.push(`บิล ${numberFormat(res.data.purged_bills)} รายการ`)
       if (res.data.purged_audit_logs != null) parts.push(`ประวัติการทำงาน ${numberFormat(res.data.purged_audit_logs)} รายการ`)
-      if (res.data.purged_ai_usage_logs != null) parts.push(`ประวัติ AI ${numberFormat(res.data.purged_ai_usage_logs)} รายการ`)
       if (res.data.purged_chat_messages != null) parts.push(`ข้อความแชท ${numberFormat(res.data.purged_chat_messages)} ข้อความ`)
       toast.success(parts.length ? `ลบข้อมูลถาวรแล้ว: ${parts.join(', ')}` : 'ตรวจแล้ว ไม่มีรายการที่ถูกลบ')
       fetchSummary()
@@ -168,21 +165,20 @@ export default function OldDataSettings() {
     }
   }
 
-  const anyPurgeSelected = purgeBills || purgeAudit || purgeAI || purgeChat
+  const anyPurgeSelected = purgeBills || purgeAudit || purgeChat
   const summaryReady = !!summary
 
   const toArchive = summary?.bills?.to_archive ?? 0
   const toPurgeBills = summary?.bills?.to_purge ?? 0
   const archivedCount = summary?.bills?.archived ?? 0
   const auditMetrics = metricOrEmpty(summary?.audit_logs)
-  const aiUsageMetrics = metricOrEmpty(summary?.ai_usage_logs)
+  const legacyUsageMetrics = metricOrEmpty(summary?.ai_usage_logs)
   const chatMetrics = metricOrEmpty(summary?.chat_messages)
-  const logsEligible = auditMetrics.to_purge + aiUsageMetrics.to_purge + chatMetrics.to_purge
+  const logsEligible = auditMetrics.to_purge + chatMetrics.to_purge
   const dbSizeMB = summary?.db_size_mb ?? 0
   const purgeImpact = [
     purgeBills ? `บิล ${numberFormat(toPurgeBills)} รายการ` : '',
     purgeAudit ? `ประวัติการทำงาน ${numberFormat(auditMetrics.to_purge)} รายการ` : '',
-    purgeAI ? `ประวัติ AI ${numberFormat(aiUsageMetrics.to_purge)} รายการ` : '',
     purgeChat ? `ข้อความแชท ${numberFormat(chatMetrics.to_purge)} ข้อความ` : '',
   ].filter(Boolean)
   const canConfirmPurge = purgeConfirmText === 'DELETE OLD DATA'
@@ -198,12 +194,12 @@ export default function OldDataSettings() {
         setSelected: setPurgeAudit,
       },
       {
-        key: 'ai',
-        label: 'ประวัติการใช้ AI',
-        description: 'จำนวน token, รุ่น AI, session และสถานะงาน extract/search',
-        metric: aiUsageMetrics,
-        selected: purgeAI,
-        setSelected: setPurgeAI,
+        key: 'legacy-runtime',
+        label: 'ประวัติระบบเดิม',
+        description: 'เก็บไว้อ่านอย่างเดียวสำหรับ audit หลังปิดระบบประมวลผลเดิม',
+        metric: legacyUsageMetrics,
+        selected: false,
+        setSelected: null,
       },
       {
         key: 'chat',
@@ -214,7 +210,7 @@ export default function OldDataSettings() {
         setSelected: setPurgeChat,
       },
     ],
-    [auditMetrics, aiUsageMetrics, chatMetrics, purgeAudit, purgeAI, purgeChat],
+    [auditMetrics, legacyUsageMetrics, chatMetrics, purgeAudit, purgeChat],
   )
 
   return (
@@ -427,10 +423,14 @@ export default function OldDataSettings() {
                       </span>
                     </TableCell>
                     <TableCell>
-                      <label className="inline-flex cursor-pointer items-center gap-2 text-sm">
-                        <Checkbox checked={row.selected} onCheckedChange={v => row.setSelected(!!v)} />
-                        ลบถาวร
-                      </label>
+                      {row.setSelected ? (
+                        <label className="inline-flex cursor-pointer items-center gap-2 text-sm">
+                          <Checkbox checked={row.selected} onCheckedChange={v => row.setSelected?.(!!v)} />
+                          ลบถาวร
+                        </label>
+                      ) : (
+                        <Badge variant="outline">อ่านอย่างเดียว</Badge>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -467,7 +467,6 @@ export default function OldDataSettings() {
             <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
               {purgeBills && <Badge variant="outline">บิล {numberFormat(toPurgeBills)}</Badge>}
               {purgeAudit && <Badge variant="outline">ประวัติการทำงาน {numberFormat(auditMetrics.to_purge)}</Badge>}
-              {purgeAI && <Badge variant="outline">ประวัติ AI {numberFormat(aiUsageMetrics.to_purge)}</Badge>}
               {purgeChat && <Badge variant="outline">ข้อความแชท {numberFormat(chatMetrics.to_purge)}</Badge>}
               {!anyPurgeSelected && <span>ยังไม่ได้เลือกข้อมูลที่จะลบ</span>}
             </div>

@@ -6,27 +6,27 @@ import (
 	"go.uber.org/zap"
 )
 
-// Pool limits concurrent goroutines for OpenRouter and SML calls.
+// Pool limits concurrent webhook and SML background work.
 // Each semaphore also has a bounded queue; jobs that exceed the queue cap are dropped
 // to prevent goroutine accumulation under load spikes.
 type Pool struct {
-	openrouterSem chan struct{}
-	smlSem        chan struct{}
-	wg            sync.WaitGroup
-	log           *zap.Logger
+	webhookSem chan struct{}
+	smlSem     chan struct{}
+	wg         sync.WaitGroup
+	log        *zap.Logger
 }
 
 const (
-	openrouterConcurrency = 5
-	openrouterQueueCap    = 20 // drop if backlog exceeds this
-	smlConcurrency        = 3
-	smlQueueCap           = 10
+	webhookConcurrency = 5
+	webhookQueueCap    = 20 // drop if backlog exceeds this
+	smlConcurrency     = 3
+	smlQueueCap        = 10
 )
 
 func New() *Pool {
 	return &Pool{
-		openrouterSem: make(chan struct{}, openrouterConcurrency),
-		smlSem:        make(chan struct{}, smlConcurrency),
+		webhookSem: make(chan struct{}, webhookConcurrency),
+		smlSem:     make(chan struct{}, smlConcurrency),
 	}
 }
 
@@ -36,26 +36,26 @@ func NewWithLogger(log *zap.Logger) *Pool {
 	return p
 }
 
-// Submit runs fn asynchronously, respecting the OpenRouter concurrency limit.
-// If the semaphore is full and the queue would exceed openrouterQueueCap, the job is dropped.
+// Submit runs fn asynchronously, respecting the webhook concurrency limit.
+// If the semaphore is full and the queue would exceed webhookQueueCap, the job is dropped.
 func (p *Pool) Submit(fn func()) {
 	select {
-	case p.openrouterSem <- struct{}{}:
+	case p.webhookSem <- struct{}{}:
 		// acquired slot immediately
 	default:
 		// semaphore full — check queue depth
-		if len(p.openrouterSem) >= openrouterQueueCap {
+		if len(p.webhookSem) >= webhookQueueCap {
 			if p.log != nil {
-				p.log.Warn("worker pool: OpenRouter queue full, dropping job")
+				p.log.Warn("worker pool: webhook queue full, dropping job")
 			}
 			return
 		}
-		p.openrouterSem <- struct{}{} // block until slot available (queue not yet full)
+		p.webhookSem <- struct{}{} // block until slot available (queue not yet full)
 	}
 	p.wg.Add(1)
 	go func() {
 		defer func() {
-			<-p.openrouterSem
+			<-p.webhookSem
 			p.wg.Done()
 		}()
 		fn()

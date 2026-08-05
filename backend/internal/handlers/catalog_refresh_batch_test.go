@@ -49,7 +49,7 @@ func TestCatalogRefreshBatchPartialSuccessAndDuplicate(t *testing.T) {
 	now := time.Now()
 	expectCatalogGetOneForBatch(mock, "SHIP_POL").WillReturnRows(
 		sqlmock.NewRows(catalogUnitFallbackColumns()).
-			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "", nil, "SERVICE", float64(0), "pending", nil, 0, nil, "", nil, nil, now, now),
+			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "", nil, "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now),
 	)
 
 	repo := repository.NewSMLCatalogRepo(db)
@@ -164,9 +164,9 @@ func TestCatalogHiddenCodesEndpointReturnsLimitedDetails(t *testing.T) {
 	now := time.Now()
 	mock.ExpectQuery("SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,").
 		WillReturnRows(sqlmock.NewRows(catalogUnitFallbackColumns()).
-			AddRow("\uFEFFITEM001", "สินค้าทดสอบ 1", "", "ชิ้น", "", "", nil, "", nil, "pending", nil, 0, nil, "", nil, nil, now, now).
-			AddRow("ITEM002", "สินค้าปกติ", "", "ชิ้น", "", "", nil, "", nil, "pending", nil, 0, nil, "", nil, nil, now, now).
-			AddRow("ITEM\u200B003", "สินค้าทดสอบ 3", "", "ชิ้น", "", "", nil, "", nil, "pending", nil, 0, nil, "", nil, nil, now, now))
+			AddRow("\uFEFFITEM001", "สินค้าทดสอบ 1", "", "ชิ้น", "", "", nil, "", nil, "disabled", nil, true, 0, nil, "", nil, nil, now, now).
+			AddRow("ITEM002", "สินค้าปกติ", "", "ชิ้น", "", "", nil, "", nil, "disabled", nil, true, 0, nil, "", nil, nil, now, now).
+			AddRow("ITEM\u200B003", "สินค้าทดสอบ 3", "", "ชิ้น", "", "", nil, "", nil, "disabled", nil, true, 0, nil, "", nil, nil, now, now))
 
 	h := &CatalogHandler{
 		catalogRepo: repository.NewSMLCatalogRepo(db),

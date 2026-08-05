@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,12 +61,6 @@ var instanceSettingDefs = []settingDef{
 	{Key: "line.notify_channel_secret", Label: "LINE Channel secret", Group: "line", Type: "password", Secret: true, Restart: true, Description: "ใช้กับ LINE OA ที่ส่งแจ้งเตือนระบบ"},
 	{Key: "line.notify_channel_access_token", Label: "LINE Channel access token", Group: "line", Type: "password", Secret: true, Restart: true, Description: "ใช้ส่ง Push แจ้งเตือน error และสถานะระบบไปยังแอดมิน"},
 	{Key: "line.notify_admin_user_id", Label: "LINE admin user ID", Group: "line", Type: "text", Restart: true, Description: "userId ของผู้รับแจ้งเตือนระบบ เช่น SML error, email error, disk/tunnel warning"},
-
-	{Key: "ai.openrouter_api_key", Label: "OpenRouter API key", Group: "ai", Type: "password", Secret: true, Restart: true, Required: true},
-	{Key: "ai.openrouter_model", Label: "Model หลัก", Group: "ai", Type: "text", Restart: true, Required: true},
-	{Key: "ai.openrouter_fallback_model", Label: "Model สำรอง", Group: "ai", Type: "text", Restart: true},
-	{Key: "ai.openrouter_audio_model", Label: "Audio model", Group: "ai", Type: "text", Restart: true},
-	{Key: "automation.auto_confirm_threshold", Label: "เกณฑ์ confidence", Group: "automation", Type: "number", Restart: true},
 }
 
 var smlDatabaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
@@ -248,7 +241,7 @@ func (h *InstanceSettingsHandler) Restart(c *gin.Context) {
 }
 
 // effectiveValue is kept only for optional fields that have a built-in default
-// (instance.name / instance.slug). All SML/AI/LINE values must be set via UI.
+// (instance.name / instance.slug). All SML/LINE values must be set via UI.
 func (h *InstanceSettingsHandler) effectiveValue(def settingDef, dbSettings map[string]repository.AppSetting) (string, string) {
 	if s, ok := dbSettings[def.Key]; ok && strings.TrimSpace(s.Value) != "" {
 		return s.Value, "database"
@@ -259,7 +252,7 @@ func (h *InstanceSettingsHandler) effectiveValue(def settingDef, dbSettings map[
 	return "", "unset"
 }
 
-// TestConnections tests SML, LINE, and OpenRouter connectivity using saved DB values.
+// TestConnections tests SML and LINE connectivity using saved DB values.
 // Each check is independent — partial success is returned so the UI can show per-service status.
 func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 	dbSettings, err := h.repo.All()
@@ -346,34 +339,6 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 		}
 	}
 
-	// ── OpenRouter ───────────────────────────────────────────────────────────
-	orResult := checkResult{}
-	orKey := get("ai.openrouter_api_key")
-	if orKey == "" {
-		orResult.Error = "ยังไม่ได้ตั้งค่า OpenRouter API key"
-	} else {
-		code, body, latencyMS, err := doInstanceGET(httpClient, "https://openrouter.ai/api/v1/auth/key",
-			map[string]string{"Authorization": "Bearer " + orKey})
-		orResult.HTTPStatus = code
-		orResult.LatencyMS = latencyMS
-		if err != nil {
-			orResult.Error = fmt.Sprintf("เชื่อมต่อ OpenRouter ไม่ได้: %v", err)
-		} else if code == http.StatusOK {
-			orResult.OK = true
-			// extract limit_remaining from JSON cheaply
-			s := string(body)
-			if i := strings.Index(s, `"limit_remaining":`); i >= 0 {
-				rest := strings.TrimSpace(s[i+18:])
-				end := strings.IndexAny(rest, ",}")
-				if end > 0 {
-					orResult.Detail = "credit คงเหลือ: " + strings.TrimSpace(rest[:end])
-				}
-			}
-		} else {
-			orResult.Error = "API key ไม่ถูกต้อง"
-		}
-	}
-
 	var wg sync.WaitGroup
 	run := func(fn func()) {
 		wg.Add(1)
@@ -399,7 +364,7 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 	logFailedInstanceCheck(h.log, "sml_tenant", smlTenantResult)
 	logFailedInstanceCheck(h.log, "sml_stock_request", smlStockResult)
 
-	allOK := checkPassed(smlResult) && checkPassed(lineResult) && checkPassed(orResult)
+	allOK := checkPassed(smlResult) && checkPassed(lineResult)
 	c.JSON(http.StatusOK, gin.H{
 		"ok":                allOK,
 		"sml":               smlResult,
@@ -407,7 +372,7 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 		"sml_tenant":        smlTenantResult,
 		"sml_stock_request": smlStockResult,
 		"line":              lineResult,
-		"openrouter":        orResult,
+		"ai_enabled":        false,
 	})
 }
 
@@ -627,12 +592,6 @@ func normalizeInstanceSetting(def settingDef, value string) (string, string) {
 		if !smlDatabaseNamePattern.MatchString(value) {
 			return "", "Database (tenant) ใช้ได้เฉพาะตัวอักษร ตัวเลข และ _ เท่านั้น"
 		}
-	case "automation.auto_confirm_threshold":
-		f, err := strconv.ParseFloat(value, 64)
-		if err != nil || f < 0 || f > 1 {
-			return "", "เกณฑ์ confidence ต้องเป็นตัวเลขระหว่าง 0 ถึง 1"
-		}
-		return floatString(f), ""
 	}
 	return value, ""
 }
@@ -650,8 +609,4 @@ func normalizeInstanceURL(value string) (string, string) {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return strings.TrimRight(u.String(), "/"), ""
-}
-
-func floatString(v float64) string {
-	return strconv.FormatFloat(v, 'f', -1, 64)
 }

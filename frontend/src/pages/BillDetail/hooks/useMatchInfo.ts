@@ -12,12 +12,10 @@ export const catalogMetaCache = new Map<
 
 export interface MatchInfo {
   itemName: string | null
-  score: number | null   // 0..1, null = user-picked code outside candidates
 }
 
 export function useMatchInfo(item: BillItem): MatchInfo {
   const code = item.item_code ?? ''
-  const candidate = (item.candidates ?? []).find((c) => c.item_code === code)
 
   const [fetched, setFetched] = useState<{
     item_name: string
@@ -26,7 +24,7 @@ export function useMatchInfo(item: BillItem): MatchInfo {
   )
 
   useEffect(() => {
-    if (!code || candidate) return
+    if (!code) return
     if (catalogMetaCache.has(code)) {
       setFetched(catalogMetaCache.get(code) ?? null)
       return
@@ -48,17 +46,9 @@ export function useMatchInfo(item: BillItem): MatchInfo {
     return () => {
       cancelled = true
     }
-  }, [code, candidate])
-
-  if (candidate) {
-    return {
-      itemName: candidate.item_name,
-      score: candidate.score,
-    }
-  }
+  }, [code])
 
   return {
     itemName: fetched?.item_name ?? null,
-    score: null,
   }
 }

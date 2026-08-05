@@ -46,6 +46,8 @@ export interface CatalogMatch {
   clean_item_code?: string
   hidden_char_kinds?: string[]
   score: number
+  method?: 'database'
+  match_type?: 'exact_code' | 'code_prefix' | 'code_contains' | 'product_name'
 }
 
 export interface CatalogImage {
@@ -72,7 +74,7 @@ export interface CatalogItem {
   unit_code: string
   price?: number | null
   sale_price?: number | null
-  embedding_status: 'pending' | 'done' | 'error'
+  embedding_status: 'disabled' | 'pending' | 'done' | 'error'
   embedded_at?: string | null
   image_count?: number
   primary_image_roworder?: number
@@ -114,7 +116,6 @@ export interface BillItem {
   discount_amount?: number
   mapped: boolean
   mapping_id?: string | null
-  candidates?: CatalogMatch[] // top-5 catalog matches for needs_review items
 }
 
 // Preview of which SML route + endpoint + doc_no pattern this bill would
@@ -207,7 +208,6 @@ export interface Bill {
   sml_order_id?: string | null
   sml_payload?: Record<string, unknown> | null
   sml_response?: Record<string, unknown> | null
-  ai_confidence?: number
   anomalies?: Anomaly[]
   error_msg?: string | null
   items?: BillItem[]
@@ -260,10 +260,15 @@ export interface Mapping {
   item_code: string
   unit_code: string
   confidence: number
-  source: 'manual' | 'ai_learned'
+  source: 'manual' | 'verified'
   usage_count: number
   last_used_at?: string | null
   created_at: string
+  updated_at: string
+  item_name?: string
+  confirmed_name?: string
+  product_active: boolean
+  open_item_count: number
 }
 
 export interface MappingStats {
@@ -281,8 +286,26 @@ export interface MarketplaceAliasReviewGroup {
   normalized_key: string
   bill_count: number
   item_count: number
-  suggested_match?: CatalogMatch | null
-  candidates?: CatalogMatch[]
+}
+
+export interface MarketplaceItemAlias {
+  id: string
+  source: string
+  source_sku: string
+  raw_name: string
+  normalized_key: string
+  item_code: string
+  unit_code: string
+  confirmed_by?: string | null
+  confirmed_name?: string
+  item_name?: string
+  usage_count: number
+  last_used_at?: string | null
+  created_at: string
+  updated_at: string
+  is_active: boolean
+  product_active: boolean
+  open_item_count: number
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
@@ -448,13 +471,6 @@ export interface NextStepMarketplaceMeta {
   page: number
   size: number
   total: number
-}
-
-export interface DailyInsight {
-  id: string
-  insight: string
-  date: string
-  created_at: string
 }
 
 // ─── Anomaly ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, AlertTriangle, Bell, Bot, Building2, CheckCircle2, Database, FileClock, PackageCheck, Plug, ReceiptText, RotateCw, Save, Settings2, ShieldCheck, XCircle } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Bell, Building2, CheckCircle2, Database, FileClock, PackageCheck, Plug, ReceiptText, RotateCw, Save, Settings2, ShieldCheck, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
@@ -12,7 +12,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { PageHeader } from '@/components/common/PageHeader'
 import { cn } from '@/lib/utils'
 
-type SettingGroup = 'instance' | 'sml' | 'sml_db' | 'marketplace' | 'line' | 'ai' | 'automation'
+type SettingGroup = 'instance' | 'sml' | 'sml_db' | 'marketplace' | 'line' | 'automation'
 
 type InstanceSetting = {
   key: string
@@ -56,7 +56,6 @@ type TestResults = {
   sml_tenant?: TestResult
   sml_stock_request?: TestResult
   line?: TestResult
-  openrouter?: TestResult
   db?: TestResult
 }
 type ShopeeAPIStatus = {
@@ -107,11 +106,6 @@ const GROUP_META: Record<SettingGroup, { title: string; description: string; ico
     description: 'Token และ userId สำหรับส่ง error/สถานะระบบไปหาแอดมิน',
     icon: Bell,
   },
-  ai: {
-    title: 'OpenRouter AI',
-    description: 'API key และ model ที่ใช้ดึงข้อมูลจากอีเมล',
-    icon: Bot,
-  },
   automation: {
     title: 'Automation',
     description: 'ค่าควบคุมการทำงานอัตโนมัติ',
@@ -119,12 +113,14 @@ const GROUP_META: Record<SettingGroup, { title: string; description: string; ico
   },
 }
 
-const GROUP_ORDER: SettingGroup[] = ['instance', 'sml', 'sml_db', 'marketplace', 'line', 'ai', 'automation']
+const GROUP_ORDER: SettingGroup[] = ['instance', 'sml', 'sml_db', 'marketplace', 'line', 'automation']
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
 const PHASE1_HIDDEN_KEYS = new Set([
   'sml.json_rpc_base_url',
-  'ai.openrouter_audio_model',
+])
+
+const RETIRED_SETTING_KEYS = new Set([
   'automation.auto_confirm_threshold',
 ])
 
@@ -134,7 +130,6 @@ const TEST_SERVICE_LABEL: Record<string, string> = {
   sml_tenant: 'Tenant/Product lookup',
   sml_stock_request: 'Stock Request URL',
   line: 'LINE แจ้งเตือน',
-  openrouter: 'OpenRouter AI',
   db: 'SML Database',
 }
 const TEST_RESULT_ORDER: Array<keyof TestResults> = [
@@ -142,7 +137,6 @@ const TEST_RESULT_ORDER: Array<keyof TestResults> = [
   'sml_tenant',
   'sml_stock_request',
   'line',
-  'openrouter',
   'db',
 ]
 
@@ -180,7 +174,6 @@ function isCriticalSetting(s: InstanceSetting) {
     s.restart_required ||
     s.group === 'sml' ||
     s.group === 'sml_db' ||
-    s.group === 'ai' ||
     s.secret ||
     key.includes('public') ||
     key.includes('redirect') ||
@@ -286,7 +279,11 @@ export default function InstanceSettings() {
   const grouped = useMemo(() => {
     return GROUP_ORDER.map((group) => ({
       group,
-      items: settings.filter((s) => !s.locked && s.group === group && !(PHASE < 2 && PHASE1_HIDDEN_KEYS.has(s.key))),
+      items: settings.filter((s) => (
+        !s.locked &&
+        !RETIRED_SETTING_KEYS.has(s.key) &&
+        !(PHASE < 2 && PHASE1_HIDDEN_KEYS.has(s.key))
+      )),
     })).filter((g) => g.items.length > 0)
   }, [settings])
   const criticalGrouped = useMemo(() => (
@@ -417,8 +414,8 @@ export default function InstanceSettings() {
       <PageHeader
         title="การเชื่อมต่อระบบ"
         description={PHASE < 2
-          ? 'ตั้งค่าเฉพาะที่ใช้ใน Phase 1: SML ผ่าน sml-api-byboss, LINE แจ้งเตือนระบบ และ OpenRouter'
-          : 'ตั้งค่า SML ERP, OpenRouter และข้อมูลร้านที่ใช้กับ Nexflow ชุดนี้'}
+          ? 'ตั้งค่า SML ผ่าน sml-api-byboss และ LINE แจ้งเตือนระบบ'
+          : 'ตั้งค่า SML ERP, Marketplace, LINE และข้อมูลร้านที่ใช้กับ Nexflow ชุดนี้'}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={testConnection} disabled={testing || saving || restarting || loading}>

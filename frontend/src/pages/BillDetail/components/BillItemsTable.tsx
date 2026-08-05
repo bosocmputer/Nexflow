@@ -80,8 +80,8 @@ export function BillItemsTable({
     ...(discountSummary?.shop_discount_codes ?? []),
   ]
   const visibleColumnCount = canEdit
-    ? showDiscountColumn ? 10 : 9
-    : showDiscountColumn ? 9 : 8
+	? showDiscountColumn ? 9 : 8
+	: showDiscountColumn ? 8 : 7
   const issueCount = items.filter((item) => {
     return (
       !item.item_code ||
@@ -154,13 +154,12 @@ export function BillItemsTable({
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <Table className={showDiscountColumn ? 'min-w-[1210px]' : 'min-w-[1080px]'}>
+          <Table className={showDiscountColumn ? 'min-w-[1080px]' : 'min-w-[950px]'}>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[360px]">{rawNameLabel}</TableHead>
                 <TableHead className="w-[220px]">รหัสสินค้า SML</TableHead>
                 <TableHead className="w-[300px]">ชื่อสินค้าใน SML</TableHead>
-                <TableHead className="w-[130px] text-center">ความมั่นใจ</TableHead>
                 <TableHead className="w-[110px] text-right">จำนวน</TableHead>
                 <TableHead className="w-[120px]">หน่วย</TableHead>
                 <TableHead className="w-[140px] text-right">ราคา</TableHead>

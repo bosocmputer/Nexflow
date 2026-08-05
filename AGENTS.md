@@ -15,7 +15,7 @@
 Backend:   Go 1.24 (Gin)  module: nexflow
 Frontend:  React + Vite + TypeScript
 Database:  PostgreSQL 16
-AI:        OpenRouter — gemini-2.5-flash-lite / gemini-2.5-flash / Mistral OCR / Whisper
+AI:        Disabled — production is deterministic sales-only
 Deploy:    Docker Compose + Cloudflare proxied domains
 ```
 
@@ -34,15 +34,15 @@ Production ports:
 ```sql
 bills               -- source, bill_type, status, sml_doc_no
 bill_items          -- item_code, qty, unit_code, price, discount_amount
-mappings            -- raw_name → item_code (F1 learning)
+mappings            -- verified exact raw_name → item_code fallback when SKU is absent
 channel_defaults    -- per-(channel, bill_type): cust_code, endpoint, doc_format, WH/VAT overrides
-imap_accounts       -- multi-account IMAP (DB-driven, not .env)
+imap_accounts       -- retained schema; runtime disabled in sales-only mode
 app_settings        -- instance config UI (replaces most env vars)
-sml_catalog         -- SML products + 1536-dim embeddings
+sml_catalog         -- active SML products for deterministic lookup
 sml_bulk_jobs       -- async bulk SML send jobs
 shopee_api_connections   -- Shopee OAuth multi-shop
 doc_counters        -- atomic doc_no per prefix/period
-processed_email_keys -- email dedup by Message-ID
+processed_email_keys -- retained historical email dedup data
 audit_logs          -- all admin actions
 shopee_order_snapshots         -- Shopee Realtime order state/timeline source
 shopee_order_payment_snapshots -- cached Shopee escrow/payment breakdowns
@@ -50,20 +50,22 @@ shopee_sml_cancellations       -- Shopee cancelled-after-SML CN tracking
 line_notification_deliveries   -- LINE notification outbox with Flex payload fallback
 ```
 
-Migrations: **001–072** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–073** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
-## 3. SML Retry Routing (bills.go)
+## 3. SML Sales Routing (bills.go)
 
 4-way dispatch on `source` + `bill_type` + `channel_defaults.endpoint`:
 
 | source | bill_type | default route | client |
 | --- | --- | --- | --- |
-| line / email / lazada | sale | sale_reserve | SML #1 JSON-RPC :3248 |
+| legacy line / email / lazada | sale | sale_reserve | SML #1 JSON-RPC :3248 |
 | shopee / tiktok | sale | saleorder REST v3 | SML #2 :8080 |
 | explicit endpoint | sale | saleinvoice v4 | SML #1 REST :8086 |
-| shopee_shipped email | purchase | purchaseorder REST v3 | SML #2 :8080 |
+
+Purchase routing and ingestion are disabled. Historical purchase code/schema is
+retained for a future redesign, but must not be started or exposed at runtime.
 
 SML #1: `provider=BRSMLST, db=smlst2016` | SML #2: `provider=SMLGOH, db=SML1_2026`
 
@@ -72,15 +74,14 @@ SML #1: `provider=BRSMLST, db=smlst2016` | SML #2: `provider=SMLGOH, db=SML1_202
 ## 4. Key Services (navigate code)
 
 ```
-MapperService      F1 fuzzy match (levenshtein ≥0.85 auto, 0.60-0.84 needs_review) + auto-learn
+MapperService      exact user-verified raw-name fallback when marketplace SKU is absent
 AnomalyService     F2 rules: price_zero/qty_zero/duplicate_bill=block; price_too_high/new_customer=warn
-EmailCoordinator   one goroutine per imap_accounts row, polls ≥300s
 LineRegistry       oa_id → LINE service (multi-OA)
-PartyCache         in-memory SML customers/suppliers, boot + 6h refresh
-Catalog            cosine-similarity index (1536-dim, text-embedding-3-small)
+PartyCache         in-memory SML customers only in sales-only production
+Catalog            database-only exact/prefix/contains product search
 events/broker      in-process SSE pubsub (sync.RWMutex + buffered ch 16)
 media/signer       HMAC-SHA256, /public/media/:id?t=, 1h TTL
-WorkerPool         semaphore: 5 OpenRouter, 3 SML
+WorkerPool         semaphore: 5 webhook tasks, 3 SML tasks
 ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 ```
 
@@ -94,7 +95,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 3. **channel_defaults empty** — all 4 retry paths fail with "ยังไม่ได้ตั้งค่า". Run Quick Setup at `/settings/channels`. `applyChannelOverrides()` overlays wh_code/shelf_code/vat_type/vat_rate per channel.
 
-4. **IMAP Gmail** — App Password required (not real password). `poll_interval_seconds >= 300` enforced by DB CHECK. Mark-read after process prevents duplicates. `processed_email_keys` table provides durable dedup by Message-ID.
+4. **Sales-only capability guard** — AI, embedding, OCR, IMAP, LINE chat, and purchase runtime are disabled. Run `bash scripts/check_sales_only_runtime.sh` before deploy; compatibility APIs return `410 Gone`.
 
 5. **LINE Push quota** — Free OA = 200 push/month. Reply API is free. `last_reply_token` cached from webhook → admin reply tries Reply first, falls back to Push only on token error. `ConsumeReplyToken` uses CTE + `SELECT FOR UPDATE` to prevent race.
 

@@ -1,4 +1,6 @@
-# OpenAI Batch Embeddings Example
+# OpenAI Batch Embeddings Example (Archived)
+
+> Archived on 2026-08-05. Nexflow production no longer uses embeddings or any AI provider. Do not run this procedure against an active instance.
 
 ตัวอย่างนี้เป็น canary flow สำหรับย้าย `POST /api/catalog/embed-all` จากการยิง OpenRouter ทีละรายการ ไปเป็น OpenAI Batch API แบบ async โดยยังคง embedding 1536 มิติให้เข้ากับ `sml_catalog.embedding` เดิม
 

@@ -156,6 +156,11 @@ The script:
 - smoke-tests backend health and `/login`
 - smoke-tests selected hostnames through edge port `6323`
 - scans recent backend logs for severe errors
+- runs `scripts/check_sales_only_runtime.sh` before connecting to production
+
+The application runtime is sales-only and deterministic. AI/OCR/embedding,
+IMAP, LINE chat, and purchase workers must remain disabled. See
+[`sales-only-no-ai.md`](sales-only-no-ai.md) for release and rollback checks.
 
 It intentionally does not turn each instance folder into a Git checkout. The
 instance folders remain config/runtime folders; the release clone is the source

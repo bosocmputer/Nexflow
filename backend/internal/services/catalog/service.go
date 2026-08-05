@@ -2,11 +2,13 @@ package catalog
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +23,7 @@ import (
 )
 
 // -------------------------------------------------------------------
-// SMLCatalogService — sync + embed + search
+// SMLCatalogService — deterministic SML sync and lookup
 // -------------------------------------------------------------------
 
 type SMLCatalogService struct {
@@ -279,8 +281,14 @@ type singleProductV3Response struct {
 //     the user the product no longer exists in SML and offer Delete).
 //   - the upserted item otherwise.
 func (s *SMLCatalogService) RefreshOne(itemCode string) (item *models.CatalogItem, notFound bool, err error) {
-	url := fmt.Sprintf("%s/api/v1/ic/products/%s", s.smlBaseURL, itemCode)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	return s.RefreshOneContext(context.Background(), itemCode)
+}
+
+// RefreshOneContext is the bounded read-through used by marketplace imports.
+// The caller owns the deadline so one slow SML lookup cannot stall a batch.
+func (s *SMLCatalogService) RefreshOneContext(ctx context.Context, itemCode string) (item *models.CatalogItem, notFound bool, err error) {
+	endpoint := fmt.Sprintf("%s/api/v1/ic/products/%s", s.smlBaseURL, url.PathEscape(itemCode))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -289,7 +297,7 @@ func (s *SMLCatalogService) RefreshOne(itemCode string) (item *models.CatalogIte
 	}
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, false, fmt.Errorf("GET %s: %w", url, err)
+		return nil, false, fmt.Errorf("catalog read-through: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

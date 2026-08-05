@@ -17,7 +17,6 @@ import { cn } from '@/lib/utils'
 import api from '@/api/client'
 import type { BillItem, CatalogMatch } from '@/types'
 import { useMatchInfo } from '../hooks/useMatchInfo'
-import { scoreStyle } from '../utils/formatters'
 import { rowIssueReason } from '../utils/validation'
 import { MapItemModal } from './MapItemModal'
 
@@ -42,28 +41,6 @@ interface Props {
   showDiscountColumn?: boolean
   discountInfo?: DiscountInfo
   tableColumnCount?: number
-}
-
-function MatchBadge({ score }: { score: number | null }) {
-  const s = scoreStyle(score)
-  const tooltip =
-    score == null
-      ? 'รายการนี้ถูกเลือกหรือพิมพ์เอง'
-      : `ความใกล้เคียงกับสินค้าใน SML: ${s.label}`
-  return (
-    <span
-      title={tooltip}
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-        'text-xs font-semibold whitespace-nowrap',
-        s.bg,
-        s.color,
-      )}
-    >
-      <span>{s.icon}</span>
-      <span>{s.label}</span>
-    </span>
-  )
 }
 
 function IssueBadge({ reason }: { reason: string }) {
@@ -138,22 +115,12 @@ export function BillItemRow({
         price: Number(draft.price),
       })
 
-      // F1 learning: backend registers ai_learned mapping if item_code changed.
       const prevCode = item.item_code ?? ''
       if (draft.item_code && draft.item_code !== prevCode) {
         toast.success('✓ จดจำการจับคู่นี้แล้ว — ครั้งถัดไประบบจะ map ให้อัตโนมัติ', {
           duration: 3500,
         })
       }
-
-      const candidates = pickedMatch
-        ? [
-            pickedMatch,
-            ...(item.candidates ?? []).filter(
-              (candidate) => candidate.item_code !== pickedMatch.item_code,
-            ),
-          ]
-        : item.candidates
 
       onUpdated({
         ...item,
@@ -162,7 +129,6 @@ export function BillItemRow({
         qty: Number(draft.qty),
         price: Number(draft.price),
         mapped: draft.item_code !== '',
-        candidates,
       })
       setEditing(false)
       setPickedMatch(null)
@@ -208,7 +174,6 @@ export function BillItemRow({
     pickedMatch && pickedMatch.item_code === draft.item_code
       ? {
           itemName: pickedMatch.item_name,
-          score: pickedMatch.score,
         }
       : matchInfo
   const billPrice = item.price ?? 0
@@ -292,9 +257,6 @@ export function BillItemRow({
             <span className={matchInfo.itemName ? 'text-foreground' : 'text-muted-foreground'}>
               {matchInfo.itemName ?? '—'}
             </span>
-          </TableCell>
-          <TableCell className="text-center">
-            <MatchBadge score={matchInfo.score} />
           </TableCell>
           <TableCell className="text-right tabular-nums">{item.qty}</TableCell>
           <TableCell>{item.unit_code || '—'}</TableCell>
@@ -444,7 +406,7 @@ export function BillItemRow({
                     variant="outline"
                     className="h-10 w-full justify-start gap-2 px-3 text-left"
                     onClick={() => setShowMapModal(true)}
-                    title="เปิดเพื่อค้นหาหรือสร้างสินค้าใหม่"
+                    title="ค้นหาและเลือกสินค้าที่มีอยู่ใน SML"
                   >
                     <span className="font-mono text-xs">
                       {draft.item_code || 'เลือกสินค้า'}
@@ -456,12 +418,9 @@ export function BillItemRow({
                     )}
                   </Button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <MatchBadge score={editMatchInfo.score} />
-                  <span className="text-xs text-muted-foreground">
-                    ระบบจะจดจำคู่จับคู่นี้หลังบันทึก
-                  </span>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  ระบบจะจดจำสินค้าที่ผู้ใช้ยืนยันหลังบันทึก
+                </p>
               </div>
 
               <div className={cn('grid gap-3', showDiscountColumn ? 'grid-cols-4' : 'grid-cols-3')}>

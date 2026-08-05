@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"nexflow/internal/models"
 	"nexflow/internal/services/itemcode"
 )
@@ -68,6 +70,9 @@ func (r *SMLCatalogRepo) Upsert(item models.CatalogItem) error {
 		  price       = EXCLUDED.price,
 		  group_code  = EXCLUDED.group_code,
 		  balance_qty = EXCLUDED.balance_qty,
+		  is_active = TRUE,
+		  missing_at = NULL,
+		  last_seen_at = NOW(),
 		  image_count = CASE
 		    WHEN $14::boolean THEN EXCLUDED.image_count
 		    ELSE sml_catalog.image_count
@@ -94,25 +99,10 @@ func (r *SMLCatalogRepo) Upsert(item models.CatalogItem) error {
 		    ELSE sml_catalog.image_synced_at
 		  END,
 		  synced_at   = NOW(),
-		  -- Reset embedding if name changed
-		  embedding_status = CASE
-		    WHEN sml_catalog.item_name != EXCLUDED.item_name
-		      OR sml_catalog.item_name2 != EXCLUDED.item_name2
-		    THEN 'pending'
-		    ELSE sml_catalog.embedding_status
-		  END,
-		  embedded_at = CASE
-		    WHEN sml_catalog.item_name != EXCLUDED.item_name
-		      OR sml_catalog.item_name2 != EXCLUDED.item_name2
-		    THEN NULL
-		    ELSE sml_catalog.embedded_at
-		  END,
-		  embedding = CASE
-		    WHEN sml_catalog.item_name != EXCLUDED.item_name
-		      OR sml_catalog.item_name2 != EXCLUDED.item_name2
-		    THEN NULL
-		    ELSE sml_catalog.embedding
-		  END
+		  embedding_status = 'disabled',
+		  embedded_at = NULL,
+		  embedding_model = NULL,
+		  embedding = NULL
 	`,
 		item.ItemCode, item.ItemName, item.ItemName2,
 		item.UnitCode, item.WHCode, item.ShelfCode,
@@ -228,7 +218,7 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 	offset := (page - 1) * perPage
 
 	// Build WHERE clauses
-	conditions := []string{}
+	conditions := []string{"is_active = TRUE"}
 	countArgs := []interface{}{}
 	if statusFilter != "" {
 		conditions = append(conditions, fmt.Sprintf("embedding_status = $%d", len(countArgs)+1))
@@ -256,6 +246,7 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 	query := fmt.Sprintf(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		       price, group_code, balance_qty, embedding_status, embedded_at,
+		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
 		       primary_image_bytes, image_synced_at, synced_at, created_at
 		FROM sml_catalog
@@ -280,7 +271,7 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 			&it.ItemCode, &it.ItemName, &it.ItemName2,
 			&it.UnitCode, &it.WHCode, &it.ShelfCode,
 			&it.Price, &it.GroupCode, &it.BalanceQty,
-			&it.EmbeddingStatus, &it.EmbeddedAt,
+			&it.EmbeddingStatus, &it.EmbeddedAt, &it.IsActive,
 			&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 			&primaryBytes, &imageSyncedAt,
 			&it.SyncedAt, &it.CreatedAt,
@@ -314,6 +305,7 @@ func (r *SMLCatalogRepo) Stats() (total, done, pending, errCount int, err error)
 		  COUNT(*) FILTER (WHERE embedding_status = 'pending'),
 		  COUNT(*) FILTER (WHERE embedding_status = 'error')
 		FROM sml_catalog
+		WHERE is_active = TRUE
 	`).Scan(&total, &done, &pending, &errCount)
 	return
 }
@@ -344,9 +336,11 @@ func (r *SMLCatalogRepo) ListHiddenItemCodes(limit int) ([]models.CatalogItem, i
 	rows, err := r.db.Query(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		       price, group_code, balance_qty, embedding_status, embedded_at,
+		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
 		       primary_image_bytes, image_synced_at, synced_at, created_at
 		FROM sml_catalog
+		WHERE is_active = TRUE
 		ORDER BY item_code
 	`)
 	if err != nil {
@@ -365,7 +359,7 @@ func (r *SMLCatalogRepo) ListHiddenItemCodes(limit int) ([]models.CatalogItem, i
 			&it.ItemCode, &it.ItemName, &it.ItemName2,
 			&it.UnitCode, &it.WHCode, &it.ShelfCode,
 			&it.Price, &it.GroupCode, &it.BalanceQty,
-			&it.EmbeddingStatus, &it.EmbeddedAt,
+			&it.EmbeddingStatus, &it.EmbeddedAt, &it.IsActive,
 			&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 			&primaryBytes, &imageSyncedAt,
 			&it.SyncedAt, &it.CreatedAt,
@@ -410,6 +404,7 @@ func (r *SMLCatalogRepo) GetOne(itemCode string) (*models.CatalogItem, error) {
 	err := r.db.QueryRow(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		       price, group_code, balance_qty, embedding_status, embedded_at,
+		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
 		       primary_image_bytes, image_synced_at, synced_at, created_at
 		FROM sml_catalog WHERE item_code = $1
@@ -417,7 +412,7 @@ func (r *SMLCatalogRepo) GetOne(itemCode string) (*models.CatalogItem, error) {
 		&it.ItemCode, &it.ItemName, &it.ItemName2,
 		&it.UnitCode, &it.WHCode, &it.ShelfCode,
 		&it.Price, &it.GroupCode, &it.BalanceQty,
-		&it.EmbeddingStatus, &it.EmbeddedAt,
+		&it.EmbeddingStatus, &it.EmbeddedAt, &it.IsActive,
 		&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 		&primaryBytes, &imageSyncedAt,
 		&it.SyncedAt, &it.CreatedAt,
@@ -469,6 +464,7 @@ func (r *SMLCatalogRepo) ListAllNames() ([]models.CatalogItem, error) {
 		       COALESCE(price, 0), image_count, primary_image_roworder,
 		       primary_image_guid, primary_image_bytes, image_synced_at
 		FROM sml_catalog
+		WHERE is_active = TRUE
 		ORDER BY item_code
 	`)
 	if err != nil {
@@ -493,6 +489,121 @@ func (r *SMLCatalogRepo) ListAllNames() ([]models.CatalogItem, error) {
 		items = append(items, it)
 	}
 	return items, rows.Err()
+}
+
+// GetActive returns an exact case-sensitive item code only when it is active.
+func (r *SMLCatalogRepo) GetActive(itemCode string) (*models.CatalogItem, error) {
+	item, err := r.GetOne(itemCode)
+	if err != nil || item == nil || !item.IsActive {
+		return nil, err
+	}
+	return item, nil
+}
+
+// GetActiveMany loads exact, case-sensitive product codes with one query.
+func (r *SMLCatalogRepo) GetActiveMany(itemCodes []string) (map[string]*models.CatalogItem, error) {
+	result := make(map[string]*models.CatalogItem, len(itemCodes))
+	if len(itemCodes) == 0 {
+		return result, nil
+	}
+	rows, err := r.db.Query(`
+		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code, price
+		FROM sml_catalog
+		WHERE is_active = TRUE AND item_code = ANY($1)
+	`, pq.Array(itemCodes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item models.CatalogItem
+		if err := rows.Scan(
+			&item.ItemCode, &item.ItemName, &item.ItemName2,
+			&item.UnitCode, &item.WHCode, &item.ShelfCode, &item.Price,
+		); err != nil {
+			return nil, err
+		}
+		item.IsActive = true
+		result[item.ItemCode] = &item
+	}
+	return result, rows.Err()
+}
+
+// CountActive is used to block document creation when the local SML catalog
+// has never been synchronized.
+func (r *SMLCatalogRepo) CountActive() (int, error) {
+	var count int
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM sml_catalog WHERE is_active = TRUE`).Scan(&count)
+	return count, err
+}
+
+// SearchActive is deterministic and database-only. Item codes remain
+// case-sensitive: ordering favours exact code, then prefix, then contains,
+// before matching product names.
+func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.CatalogMatch, error) {
+	rows, err := r.db.Query(`
+		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
+		       COALESCE(price, 0), image_count, primary_image_roworder,
+		       primary_image_guid, primary_image_bytes,
+		       CASE
+		         WHEN item_code = $1 THEN 'exact_code'
+		         WHEN item_code LIKE $1 || '%' THEN 'code_prefix'
+		         WHEN item_code LIKE '%' || $1 || '%' THEN 'code_contains'
+		         ELSE 'product_name'
+		       END AS match_type
+		FROM sml_catalog
+		WHERE is_active = TRUE
+		  AND (item_code LIKE '%' || $1 || '%'
+		       OR item_name ILIKE '%' || $1 || '%'
+		       OR item_name2 ILIKE '%' || $1 || '%')
+		ORDER BY CASE
+		           WHEN item_code = $1 THEN 0
+		           WHEN item_code LIKE $1 || '%' THEN 1
+		           WHEN item_code LIKE '%' || $1 || '%' THEN 2
+		           ELSE 3
+		         END,
+		         item_code
+		LIMIT $2`, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make([]models.CatalogMatch, 0, limit)
+	for rows.Next() {
+		var match models.CatalogMatch
+		var primaryRoworder sql.NullInt64
+		var primaryBytes sql.NullInt64
+		if err := rows.Scan(
+			&match.ItemCode, &match.ItemName, &match.ItemName2,
+			&match.UnitCode, &match.WHCode, &match.ShelfCode,
+			&match.Price, &match.ImageCount, &primaryRoworder,
+			&match.PrimaryImageGuid, &primaryBytes, &match.MatchType,
+		); err != nil {
+			return nil, err
+		}
+		if primaryRoworder.Valid {
+			roworder := int(primaryRoworder.Int64)
+			match.PrimaryImageRoworder = &roworder
+		}
+		if primaryBytes.Valid {
+			bytes := primaryBytes.Int64
+			match.PrimaryImageBytes = &bytes
+		}
+		match.Method = "database"
+		switch match.MatchType {
+		case "exact_code":
+			match.Score = 1
+		case "code_prefix":
+			match.Score = .95
+		case "code_contains":
+			match.Score = .9
+		default:
+			match.Score = .8
+		}
+		results = append(results, match)
+	}
+	return results, rows.Err()
 }
 
 func applyItemCodeMetadata(it *models.CatalogItem) {

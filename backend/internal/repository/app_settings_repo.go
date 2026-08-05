@@ -2,7 +2,6 @@ package repository
 
 import (
 	"database/sql"
-	"strconv"
 	"strings"
 
 	"nexflow/internal/config"
@@ -93,18 +92,6 @@ func (r *AppSettingsRepo) ApplyToConfig(cfg *config.Config) error {
 	if v := get("instance.name"); v != "" {
 		// Currently displayed in UI only. Kept in DB; no config field needed.
 	}
-	if v := get("ai.openrouter_api_key"); v != "" {
-		cfg.OpenRouterAPIKey = v
-	}
-	if v := get("ai.openrouter_model"); v != "" {
-		cfg.OpenRouterModel = v
-	}
-	if v := get("ai.openrouter_fallback_model"); v != "" {
-		cfg.OpenRouterFallback = v
-	}
-	if v := get("ai.openrouter_audio_model"); v != "" {
-		cfg.OpenRouterAudioModel = v
-	}
 	if v := get("sml.rest_base_url"); v != "" {
 		cfg.ShopeeSMLURL = v
 	}
@@ -126,28 +113,18 @@ func (r *AppSettingsRepo) ApplyToConfig(cfg *config.Config) error {
 	if v := get("line.notify_admin_user_id"); v != "" {
 		cfg.LineAdminUserID = v
 	}
-	if v := get("automation.auto_confirm_threshold"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.AutoConfirmThreshold = f
-		}
-	}
 	return nil
 }
 
 func RuntimeSettingValues(cfg *config.Config) map[string]string {
 	return map[string]string{
-		"sml.rest_base_url":                 cfg.ShopeeSMLURL,
-		"sml.provider":                      cfg.ShopeeSMLProvider,
-		"sml.config_file":                   cfg.ShopeeSMLConfigFile,
-		"sml.database":                      cfg.ShopeeSMLDatabase,
-		"line.notify_channel_secret":        cfg.LineChannelSecret,
-		"line.notify_channel_access_token":  cfg.LineChannelAccessToken,
-		"line.notify_admin_user_id":         cfg.LineAdminUserID,
-		"ai.openrouter_api_key":             cfg.OpenRouterAPIKey,
-		"ai.openrouter_model":               cfg.OpenRouterModel,
-		"ai.openrouter_fallback_model":      cfg.OpenRouterFallback,
-		"ai.openrouter_audio_model":         cfg.OpenRouterAudioModel,
-		"automation.auto_confirm_threshold": strconv.FormatFloat(cfg.AutoConfirmThreshold, 'f', -1, 64),
+		"sml.rest_base_url":                cfg.ShopeeSMLURL,
+		"sml.provider":                     cfg.ShopeeSMLProvider,
+		"sml.config_file":                  cfg.ShopeeSMLConfigFile,
+		"sml.database":                     cfg.ShopeeSMLDatabase,
+		"line.notify_channel_secret":       cfg.LineChannelSecret,
+		"line.notify_channel_access_token": cfg.LineChannelAccessToken,
+		"line.notify_admin_user_id":        cfg.LineAdminUserID,
 	}
 }
 

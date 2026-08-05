@@ -18,21 +18,24 @@ type MarketplaceItemAlias struct {
 	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+	IsActive      bool       `json:"is_active"`
+	ItemName      string     `json:"item_name,omitempty"`
+	ConfirmedName string     `json:"confirmed_name,omitempty"`
+	ProductActive bool       `json:"product_active"`
+	OpenItemCount int        `json:"open_item_count"`
 }
 
 // MarketplaceAliasReviewGroup groups unmatched bill items by their normalized key
 // for bulk review in the admin UI.
 type MarketplaceAliasReviewGroup struct {
-	GroupKey       string        `json:"group_key"`
-	Source         string        `json:"source"`
-	BillType       string        `json:"bill_type"`
-	SourceSKU      string        `json:"source_sku"`
-	RawName        string        `json:"raw_name"`
-	NormalizedKey  string        `json:"normalized_key"`
-	ItemCount      int           `json:"item_count"`
-	BillCount      int           `json:"bill_count"`
-	Candidates     []CatalogMatch `json:"candidates"`
-	SuggestedMatch *CatalogMatch  `json:"suggested_match,omitempty"`
+	GroupKey      string `json:"group_key"`
+	Source        string `json:"source"`
+	BillType      string `json:"bill_type"`
+	SourceSKU     string `json:"source_sku"`
+	RawName       string `json:"raw_name"`
+	NormalizedKey string `json:"normalized_key"`
+	ItemCount     int    `json:"item_count"`
+	BillCount     int    `json:"bill_count"`
 }
 
 // MarketplaceAliasReviewFilter controls pagination + filtering for ReviewGroupsPaged.
@@ -40,7 +43,7 @@ type MarketplaceAliasReviewFilter struct {
 	BillType string
 	Source   string
 	Query    string
-	Sort     string // "impact" | "source" | "name" | "score"
+	Sort     string // "impact" | "source" | "name"
 	Page     int
 	PerPage  int
 }

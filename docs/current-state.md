@@ -1,6 +1,10 @@
 # Nexflow — Current State
 
-Updated: 2026-07-09
+Updated: 2026-08-05
+
+Production capability mode is **sales-only and deterministic**. AI, OCR,
+embedding, Daily Insight, IMAP ingestion, LINE chat, and purchase workflows are
+disabled. Historical schemas and AI usage logs remain for audit/rollback.
 
 ---
 
@@ -45,7 +49,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–071** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–073** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -66,6 +70,8 @@ Key recent migrations:
 | 065 | structured LINE Flex payload outbox for Shopee order/settlement alerts |
 | 066 | Shopee order payment breakdown snapshot queue from `get_escrow_detail` |
 | 067 | LINE MyShop multi-account connections, snapshots, webhook events, `line_myshop` source/channel |
+| 068–072 | multi-tenant notification, permissions, gateway, and operational hardening |
+| 073 | sales-only mode, disabled embeddings, verified mappings, active aliases, catalog search indexes |
 
 ---
 

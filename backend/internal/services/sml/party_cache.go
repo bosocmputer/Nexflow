@@ -17,8 +17,9 @@ import (
 // Search runs in O(N) over ~1500 records — sub-millisecond, so no need for
 // a trie/prefix tree.
 type PartyCache struct {
-	client *PartyClient
-	log    *zap.Logger
+	client    *PartyClient
+	log       *zap.Logger
+	salesOnly bool
 
 	mu          sync.RWMutex
 	customers   []Party
@@ -28,6 +29,13 @@ type PartyCache struct {
 	lastErr     string
 
 	stopCh chan struct{}
+}
+
+// SalesOnly disables supplier reads while keeping the customer cache used by
+// sales channel defaults. It must be enabled by the production server.
+func (pc *PartyCache) SalesOnly() *PartyCache {
+	pc.salesOnly = true
+	return pc
 }
 
 func NewPartyCache(client *PartyClient, log *zap.Logger) *PartyCache {
@@ -123,10 +131,13 @@ func (pc *PartyCache) RefreshNow(ctx context.Context) error {
 		pc.recordError(err)
 		return err
 	}
-	suppliers, err := pc.client.FetchAllSuppliers(ctx)
-	if err != nil {
-		pc.recordError(err)
-		return err
+	suppliers := []Party(nil)
+	if !pc.salesOnly {
+		suppliers, err = pc.client.FetchAllSuppliers(ctx)
+		if err != nil {
+			pc.recordError(err)
+			return err
+		}
 	}
 	pc.mu.Lock()
 	pc.customers = customers
@@ -137,6 +148,7 @@ func (pc *PartyCache) RefreshNow(ctx context.Context) error {
 	pc.log.Info("party_cache_refreshed",
 		zap.Int("customers", len(customers)),
 		zap.Int("suppliers", len(suppliers)),
+		zap.Bool("sales_only", pc.salesOnly),
 		zap.Duration("dur", time.Since(start)),
 	)
 	return nil

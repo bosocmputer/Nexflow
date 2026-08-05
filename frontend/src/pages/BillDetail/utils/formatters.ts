@@ -125,35 +125,3 @@ export function fmtSize(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 / 1024).toFixed(2)} MB`
 }
-
-/** Returns Tailwind classes for a score value */
-export function scoreStyle(score: number | null): {
-  color: string
-  bg: string
-  label: string
-  icon: string
-} {
-  if (score == null)
-    return { color: 'text-muted-foreground', bg: 'bg-muted', label: 'เลือกเอง', icon: '✎' }
-  const pct = Math.round(score * 100)
-  if (score >= 0.85)
-    return { color: 'text-success', bg: 'bg-success/10', label: `${pct}%`, icon: '✓' }
-  if (score >= 0.6)
-    return { color: 'text-warning', bg: 'bg-warning/10', label: `${pct}%`, icon: '⚠' }
-  return { color: 'text-destructive', bg: 'bg-destructive/10', label: `${pct}%`, icon: '⚠' }
-}
-
-/** Returns raw hex/css color for inline status accents. */
-export function scoreColor(score: number | null): string {
-  if (score == null) return 'hsl(var(--muted-foreground))'
-  if (score >= 0.85) return 'hsl(var(--success))'
-  if (score >= 0.6) return 'hsl(var(--warning))'
-  return 'hsl(var(--destructive))'
-}
-
-/** Returns a border-color class string for catalog result buttons */
-export function scoreBorderClass(score: number): string {
-  if (score >= 0.85) return 'border-success'
-  if (score >= 0.6) return 'border-warning'
-  return 'border-destructive'
-}

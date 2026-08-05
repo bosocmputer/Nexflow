@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shlex
@@ -134,6 +135,24 @@ TARGETS: dict[str, Target] = load_targets()
 def require_tool(name: str) -> None:
     if shutil.which(name) is None:
         fail(f"{name} is required")
+
+
+def run_sales_only_release_guard() -> None:
+    guard = ROOT / "scripts" / "check_sales_only_runtime.sh"
+    result = subprocess.run(
+        ["bash", str(guard)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.stderr:
+        print(result.stderr.rstrip(), file=sys.stderr)
+    if result.returncode != 0:
+        fail("sales-only release guard failed")
 
 
 def password() -> str:
@@ -467,6 +486,61 @@ def backup_target(target: Target) -> None:
     )
 
 
+def snapshot_target_sales_counts(target: Target, phase: str) -> str:
+    sql = """
+SELECT json_build_object(
+  'catalog_active', (SELECT COUNT(*) FROM sml_catalog WHERE is_active=TRUE),
+  'marketplace_aliases', (SELECT COUNT(*) FROM marketplace_item_aliases),
+  'verified_mappings', (SELECT COUNT(*) FROM mappings),
+  'ai_usage_audit', (SELECT COUNT(*) FROM ai_usage_logs),
+  'purchase_bills', (SELECT COUNT(*) FROM bills WHERE bill_type='purchase'),
+  'imap_enabled', (SELECT COUNT(*) FROM imap_accounts WHERE enabled=TRUE)
+);
+""".strip()
+    encoded = base64.b64encode(sql.encode()).decode()
+    return sudo(
+        f"printf %s {shlex.quote(encoded)} | base64 -d | "
+        f"docker exec -i {shlex.quote(target.postgres_container)} "
+        "psql -U nexflow -d nexflow -At",
+        label=f"{phase} sales-only counts {target.name}",
+        timeout=30,
+    )
+
+
+def sanitize_target_disabled_env(target: Target) -> None:
+    script = f"""
+set -euo pipefail
+python3 - <<'PY'
+from pathlib import Path
+import os
+
+path = Path({str(Path(target.remote) / '.env')!r})
+disabled = {{
+    'OPENROUTER_API_KEY', 'OPENROUTER_MODEL', 'OPENROUTER_FALLBACK_MODEL',
+    'OPENROUTER_AUDIO_MODEL', 'OPENROUTER_APP_TITLE', 'OPENROUTER_APP_REFERER',
+    'MISTRAL_API_KEY', 'GEMINI_API_KEY', 'SHIPPED_SML_DOC_FORMAT',
+    'AUTO_CONFIRM_THRESHOLD', 'INSIGHT_CRON_HOUR', 'INSIGHT_LINE_NOTIFY',
+    'SHOPEE_EMAIL_DOMAINS', 'PURCHASE_FLOW_ENABLED',
+}}
+kept = []
+removed = []
+for line in path.read_text().splitlines():
+    key = line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else ''
+    if key in disabled or key.startswith('IMAP_'):
+        removed.append(key)
+        continue
+    kept.append(line)
+kept.extend(['', '# Nexflow production capability guard', 'PURCHASE_FLOW_ENABLED=false'])
+tmp = path.with_name('.env.sales-only.tmp')
+tmp.write_text('\n'.join(kept).rstrip() + '\n')
+os.chmod(tmp, 0o600)
+tmp.replace(path)
+print('disabled runtime keys removed: ' + ','.join(sorted(set(removed))))
+PY
+"""
+    sudo(script, label=f"sanitize disabled runtime env {target.name}", timeout=30)
+
+
 def ensure_gateway_runtime() -> None:
     script = f"""
 set -euo pipefail
@@ -558,7 +632,9 @@ def deploy_target(target: Target) -> None:
     )
     ensure_instance_compose(target)
     provision_target_gateway_identity(target)
+    snapshot_target_sales_counts(target, "before")
     backup_target(target)
+    sanitize_target_disabled_env(target)
     sudo(
         f"cd {shlex.quote(target.remote)} && docker compose up -d --build backend frontend",
         label=f"docker up {target.name}",
@@ -583,6 +659,7 @@ def deploy_target(target: Target) -> None:
         label=f"fresh database authentication {target.name}",
         timeout=30,
     )
+    snapshot_target_sales_counts(target, "after")
     ssh(
         f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{target.frontend_debug_port}/login",
         label=f"frontend debug login status {target.name}",
@@ -621,6 +698,7 @@ def main() -> None:
             print(f"{target.name}\t{target.hostname}\t{target.remote}\t{target.sml_tenant}")
         return
 
+    run_sales_only_release_guard()
     require_tool("sshpass")
     selected = list(TARGETS.values()) if args.target == "all" else ([] if args.target == "gateway" else [TARGETS[args.target]])
     deployed_commit = ensure_release_clone(args.ref)

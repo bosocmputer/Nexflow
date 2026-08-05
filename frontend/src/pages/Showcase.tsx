@@ -381,7 +381,7 @@ export default function Showcase() {
             <h2 className="text-xl font-semibold">หัวข้อรอง — Heading two</h2>
             <p className="text-base">
               ภาษาไทย: ระบบ Nexflow ช่วยให้พนักงานลดเวลาคีย์บิลจากวันละหลายร้อยใบลงเหลือเกือบศูนย์
-              โดยใช้ AI extract ข้อมูลจากหลายช่องทาง — English: keep typography legible across both scripts.
+              ข้อมูลจากหลายช่องทางต้องอ่านง่ายและตรวจสอบได้ — English: keep typography legible across both scripts.
             </p>
             <p className="font-mono text-sm">CON-01000 · NX-INV-20260427-abc12345</p>
           </div>

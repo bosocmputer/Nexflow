@@ -57,7 +57,6 @@ const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
 
 const ROUTE_OPTIONS: Array<{ value: string; label: string; source?: string; bill_type?: string; document_route?: string }> = [
   { value: 'all', label: 'ทุกปลายทาง' },
-  { value: 'purchaseorder', label: 'ใบสั่งซื้อ', source: 'shopee_shipped', bill_type: 'purchase' },
   { value: 'saleorder', label: 'ใบสั่งขาย', bill_type: 'sale', document_route: 'saleorder' },
   { value: 'saleinvoice', label: 'ขายสินค้าและบริการ', bill_type: 'sale', document_route: 'saleinvoice' },
 ]
@@ -113,14 +112,13 @@ function statusTone(status: string) {
 function routeLabel(job: BulkSendJob) {
   if (job.document_route === 'saleinvoice') return 'ขายสินค้าและบริการ'
   if (job.document_route === 'saleorder') return 'ใบสั่งขาย'
-  if (job.bill_type === 'purchase') return 'ใบสั่งซื้อ'
   return job.title || 'ส่ง SML'
 }
 
 function itemPath(job: BulkSendJob, item: BulkSendJobItem) {
   if (job.document_route === 'saleinvoice') return `/sale-invoices/${item.bill_id}`
   if (job.document_route === 'saleorder') return `/sales-orders/${item.bill_id}`
-  return `/bills/${item.bill_id}`
+  return '/dashboard'
 }
 
 function ProgressBar({ job }: { job: BulkSendJob }) {

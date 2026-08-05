@@ -5,7 +5,6 @@ import {
   Moon,
   PanelLeftClose,
   Search,
-  Sparkles,
   Sun,
 } from 'lucide-react'
 import {
@@ -25,8 +24,6 @@ import { useUIStore } from '@/lib/ui-store'
 import { billSourceLabel, billStatusLabel } from '@/lib/labels'
 import { visibleNavGroups } from '@/lib/navigation'
 import type { Bill } from '@/types'
-
-const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
 interface RecentBill {
   id: string
@@ -54,7 +51,6 @@ export function CommandPalette({
   const [searched, setSearched] = useState<RecentBill[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const isAdmin = user?.role === 'admin'
   const navGroups = visibleNavGroups(user)
 
   useEffect(() => {
@@ -119,18 +115,6 @@ export function CommandPalette({
     close()
   }
 
-  const generateInsight = async () => {
-    close()
-    const { toast } = await import('sonner')
-    const id = toast.loading('กำลังสร้างสรุปรายวัน…')
-    try {
-      await client.post('/api/dashboard/insights/generate')
-      toast.success('สร้างสรุปรายวันสำเร็จ', { id })
-    } catch {
-      toast.error('ไม่สามารถสร้างได้', { id })
-    }
-  }
-
   const handleLogout = () => {
     close()
     logout()
@@ -173,12 +157,6 @@ export function CommandPalette({
         {navGroups.length > 0 && <CommandSeparator />}
 
         <CommandGroup heading="คำสั่ง">
-          {PHASE >= 2 && isAdmin && (
-            <CommandItem value="cmd insight" onSelect={generateInsight}>
-              <Sparkles className="h-4 w-4" />
-              <span>สร้างสรุปรายวัน</span>
-            </CommandItem>
-          )}
           <CommandItem
             value="cmd theme light"
             onSelect={() => {

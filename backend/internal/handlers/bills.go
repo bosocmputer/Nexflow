@@ -98,6 +98,14 @@ func (h *BillHandler) SetShopeeRealtimeSync(repo *repository.ShopeeRealtimeRepo,
 	h.eventBroker = broker
 }
 
+func (h *BillHandler) blockPurchaseFlow(c *gin.Context, billType string) bool {
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled && strings.EqualFold(strings.TrimSpace(billType), "purchase") {
+		featureGone(c, "ฝั่งซื้อถูกปิดใช้งาน ระบบรองรับเอกสารขายเท่านั้น")
+		return true
+	}
+	return false
+}
+
 // ─── Stock recalculation ──────────────────────────────────────────────────────
 
 // stockRecalcSem limits concurrent processstockrequest goroutines to 3
@@ -622,6 +630,12 @@ func (h *BillHandler) List(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if h.blockPurchaseFlow(c, f.BillType) {
+		return
+	}
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
+		f.BillType = "sale"
+	}
 	if f.PerPage > 0 {
 		f.PageSize = f.PerPage
 	}
@@ -662,6 +676,12 @@ func (h *BillHandler) Counts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if h.blockPurchaseFlow(c, f.BillType) {
+		return
+	}
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
+		f.BillType = "sale"
+	}
 	counts, err := h.billRepo.QueueCounts(f)
 	if err != nil {
 		h.log.Error("Bill counts", zap.Error(err))
@@ -688,6 +708,9 @@ func (h *BillHandler) Get(c *gin.Context) {
 	}
 	if bill == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
+		return
+	}
+	if h.blockPurchaseFlow(c, bill.BillType) {
 		return
 	}
 	shopeeRealtimeLinked := h.hasShopeeRealtimeSnapshot(c.Request.Context(), bill.ID)
@@ -1140,6 +1163,9 @@ func (h *BillHandler) Retry(c *gin.Context) {
 	bill, err := h.billRepo.FindByID(id)
 	if err != nil || bill == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
+		return
+	}
+	if h.blockPurchaseFlow(c, bill.BillType) {
 		return
 	}
 	switch bill.Status {
@@ -2046,10 +2072,17 @@ func (h *BillHandler) ListBulkSendJobs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
 		return
 	}
+	billType := strings.TrimSpace(c.Query("bill_type"))
+	if h.blockPurchaseFlow(c, billType) {
+		return
+	}
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
+		billType = "sale"
+	}
 	result, err := h.bulkJobRepo.List(repository.SMLBulkJobListFilter{
 		Status:        status,
 		Source:        c.Query("source"),
-		BillType:      c.Query("bill_type"),
+		BillType:      billType,
 		DocumentRoute: c.Query("document_route"),
 		Page:          page,
 		PerPage:       perPage,
@@ -2080,6 +2113,12 @@ func (h *BillHandler) CreateBulkSendJob(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if h.blockPurchaseFlow(c, req.BillType) {
+		return
+	}
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
+		req.BillType = "sale"
 	}
 	req.ClientRequestID = strings.TrimSpace(req.ClientRequestID)
 	if req.ClientRequestID == "" {
@@ -2147,6 +2186,9 @@ func (h *BillHandler) GetBulkSendJob(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bulk send job not found"})
 		return
 	}
+	if h.blockPurchaseFlow(c, job.BillType) {
+		return
+	}
 	c.JSON(http.StatusOK, job)
 }
 
@@ -2155,9 +2197,16 @@ func (h *BillHandler) GetActiveBulkSendJob(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk send job store not configured"})
 		return
 	}
+	billType := strings.TrimSpace(c.Query("bill_type"))
+	if h.blockPurchaseFlow(c, billType) {
+		return
+	}
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
+		billType = "sale"
+	}
 	job, err := h.bulkJobRepo.FindActive(
 		c.Query("source"),
-		c.Query("bill_type"),
+		billType,
 		c.Query("document_route"),
 		c.GetString("user_id"),
 	)
@@ -2250,6 +2299,9 @@ func (h *BillHandler) RetryFailedBulkSendJob(c *gin.Context) {
 	}
 	if original == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bulk send job not found"})
+		return
+	}
+	if h.blockPurchaseFlow(c, original.BillType) {
 		return
 	}
 	var req retryFailedBulkSendJobRequest
@@ -2358,6 +2410,10 @@ func (h *BillHandler) runBulkSendJob(jobID string) {
 		}
 		return
 	}
+	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled && job.BillType == "purchase" {
+		_ = h.bulkJobRepo.MarkJobFailed(jobID, "purchase flow is disabled")
+		return
+	}
 	var payload RetryRequest
 	if len(job.RequestPayload) > 0 {
 		if err := json.Unmarshal(job.RequestPayload, &payload); err != nil {
@@ -2397,6 +2453,11 @@ func (h *BillHandler) runBulkSendJob(jobID string) {
 				reason = "load bill failed: " + err.Error()
 			}
 			_ = h.bulkJobRepo.FinishItemSkipped(item.ID, reason)
+			_ = h.bulkJobRepo.RefreshCounts(jobID)
+			continue
+		}
+		if h.cfg != nil && !h.cfg.PurchaseFlowEnabled && bill.BillType == "purchase" {
+			_ = h.bulkJobRepo.FinishItemSkipped(item.ID, "ฝั่งซื้อถูกปิดใช้งาน")
 			_ = h.bulkJobRepo.RefreshCounts(jobID)
 			continue
 		}
@@ -3361,6 +3422,9 @@ func (h *BillHandler) AddItem(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
 		return
 	}
+	if h.blockPurchaseFlow(c, bill.BillType) {
+		return
+	}
 	if bill.Status == "sent" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot add items to a bill already sent to SML"})
 		return
@@ -3427,6 +3491,9 @@ func (h *BillHandler) DeleteItemRow(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
 		return
 	}
+	if h.blockPurchaseFlow(c, bill.BillType) {
+		return
+	}
 	if bill.Status == "sent" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot delete items from a bill already sent to SML"})
 		return
@@ -3473,6 +3540,9 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 	bill, err := h.billRepo.FindByID(billID)
 	if err != nil || bill == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
+		return
+	}
+	if h.blockPurchaseFlow(c, bill.BillType) {
 		return
 	}
 	if bill.Status == "sent" {

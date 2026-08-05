@@ -169,7 +169,7 @@ export function PartyPicker({ billType, value, onChange, disabled }: PartyPicker
       setLastSync(r.data.last_sync)
       setSyncStatus(r.data.status ?? 'ok')
       setSyncError('')
-      toast.success(`ซิงก์เสร็จ — ${r.data.customers} ลูกค้า / ${r.data.suppliers} ผู้ขาย`)
+      toast.success(`ซิงก์เสร็จ — ${r.data.customers} ลูกค้า`)
       fetchResults(query)
     } catch (e: any) {
       const msg = humanizeSMLConnectionError(e?.response?.data?.error ?? e?.message ?? 'unknown')

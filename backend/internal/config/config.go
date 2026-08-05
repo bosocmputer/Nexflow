@@ -44,20 +44,6 @@ type Config struct {
 	// Defaults to JWT_SECRET when empty so single-secret deployments work.
 	MediaSigningKey string
 
-	// IMAP — moved to imap_accounts table (DB-driven, multi-account).
-	// Manage via /settings/email instead of env vars.
-
-	// OpenRouter
-	OpenRouterAPIKey     string
-	OpenRouterModel      string
-	OpenRouterFallback   string
-	OpenRouterAudioModel string
-	OpenRouterAppTitle   string
-	OpenRouterAppReferer string
-
-	// Mistral
-	MistralAPIKey string
-
 	// Shopee SML (REST API — saleinvoice).
 	// CustCode moved to channel_defaults table — manage via /settings/channels.
 	ShopeeSMLURL        string
@@ -74,16 +60,6 @@ type Config struct {
 	ShopeeSMLVATType    int
 	ShopeeSMLVATRate    float64
 	ShopeeSMLDocTime    string
-
-	// Shopee shipped email → SML purchaseorder.
-	// Reuses all SHOPEE_SML_* fields above; only doc_format differs.
-	ShippedSMLDocFormat string
-
-	// Gemini (for text-embedding-004)
-	GeminiAPIKey string
-
-	// Shopee email detection moved to per-account `shopee_domains` column
-	// in imap_accounts table.
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
@@ -109,14 +85,10 @@ type Config struct {
 	ShopeeRealtimeWebhookSecret        string
 	ShopeeRealtimeSyncIntervalSeconds  int
 	LineMyShopEnabled                  bool
-
-	// Auto-confirm
-	AutoConfirmThreshold float64
+	PurchaseFlowEnabled                bool
 
 	// Cron
-	InsightCronHour       int
 	BackupCronHour        int
-	InsightLineNotify     bool
 	DiskWarnPercent       int
 	DataLifecycleEnabled  bool
 	DataLifecycleCronHour int
@@ -148,13 +120,6 @@ func Load() *Config {
 		LineGreeting:                       getEnv("LINE_GREETING", ""),
 		PublicBaseURL:                      getEnv("PUBLIC_BASE_URL", ""),
 		MediaSigningKey:                    getEnv("MEDIA_SIGNING_KEY", ""),
-		OpenRouterAPIKey:                   getEnv("OPENROUTER_API_KEY", ""),
-		OpenRouterModel:                    getEnv("OPENROUTER_MODEL", "google/gemini-2.5-flash"),
-		OpenRouterFallback:                 getEnv("OPENROUTER_FALLBACK_MODEL", "google/gemini-flash-1.5"),
-		OpenRouterAudioModel:               getEnv("OPENROUTER_AUDIO_MODEL", "openai/whisper-1"),
-		OpenRouterAppTitle:                 getEnv("OPENROUTER_APP_TITLE", "Nexflow"),
-		OpenRouterAppReferer:               getEnv("OPENROUTER_APP_REFERER", getEnv("PUBLIC_BASE_URL", "")),
-		MistralAPIKey:                      getEnv("MISTRAL_API_KEY", ""),
 		ShopeeSMLURL:                       getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
 		ShopeeSMLGUID:                      getEnv("SHOPEE_SML_GUID", "SMLX"),
 		ShopeeSMLProvider:                  getEnv("SHOPEE_SML_PROVIDER", "SML1"),
@@ -169,8 +134,6 @@ func Load() *Config {
 		ShopeeSMLVATType:                   getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
 		ShopeeSMLVATRate:                   getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
 		ShopeeSMLDocTime:                   getEnv("SHOPEE_SML_DOC_TIME", ""),
-		ShippedSMLDocFormat:                getEnv("SHIPPED_SML_DOC_FORMAT", ""),
-		GeminiAPIKey:                       getEnv("GEMINI_API_KEY", ""),
 		ShopeeOpenAPIEnabled:               getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
 		ShopeeOpenAPIEnv:                   getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
 		ShopeeOpenAPIBaseURL:               getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
@@ -193,10 +156,8 @@ func Load() *Config {
 		ShopeeRealtimeWebhookSecret:        getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
 		ShopeeRealtimeSyncIntervalSeconds:  getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
 		LineMyShopEnabled:                  getEnvBool("ENABLE_LINE_MYSHOP", true),
-		AutoConfirmThreshold:               getEnvFloat("AUTO_CONFIRM_THRESHOLD", 0.85),
-		InsightCronHour:                    getEnvInt("INSIGHT_CRON_HOUR", 8),
+		PurchaseFlowEnabled:                false,
 		BackupCronHour:                     getEnvInt("BACKUP_CRON_HOUR", 0),
-		InsightLineNotify:                  getEnvBool("INSIGHT_LINE_NOTIFY", false),
 		DiskWarnPercent:                    getEnvInt("DISK_WARN_PERCENT", 90),
 		DataLifecycleEnabled:               getEnvBool("DATA_LIFECYCLE_ENABLED", true),
 		DataLifecycleCronHour:              getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),

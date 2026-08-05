@@ -205,28 +205,25 @@ test_phase4() {
     return
   fi
 
-  # Import endpoint should exist (even as stub returning 501)
+  # The retired generic email/purchase import endpoint returns 410.
   response=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Authorization: Bearer $TOKEN" \
     -F "platform=lazada" \
     "${BASE}/api/import/upload" 2>&1)
   STATUS=$(echo "$response" | tail -1)
-  if [[ "$STATUS" == "501" || "$STATUS" == "400" || "$STATUS" == "422" ]]; then
-    ok "POST /api/import/upload exists (HTTP $STATUS)"
+  if [[ "$STATUS" == "410" ]]; then
+    ok "POST /api/import/upload is disabled (HTTP $STATUS)"
   else
     fail "POST /api/import/upload unexpected status: $STATUS"
   fi
 }
 
-# ── Phase 5: Email IMAP (config check only) ───────────────────────────────────
+# ── Phase 5: Disabled capability guard ────────────────────────────────────────
 
 test_phase5() {
-  info "Phase 5 — Email IMAP"
+  info "Phase 5 — Sales-only capability"
   echo ""
-  echo "  NOTE: IMAP test requires IMAP_HOST configured in .env"
-  echo "  Backend will auto-start email poller if IMAP_HOST is set."
-  echo "  Manual test: Check backend logs for 'IMAP poll' messages."
-  ok "Phase 5 reminder: configure IMAP_HOST in .env before full test"
+  ok "AI, IMAP, LINE chat, and purchase runtime must remain disabled"
 }
 
 # ── Phase 6: Web UI (frontend) ────────────────────────────────────────────────

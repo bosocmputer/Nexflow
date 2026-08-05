@@ -21,7 +21,7 @@ import {
 import { DataTable } from '@/components/common/DataTable'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
-import { ENABLE_CHAT, ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
@@ -33,23 +33,10 @@ import {
   type ChannelKey,
 } from './ChannelDefaults/labels'
 
-const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
-
-const PHASE1_CHANNEL_SLOTS: Array<{
+const SALES_CHANNEL_SLOTS: Array<{
   channel: ChannelKey
   bill_type: ChannelBillType
 }> = [
-  { channel: 'shopee_shipped', bill_type: 'purchase' },
-]
-
-const PHASE_PLUS_CHANNEL_SLOTS: Array<{
-  channel: ChannelKey
-  bill_type: ChannelBillType
-}> = [
-  ...(ENABLE_CHAT
-    ? [{ channel: 'line' as ChannelKey, bill_type: 'sale' as const }]
-    : []),
-  { channel: 'shopee_shipped', bill_type: 'purchase' },
   ...(ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee' as ChannelKey, bill_type: 'sale' as const }]
     : []),
@@ -74,13 +61,10 @@ const PHASE_PLUS_CHANNEL_SLOTS: Array<{
 ]
 
 function visibleChannelSlots() {
-  return PHASE < 2 ? PHASE1_CHANNEL_SLOTS : PHASE_PLUS_CHANNEL_SLOTS
+  return SALES_CHANNEL_SLOTS
 }
 
 function displayChannelLabel(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
-  if (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') {
-    return 'Email บิลซื้อ Shopee'
-  }
   return CHANNEL_LABELS[row.channel as ChannelKey] ?? row.channel
 }
 
@@ -104,9 +88,6 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
     }
     return { label: 'ใบสั่งขาย', to: row.channel === 'line_myshop' ? '/sales-orders?source=line_myshop' : '/sales-orders' }
   }
-  if (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') {
-    return { label: 'ใบสั่งซื้อ', to: '/bills' }
-  }
   return null
 }
 
@@ -125,9 +106,6 @@ function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
   }
   if (row.channel === 'line_myshop' && row.bill_type === 'sale') {
     return 'ออเดอร์จาก LINE MyShop webhook/polling แยกจาก LINE OA chat'
-  }
-  if (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') {
-    return 'อีเมล Shopee Shipped สำหรับสร้างใบสั่งซื้อ'
   }
   return ''
 }
@@ -225,7 +203,7 @@ function HelpBanner() {
         <CollapsibleContent>
           <CardContent className="grid gap-2 border-t border-border px-4 py-3 text-xs leading-relaxed text-muted-foreground md:grid-cols-3">
             <div>
-              <span className="font-medium text-foreground">ปลายทาง SML:</span> เลือกเมนูที่เอกสารจะถูกส่งเข้า เช่น ขายสินค้าและบริการ หรือใบสั่งซื้อ
+              <span className="font-medium text-foreground">ปลายทาง SML:</span> เลือกเมนูขายที่เอกสารจะถูกส่งเข้า เช่น ขายสินค้าและบริการ หรือใบสั่งขาย
             </div>
             <div>
               <span className="font-medium text-foreground">รหัสเอกสาร:</span> ใช้ doc_format_code จาก SML และใช้เลขรันแบบที่ SML แสดงเอกสารได้จริง
@@ -252,7 +230,7 @@ export default function ChannelDefaults() {
       const r = await client.get<{ data: ChannelDefaultRow[] }>(
         '/api/settings/channel-defaults',
       )
-      setRows(r.data.data ?? [])
+      setRows((r.data.data ?? []).filter((row) => row.bill_type !== 'purchase'))
     } catch (e: any) {
       toast.error('โหลดข้อมูลไม่สำเร็จ: ' + (e?.message ?? 'unknown'))
     } finally {
@@ -348,13 +326,7 @@ export default function ChannelDefaults() {
     <div className="space-y-5">
       <PageHeader
         title="เส้นทางเอกสาร SML"
-        description={
-          PHASE < 2
-            ? ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
-              ? 'ตรวจความพร้อมเส้นทางขายหลักและบิลซื้อก่อนส่งเอกสารเข้า SML'
-              : 'ตรวจความพร้อมเส้นทางบิลซื้อ Shopee ก่อนส่งเข้า SML'
-            : 'ตรวจว่าแต่ละช่องทางพร้อมส่งเข้าเมนู SML ที่ถูกต้องหรือยัง'
-        }
+        description="ตรวจว่าแต่ละช่องทางขายพร้อมส่งเข้าเมนู SML ที่ถูกต้องหรือยัง"
       />
 
       <HelpBanner />
@@ -439,14 +411,12 @@ export default function ChannelDefaults() {
                       variant="secondary"
                       className={cn(
                         'h-5 px-1.5 text-[10px] font-medium',
-                        r.bill_type === 'purchase'
-                          ? 'bg-warning/15 text-warning hover:bg-warning/20'
-                          : r.bill_type === 'ar_receipt'
-                            ? 'bg-success/15 text-success hover:bg-success/20'
+                        r.bill_type === 'ar_receipt'
+                          ? 'bg-success/15 text-success hover:bg-success/20'
                         : 'bg-info/15 text-info hover:bg-info/20',
                       )}
                     >
-                      {r.bill_type === 'purchase' ? 'บิลซื้อ' : r.bill_type === 'ar_receipt' ? 'รับชำระ' : 'บิลขาย'}
+                      {r.bill_type === 'ar_receipt' ? 'รับชำระ' : 'บิลขาย'}
                     </Badge>
                     {mode && (
                       <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px] font-medium', mode.className)}>

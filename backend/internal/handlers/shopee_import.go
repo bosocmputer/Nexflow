@@ -40,13 +40,12 @@ type ShopeeImportHandler struct {
 	db                     *sql.DB
 	billRepo               *repository.BillRepo
 	mappingRepo            *repository.MappingRepo
+	aliasRepo              *repository.MarketplaceAliasRepo
 	auditRepo              *repository.AuditLogRepo
 	cfg                    *config.Config
 	channelDefaults        *repository.ChannelDefaultRepo
-	catalogSvc             *catalog.SMLCatalogService
-	embSvc                 *catalog.EmbeddingService
-	catalogIdx             *catalog.CatalogIndex
 	catalogRepo            *repository.SMLCatalogRepo
+	catalogSvc             *catalog.SMLCatalogService
 	artifactSvc            *artifact.Service
 	settlementLineNotifier shopeeSettlementLineNotifier
 	logger                 *zap.Logger
@@ -77,23 +76,21 @@ func NewShopeeImportHandler(
 	auditRepo *repository.AuditLogRepo,
 	cfg *config.Config,
 	channelDefaults *repository.ChannelDefaultRepo,
-	catalogSvc *catalog.SMLCatalogService,
-	embSvc *catalog.EmbeddingService,
-	catalogIdx *catalog.CatalogIndex,
 	catalogRepo *repository.SMLCatalogRepo,
+	catalogSvc *catalog.SMLCatalogService,
+	aliasRepo *repository.MarketplaceAliasRepo,
 	logger *zap.Logger,
 ) *ShopeeImportHandler {
 	h := &ShopeeImportHandler{
 		db:              db,
 		billRepo:        billRepo,
 		mappingRepo:     mappingRepo,
+		aliasRepo:       aliasRepo,
 		auditRepo:       auditRepo,
 		cfg:             cfg,
 		channelDefaults: channelDefaults,
-		catalogSvc:      catalogSvc,
-		embSvc:          embSvc,
-		catalogIdx:      catalogIdx,
 		catalogRepo:     catalogRepo,
+		catalogSvc:      catalogSvc,
 		logger:          logger,
 	}
 	go h.gcPendingUploads()
@@ -569,6 +566,9 @@ func (h *ShopeeImportHandler) Preview(c *gin.Context) {
 
 // Confirm processes the selected orders: calls SML 224 and saves bills to DB.
 func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
+	if blockIfCatalogNotReady(c, h.catalogRepo) {
+		return
+	}
 	var req ConfirmRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request ไม่ถูกต้อง: " + err.Error()})
@@ -615,13 +615,15 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 	traceID := c.GetString("trace_id")
 	confirmStart := time.Now()
 
-	const topK = 5
-	const highConfThreshold = 0.85
-	type matchResolution struct {
-		learned *models.Mapping
-		matches []models.CatalogMatch
+	resolutionBatch, err := prepareMarketplaceResolution(
+		c.Request.Context(), "shopee", req.Orders, selectedSet,
+		h.catalogRepo, h.catalogSvc, h.aliasRepo, h.mappingRepo, h.logger,
+	)
+	if err != nil {
+		h.logger.Warn("shopee_import: prepare product resolution failed", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog_unavailable", "message": "เตรียมข้อมูลสินค้า SML ไม่สำเร็จ กรุณาลองใหม่"})
+		return
 	}
-	resolutionCache := map[string]matchResolution{}
 
 	// Pull the original .xlsx bytes once so we can attach the same artifact
 	// to every bill the import creates. May be nil when artifact service is
@@ -698,100 +700,24 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 
 		// Resolve each item BEFORE creating the bill so we know the
 		// final status (pending vs needs_review).
-		type itemEnriched struct {
-			item       models.BillItem
-			candidates []models.CatalogMatch
-		}
+		type itemEnriched struct{ item models.BillItem }
 		var enriched []itemEnriched
 		allHigh := true
 
 		for _, it := range order.Items {
 			rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
-			resolved, ok := resolutionCache[rawName]
-			if !ok {
-				if h.mappingRepo != nil {
-					if m, err := h.mappingRepo.FindByRawName(rawName); err == nil {
-						resolved.learned = m
-					} else {
-						h.logger.Warn("shopee_excel: lookup mapping failed",
-							zap.String("raw_name", rawName),
-							zap.Error(err))
-					}
-				}
-				if resolved.learned == nil && h.embSvc != nil && h.embSvc.IsConfigured() && h.catalogIdx != nil && h.catalogIdx.Size() > 0 {
-					if emb, err := h.embSvc.EmbedText(rawName); err == nil {
-						resolved.matches = h.catalogIdx.Search(emb, topK)
-					} else {
-						h.logger.Warn("shopee_excel: embedding lookup failed",
-							zap.String("raw_name", rawName),
-							zap.Error(err))
-					}
-				}
-				if resolved.learned == nil && len(resolved.matches) == 0 && h.catalogSvc != nil {
-					resolved.matches, _ = h.catalogSvc.SearchByText(rawName, topK)
-				}
-				resolutionCache[rawName] = resolved
-			}
-			matches := resolved.matches
+			resolved := resolutionBatch.resolution(it.SKU, rawName)
 
 			price := it.Price
-			bi := models.BillItem{
-				RawName:   rawName,
-				SourceSKU: it.SKU,
-				Qty:       it.Qty,
-				Price:     &price,
+			exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
+			bi, mapped := marketplaceBillItemFromMatch(rawName, it.SKU, it.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, resolutionBatch.catalogLookup, 1)
+			if mapped {
+				recordMarketplaceResolutionUsage(h.aliasRepo, h.mappingRepo, resolved, exactSKU)
 			}
-
-			// Priority:
-			// 1. Human/F1 mapping from /mappings. This is the user's source
-			//    of truth and must win over Shopee SKU guesses.
-			// 2. High-confidence catalog match.
-			// 3. Excel SKU only when it exists in SML catalog. Otherwise keep
-			//    it as source_sku, not item_code, so Shopee SKU cannot masquerade
-			//    as an SML product code.
-			switch {
-			case resolved.learned != nil:
-				bi.ItemCode = &resolved.learned.ItemCode
-				bi.UnitCode = &resolved.learned.UnitCode
-				bi.MappingID = &resolved.learned.ID
-				bi.Mapped = true
-				_ = h.mappingRepo.IncrementUsage(resolved.learned.ID)
-			case len(matches) > 0 && matches[0].Score >= highConfThreshold:
-				bi.ItemCode = &matches[0].ItemCode
-				unit := matches[0].UnitCode
-				if unit == "" {
-					unit = defaultUnit
-				}
-				bi.UnitCode = &unit
-				bi.Mapped = true
-			case it.SKU != "":
-				if cat := h.lookupCatalogItem(it.SKU); cat != nil {
-					code := cat.ItemCode
-					unit := cat.UnitCode
-					if unit == "" {
-						unit = defaultUnit
-					}
-					bi.ItemCode = &code
-					bi.UnitCode = &unit
-					bi.Mapped = true
-				} else {
-					bi.Mapped = false
-					allHigh = false
-				}
-			default:
-				if len(matches) > 0 {
-					bi.ItemCode = &matches[0].ItemCode
-					unit := matches[0].UnitCode
-					if unit == "" {
-						unit = defaultUnit
-					}
-					bi.UnitCode = &unit
-				}
-				bi.Mapped = false
+			if !mapped {
 				allHigh = false
 			}
-
-			enriched = append(enriched, itemEnriched{item: bi, candidates: matches})
+			enriched = append(enriched, itemEnriched{item: bi})
 		}
 
 		status := "pending"
@@ -799,7 +725,6 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 			status = "needs_review"
 		}
 
-		aiConf := 1.0
 		raw := map[string]interface{}{
 			"flow":               sourceFlow,
 			"shopee_order_id":    order.OrderID,
@@ -846,7 +771,7 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 			Source:        "shopee",
 			Status:        status,
 			DocumentRoute: documentRoute,
-			AIConfidence:  &aiConf,
+			AIConfidence:  nil,
 			RawData:       rawData,
 			SMLOrderID:    order.OrderID,
 		}
@@ -875,8 +800,7 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 
 		for i := range enriched {
 			enriched[i].item.BillID = bill.ID
-			candidatesJSON, _ := json.Marshal(enriched[i].candidates)
-			_ = h.billRepo.InsertItemWithCandidates(&enriched[i].item, candidatesJSON)
+			_ = h.billRepo.InsertItemWithCandidates(&enriched[i].item, []byte("[]"))
 		}
 
 		// Archive the source .xlsx as a per-bill artifact so the user can
@@ -1417,8 +1341,6 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 	if strings.TrimSpace(order.OrderID) == "" {
 		return ConfirmResult{Success: false, Message: "order_id ว่าง"}, fmt.Errorf("order_id is required")
 	}
-	_ = ctx // Current repository helpers are sync APIs; keep ctx in the interface for future DB/API work.
-
 	sourceFlow := strings.TrimSpace(opts.SourceFlow)
 	if sourceFlow == "" {
 		sourceFlow = "shopee_realtime"
@@ -1447,100 +1369,35 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 		}, nil
 	}
 
-	const topK = 5
-	const highConfThreshold = 0.85
-	type matchResolution struct {
-		learned *models.Mapping
-		matches []models.CatalogMatch
+	type itemEnriched struct{ item models.BillItem }
+	activeCatalog, err := h.catalogRepo.CountActive()
+	if err != nil || activeCatalog == 0 {
+		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "ยังไม่มีข้อมูลสินค้า SML กรุณารีเฟรชสินค้า SML ก่อน"}, fmt.Errorf("catalog_not_ready")
 	}
-	type itemEnriched struct {
-		item       models.BillItem
-		candidates []models.CatalogMatch
+	resolutionBatch, err := prepareMarketplaceResolution(
+		ctx, "shopee", []ShopeeOrder{order}, nil,
+		h.catalogRepo, h.catalogSvc, h.aliasRepo, h.mappingRepo, h.logger,
+	)
+	if err != nil {
+		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "เตรียมข้อมูลสินค้า SML ไม่สำเร็จ"}, err
 	}
-	resolutionCache := map[string]matchResolution{}
 	enriched := []itemEnriched{}
 	allHigh := true
 
 	for _, it := range order.Items {
 		rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
-		resolved, ok := resolutionCache[rawName]
-		if !ok {
-			if h.mappingRepo != nil {
-				if m, err := h.mappingRepo.FindByRawName(rawName); err == nil {
-					resolved.learned = m
-				} else {
-					h.logger.Warn("shopee_realtime: lookup mapping failed",
-						zap.String("raw_name", rawName),
-						zap.Error(err))
-				}
-			}
-			if resolved.learned == nil && h.embSvc != nil && h.embSvc.IsConfigured() && h.catalogIdx != nil && h.catalogIdx.Size() > 0 {
-				if emb, err := h.embSvc.EmbedText(rawName); err == nil {
-					resolved.matches = h.catalogIdx.Search(emb, topK)
-				} else {
-					h.logger.Warn("shopee_realtime: embedding lookup failed",
-						zap.String("raw_name", rawName),
-						zap.Error(err))
-				}
-			}
-			if resolved.learned == nil && len(resolved.matches) == 0 && h.catalogSvc != nil {
-				resolved.matches, _ = h.catalogSvc.SearchByText(rawName, topK)
-			}
-			resolutionCache[rawName] = resolved
-		}
-		matches := resolved.matches
+		resolved := resolutionBatch.resolution(it.SKU, rawName)
 
 		price := it.Price
-		bi := models.BillItem{
-			RawName:   rawName,
-			SourceSKU: it.SKU,
-			Qty:       it.Qty,
-			Price:     &price,
+		exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
+		bi, mapped := marketplaceBillItemFromMatch(rawName, it.SKU, it.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, resolutionBatch.catalogLookup, 1)
+		if mapped {
+			recordMarketplaceResolutionUsage(h.aliasRepo, h.mappingRepo, resolved, exactSKU)
 		}
-
-		switch {
-		case resolved.learned != nil:
-			bi.ItemCode = &resolved.learned.ItemCode
-			bi.UnitCode = &resolved.learned.UnitCode
-			bi.MappingID = &resolved.learned.ID
-			bi.Mapped = true
-			_ = h.mappingRepo.IncrementUsage(resolved.learned.ID)
-		case len(matches) > 0 && matches[0].Score >= highConfThreshold:
-			bi.ItemCode = &matches[0].ItemCode
-			unit := matches[0].UnitCode
-			if unit == "" {
-				unit = defaultUnit
-			}
-			bi.UnitCode = &unit
-			bi.Mapped = true
-		case it.SKU != "":
-			if cat := h.lookupCatalogItem(it.SKU); cat != nil {
-				code := cat.ItemCode
-				unit := cat.UnitCode
-				if unit == "" {
-					unit = defaultUnit
-				}
-				bi.ItemCode = &code
-				bi.UnitCode = &unit
-				bi.Mapped = true
-			} else {
-				bi.Mapped = false
-				allHigh = false
-			}
-		default:
-			if len(matches) > 0 {
-				bi.ItemCode = &matches[0].ItemCode
-				unit := matches[0].UnitCode
-				if unit == "" {
-					unit = defaultUnit
-				}
-				bi.UnitCode = &unit
-			}
-			bi.Mapped = false
+		if !mapped {
 			allHigh = false
 		}
-
-		enriched = append(enriched, itemEnriched{item: bi, candidates: matches})
+		enriched = append(enriched, itemEnriched{item: bi})
 	}
 
 	if len(enriched) == 0 {
@@ -1552,7 +1409,6 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 		status = "needs_review"
 	}
 
-	aiConf := 1.0
 	raw := map[string]interface{}{
 		"flow":               sourceFlow,
 		"shopee_order_id":    order.OrderID,
@@ -1599,7 +1455,7 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 		Source:        "shopee",
 		Status:        status,
 		DocumentRoute: documentRoute,
-		AIConfidence:  &aiConf,
+		AIConfidence:  nil,
 		RawData:       rawData,
 		SMLOrderID:    order.OrderID,
 	}
@@ -1622,8 +1478,7 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 
 	for i := range enriched {
 		enriched[i].item.BillID = bill.ID
-		candidatesJSON, _ := json.Marshal(enriched[i].candidates)
-		if err := h.billRepo.InsertItemWithCandidates(&enriched[i].item, candidatesJSON); err != nil {
+		if err := h.billRepo.InsertItemWithCandidates(&enriched[i].item, []byte("[]")); err != nil {
 			h.logger.Warn("shopee_realtime: insert bill item failed",
 				zap.String("bill_id", bill.ID),
 				zap.String("order_id", order.OrderID),
@@ -1733,7 +1588,7 @@ func (h *ShopeeImportHandler) lookupCatalogItem(code string) *models.CatalogItem
 	if code == "" || h.catalogRepo == nil {
 		return nil
 	}
-	item, err := h.catalogRepo.GetOne(code)
+	item, err := h.catalogRepo.GetActive(code)
 	if err != nil {
 		h.logger.Warn("shopee_excel: catalog sku lookup failed",
 			zap.String("sku", code),

@@ -1,10 +1,121 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/models"
+	"nexflow/internal/repository"
 )
+
+type trackingCatalogReadThrough struct {
+	mu            sync.Mutex
+	calls         map[string]int
+	inFlight      int
+	maxConcurrent int
+}
+
+func (f *trackingCatalogReadThrough) RefreshOneContext(ctx context.Context, itemCode string) (*models.CatalogItem, bool, error) {
+	f.mu.Lock()
+	f.calls[itemCode]++
+	f.inFlight++
+	if f.inFlight > f.maxConcurrent {
+		f.maxConcurrent = f.inFlight
+	}
+	f.mu.Unlock()
+	select {
+	case <-time.After(3 * time.Millisecond):
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+	f.mu.Lock()
+	f.inFlight--
+	f.mu.Unlock()
+	return &models.CatalogItem{ItemCode: itemCode, UnitCode: "PCS", IsActive: true}, false, nil
+}
+
+func TestPrepareMarketplaceResolutionCapsAndDeduplicatesReadThrough(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)SELECT item_code.*FROM sml_catalog.*is_active = TRUE.*item_code = ANY`).
+		WillReturnRows(sqlmock.NewRows([]string{"item_code", "item_name", "item_name2", "unit_code", "wh_code", "shelf_code", "price"}))
+
+	items := make([]ShopeeExcelItem, 0, marketplaceCatalogReadThroughLimit+7)
+	for i := 0; i < marketplaceCatalogReadThroughLimit+6; i++ {
+		items = append(items, ShopeeExcelItem{SKU: fmt.Sprintf("SKU-%03d", i), ProductName: "สินค้า", Qty: 1})
+	}
+	items = append(items, ShopeeExcelItem{SKU: "SKU-000", ProductName: "สินค้าซ้ำ", Qty: 1})
+	reader := &trackingCatalogReadThrough{calls: map[string]int{}}
+	batch, err := prepareMarketplaceResolution(
+		context.Background(), "shopee", []ShopeeOrder{{OrderID: "ORDER-1", Items: items}}, nil,
+		repository.NewSMLCatalogRepo(db), reader, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("prepareMarketplaceResolution: %v", err)
+	}
+	if batch == nil {
+		t.Fatal("batch is nil")
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if len(reader.calls) != marketplaceCatalogReadThroughLimit {
+		t.Fatalf("unique read-through calls = %d, want %d", len(reader.calls), marketplaceCatalogReadThroughLimit)
+	}
+	for i := 0; i < marketplaceCatalogReadThroughLimit; i++ {
+		code := fmt.Sprintf("SKU-%03d", i)
+		if reader.calls[code] != 1 {
+			t.Fatalf("first batch SKU %s was not read through exactly once", code)
+		}
+	}
+	if reader.calls["SKU-050"] != 0 {
+		t.Fatal("read-through exceeded the first 50 unique SKUs")
+	}
+	for code, count := range reader.calls {
+		if count != 1 {
+			t.Fatalf("read-through %s called %d times, want once", code, count)
+		}
+	}
+	if reader.maxConcurrent > 3 {
+		t.Fatalf("max concurrency = %d, want <= 3", reader.maxConcurrent)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBlockIfCatalogNotReadyReturnsActionableConflict(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM sml_catalog WHERE is_active = TRUE`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	if !blockIfCatalogNotReady(c, repository.NewSMLCatalogRepo(db)) {
+		t.Fatal("empty catalog was not blocked")
+	}
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusConflict)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 	price := 120.0
@@ -12,6 +123,12 @@ func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 		ID:       "map-1",
 		ItemCode: "NAME-CODE",
 		UnitCode: "ชิ้น",
+	}
+	alias := &models.MarketplaceItemAlias{
+		ID:       "alias-old",
+		ItemCode: "ALIAS-OLD",
+		UnitCode: "ชิ้น",
+		IsActive: true,
 	}
 	matches := []models.CatalogMatch{{
 		ItemCode: "NAME-MATCH",
@@ -25,7 +142,7 @@ func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 		2,
 		&price,
 		"ถุง",
-		nil,
+		alias,
 		learned,
 		matches,
 		func(code string) *models.CatalogItem {
@@ -54,7 +171,39 @@ func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 	}
 }
 
-func TestMarketplaceBillItemFallsBackToNameWhenSKUIsMissingFromCatalog(t *testing.T) {
+func TestMarketplaceBillItemUsesVerifiedNameMappingOnlyWithoutSKU(t *testing.T) {
+	learned := &models.Mapping{
+		ID:       "map-verified",
+		ItemCode: "NAME-CODE",
+		UnitCode: "ชิ้น",
+		Source:   "verified",
+	}
+
+	item, high := marketplaceBillItemFromMatch(
+		"ชื่อที่ผู้ใช้ยืนยัน",
+		"",
+		1,
+		nil,
+		"หน่วย",
+		nil,
+		learned,
+		nil,
+		nil,
+		0,
+	)
+
+	if !high || !item.Mapped {
+		t.Fatalf("high/mapped = %v/%v, want true/true", high, item.Mapped)
+	}
+	if item.ItemCode == nil || *item.ItemCode != "NAME-CODE" {
+		t.Fatalf("ItemCode = %v, want NAME-CODE", item.ItemCode)
+	}
+	if item.MappingID == nil || *item.MappingID != "map-verified" {
+		t.Fatalf("MappingID = %v, want map-verified", item.MappingID)
+	}
+}
+
+func TestMarketplaceBillItemDoesNotGuessByNameWhenSKUIsMissingFromCatalog(t *testing.T) {
 	price := 88.0
 	matches := []models.CatalogMatch{{
 		ItemCode: "NAME-MATCH",
@@ -80,14 +229,14 @@ func TestMarketplaceBillItemFallsBackToNameWhenSKUIsMissingFromCatalog(t *testin
 		0.85,
 	)
 
-	if !high || !item.Mapped {
-		t.Fatalf("high/mapped = %v/%v, want true/true from name fallback", high, item.Mapped)
+	if high || item.Mapped {
+		t.Fatalf("high/mapped = %v/%v, want false/false without exact SKU or confirmed alias", high, item.Mapped)
 	}
 	if item.SourceSKU != "UNKNOWN-SKU" {
 		t.Fatalf("SourceSKU = %q, want UNKNOWN-SKU", item.SourceSKU)
 	}
-	if item.ItemCode == nil || *item.ItemCode != "NAME-MATCH" {
-		t.Fatalf("ItemCode = %v, want NAME-MATCH", item.ItemCode)
+	if item.ItemCode != nil {
+		t.Fatalf("ItemCode = %v, want nil", item.ItemCode)
 	}
 }
 
@@ -97,6 +246,7 @@ func TestMarketplaceBillItemUsesAliasBeforeNameMapping(t *testing.T) {
 		ID:       "alias-1",
 		ItemCode: "ALIAS-CODE",
 		UnitCode: "กล่อง",
+		IsActive: true,
 	}
 	learned := &models.Mapping{
 		ID:       "map-1",
@@ -125,7 +275,7 @@ func TestMarketplaceBillItemUsesAliasBeforeNameMapping(t *testing.T) {
 	}
 }
 
-func TestMarketplaceBillItemBlocksVariantConflict(t *testing.T) {
+func TestMarketplaceBillItemDoesNotUseUnconfirmedNameSuggestion(t *testing.T) {
 	item, high := marketplaceBillItemFromMatch(
 		"สติ๊กเกอร์บล็อคคิ้ว / No.4 สีชมพู",
 		"",
@@ -176,7 +326,7 @@ func TestMarketplaceBillItemFallsBackToNeedsReviewWithoutSKUOrHighNameMatch(t *t
 	if item.SourceSKU != "" {
 		t.Fatalf("SourceSKU = %q, want empty", item.SourceSKU)
 	}
-	if item.ItemCode == nil || *item.ItemCode != "LOW-MATCH" {
-		t.Fatalf("ItemCode = %v, want LOW-MATCH as candidate", item.ItemCode)
+	if item.ItemCode != nil {
+		t.Fatalf("ItemCode = %v, want nil because suggestions are disabled", item.ItemCode)
 	}
 }

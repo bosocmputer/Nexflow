@@ -32,13 +32,12 @@ import (
 type TikTokImportHandler struct {
 	billRepo        *repository.BillRepo
 	mappingRepo     *repository.MappingRepo
+	aliasRepo       *repository.MarketplaceAliasRepo
 	auditRepo       *repository.AuditLogRepo
 	cfg             *config.Config
 	channelDefaults *repository.ChannelDefaultRepo
-	catalogSvc      *catalog.SMLCatalogService
-	embSvc          *catalog.EmbeddingService
-	catalogIdx      *catalog.CatalogIndex
 	catalogRepo     *repository.SMLCatalogRepo
+	catalogSvc      *catalog.SMLCatalogService
 	artifactSvc     *artifact.Service
 	logger          *zap.Logger
 
@@ -51,22 +50,20 @@ func NewTikTokImportHandler(
 	auditRepo *repository.AuditLogRepo,
 	cfg *config.Config,
 	channelDefaults *repository.ChannelDefaultRepo,
-	catalogSvc *catalog.SMLCatalogService,
-	embSvc *catalog.EmbeddingService,
-	catalogIdx *catalog.CatalogIndex,
 	catalogRepo *repository.SMLCatalogRepo,
+	catalogSvc *catalog.SMLCatalogService,
+	aliasRepo *repository.MarketplaceAliasRepo,
 	logger *zap.Logger,
 ) *TikTokImportHandler {
 	h := &TikTokImportHandler{
 		billRepo:        billRepo,
 		mappingRepo:     mappingRepo,
+		aliasRepo:       aliasRepo,
 		auditRepo:       auditRepo,
 		cfg:             cfg,
 		channelDefaults: channelDefaults,
-		catalogSvc:      catalogSvc,
-		embSvc:          embSvc,
-		catalogIdx:      catalogIdx,
 		catalogRepo:     catalogRepo,
+		catalogSvc:      catalogSvc,
 		logger:          logger,
 	}
 	go h.gcPendingUploads()
@@ -281,6 +278,9 @@ func (h *TikTokImportHandler) Preview(c *gin.Context) {
 }
 
 func (h *TikTokImportHandler) Confirm(c *gin.Context) {
+	if blockIfCatalogNotReady(c, h.catalogRepo) {
+		return
+	}
 	var req ConfirmRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request ไม่ถูกต้อง: " + err.Error()})
@@ -302,13 +302,15 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 	traceID := c.GetString("trace_id")
 	confirmStart := time.Now()
 
-	const topK = 5
-	const highConfThreshold = 0.85
-	type matchResolution struct {
-		learned *models.Mapping
-		matches []models.CatalogMatch
+	resolutionBatch, err := prepareMarketplaceResolution(
+		c.Request.Context(), "tiktok", req.Orders, selectedSet,
+		h.catalogRepo, h.catalogSvc, h.aliasRepo, h.mappingRepo, h.logger,
+	)
+	if err != nil {
+		h.logger.Warn("tiktok_import: prepare product resolution failed", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog_unavailable", "message": "เตรียมข้อมูลสินค้า SML ไม่สำเร็จ กรุณาลองใหม่"})
+		return
 	}
-	resolutionCache := map[string]matchResolution{}
 
 	var uploadBytes []byte
 	var uploadFilename string
@@ -336,10 +338,7 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 			continue
 		}
 
-		type itemEnriched struct {
-			item       models.BillItem
-			candidates []models.CatalogMatch
-		}
+		type itemEnriched struct{ item models.BillItem }
 		var enriched []itemEnriched
 		allHigh := true
 		orderItemIDs := []string{}
@@ -349,87 +348,23 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 			if it.OrderItemID != "" {
 				orderItemIDs = append(orderItemIDs, it.OrderItemID)
 			}
-			resolved, ok := resolutionCache[rawName]
-			if !ok {
-				if h.mappingRepo != nil {
-					if m, err := h.mappingRepo.FindByRawName(rawName); err == nil {
-						resolved.learned = m
-					} else {
-						h.logger.Warn("tiktok_excel: lookup mapping failed",
-							zap.String("raw_name", rawName), zap.Error(err))
-					}
-				}
-				if resolved.learned == nil && h.embSvc != nil && h.embSvc.IsConfigured() && h.catalogIdx != nil && h.catalogIdx.Size() > 0 {
-					if emb, err := h.embSvc.EmbedText(rawName); err == nil {
-						resolved.matches = h.catalogIdx.Search(emb, topK)
-					} else {
-						h.logger.Warn("tiktok_excel: embedding lookup failed",
-							zap.String("raw_name", rawName), zap.Error(err))
-					}
-				}
-				if resolved.learned == nil && len(resolved.matches) == 0 && h.catalogSvc != nil {
-					resolved.matches, _ = h.catalogSvc.SearchByText(rawName, topK)
-				}
-				resolutionCache[rawName] = resolved
-			}
-			matches := resolved.matches
+			resolved := resolutionBatch.resolution(it.SKU, rawName)
 			price := it.Price
-			bi := models.BillItem{
-				RawName:   rawName,
-				SourceSKU: it.SKU,
-				Qty:       it.Qty,
-				Price:     &price,
+			exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
+			bi, mapped := marketplaceBillItemFromMatch(rawName, it.SKU, it.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, resolutionBatch.catalogLookup, 1)
+			if mapped {
+				recordMarketplaceResolutionUsage(h.aliasRepo, h.mappingRepo, resolved, exactSKU)
 			}
-
-			switch {
-			case resolved.learned != nil:
-				bi.ItemCode = &resolved.learned.ItemCode
-				bi.UnitCode = &resolved.learned.UnitCode
-				bi.MappingID = &resolved.learned.ID
-				bi.Mapped = true
-				_ = h.mappingRepo.IncrementUsage(resolved.learned.ID)
-			case len(matches) > 0 && matches[0].Score >= highConfThreshold:
-				bi.ItemCode = &matches[0].ItemCode
-				unit := matches[0].UnitCode
-				if unit == "" {
-					unit = defaultUnit
-				}
-				bi.UnitCode = &unit
-				bi.Mapped = true
-			case it.SKU != "":
-				if cat := h.lookupCatalogItem(it.SKU); cat != nil {
-					code := cat.ItemCode
-					unit := cat.UnitCode
-					if unit == "" {
-						unit = defaultUnit
-					}
-					bi.ItemCode = &code
-					bi.UnitCode = &unit
-					bi.Mapped = true
-				} else {
-					bi.Mapped = false
-					allHigh = false
-				}
-			default:
-				if len(matches) > 0 {
-					bi.ItemCode = &matches[0].ItemCode
-					unit := matches[0].UnitCode
-					if unit == "" {
-						unit = defaultUnit
-					}
-					bi.UnitCode = &unit
-				}
-				bi.Mapped = false
+			if !mapped {
 				allHigh = false
 			}
-			enriched = append(enriched, itemEnriched{item: bi, candidates: matches})
+			enriched = append(enriched, itemEnriched{item: bi})
 		}
 
 		status := "pending"
 		if !allHigh {
 			status = "needs_review"
 		}
-		aiConf := 1.0
 		rawData, _ := json.Marshal(map[string]interface{}{
 			"flow":               "tiktok_excel",
 			"tiktok_order_id":    order.OrderID,
@@ -461,7 +396,7 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 			Source:        "tiktok",
 			Status:        status,
 			DocumentRoute: documentRoute,
-			AIConfidence:  &aiConf,
+			AIConfidence:  nil,
 			RawData:       rawData,
 			SMLOrderID:    order.OrderID,
 		}
@@ -485,8 +420,7 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 		}
 		for i := range enriched {
 			enriched[i].item.BillID = bill.ID
-			candidatesJSON, _ := json.Marshal(enriched[i].candidates)
-			_ = h.billRepo.InsertItemWithCandidates(&enriched[i].item, candidatesJSON)
+			_ = h.billRepo.InsertItemWithCandidates(&enriched[i].item, []byte("[]"))
 		}
 		if h.artifactSvc != nil && uploadBytes != nil {
 			meta := map[string]interface{}{"order_id": order.OrderID, "uploaded_by": "", "trace_id": traceID}
@@ -947,7 +881,7 @@ func (h *TikTokImportHandler) lookupCatalogItem(code string) *models.CatalogItem
 	if code == "" || h.catalogRepo == nil {
 		return nil
 	}
-	item, err := h.catalogRepo.GetOne(code)
+	item, err := h.catalogRepo.GetActive(code)
 	if err != nil {
 		h.logger.Warn("tiktok_excel: catalog sku lookup failed", zap.String("sku", code), zap.Error(err))
 		return nil

@@ -331,12 +331,6 @@ export function BillHeader({
                 value={dayjs(bill.sent_at).format('DD/MM/YYYY HH:mm')}
               />
             )}
-            {!isPurchase && bill.ai_confidence != null && (
-              <InfoRow
-                label="ความมั่นใจ"
-                value={`${Math.round(bill.ai_confidence * 100)}%`}
-              />
-            )}
             {bill.remark && (
               <InfoRow
                 label="หมายเหตุ"

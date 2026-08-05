@@ -154,10 +154,8 @@ ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 PUBLIC_BASE_URL=https://animal-galvanize-tameness.ngrok-free.dev
 MEDIA_SIGNING_KEY=        # optional; fallback JWT_SECRET
 
-# AI extraction from chat media/audio
-OPENROUTER_MODEL=google/gemini-2.5-flash
-OPENROUTER_AUDIO_MODEL=openai/whisper-1
-MISTRAL_API_KEY=
+# LINE chat/AI extraction is disabled in sales-only mode.
+# LINE OA remains available for order Push notifications only.
 ```
 
 ---

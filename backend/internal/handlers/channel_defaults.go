@@ -13,20 +13,23 @@ import (
 
 // ChannelDefaultsHandler exposes route/document defaults for channel_defaults.
 type ChannelDefaultsHandler struct {
-	repo      *repository.ChannelDefaultRepo
-	auditRepo *repository.AuditLogRepo
-	logger    *zap.Logger
+	repo                *repository.ChannelDefaultRepo
+	auditRepo           *repository.AuditLogRepo
+	logger              *zap.Logger
+	purchaseFlowEnabled bool
 }
 
 func NewChannelDefaultsHandler(
 	repo *repository.ChannelDefaultRepo,
 	auditRepo *repository.AuditLogRepo,
+	purchaseFlowEnabled bool,
 	logger *zap.Logger,
 ) *ChannelDefaultsHandler {
 	return &ChannelDefaultsHandler{
-		repo:      repo,
-		auditRepo: auditRepo,
-		logger:    logger,
+		repo:                repo,
+		auditRepo:           auditRepo,
+		purchaseFlowEnabled: purchaseFlowEnabled,
+		logger:              logger,
 	}
 }
 
@@ -37,6 +40,15 @@ func (h *ChannelDefaultsHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.purchaseFlowEnabled {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if row.BillType != "purchase" {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
 	c.JSON(http.StatusOK, gin.H{"data": rows})
 }
 
@@ -45,6 +57,10 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 	var in models.ChannelDefaultUpsert
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !h.purchaseFlowEnabled && in.BillType == "purchase" {
+		featureGone(c, "ฝั่งซื้อถูกปิดใช้งานแล้ว")
 		return
 	}
 	if !validChannelBillTypeCombo(in.Channel, in.BillType) {

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -63,13 +62,7 @@ func (h *SetupHandler) Status(c *gin.Context) {
 	}
 
 	channelReady, channelMissing := h.channelReady()
-	emailReady, emailDetail := h.emailReady()
 	catalogReady, catalogDetail := h.catalogReady()
-	aiMissing := missingSettings(settings, runtime, []string{
-		"ai.openrouter_api_key",
-		"ai.openrouter_model",
-	})
-	aiReady := len(aiMissing) == 0 && !pendingRestart
 	docCounts := h.documentCounts()
 	importCounts := h.importCounts()
 	system := h.systemSummary(settings, pendingRestart, pendingKeys)
@@ -88,20 +81,11 @@ func (h *SetupHandler) Status(c *gin.Context) {
 		{
 			"key":         "channels",
 			"title":       "เส้นทางเอกสาร SML",
-			"description": "ตั้งปลายทางเอกสารซื้อ/ขาย, รูปแบบเลขเอกสาร และ endpoint SML ให้ตรงกับ flow ที่เปิดใช้",
+			"description": "ตั้งปลายทางเอกสารขาย รูปแบบเลขเอกสาร และ endpoint SML ให้ตรงกับช่องทางที่เปิดใช้",
 			"href":        "/settings/channels",
 			"ready":       channelReady,
 			"status":      statusText(channelReady, false),
 			"missing":     channelMissing,
-			"blocking":    true,
-		},
-		{
-			"key":         "email",
-			"title":       "กล่องอีเมลรับบิล",
-			"description": "เพิ่ม inbox และทดสอบการเชื่อมต่อ IMAP ให้พร้อมรับบิล",
-			"href":        "/settings/email",
-			"ready":       emailReady,
-			"status":      emailDetail,
 			"blocking":    true,
 		},
 		{
@@ -112,16 +96,6 @@ func (h *SetupHandler) Status(c *gin.Context) {
 			"ready":       catalogReady,
 			"status":      catalogDetail,
 			"blocking":    true,
-		},
-		{
-			"key":         "ai",
-			"title":       "AI และค่าใช้จ่าย",
-			"description": "ตั้งค่า OpenRouter model ให้พร้อมสำหรับอ่านเอกสารและเก็บ token usage แยกตาม model",
-			"href":        "/settings/ai-usage",
-			"ready":       aiReady,
-			"status":      statusText(aiReady, pendingRestart),
-			"missing":     aiMissing,
-			"blocking":    false,
 		},
 		{
 			"key":         "operations",
@@ -167,7 +141,6 @@ func (h *SetupHandler) Status(c *gin.Context) {
 type resetTestDataRequest struct {
 	Confirm         string `json:"confirm"`
 	ResetDocCounter bool   `json:"reset_doc_counter"`
-	ResetEmailDedup bool   `json:"reset_email_dedup"`
 }
 
 func (h *SetupHandler) ResetTestData(c *gin.Context) {
@@ -218,31 +191,6 @@ func (h *SetupHandler) ResetTestData(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	if req.ResetEmailDedup {
-		if _, err := execIfTableExists(tx, "processed_email_keys", `DELETE FROM processed_email_keys`); err != nil {
-			h.logger.Error("reset processed email keys", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-		if _, err := execIfTableExists(tx, "imap_accounts", `
-			UPDATE imap_accounts
-			   SET last_seen_uid = 0,
-			       last_poll_status = NULL,
-			       last_poll_error = NULL,
-			       last_poll_messages = NULL,
-			       last_poll_found = NULL,
-			       last_poll_processed = NULL,
-			       last_poll_skipped = NULL,
-			       last_poll_details = '[]'::jsonb,
-			       last_poll_summary = '{}'::jsonb,
-			       last_poll_limited = FALSE,
-			       last_poll_backlog = NULL,
-			       updated_at = NOW()`); err != nil {
-			h.logger.Error("reset imap poll cursor", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-	}
 	if req.ResetDocCounter {
 		if _, err := tx.Exec(`DELETE FROM doc_counters`); err != nil {
 			h.logger.Error("reset doc counters", zap.Error(err))
@@ -272,17 +220,14 @@ func (h *SetupHandler) ResetTestData(c *gin.Context) {
 			Source: "setup",
 			Level:  "warn",
 			Detail: map[string]interface{}{
-				"before_documents":       beforeDocs,
-				"before_imports":         beforeImports,
-				"before_logs":            beforeLogs,
-				"reset_doc_counter":      req.ResetDocCounter,
-				"reset_email_dedup":      req.ResetEmailDedup,
-				"reset_email_cursor":     req.ResetEmailDedup,
-				"preserved_catalog":      true,
-				"preserved_mappings":     true,
-				"preserved_feedback":     true,
-				"preserved_settings":     true,
-				"preserved_ai_usage_log": true,
+				"before_documents":   beforeDocs,
+				"before_imports":     beforeImports,
+				"before_logs":        beforeLogs,
+				"reset_doc_counter":  req.ResetDocCounter,
+				"preserved_catalog":  true,
+				"preserved_mappings": true,
+				"preserved_feedback": true,
+				"preserved_settings": true,
 			},
 		})
 	}
@@ -294,8 +239,6 @@ func (h *SetupHandler) ResetTestData(c *gin.Context) {
 			"imports":      beforeImports,
 			"audit_logs":   beforeLogs,
 			"doc_counters": req.ResetDocCounter,
-			"email_dedup":  req.ResetEmailDedup,
-			"email_cursor": req.ResetEmailDedup,
 		},
 	})
 }
@@ -324,22 +267,21 @@ func (h *SetupHandler) channelReady() (bool, []string) {
 	rows, err := h.db.Query(`
 		SELECT channel, bill_type, doc_format_code, endpoint, doc_prefix, doc_running_format
 		  FROM channel_defaults
-		 WHERE (channel='shopee_shipped' AND bill_type='purchase')
-		    OR (channel='shopee' AND bill_type='sale')`)
+		 WHERE channel='shopee' AND bill_type='sale'`)
 	if err != nil {
 		return false, []string{"ตั้งค่าเส้นทางเอกสาร"}
 	}
 	defer rows.Close()
 
-	foundPurchase := false
+	foundSale := false
 	missing := []string{}
 	for rows.Next() {
 		var channel, billType, docFormat, endpoint, prefix, running string
 		if err := rows.Scan(&channel, &billType, &docFormat, &endpoint, &prefix, &running); err != nil {
 			return false, []string{"อ่านค่าเส้นทางเอกสารไม่ได้"}
 		}
-		if channel == "shopee_shipped" && billType == "purchase" {
-			foundPurchase = true
+		if channel == "shopee" && billType == "sale" {
+			foundSale = true
 		}
 		label := channel
 		if channel == "shopee_shipped" {
@@ -362,75 +304,35 @@ func (h *SetupHandler) channelReady() (bool, []string) {
 			missing = append(missing, label+": รูปแบบเลขรัน")
 		}
 	}
-	if !foundPurchase {
-		missing = append(missing, "ใบสั่งซื้อ")
+	if !foundSale {
+		missing = append(missing, "ใบสั่งขาย")
 	}
 	return len(missing) == 0, missing
 }
 
-func (h *SetupHandler) emailReady() (bool, string) {
-	var total, readyCount, noNewMailCount, errorCount, neverPollCount int
-	_ = h.db.QueryRow(`
-		SELECT COUNT(*),
-		       COUNT(*) FILTER (WHERE last_poll_status IN ('ok', 'no_new_mail')),
-		       COUNT(*) FILTER (WHERE last_poll_status='no_new_mail'),
-		       COUNT(*) FILTER (WHERE last_poll_status IS NOT NULL AND last_poll_status NOT IN ('ok', 'no_new_mail', 'backlog', 'partial', 'warning', 'interrupted')),
-		       COUNT(*) FILTER (WHERE last_poll_status IS NULL)
-		  FROM imap_accounts
-		 WHERE enabled=TRUE`,
-	).Scan(&total, &readyCount, &noNewMailCount, &errorCount, &neverPollCount)
-	if total == 0 {
-		return false, "ยังไม่มี inbox ที่เปิดใช้งาน"
-	}
-	if readyCount == 0 {
-		if errorCount > 0 {
-			return false, "เพิ่ม inbox แล้ว แต่รอบล่าสุดดึงอีเมลไม่สำเร็จ"
-		}
-		if neverPollCount == total {
-			return false, "เพิ่ม inbox แล้ว แต่ยังไม่เคยทดสอบหรือดึงอีเมล"
-		}
-		return false, "เพิ่ม inbox แล้ว แต่ยังไม่เคยทดสอบ/poll ผ่าน"
-	}
-	if readyCount < total {
-		return true, fmt.Sprintf("พร้อมใช้งานบางกล่อง (%d/%d) · มีกล่องที่ต้องตรวจ", readyCount, total)
-	}
-	if noNewMailCount == total {
-		return true, "ทดสอบสำเร็จ แต่ไม่มีอีเมลใหม่"
-	}
-	return true, "พร้อมใช้งาน"
-}
-
 func (h *SetupHandler) catalogReady() (bool, string) {
-	var total, embedded int
-	_ = h.db.QueryRow(`
-		SELECT COUNT(*),
-		       COUNT(*) FILTER (WHERE embedding_status='done')
-		  FROM sml_catalog`,
-	).Scan(&total, &embedded)
+	var total int
+	_ = h.db.QueryRow(`SELECT COUNT(*) FROM sml_catalog WHERE is_active=TRUE`).Scan(&total)
 	if total == 0 {
 		return false, "ยังไม่ได้ Sync สินค้า"
-	}
-	if embedded == 0 {
-		return false, "Sync แล้ว แต่ยังไม่ได้สร้างข้อมูลจับคู่"
 	}
 	return true, "พร้อมใช้งาน"
 }
 
 func (h *SetupHandler) documentCounts() gin.H {
-	var total, pending, needsReview, failed, sent, purchase, saleorder, saleinvoice int
+	var total, pending, needsReview, failed, sent, saleorder, saleinvoice int
 	_ = h.db.QueryRow(`
 		SELECT COUNT(*),
 		       COUNT(*) FILTER (WHERE status='pending'),
 		       COUNT(*) FILTER (WHERE status='needs_review'),
 		       COUNT(*) FILTER (WHERE status='failed'),
 		       COUNT(*) FILTER (WHERE status='sent'),
-		       COUNT(*) FILTER (WHERE source='shopee_shipped' AND bill_type='purchase'),
 		       COUNT(*) FILTER (WHERE source IN ('shopee','lazada','tiktok') AND bill_type='sale' AND COALESCE(document_route, 'saleorder')='saleorder'),
 		       COUNT(*) FILTER (WHERE source IN ('shopee','lazada','tiktok') AND bill_type='sale' AND document_route='saleinvoice')
-		  FROM bills`,
+		  FROM bills WHERE bill_type='sale'`,
 	).Scan(
 		&total, &pending, &needsReview, &failed, &sent,
-		&purchase, &saleorder, &saleinvoice,
+		&saleorder, &saleinvoice,
 	)
 	return gin.H{
 		"total":        total,
@@ -438,14 +340,13 @@ func (h *SetupHandler) documentCounts() gin.H {
 		"needs_review": needsReview,
 		"failed":       failed,
 		"sent":         sent,
-		"purchase":     purchase,
 		"saleorder":    saleorder,
 		"saleinvoice":  saleinvoice,
 	}
 }
 
 func (h *SetupHandler) importCounts() gin.H {
-	var shopeeRuns, shopeeRunning, shopeeFailed, emailDedupKeys, auditLogs int
+	var shopeeRuns, shopeeRunning, shopeeFailed, auditLogs int
 	if tableExists(h.db, "shopee_import_runs") {
 		_ = h.db.QueryRow(`
 			SELECT COUNT(*),
@@ -454,16 +355,12 @@ func (h *SetupHandler) importCounts() gin.H {
 			  FROM shopee_import_runs`,
 		).Scan(&shopeeRuns, &shopeeRunning, &shopeeFailed)
 	}
-	if tableExists(h.db, "processed_email_keys") {
-		_ = h.db.QueryRow(`SELECT COUNT(*) FROM processed_email_keys`).Scan(&emailDedupKeys)
-	}
 	_ = h.db.QueryRow(`SELECT COUNT(*) FROM audit_logs`).Scan(&auditLogs)
 	return gin.H{
-		"shopee_runs":      shopeeRuns,
-		"shopee_running":   shopeeRunning,
-		"shopee_failed":    shopeeFailed,
-		"email_dedup_keys": emailDedupKeys,
-		"audit_logs":       auditLogs,
+		"shopee_runs":    shopeeRuns,
+		"shopee_running": shopeeRunning,
+		"shopee_failed":  shopeeFailed,
+		"audit_logs":     auditLogs,
 	}
 }
 
@@ -493,9 +390,8 @@ func (h *SetupHandler) systemSummary(settings map[string]repository.AppSetting, 
 	if instanceSlug == "" {
 		instanceSlug = "default"
 	}
-	var lastCatalogSync, lastEmailPoll, lastImportRun sql.NullString
+	var lastCatalogSync, lastImportRun sql.NullString
 	_ = h.db.QueryRow(`SELECT MAX(synced_at)::text FROM sml_catalog`).Scan(&lastCatalogSync)
-	_ = h.db.QueryRow(`SELECT MAX(last_polled_at)::text FROM imap_accounts`).Scan(&lastEmailPoll)
 	_ = h.db.QueryRow(`SELECT MAX(created_at)::text FROM shopee_import_runs`).Scan(&lastImportRun)
 	return gin.H{
 		"instance_name":            instanceName,
@@ -504,11 +400,11 @@ func (h *SetupHandler) systemSummary(settings map[string]repository.AppSetting, 
 		"sml_rest_url":             h.cfg.ShopeeSMLURL,
 		"sml_database":             h.cfg.ShopeeSMLDatabase,
 		"public_base_url":          h.cfg.PublicBaseURL,
-		"openrouter_model":         h.cfg.OpenRouterModel,
+		"ai_enabled":               false,
+		"purchase_flow_enabled":    false,
 		"pending_restart":          pendingRestart,
 		"pending_restart_settings": pendingKeys,
 		"last_catalog_sync":        lastCatalogSync.String,
-		"last_email_poll":          lastEmailPoll.String,
 		"last_import_run":          lastImportRun.String,
 	}
 }

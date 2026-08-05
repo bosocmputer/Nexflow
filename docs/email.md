@@ -1,4 +1,6 @@
-# Email IMAP — การทำงานของ Email Pipeline
+# Email IMAP — การทำงานของ Email Pipeline (Archived)
+
+> Runtime นี้ถูกปิดตั้งแต่ sales-only release 2026-08-05 เอกสารด้านล่างเก็บไว้เป็นประวัติเท่านั้น ห้ามตั้ง IMAP หรือ AI provider ใน production ปัจจุบัน
 
 > อัพเดตล่าสุด: 2026-06-22
 > สถานะ: ✅ multi-account IMAP deployed; config อยู่ใน `/settings/email` และ `imap_accounts` table. Production ปัจจุบันมี 0 IMAP accounts จึงต้องแสดง empty state และยังเพิ่ม Gmail App Password inbox ได้.

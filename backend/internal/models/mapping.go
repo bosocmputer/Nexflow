@@ -14,6 +14,11 @@ type Mapping struct {
 	LearnedFromBillID *string    `json:"learned_from_bill_id,omitempty"`
 	CreatedBy         *string    `json:"created_by,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	ItemName          string     `json:"item_name,omitempty"`
+	ConfirmedName     string     `json:"confirmed_name,omitempty"`
+	ProductActive     bool       `json:"product_active"`
+	OpenItemCount     int        `json:"open_item_count"`
 }
 
 type MappingFeedback struct {

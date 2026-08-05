@@ -155,7 +155,7 @@ func TestCatalogGetProductUnitsFallsBackToLocalCatalogUnit(t *testing.T) {
 	mock.ExpectQuery("SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,").
 		WithArgs("SHIP_POL").
 		WillReturnRows(sqlmock.NewRows(catalogUnitFallbackColumns()).
-			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "", nil, "", nil, "pending", nil, 0, nil, "", nil, nil, now, now))
+			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "", nil, "", nil, "disabled", nil, true, 0, nil, "", nil, nil, now, now))
 
 	h := &CatalogHandler{
 		cfg:         &config.Config{ShopeeSMLURL: upstream.URL},
@@ -199,6 +199,7 @@ func catalogUnitFallbackColumns() []string {
 		"balance_qty",
 		"embedding_status",
 		"embedded_at",
+		"is_active",
 		"image_count",
 		"primary_image_roworder",
 		"primary_image_guid",

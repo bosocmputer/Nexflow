@@ -70,20 +70,6 @@ func TestNormalizeInstanceSettingRejectsUnsafeDatabaseName(t *testing.T) {
 	}
 }
 
-func TestNormalizeInstanceSettingAutoConfirmThreshold(t *testing.T) {
-	def := settingDef{Key: "automation.auto_confirm_threshold"}
-	got, msg := normalizeInstanceSetting(def, "0.85")
-	if msg != "" {
-		t.Fatalf("normalizeInstanceSetting() error = %q, want none", msg)
-	}
-	if got != "0.85" {
-		t.Fatalf("threshold = %q, want 0.85", got)
-	}
-	if _, msg := normalizeInstanceSetting(def, "1.5"); msg == "" {
-		t.Fatal("normalizeInstanceSetting() accepted threshold > 1")
-	}
-}
-
 func TestCheckSMLStockURLSkipsEmptyOptionalURL(t *testing.T) {
 	result := checkSMLStockURL(&http.Client{Timeout: 10 * time.Millisecond}, "")
 	if !result.OK || !result.Skipped {

@@ -15,7 +15,8 @@ type CatalogItem struct {
 	Price                *float64   `json:"price"`
 	GroupCode            string     `json:"group_code"`
 	BalanceQty           *float64   `json:"balance_qty"`
-	EmbeddingStatus      string     `json:"embedding_status"` // pending | done | error
+	EmbeddingStatus      string     `json:"embedding_status"` // disabled in sales-only mode
+	IsActive             bool       `json:"is_active"`
 	EmbeddedAt           *time.Time `json:"embedded_at"`
 	ImageCount           int        `json:"image_count"`
 	PrimaryImageRoworder *int       `json:"primary_image_roworder,omitempty"`
@@ -31,7 +32,7 @@ type CatalogItem struct {
 	CreatedAt            time.Time  `json:"created_at"`
 }
 
-// CatalogMatch is one similarity search result
+// CatalogMatch is one deterministic database search result.
 type CatalogMatch struct {
 	ItemCode             string   `json:"item_code"`
 	ItemName             string   `json:"item_name"`
@@ -48,5 +49,7 @@ type CatalogMatch struct {
 	HasHiddenChars       bool     `json:"has_hidden_chars"`
 	CleanItemCode        string   `json:"clean_item_code,omitempty"`
 	HiddenCharKinds      []string `json:"hidden_char_kinds,omitempty"`
-	Score                float64  `json:"score"` // cosine similarity 0–1
+	Score                float64  `json:"score"` // deterministic rank retained for response compatibility
+	Method               string   `json:"method,omitempty"`
+	MatchType            string   `json:"match_type,omitempty"`
 }

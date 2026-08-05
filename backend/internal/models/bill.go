@@ -16,7 +16,7 @@ type Bill struct {
 	SMLOrderID    string             `json:"sml_order_id,omitempty"`
 	SMLPayload    json.RawMessage    `json:"sml_payload,omitempty"`
 	SMLResponse   json.RawMessage    `json:"sml_response,omitempty"`
-	AIConfidence  *float64           `json:"ai_confidence,omitempty"`
+	AIConfidence  *float64           `json:"-"` // retained in storage for historical audit only
 	Anomalies     json.RawMessage    `json:"anomalies"`
 	ErrorMsg      *string            `json:"error_msg,omitempty"`
 	CreatedBy     *string            `json:"created_by,omitempty"`
@@ -117,7 +117,7 @@ type BillItem struct {
 	DiscountAmount float64         `json:"discount_amount"`
 	Mapped         bool            `json:"mapped"`
 	MappingID      *string         `json:"mapping_id,omitempty"`
-	Candidates     json.RawMessage `json:"candidates,omitempty"` // top-5 catalog matches
+	Candidates     json.RawMessage `json:"-"` // retained in storage for migration compatibility only
 }
 
 const ShopeeShippingSourceSKU = "__shopee_shipping__"
