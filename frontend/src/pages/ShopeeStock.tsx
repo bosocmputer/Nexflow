@@ -487,7 +487,7 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby="stock-pct-help" value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div><p id="stock-pct-help" className={cn('text-xs text-muted-foreground', !stockPctValid && 'text-destructive')}>{stockPctValid ? `SML 100 หน่วย ส่ง Shopee ${formatNumber(draft?.stock_pct)} หน่วย` : 'กรอกตัวเลขระหว่าง 1-100'}</p></div>
+          <div className="space-y-1.5"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอกตัวเลขระหว่าง 1-100</p>}</div>
           <div className="space-y-1.5">
             <Label htmlFor="shopee-stock-scope">ขอบเขตสต๊อก SML</Label>
             <Select
