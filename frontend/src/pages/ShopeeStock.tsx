@@ -462,8 +462,8 @@ export default function ShopeeStock() {
       </section>
 
       <Card>
-        <CardContent className="grid gap-4 p-4 lg:grid-cols-[220px_160px_180px_minmax(260px,1fr)_auto] lg:items-end">
-          <div className="space-y-1.5">
+        <CardContent className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-12 xl:items-end">
+          <div className="space-y-1.5 xl:col-span-3">
             <Label htmlFor="shopee-stock-shop">ร้าน Shopee</Label>
             <Select
               value={shopID ? String(shopID) : undefined}
@@ -487,8 +487,8 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอกตัวเลขระหว่าง 1-100</p>}</div>
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 xl:col-span-2"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอกตัวเลขระหว่าง 1-100</p>}</div>
+          <div className="space-y-1.5 xl:col-span-2">
             <Label htmlFor="shopee-stock-scope">ขอบเขตสต๊อก SML</Label>
             <Select
               value={draft?.scope_mode ?? 'unconfigured'}
@@ -512,8 +512,8 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก {formatInterval(draft?.interval_seconds)}</p><p className="text-xs text-muted-foreground">{draft?.dry_run_required ? 'ต้องผ่าน Dry-run ก่อนจึงจะเปิดได้' : 'ปิดแล้วไม่เปลี่ยนยอดที่อยู่ใน Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
-          <Button onClick={saveSettings} disabled={!draft || !stockPctValid || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 md:col-span-2 xl:col-span-3"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก {formatInterval(draft?.interval_seconds)}</p><p className="text-xs text-muted-foreground">{draft?.dry_run_required ? 'ต้องผ่าน Dry-run ก่อนจึงจะเปิดได้' : 'ปิดแล้วไม่เปลี่ยนยอดที่อยู่ใน Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
+          <Button className="w-full md:justify-self-end xl:col-span-2" onClick={saveSettings} disabled={!draft || !stockPctValid || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
         </CardContent>
       </Card>
 
