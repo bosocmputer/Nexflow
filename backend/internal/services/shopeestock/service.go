@@ -97,7 +97,7 @@ func (s *Service) Overview(ctx context.Context, shopID int64, filter ProductFilt
 		shopID = settings[0].ShopID
 	}
 	if shopID > 0 {
-		overview.Products, overview.ProductsTotal, err = s.store.ListProductsPage(ctx, shopID, filter)
+		overview.Products, overview.ProductsTotal, overview.ProductCounts, err = s.store.ListProductsPage(ctx, shopID, filter)
 		if err != nil {
 			return nil, err
 		}

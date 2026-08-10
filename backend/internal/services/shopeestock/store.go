@@ -471,11 +471,11 @@ func (s *Store) EnabledSMLItemsOtherShops(ctx context.Context, shopID int64) (ma
 }
 
 func (s *Store) ListProducts(ctx context.Context, shopID int64) ([]ProductRow, error) {
-	products, _, err := s.listProducts(ctx, shopID, ProductFilter{Page: 1, Size: 100000})
+	products, _, _, err := s.listProducts(ctx, shopID, ProductFilter{Page: 1, Size: 100000})
 	return products, err
 }
 
-func (s *Store) ListProductsPage(ctx context.Context, shopID int64, filter ProductFilter) ([]ProductRow, int, error) {
+func (s *Store) ListProductsPage(ctx context.Context, shopID int64, filter ProductFilter) ([]ProductRow, int, ProductCounts, error) {
 	if filter.Page < 1 {
 		filter.Page = 1
 	}
@@ -485,7 +485,43 @@ func (s *Store) ListProductsPage(ctx context.Context, shopID int64, filter Produ
 	return s.listProducts(ctx, shopID, filter)
 }
 
-func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFilter) ([]ProductRow, int, error) {
+func (s *Store) countProductsByStatus(ctx context.Context, shopID int64, query string) (ProductCounts, error) {
+	query = strings.TrimSpace(query)
+	queryFilter := ""
+	args := []any{shopID}
+	if query != "" {
+		queryFilter = " AND (p.item_name ILIKE $2 OR p.model_name ILIKE $2 OR p.item_sku ILIKE $2 OR p.model_sku ILIKE $2 OR m.sml_item_code ILIKE $2)"
+		args = append(args, "%"+query+"%")
+	}
+	var counts ProductCounts
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FILTER (
+		           WHERE m.excluded=false AND m.sml_item_code<>'' AND jsonb_array_length(m.warning_codes)=0
+		       )::int AS ready_count,
+		       COUNT(*) FILTER (
+		           WHERE m.excluded=false AND (m.sml_item_code='' OR jsonb_array_length(m.warning_codes)>0)
+		       )::int AS fix_count,
+		       COUNT(*) FILTER (WHERE m.excluded=true)::int AS excluded_count
+		  FROM shopee_stock_products p
+		  JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
+		 WHERE p.shop_id=$1 AND p.is_active=true`+queryFilter, args...).Scan(&counts.Ready, &counts.Fix, &counts.Excluded)
+	return counts, err
+}
+
+func (c ProductCounts) totalForStatus(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ready":
+		return c.Ready
+	case "fix":
+		return c.Fix
+	case "excluded":
+		return c.Excluded
+	default:
+		return c.Ready + c.Fix + c.Excluded
+	}
+}
+
+func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFilter) ([]ProductRow, int, ProductCounts, error) {
 	status := strings.ToLower(strings.TrimSpace(filter.Status))
 	query := strings.TrimSpace(filter.Query)
 	whereStatus := ""
@@ -503,11 +539,11 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		queryFilter = " AND (p.item_name ILIKE $2 OR p.model_name ILIKE $2 OR p.item_sku ILIKE $2 OR p.model_sku ILIKE $2 OR m.sml_item_code ILIKE $2)"
 		args = append(args, "%"+query+"%")
 	}
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM shopee_stock_products p JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
-		WHERE p.shop_id=$1 AND p.is_active=true`+whereStatus+queryFilter, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	counts, err := s.countProductsByStatus(ctx, shopID, query)
+	if err != nil {
+		return nil, 0, ProductCounts{}, err
 	}
+	total := counts.totalForStatus(status)
 	limitArg := len(args) + 1
 	offsetArg := len(args) + 2
 	args = append(args, filter.Size, (filter.Page-1)*filter.Size)
@@ -525,7 +561,7 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		 ORDER BY (jsonb_array_length(m.warning_codes)>0) DESC,p.item_name,p.model_name,p.item_id,p.model_id
 		 LIMIT $`+strconv.Itoa(limitArg)+` OFFSET $`+strconv.Itoa(offsetArg), args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, ProductCounts{}, err
 	}
 	defer rows.Close()
 	products := []ProductRow{}
@@ -537,12 +573,12 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 			&item.MatchSource, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
 			&item.LastPreviewTarget, &item.LastSuccessTarget, &item.UpdatedAt); err != nil {
-			return nil, 0, err
+			return nil, 0, ProductCounts{}, err
 		}
 		_ = json.Unmarshal(warnings, &item.WarningCodes)
 		products = append(products, item)
 	}
-	return products, total, rows.Err()
+	return products, total, counts, rows.Err()
 }
 
 func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64, request MappingUpdate, userID string) (*ProductRow, error) {

@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner'
 
 import client from '@/api/client'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { PageHeader } from '@/components/common/PageHeader'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -108,6 +109,7 @@ type Overview = {
   diagnostics: Diagnostic[]
   products: ProductRow[]
   products_total: number
+  product_counts: { ready: number; fix: number; excluded: number }
   products_page: number
   products_size: number
   runs: SyncRun[]
@@ -172,6 +174,13 @@ function formatDateTime(value?: string) {
   return new Intl.DateTimeFormat('th-TH', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
+function formatInterval(seconds?: number) {
+  const value = seconds ?? 300
+  if (value < 3600) return `${Math.max(1, Math.round(value / 60))} นาที`
+  if (value % 3600 === 0) return `${value / 3600} ชั่วโมง`
+  return `${Math.round(value / 60)} นาที`
+}
+
 function bangkokDate() {
   const parts = new Intl.DateTimeFormat('en', {
     timeZone: 'Asia/Bangkok',
@@ -202,6 +211,23 @@ function productDisplayName(product: ProductRow) {
   return optionName ? `${productItemName(product)} · ${optionName}` : productItemName(product)
 }
 
+function sameLocations(left: LocationPair[], right: LocationPair[]) {
+  if (left.length !== right.length) return false
+  const leftKeys = left.map(locationKey).sort()
+  const rightKeys = right.map(locationKey).sort()
+  return leftKeys.every((key, index) => key === rightKeys[index])
+}
+
+function sameSettings(left: StockSetting | null, right?: StockSetting) {
+  if (!left || !right) return false
+  return left.enabled === right.enabled &&
+    left.stock_pct === right.stock_pct &&
+    left.interval_seconds === right.interval_seconds &&
+    left.scope_mode === right.scope_mode &&
+    left.all_scope_warning_acknowledged === right.all_scope_warning_acknowledged &&
+    sameLocations(left.locations, right.locations)
+}
+
 export default function ShopeeStock() {
   const [data, setData] = useState<Overview | null>(null)
   const [shopID, setShopID] = useState(0)
@@ -215,6 +241,7 @@ export default function ShopeeStock() {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [mapping, setMapping] = useState<ProductRow | null>(null)
   const sequence = useRef(0)
+  const autoSelectedShops = useRef(new Set<number>())
 
   const load = useCallback(async (preferredShopID = shopID) => {
     const current = sequence.current + 1
@@ -251,6 +278,20 @@ export default function ShopeeStock() {
   }, [data?.locations])
   const pageCount = Math.max(1, Math.ceil((data?.products_total ?? 0) / (data?.products_size || 50)))
   const productNames = useMemo(() => new Map((data?.products ?? []).map((product) => [`${product.item_id}:${product.model_id}`, productDisplayName(product)])), [data?.products])
+  const productCounts = data?.product_counts ?? { ready: 0, fix: 0, excluded: 0 }
+  const stockPctValid = !!draft && Number.isFinite(draft.stock_pct) && draft.stock_pct >= 1 && draft.stock_pct <= 100
+  const scopeReady = !!draft && (
+    (draft.scope_mode === 'selected' && draft.locations.length > 0) ||
+    (draft.scope_mode === 'all' && (!data?.diagnostics?.length || draft.all_scope_warning_acknowledged))
+  )
+  const settingsDirty = !sameSettings(draft, selectedSetting)
+
+  useEffect(() => {
+    if (!shopID || tab !== 'ready' || search || productCounts.ready > 0 || productCounts.fix === 0 || autoSelectedShops.current.has(shopID)) return
+    autoSelectedShops.current.add(shopID)
+    setPage(1)
+    setTab('fix')
+  }, [productCounts.fix, productCounts.ready, search, shopID, tab])
 
   const runAction = async (name: string, action: () => Promise<void>) => {
     if (busy) return
@@ -310,6 +351,69 @@ export default function ShopeeStock() {
     setDraft({ ...draft, locations: next, enabled: false, dry_run_required: true })
   }
 
+  const previewDisabledReason = !data?.available
+    ? 'ระบบซิงก์สต๊อกยังไม่พร้อมใช้งาน'
+    : !draft
+      ? 'เลือกร้าน Shopee ก่อน'
+      : !stockPctValid
+        ? 'กำหนดสัดส่วนส่ง Shopee ระหว่าง 1-100%'
+        : draft.scope_mode === 'unconfigured'
+          ? 'เลือกขอบเขตสต๊อก SML ก่อน'
+          : draft.scope_mode === 'selected' && draft.locations.length === 0
+            ? 'เลือกคลังหรือพื้นที่อย่างน้อย 1 รายการ'
+            : draft.scope_mode === 'all' && !!data?.diagnostics?.length && !draft.all_scope_warning_acknowledged
+              ? 'รับทราบยอดในพื้นที่ว่างหรือไม่อยู่ใน master ก่อน'
+              : ''
+  const syncDisabledReason = !draft?.enabled
+    ? 'เปิดซิงก์อัตโนมัติและบันทึกก่อนใช้ปุ่มนี้'
+    : draft.dry_run_required
+      ? 'ตรวจผลกระทบ Dry-run ใหม่ก่อนซิงก์'
+      : draft.paused_reason || ''
+  const setupSteps = [
+    {
+      label: 'เลือกขอบเขตสต๊อก',
+      detail: draft?.scope_mode === 'all'
+        ? 'รวมทุกคลังใน SML'
+        : draft?.scope_mode === 'selected' && draft.locations.length
+          ? `เลือกแล้ว ${formatNumber(draft.locations.length)} พื้นที่`
+          : 'ยังไม่ได้เลือกคลังหรือพื้นที่',
+      done: scopeReady,
+    },
+    {
+      label: 'ตรวจและจับคู่สินค้า',
+      detail: productCounts.fix > 0
+        ? `ต้องแก้ ${formatNumber(productCounts.fix)} รายการ`
+        : productCounts.ready > 0
+          ? `พร้อมซิงก์ ${formatNumber(productCounts.ready)} รายการ`
+          : 'ยังไม่มีสินค้าพร้อมซิงก์',
+      done: productCounts.fix === 0 && productCounts.ready > 0,
+    },
+    {
+      label: 'ตรวจผลกระทบ Dry-run',
+      detail: !draft?.dry_run_required && selectedSetting?.last_preview_at
+        ? `ตรวจล่าสุด ${formatDateTime(selectedSetting.last_preview_at)}`
+        : 'ยังไม่ได้ตรวจด้วยค่าปัจจุบัน',
+      done: !!draft && !draft.dry_run_required && !!selectedSetting?.last_preview_at,
+    },
+    {
+      label: 'เปิดซิงก์สต๊อก',
+      detail: draft?.enabled ? `ทำงานทุก ${formatInterval(draft.interval_seconds)}` : 'ยังปิดเพื่อความปลอดภัย',
+      done: !!draft?.enabled,
+    },
+  ]
+  const nextActionMessage = previewDisabledReason || (draft?.dry_run_required
+    ? 'กด “บันทึกและตรวจ Dry-run” เพื่อคำนวณเป้าหมายโดยยังไม่ส่งไป Shopee'
+    : syncDisabledReason)
+  const emptyState = search
+    ? { title: `ไม่พบรายการที่ตรงกับ “${search}”`, description: 'ลองค้นหาด้วย SKU รหัสสินค้า หรือชื่อที่สั้นลง' }
+    : tab === 'ready' && productCounts.fix > 0
+      ? { title: 'ยังไม่มีสินค้าพร้อมซิงก์', description: `มี ${formatNumber(productCounts.fix)} รายการที่ต้องจับคู่หรือแก้ข้อมูลก่อน` }
+      : tab === 'fix'
+        ? { title: 'ไม่มีรายการที่ต้องแก้', description: 'สินค้าที่ใช้งานอยู่พร้อมสำหรับขั้นตอน Dry-run แล้ว' }
+        : tab === 'excluded'
+          ? { title: 'ยังไม่มีสินค้าที่ถูกยกเว้น', description: 'สินค้าที่ไม่ต้องการซิงก์จะปรากฏในแท็บนี้' }
+          : { title: 'ยังไม่มีสินค้าในแท็บนี้', description: selectedSetting?.last_catalog_sync_at ? 'ลองตรวจแท็บอื่นหรืออัปเดต Catalog อีกครั้ง' : 'อัปเดต Catalog เพื่อดึงสินค้า Shopee และสินค้า SML' }
+
   if (loading && !data) {
     return <div className="flex min-h-[320px] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
   }
@@ -318,7 +422,7 @@ export default function ShopeeStock() {
     <div className="space-y-4 p-4 sm:p-6">
       <PageHeader
         title="ซิงก์สต๊อก Shopee"
-        description="คุมสต๊อก Shopee จากยอดพร้อมขายใน SML พร้อมกันของสำหรับหน้าร้าน"
+        description="คุมสต๊อก Shopee จากยอดพร้อมขายใน SML โดยกันสต๊อกส่วนหนึ่งไว้สำหรับหน้าร้าน"
         actions={<Button variant="outline" onClick={() => load(shopID)} disabled={loading || !!busy}><RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />รีเฟรช</Button>}
       />
 
@@ -329,6 +433,33 @@ export default function ShopeeStock() {
       {data?.diagnostics?.length ? (
         <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>พบยอดในพื้นที่ว่างหรือไม่อยู่ใน master SML</AlertTitle><AlertDescription>รวม {data.diagnostics.length} ตำแหน่ง หากเลือก “รวมทุกคลัง” ต้องรับทราบก่อน dry-run เพื่อให้ผู้ใช้กลับไปแก้ master ใน SML ได้</AlertDescription></Alert>
       ) : null}
+
+      <section className="rounded-md border bg-card px-4 py-3" aria-labelledby="stock-setup-steps">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 id="stock-setup-steps" className="text-sm font-semibold">เริ่มใช้งานตามลำดับ</h2>
+            <p className="text-xs text-muted-foreground">ระบบจะยังไม่ส่งยอดไป Shopee จนกว่าจะผ่าน Dry-run และเปิดซิงก์</p>
+          </div>
+          {productCounts.fix > 0 && (
+            <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => { setTab('fix'); setPage(1) }}>
+              เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})
+            </Button>
+          )}
+        </div>
+        <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {setupSteps.map((step, index) => (
+            <li key={step.label} className={cn('flex min-w-0 gap-3 sm:border-l sm:pl-3 first:sm:border-l-0 first:sm:pl-0', step.done ? 'text-foreground' : 'text-muted-foreground')}>
+              <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold', step.done && 'border-success bg-success/15 text-emerald-800 dark:text-emerald-200')}>
+                {step.done ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : index + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{step.label}</p>
+                <p className="mt-0.5 text-xs">{step.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
 
       <Card>
         <CardContent className="grid gap-4 p-4 lg:grid-cols-[220px_160px_180px_minmax(260px,1fr)_auto] lg:items-end">
@@ -356,7 +487,7 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className="pr-8" /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div></div>
+          <div className="space-y-1.5"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby="stock-pct-help" value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div><p id="stock-pct-help" className={cn('text-xs text-muted-foreground', !stockPctValid && 'text-destructive')}>{stockPctValid ? `SML 100 หน่วย ส่ง Shopee ${formatNumber(draft?.stock_pct)} หน่วย` : 'กรอกตัวเลขระหว่าง 1-100'}</p></div>
           <div className="space-y-1.5">
             <Label htmlFor="shopee-stock-scope">ขอบเขตสต๊อก SML</Label>
             <Select
@@ -366,6 +497,7 @@ export default function ShopeeStock() {
                 ...draft,
                 scope_mode: value as StockSetting['scope_mode'],
                 locations: [],
+                all_scope_warning_acknowledged: false,
                 enabled: false,
                 dry_run_required: true,
               })}
@@ -380,8 +512,8 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก 5 นาที</p><p className="text-xs text-muted-foreground">หยุดระบบไม่เปลี่ยนยอดที่อยู่ใน Shopee</p></div><Switch checked={draft?.enabled ?? false} disabled={!data?.available || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
-          <Button onClick={saveSettings} disabled={!draft || !!busy}><Save className="h-4 w-4" />บันทึก</Button>
+          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก {formatInterval(draft?.interval_seconds)}</p><p className="text-xs text-muted-foreground">{draft?.dry_run_required ? 'ต้องผ่าน Dry-run ก่อนจึงจะเปิดได้' : 'ปิดแล้วไม่เปลี่ยนยอดที่อยู่ใน Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
+          <Button onClick={saveSettings} disabled={!draft || !stockPctValid || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
         </CardContent>
       </Card>
 
@@ -398,9 +530,10 @@ export default function ShopeeStock() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังดึงสินค้า...' : 'อัปเดต Catalog'}</Button>
-        <Button variant="outline" onClick={previewImpact} disabled={!data?.available || !draft || draft.scope_mode === 'unconfigured' || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'ตรวจผลกระทบ Dry-run'}</Button>
-        <Button onClick={syncNow} disabled={!draft?.enabled || !!draft?.dry_run_required || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
+        <Button variant="outline" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจ Dry-run'}</Button>
+        <Button onClick={syncNow} disabled={!!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
         <span className="text-xs text-muted-foreground">Catalog ล่าสุด {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ซิงก์สำเร็จล่าสุด {formatDateTime(selectedSetting?.last_success_at)}</span>
+        {nextActionMessage && <p className="basis-full text-xs text-amber-800 dark:text-amber-200"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
       </div>
 
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ระบบหยุดร้านนี้เพื่อความปลอดภัย</AlertTitle><AlertDescription>{draft.paused_reason}{draft.last_error ? ` · ${draft.last_error}` : ''}</AlertDescription></Alert>}
@@ -409,7 +542,19 @@ export default function ShopeeStock() {
 
       <section className="overflow-hidden rounded-md border bg-card">
         <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
-          <Tabs value={tab} onValueChange={(value) => { setTab(value as typeof tab); setPage(1) }}><TabsList>{STATUS_TABS.map((item) => <TabsTrigger key={item.key} value={item.key}>{item.label}</TabsTrigger>)}</TabsList></Tabs>
+          <Tabs value={tab} onValueChange={(value) => { setTab(value as typeof tab); setPage(1) }}>
+            <TabsList className="h-auto max-w-full justify-start overflow-x-auto">
+              {STATUS_TABS.map((item) => {
+                const count = item.key === 'history' ? null : productCounts[item.key]
+                return (
+                  <TabsTrigger key={item.key} value={item.key} className="shrink-0 gap-2">
+                    <span>{item.label}</span>
+                    {count != null && <Badge variant="outline" className="h-5 bg-background px-1.5 text-[10px]">{formatNumber(count)}</Badge>}
+                  </TabsTrigger>
+                )
+              })}
+            </TabsList>
+          </Tabs>
           {tab !== 'history' && <form className="relative w-full sm:w-72" onSubmit={(event) => { event.preventDefault(); setPage(1); setSearch(query.trim()) }}><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหา SKU หรือสินค้า" className="pl-9" /></form>}
         </div>
 
@@ -417,7 +562,20 @@ export default function ShopeeStock() {
           <>
             <div className="hidden grid-cols-[minmax(240px,1.4fr)_minmax(220px,1.2fr)_90px_90px_120px] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid"><span>สินค้า Shopee</span><span>สินค้าและยอด SML</span><span className="text-right">Shopee ตั้งไว้</span><span className="text-right">เป้าหมาย</span><span /></div>
             <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} />)}</div>
-            {!data?.products.length && <div className="px-4 py-12 text-center text-sm text-muted-foreground">{selectedSetting?.last_catalog_sync_at ? 'ไม่พบรายการในแท็บนี้' : 'กด “อัปเดต Catalog” เพื่อดึงสินค้า Shopee และ SML ก่อน'}</div>}
+            {!data?.products.length && (
+              <div className="flex flex-col items-center px-4 py-10 text-center">
+                <PackageCheck className="mb-3 h-7 w-7 text-muted-foreground" aria-hidden="true" />
+                <p className="text-sm font-medium text-foreground">{emptyState.title}</p>
+                <p className="mt-1 max-w-md text-sm text-muted-foreground">{emptyState.description}</p>
+                {search ? (
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setQuery(''); setSearch(''); setPage(1) }}>ล้างคำค้นหา</Button>
+                ) : tab === 'ready' && productCounts.fix > 0 ? (
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setTab('fix'); setPage(1) }}>เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})</Button>
+                ) : !selectedSetting?.last_catalog_sync_at ? (
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดต Catalog</Button>
+                ) : null}
+              </div>
+            )}
             <div className="flex items-center justify-between border-t px-3 py-2"><span className="text-xs text-muted-foreground">ทั้งหมด {formatNumber(data?.products_total)} รายการ</span><div className="flex items-center gap-2"><Button variant="outline" size="icon" title="หน้าก่อนหน้า" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /></Button><span className="text-sm">{page} / {pageCount}</span><Button variant="outline" size="icon" title="หน้าถัดไป" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}><ChevronRight className="h-4 w-4" /></Button></div></div>
           </>
         )}
@@ -449,9 +607,11 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
   const [useManualFactor, setUseManualFactor] = useState(false)
   const [manualFactor, setManualFactor] = useState('')
   const [busy, setBusy] = useState(false)
+  const [confirmExclude, setConfirmExclude] = useState(false)
 
   useEffect(() => {
     let active = true
+    setConfirmExclude(false)
     setQuery(product?.sml_item_code || '')
     setResults([])
     setSelected(product?.sml_item_code ? { item_code: product.sml_item_code, item_name: product.sml_item_name, standard_unit: product.sml_unit_code, units: [] } : null)
@@ -490,5 +650,71 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
     setBusy(true)
     try { await client.put(`/api/settings/shopee-stock/${shopID}/mappings/${product.item_id}/${product.model_id}`, { sml_item_code: excluded ? '' : selected?.item_code, sml_unit_code: excluded ? '' : unitCode, manual_unit_factor: !excluded && useManualFactor ? parsedManualFactor : null, excluded, updated_at: product.updated_at }); toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : 'บันทึกการจับคู่แล้ว ต้อง dry-run ใหม่'); await onSaved() } catch (error) { toast.error(errorText(error)) } finally { setBusy(false) }
   }
-  return <Dialog open={!!product} onOpenChange={(open) => !open && onClose()}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>จับคู่สินค้า SML</DialogTitle><DialogDescription>{product ? `${productDisplayName(product)} · SKU ${product.model_sku || product.item_sku || 'ไม่มี'}` : ''}</DialogDescription></DialogHeader><div className="space-y-4"><form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void searchCatalog() }}><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหารหัสหรือชื่อสินค้า SML" /><Button type="submit" variant="outline" disabled={busy}><Search className="h-4 w-4" />ค้นหา</Button></form><div className="max-h-52 divide-y overflow-y-auto rounded-md border">{results.map((item) => <button key={item.item_code} type="button" onClick={() => selectProduct(item)} className={cn('block w-full px-3 py-2 text-left hover:bg-muted', selected?.item_code === item.item_code && 'bg-primary/10')}><p className="text-sm font-medium">{item.item_code}</p><p className="text-xs text-muted-foreground">{item.item_name}</p></button>)}{!results.length && <p className="p-4 text-center text-sm text-muted-foreground">ค้นหาและเลือกสินค้าจาก SML stock catalog</p>}</div>{selected && <div className="space-y-3"><div className="space-y-1.5"><Label htmlFor="shopee-stock-unit">หน่วยขายบน Shopee</Label><Select value={unitCode || undefined} onValueChange={setUnitCode}><SelectTrigger id="shopee-stock-unit" className="h-10"><SelectValue placeholder={units.length ? 'เลือกหน่วย' : 'ไม่พบหน่วยใน SML'} /></SelectTrigger><SelectContent>{units.length ? units.map((unit) => <SelectItem key={unit.code} value={unit.code}>{unit.code}{unit.name ? ` · ${unit.name}` : ''} ({formatNumber((unit.stand_value ?? 0) / (unit.divide_value || 1))} หน่วยเล็ก)</SelectItem>) : <SelectItem value="__empty" disabled>ไม่พบหน่วยใน SML</SelectItem>}</SelectContent></Select></div><div className="rounded-md border p-3"><div className="flex items-center justify-between gap-3"><div><Label htmlFor="manual-factor">ยืนยันอัตราส่วนเอง</Label><p className="text-xs text-muted-foreground">ใช้เฉพาะเมื่อข้อมูลหน่วยใน SML ยังไม่ถูกต้อง และระบบจะบันทึก audit</p></div><Switch id="manual-factor" checked={useManualFactor} onCheckedChange={setUseManualFactor} /></div>{useManualFactor && <Input className="mt-3" inputMode="decimal" type="number" min="1" step="any" value={manualFactor} onChange={(event) => setManualFactor(event.target.value)} placeholder="เช่น 6" />}</div></div>}</div><DialogFooter className="gap-2 sm:justify-between"><Button type="button" variant="destructive" onClick={() => save(true)} disabled={busy}>ยกเว้นจากการซิงก์</Button><div className="flex gap-2"><Button variant="outline" onClick={onClose}>ยกเลิก</Button><Button onClick={() => save(false)} disabled={busy || !selected || !unitCode || (useManualFactor && !manualFactor)}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}บันทึกการจับคู่</Button></div></DialogFooter></DialogContent></Dialog>
+  const selectedUnit = units.find((unit) => unit.code === unitCode)
+  return (
+    <>
+      <Dialog open={!!product} onOpenChange={(open) => !open && !busy && onClose()}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>จับคู่สินค้า SML</DialogTitle>
+            <DialogDescription>{product ? `${productDisplayName(product)} · SKU ${product.model_sku || product.item_sku || 'ไม่มี'}` : ''}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void searchCatalog() }}>
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหารหัสหรือชื่อสินค้า SML" />
+              <Button type="submit" variant="outline" disabled={busy}><Search className="h-4 w-4" />ค้นหา</Button>
+            </form>
+            <div className="max-h-52 divide-y overflow-y-auto rounded-md border">
+              {results.map((item) => (
+                <button key={item.item_code} type="button" onClick={() => selectProduct(item)} className={cn('block w-full px-3 py-2 text-left hover:bg-muted', selected?.item_code === item.item_code && 'bg-primary/10')}>
+                  <p className="text-sm font-medium">{item.item_code}</p>
+                  <p className="text-xs text-muted-foreground">{item.item_name}</p>
+                </button>
+              ))}
+              {!results.length && <p className="p-4 text-center text-sm text-muted-foreground">{query.trim().length >= 2 ? 'ไม่พบสินค้าที่ตรงกับคำค้นหา' : 'ค้นหาด้วยรหัสหรือชื่อสินค้า แล้วเลือกสินค้าจาก SML'}</p>}
+            </div>
+            {selected && (
+              <div className="space-y-3">
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">สินค้าที่เลือก</p>
+                  <p className="mt-0.5 text-sm font-medium">{selected.item_code} · {selected.item_name}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="shopee-stock-unit">หน่วยขายบน Shopee</Label>
+                  <Select value={unitCode || undefined} onValueChange={setUnitCode}>
+                    <SelectTrigger id="shopee-stock-unit" className="h-10"><SelectValue placeholder={units.length ? 'เลือกหน่วย' : 'ไม่พบหน่วยใน SML'} /></SelectTrigger>
+                    <SelectContent>
+                      {units.length ? units.map((unit) => <SelectItem key={unit.code} value={unit.code}>{unit.code}{unit.name ? ` · ${unit.name}` : ''} ({formatNumber((unit.stand_value ?? 0) / (unit.divide_value || 1))} หน่วยเล็ก)</SelectItem>) : <SelectItem value="__empty" disabled>ไม่พบหน่วยใน SML</SelectItem>}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">ระบบเลือกหน่วยมาตรฐานให้ก่อน กรุณาตรวจสอบว่าตรงกับหน่วยที่ขายบน Shopee</p>
+                  {selectedUnit && <p className="text-xs font-medium text-foreground">1 {selectedUnit.code} = {formatNumber((selectedUnit.stand_value ?? 0) / (selectedUnit.divide_value || 1))} หน่วยเล็กใน SML</p>}
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div><Label htmlFor="manual-factor">กำหนดอัตราส่วนเอง</Label><p className="text-xs text-muted-foreground">ใช้เฉพาะเมื่อข้อมูลหน่วยใน SML ยังไม่ถูกต้อง ระบบจะบันทึกไว้ในประวัติ</p></div>
+                    <Switch id="manual-factor" checked={useManualFactor} onCheckedChange={setUseManualFactor} />
+                  </div>
+                  {useManualFactor && <Input className="mt-3" inputMode="decimal" type="number" min="1" step="any" value={manualFactor} onChange={(event) => setManualFactor(event.target.value)} placeholder="เช่น 6" />}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button type="button" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirmExclude(true)} disabled={busy}>ยกเว้นสินค้านี้</Button>
+            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={() => save(false)} disabled={busy || !selected || !unitCode || (useManualFactor && !manualFactor)}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}บันทึกการจับคู่</Button></div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={confirmExclude}
+        onOpenChange={setConfirmExclude}
+        title="ยกเว้นสินค้านี้จากการซิงก์?"
+        description={product ? `${productDisplayName(product)}\nสินค้านี้จะไม่ถูกส่งยอดสต๊อกไป Shopee จนกว่าจะกลับมาแก้ไขการจับคู่` : undefined}
+        confirmLabel="ยืนยันการยกเว้น"
+        variant="destructive"
+        onConfirm={() => save(true)}
+      />
+    </>
+  )
 }

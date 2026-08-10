@@ -75,6 +75,12 @@ type ProductRow struct {
 	UpdatedAt                  time.Time `json:"updated_at"`
 }
 
+type ProductCounts struct {
+	Ready    int `json:"ready"`
+	Fix      int `json:"fix"`
+	Excluded int `json:"excluded"`
+}
+
 type Run struct {
 	ID            string     `json:"id"`
 	ShopID        int64      `json:"shop_id"`
@@ -102,6 +108,7 @@ type Overview struct {
 	Diagnostics      []LocationDiagnostic `json:"diagnostics"`
 	Products         []ProductRow         `json:"products"`
 	ProductsTotal    int                  `json:"products_total"`
+	ProductCounts    ProductCounts        `json:"product_counts"`
 	ProductsPage     int                  `json:"products_page"`
 	ProductsSize     int                  `json:"products_size"`
 	Runs             []Run                `json:"runs"`
