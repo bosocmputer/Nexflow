@@ -2,10 +2,32 @@ package shopeeapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestProductBusinessErrorPreservesSafeMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":      "no_permission",
+			"message":    "Product API is not authorized",
+			"request_id": "shopee-request-1",
+		})
+	}))
+	defer server.Close()
+
+	client := New(Config{BaseURL: server.URL, PartnerID: 1, PartnerKey: "secret"})
+	_, err := client.GetWarehouseDetail(t.Context(), "access", 2)
+	var businessErr *BusinessError
+	if !errors.As(err, &businessErr) {
+		t.Fatalf("error = %#v, want BusinessError", err)
+	}
+	if businessErr.Operation != "get_warehouse_detail" || businessErr.Code != "no_permission" || businessErr.RequestID != "shopee-request-1" {
+		t.Fatalf("business error = %+v", businessErr)
+	}
+}
 
 func TestClientGetItemListUsesBoundedPageAndUpdateWindow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,34 @@ const (
 
 type StringID string
 
+// BusinessError preserves Shopee's machine-readable failure metadata without
+// retaining request payloads or credentials.
+type BusinessError struct {
+	Operation string
+	Code      string
+	Message   string
+	RequestID string
+}
+
+func (e *BusinessError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("shopee %s: %s %s", e.Operation, e.Code, e.Message)
+}
+
+func productBusinessError(operation, code, message, requestID string) error {
+	if strings.TrimSpace(code) == "" {
+		return nil
+	}
+	return &BusinessError{
+		Operation: strings.TrimSpace(operation),
+		Code:      strings.TrimSpace(code),
+		Message:   strings.TrimSpace(message),
+		RequestID: strings.TrimSpace(requestID),
+	}
+}
+
 func (id *StringID) UnmarshalJSON(data []byte) error {
 	raw := bytes.TrimSpace(data)
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
@@ -237,7 +265,7 @@ func (c *Client) GetItemList(ctx context.Context, accessToken string, shopID int
 		return nil, err
 	}
 	if out.Error != "" {
-		return nil, fmt.Errorf("shopee get_item_list: %s %s", out.Error, out.Message)
+		return nil, productBusinessError("get_item_list", out.Error, out.Message, out.RequestID)
 	}
 	return &out, nil
 }
@@ -262,7 +290,7 @@ func (c *Client) GetItemBaseInfo(ctx context.Context, accessToken string, shopID
 		return nil, err
 	}
 	if out.Error != "" {
-		return nil, fmt.Errorf("shopee get_item_base_info: %s %s", out.Error, out.Message)
+		return nil, productBusinessError("get_item_base_info", out.Error, out.Message, out.RequestID)
 	}
 	return &out, nil
 }
@@ -278,7 +306,7 @@ func (c *Client) GetModelList(ctx context.Context, accessToken string, shopID, i
 		return nil, err
 	}
 	if out.Error != "" {
-		return nil, fmt.Errorf("shopee get_model_list: %s %s", out.Error, out.Message)
+		return nil, productBusinessError("get_model_list", out.Error, out.Message, out.RequestID)
 	}
 	return &out, nil
 }
@@ -289,7 +317,7 @@ func (c *Client) GetWarehouseDetail(ctx context.Context, accessToken string, sho
 		return nil, err
 	}
 	if out.Error != "" {
-		return nil, fmt.Errorf("shopee get_warehouse_detail: %s %s", out.Error, out.Message)
+		return nil, productBusinessError("get_warehouse_detail", out.Error, out.Message, out.RequestID)
 	}
 	return &out, nil
 }
@@ -303,7 +331,7 @@ func (c *Client) UpdateStock(ctx context.Context, accessToken string, shopID int
 		return nil, err
 	}
 	if out.Error != "" {
-		return nil, fmt.Errorf("shopee update_stock: %s %s", out.Error, out.Message)
+		return nil, productBusinessError("update_stock", out.Error, out.Message, out.RequestID)
 	}
 	return &out, nil
 }

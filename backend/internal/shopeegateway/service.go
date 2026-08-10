@@ -267,6 +267,16 @@ func (s *Service) Execute(ctx context.Context, tenantSlug string, req GatewayExe
 		if errors.As(err, &known) {
 			return nil, known
 		}
+		var businessErr *shopeeapi.BusinessError
+		if errors.As(err, &businessErr) {
+			s.logger.Warn("shopee_gateway_upstream_error",
+				zap.String("tenant", strings.TrimSpace(tenantSlug)),
+				zap.String("operation", operation),
+				zap.Int64("shop_id", req.ShopID),
+				zap.String("upstream_error_code", businessErr.Code),
+				zap.String("upstream_request_id", businessErr.RequestID),
+			)
+		}
 		lower := strings.ToLower(err.Error())
 		if strings.Contains(lower, "required") || strings.Contains(lower, "invalid operation payload") || strings.Contains(lower, "must contain") {
 			return nil, serviceError("invalid_operation_payload", "ข้อมูลสำหรับ Shopee operation ไม่ถูกต้อง", 400, false, err)
@@ -682,6 +692,20 @@ func isRetryableShopeeError(err error) bool {
 }
 
 func shopeeErrorCode(err error) string {
+	var businessErr *shopeeapi.BusinessError
+	if errors.As(err, &businessErr) {
+		code := strings.ToLower(strings.TrimSpace(businessErr.Code))
+		switch {
+		case strings.Contains(code, "source_ip_undeclared"):
+			return "source_ip_undeclared"
+		case strings.Contains(code, "permission"), strings.Contains(code, "forbidden"), strings.Contains(code, "no_authorization"):
+			return "permission_denied"
+		case strings.Contains(code, "rate"), strings.Contains(code, "too_many"):
+			return "rate_limited"
+		case code != "":
+			return code
+		}
+	}
 	lower := strings.ToLower(errorString(err))
 	switch {
 	case isShopeeTokenError(err):

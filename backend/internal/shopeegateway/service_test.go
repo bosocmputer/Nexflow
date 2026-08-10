@@ -312,6 +312,23 @@ func TestServiceRejectsMissingOAuthStateWithoutFallback(t *testing.T) {
 	}
 }
 
+func TestShopeeErrorCodeUsesTypedBusinessError(t *testing.T) {
+	tests := []struct {
+		code string
+		want string
+	}{
+		{code: "no_permission", want: "permission_denied"},
+		{code: "source_ip_undeclared", want: "source_ip_undeclared"},
+		{code: "error_param", want: "error_param"},
+	}
+	for _, tt := range tests {
+		err := &shopeeapi.BusinessError{Operation: "get_item_list", Code: tt.code, RequestID: "req-1"}
+		if got := shopeeErrorCode(err); got != tt.want {
+			t.Fatalf("shopeeErrorCode(%q) = %q, want %q", tt.code, got, tt.want)
+		}
+	}
+}
+
 func TestServiceRejectsOAuthTokenForDifferentShop(t *testing.T) {
 	shopee := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
