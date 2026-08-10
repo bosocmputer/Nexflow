@@ -29,6 +29,32 @@ func TestProductBusinessErrorPreservesSafeMetadata(t *testing.T) {
 	}
 }
 
+func TestWarehouseDetailResponseAcceptsCurrentArrayContract(t *testing.T) {
+	var response WarehouseDetailResponse
+	if err := json.Unmarshal([]byte(`{
+		"response":[{"warehouse_id":6,"warehouse_name":"Main","warehouse_type":1,"location_id":"TH-1"}]
+	}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	locations := response.Locations()
+	if len(locations) != 1 || locations[0].LocationID != "TH-1" || locations[0].WarehouseType != 1 {
+		t.Fatalf("locations = %+v", locations)
+	}
+}
+
+func TestWarehouseDetailResponseAcceptsLegacyObjectContract(t *testing.T) {
+	var response WarehouseDetailResponse
+	if err := json.Unmarshal([]byte(`{
+		"response":{"location_list":[{"warehouse_id":7,"location_id":"TH-2"}]}
+	}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	locations := response.Locations()
+	if len(locations) != 1 || locations[0].LocationID != "TH-2" {
+		t.Fatalf("locations = %+v", locations)
+	}
+}
+
 func TestClientGetItemListUsesBoundedPageAndUpdateWindow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != PathProductGetItemList {

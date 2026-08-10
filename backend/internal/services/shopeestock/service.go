@@ -202,18 +202,13 @@ func (s *Service) syncCatalog(ctx context.Context, shopID int64, trigger string,
 		return nil, cause
 	}
 
-	warehouse, err := s.shopee.GetWarehouseDetail(ctx, "", shopID)
+	locationID, multipleWarehouses, err := s.sellerLocationID(ctx, shopID)
 	if err != nil {
 		return fail(err)
 	}
-	locations := warehouse.Locations()
-	if len(locations) > 1 {
+	if multipleWarehouses {
 		_ = s.store.SetPaused(context.Background(), shopID, "multiple_shopee_warehouses", "Shopee มีหลาย seller warehouse locations ซึ่ง v1 ยังไม่รองรับ")
-		return fail(fmt.Errorf("Shopee มี %d seller warehouse locations กรุณาหยุดซิงก์และตรวจร้าน", len(locations)))
-	}
-	locationID := shopeeapi.StringID("")
-	if len(locations) == 1 {
-		locationID = locations[0].LocationID
+		return fail(errors.New("Shopee มีหลาย seller warehouse locations กรุณาหยุดซิงก์และตรวจร้าน"))
 	}
 
 	var updatedFrom, updatedTo *time.Time
@@ -316,20 +311,15 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 		}
 	}
 	groups := groupLinesByItem(changed)
-	warehouse, err := s.shopee.GetWarehouseDetail(ctx, "", shopID)
+	locationID, multipleWarehouses, err := s.sellerLocationID(ctx, shopID)
 	if err != nil {
 		_ = s.store.FinishRun(ctx, preview.RunID, "failed", preview, 1, userSafeError(err))
 		return result, err
 	}
-	locations := warehouse.Locations()
-	if len(locations) > 1 {
+	if multipleWarehouses {
 		_ = s.store.SetPaused(context.Background(), shopID, "multiple_shopee_warehouses", "Shopee มีหลาย seller warehouse locations")
 		_ = s.store.FinishRun(ctx, preview.RunID, "paused", preview, 0, "multiple_shopee_warehouses")
 		return result, errors.New("Shopee มีหลาย seller warehouse locations ซึ่ง v1 ยังไม่รองรับ")
-	}
-	locationID := shopeeapi.StringID("")
-	if len(locations) == 1 {
-		locationID = locations[0].LocationID
 	}
 	type groupResult struct {
 		success         []PreviewLine
@@ -381,6 +371,37 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Service) sellerLocationID(ctx context.Context, shopID int64) (shopeeapi.StringID, bool, error) {
+	warehouse, err := s.shopee.GetWarehouseDetail(ctx, "", shopID)
+	if err != nil {
+		if isShopeeSingleWarehouseFallback(err) {
+			s.log.Info("shopee stock uses default seller stock",
+				zap.Int64("shop_id", shopID),
+				zap.String("reason", "multi_warehouse_not_enabled"),
+			)
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	locations := warehouse.Locations()
+	if len(locations) > 1 {
+		return "", true, nil
+	}
+	if len(locations) == 1 {
+		return locations[0].LocationID, false, nil
+	}
+	return "", false, nil
+}
+
+func isShopeeSingleWarehouseFallback(err error) bool {
+	var gatewayErr *shopeeapi.GatewayError
+	if errors.As(err, &gatewayErr) && strings.EqualFold(strings.TrimSpace(gatewayErr.Code), "warehouse.error_not_in_whitelist") {
+		return true
+	}
+	var businessErr *shopeeapi.BusinessError
+	return errors.As(err, &businessErr) && strings.EqualFold(strings.TrimSpace(businessErr.Code), "warehouse.error_not_in_whitelist")
 }
 
 func (s *Service) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64, request MappingUpdate, userID string) (*ProductRow, error) {

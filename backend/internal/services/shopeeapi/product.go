@@ -180,6 +180,7 @@ type WarehouseDetail struct {
 	LocationID    StringID `json:"location_id"`
 	WarehouseID   StringID `json:"warehouse_id"`
 	WarehouseName string   `json:"warehouse_name"`
+	WarehouseType int      `json:"warehouse_type"`
 	AddressID     StringID `json:"address_id"`
 	Region        string   `json:"region"`
 	State         string   `json:"state"`
@@ -190,14 +191,28 @@ type WarehouseDetail struct {
 	Zipcode       string   `json:"zipcode"`
 }
 
+type WarehouseDetailPayload struct {
+	WarehouseList []WarehouseDetail `json:"warehouse_list"`
+	LocationList  []WarehouseDetail `json:"location_list"`
+}
+
+func (p *WarehouseDetailPayload) UnmarshalJSON(data []byte) error {
+	raw := bytes.TrimSpace(data)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+	if raw[0] == '[' {
+		return json.Unmarshal(raw, &p.WarehouseList)
+	}
+	type payloadAlias WarehouseDetailPayload
+	return json.Unmarshal(raw, (*payloadAlias)(p))
+}
+
 type WarehouseDetailResponse struct {
-	Error     string `json:"error"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
-	Response  struct {
-		WarehouseList []WarehouseDetail `json:"warehouse_list"`
-		LocationList  []WarehouseDetail `json:"location_list"`
-	} `json:"response"`
+	Error     string                 `json:"error"`
+	Message   string                 `json:"message"`
+	RequestID string                 `json:"request_id"`
+	Response  WarehouseDetailPayload `json:"response"`
 }
 
 func (r *WarehouseDetailResponse) Locations() []WarehouseDetail {

@@ -2,6 +2,7 @@ package shopeestock
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -9,6 +10,21 @@ import (
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/sml"
 )
+
+func TestSingleWarehouseFallbackOnlyAcceptsShopeeWhitelistCapability(t *testing.T) {
+	if !isShopeeSingleWarehouseFallback(&shopeeapi.GatewayError{Code: "warehouse.error_not_in_whitelist"}) {
+		t.Fatal("gateway whitelist error should use default seller stock")
+	}
+	if !isShopeeSingleWarehouseFallback(&shopeeapi.BusinessError{Code: "warehouse.error_not_in_whitelist"}) {
+		t.Fatal("direct whitelist error should use default seller stock")
+	}
+	if isShopeeSingleWarehouseFallback(&shopeeapi.GatewayError{Code: "permission_denied"}) {
+		t.Fatal("unrelated permission error must not be ignored")
+	}
+	if isShopeeSingleWarehouseFallback(errors.New("warehouse.error_not_in_whitelist")) {
+		t.Fatal("untyped error must not be silently ignored")
+	}
+}
 
 func TestTodayBangkokReturnsCalendarDate(t *testing.T) {
 	if _, err := time.Parse("2006-01-02", TodayBangkok()); err != nil {
