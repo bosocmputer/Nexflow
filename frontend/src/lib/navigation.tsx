@@ -131,7 +131,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'setup', to: '/setup', label: 'สถานะพร้อมใช้งาน', icon: ClipboardCheck, hint: 'ตรวจความพร้อมร้าน' },
       { menuKey: 'channel_defaults', to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'Document Routing' },
       { menuKey: 'shopee_connections', to: '/settings/shopee-connections', label: 'ร้าน Shopee', icon: Store, hint: 'OAuth / token / shop connection', adminOnly: true, enabled: ENABLE_SHOPEE_EXCEL },
-      { menuKey: 'instance_settings', to: '/settings/instance', label: 'การเชื่อมต่อระบบ', icon: Settings2, hint: 'SML และการตั้งค่าร้านนี้' },
+      { menuKey: 'instance_settings', to: '/settings/instance', label: 'ข้อมูลร้านและการเชื่อมต่อ', icon: Settings2, hint: 'ข้อมูลร้านและสถานะบริการ', adminOnly: true },
     ],
   },
   {

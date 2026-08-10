@@ -224,7 +224,7 @@ func (h *CatalogHandler) hasPendingRestart(c *gin.Context) bool {
 		return false
 	}
 	c.JSON(http.StatusConflict, gin.H{
-		"error":                    "มีการเปลี่ยนค่า SML ที่ยังไม่ได้เริ่มใช้ กรุณากดรีสตาร์ท backend ในหน้าการเชื่อมต่อระบบก่อน Sync สินค้า",
+		"error":                    "มีการเปลี่ยนค่าระบบ SML ที่ยังไม่ได้เริ่มใช้ กรุณาติดต่อผู้ดูแลระบบก่อน Sync สินค้า",
 		"pending_restart":          true,
 		"pending_restart_settings": keys,
 	})

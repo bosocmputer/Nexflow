@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -91,6 +92,32 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 			"shopee_realtime_enabled":  h.cfg != nil && h.cfg.ShopeeRealtimeOpsEnabled,
 			"delivery_worker_interval": "15s",
 		},
+	})
+}
+
+// Status returns only the counts needed by the instance overview. It never
+// serializes LINE credentials, destination IDs, candidates, or delivery data.
+func (h *LineNotificationHandler) Status(c *gin.Context) {
+	ctx := c.Request.Context()
+	senderTotal, enabledSenders, err := h.lineOARepo.CountStatus(ctx)
+	if err != nil {
+		h.logger.Warn("line notification sender status", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจสอบสถานะ LINE OA ไม่สำเร็จ"})
+		return
+	}
+	recipientTotal, enabledRecipients, err := h.repo.CountRecipientStatus(ctx)
+	if err != nil {
+		h.logger.Warn("line notification recipient status", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจสอบสถานะผู้รับ LINE ไม่สำเร็จ"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ready":                   enabledSenders > 0 && enabledRecipients > 0,
+		"sender_count":            senderTotal,
+		"enabled_sender_count":    enabledSenders,
+		"recipient_count":         recipientTotal,
+		"enabled_recipient_count": enabledRecipients,
+		"checked_at":              time.Now().Format(time.RFC3339),
 	})
 }
 

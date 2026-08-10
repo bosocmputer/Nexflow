@@ -42,7 +42,7 @@ type ReadinessChecker struct {
 
 func NewReadinessChecker(cfg PartyConfig, log *zap.Logger) *ReadinessChecker {
 	return &ReadinessChecker{
-		cfg:     cfg,
+		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: defaultReadinessTimeout,
 		},
@@ -140,7 +140,7 @@ func (c *ReadinessChecker) checkLive(ctx context.Context) ReadinessStatus {
 			Ready:      false,
 			Status:     "auth_failed",
 			Tenant:     tenant,
-			Message:    "SML API key หรือ tenant ของร้านนี้ไม่ถูกต้อง กรุณาตรวจหน้าการเชื่อมต่อระบบ",
+			Message:    "การยืนยันตัวตน SML ของร้านนี้ไม่ถูกต้อง กรุณาติดต่อผู้ดูแลระบบ",
 			HTTPStatus: resp.StatusCode,
 			CheckedAt:  now,
 		}

@@ -74,7 +74,7 @@ func (r testSMLMessageResponse) GetMessage() string {
 
 func TestSMLSendErrorMessageExplainsEmpty404(t *testing.T) {
 	got := smlSendErrorMessage(http.StatusNotFound, testSMLMessageResponse{}, nil)
-	want := "HTTP 404 — ไม่พบ endpoint SML ที่ตั้งไว้ กรุณาตรวจ SML REST URL ใน /settings/instance และปลายทางใน /settings/channels"
+	want := "HTTP 404 — ไม่พบ endpoint SML ที่ตั้งไว้ กรุณาตรวจปลายทางใน /settings/channels หรือติดต่อผู้ดูแลระบบ"
 	if got != want {
 		t.Fatalf("message = %q, want %q", got, want)
 	}

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -72,6 +73,17 @@ func (r *LineOAAccountRepo) ListEnabled() ([]*models.LineOAAccount, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// CountStatus returns readiness counts without loading LINE credentials.
+func (r *LineOAAccountRepo) CountStatus(ctx context.Context) (total, enabled int, err error) {
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE enabled = TRUE)
+		  FROM line_oa_accounts`).Scan(&total, &enabled)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count line_oa_accounts: %w", err)
+	}
+	return total, enabled, nil
 }
 
 // Get returns a single OA by ID, or nil (no error) when not found.

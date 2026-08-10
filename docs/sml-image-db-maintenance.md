@@ -80,7 +80,7 @@ Run this whenever:
 - creating a new tenant/database;
 - restoring only data without indexes;
 - creating a new image database manually;
-- changing Nexflow `/settings/instance` to a new `Database (tenant)`.
+- changing a Nexflow instance to a new SML database through the deployment runbook.
 
 If the migration uses a full `pg_dump` / `pg_restore` of schema and data, the index should already come along. Still verify it.
 
@@ -112,15 +112,13 @@ Expected: `Index Scan using images_trim_image_id_order_roworder_file_idx`.
 
 ## Nexflow Cutover Checklist
 
-1. Go to `/settings/instance`.
-2. Change `SML REST URL` and/or `Database (tenant)`.
+1. Back up the instance `.env`, compose config, and current `app_settings` values.
+2. Update the SML tenant/connection through the deployment runbook; do not expose these values in `/settings/instance`.
 3. Run `scripts/apply-sml-image-index.sh` for the target image DB.
-4. Click `ทดสอบค่าที่กรอกอยู่`.
-5. Save and let backend restart.
-6. Go to `/settings/catalog`.
-7. Sync catalog from SML.
-8. Search a product known to have images, for example `BF00002` or `BF0004`.
-9. Open image preview and confirm thumbnails/gallery work.
+4. Recreate the target backend container and verify `/health` plus `/api/setup/status`.
+5. Go to `/settings/catalog` and sync catalog from SML.
+6. Search a product known to have images, for example `BF00002` or `BF0004`.
+7. Open image preview and confirm thumbnails/gallery work.
 
 ## Production Notes
 

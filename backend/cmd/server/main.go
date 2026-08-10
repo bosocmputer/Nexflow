@@ -325,7 +325,7 @@ func main() {
 	tiktokH.SetArtifactService(artifactSvc)
 	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, logger)
 	settingsH := handlers.NewSettingsHandler(platformRepo, logger)
-	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, cfg, logger)
+	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, auditLogRepo, cfg, logger)
 	channelDefaultsH := handlers.NewChannelDefaultsHandler(channelDefaultRepo, auditLogRepo, cfg.PurchaseFlowEnabled, logger)
 	smlPartyH := handlers.NewSMLPartyHandler(partyCache, partyClient, auditLogRepo, logger)
 	smlPartyH.SetSMLConfig(cfg.ShopeeSMLURL, cfg.ShopeeSMLGUID, cfg.ShopeeSMLDatabase)
@@ -382,6 +382,7 @@ func main() {
 		lineNotificationGroup.Use(middleware.RequireRole("admin"))
 		{
 			lineNotificationGroup.GET("", lineNotificationH.Overview)
+			lineNotificationGroup.GET("/status", lineNotificationH.Status)
 			lineNotificationGroup.POST("/senders", lineNotificationH.CreateSender)
 			lineNotificationGroup.PUT("/senders/:id", lineNotificationH.UpdateSender)
 			lineNotificationGroup.POST("/senders/:id/test", lineNotificationH.TestSender)

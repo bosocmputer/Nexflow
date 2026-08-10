@@ -113,6 +113,17 @@ func (r *LineNotificationRepo) ListRecipients(ctx context.Context) ([]models.Lin
 	return out, rows.Err()
 }
 
+// CountRecipientStatus returns readiness counts without loading destination IDs.
+func (r *LineNotificationRepo) CountRecipientStatus(ctx context.Context) (total, enabled int, err error) {
+	err = r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE enabled = TRUE)
+		  FROM line_notification_recipients`).Scan(&total, &enabled)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count line notification recipients: %w", err)
+	}
+	return total, enabled, nil
+}
+
 func (r *LineNotificationRepo) GetRecipient(ctx context.Context, id string) (*models.LineNotificationRecipient, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+lineNotificationRecipientCols+`

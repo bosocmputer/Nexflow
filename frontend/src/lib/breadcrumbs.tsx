@@ -70,7 +70,7 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   },
   {
     pattern: '/settings/instance',
-    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'การเชื่อมต่อระบบ' }],
+    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ข้อมูลร้านและการเชื่อมต่อ' }],
   },
   {
     pattern: '/settings/line-notifications',

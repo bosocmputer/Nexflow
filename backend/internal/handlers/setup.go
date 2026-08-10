@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -60,6 +61,20 @@ func (h *SetupHandler) Status(c *gin.Context) {
 	if len(smlMissing) == 0 && !pendingRestart && !smlReadiness.Ready {
 		smlStatus = smlReadiness.Message
 	}
+	checkedAt := time.Now()
+	if c.Query("summary") == "1" {
+		c.JSON(http.StatusOK, gin.H{
+			"checked_at": checkedAt.Format(time.RFC3339),
+			"sml_readiness": gin.H{
+				"configured": smlReadiness.Configured,
+				"ready":      smlReadiness.Ready,
+				"status":     smlReadiness.Status,
+				"checked_at": smlReadiness.CheckedAt,
+				"cached":     smlReadiness.Cached,
+			},
+		})
+		return
+	}
 
 	channelReady, channelMissing := h.channelReady()
 	catalogReady, catalogDetail := h.catalogReady()
@@ -70,8 +85,8 @@ func (h *SetupHandler) Status(c *gin.Context) {
 	steps := []gin.H{
 		{
 			"key":         "instance",
-			"title":       "ข้อมูลร้านและ SML",
-			"description": "กรอก SML REST URL และ Database ของร้านนี้",
+			"title":       "ข้อมูลร้านและการเชื่อมต่อ",
+			"description": "ตรวจสถานะ SML และข้อมูลร้านที่ใช้งานอยู่",
 			"href":        "/settings/instance",
 			"ready":       smlReady,
 			"status":      smlStatus,
@@ -123,6 +138,7 @@ func (h *SetupHandler) Status(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
+		"checked_at":               checkedAt.Format(time.RFC3339),
 		"ready":                    blockingReadyCount == blockingTotal,
 		"ready_count":              readyCount,
 		"total_count":              len(steps),

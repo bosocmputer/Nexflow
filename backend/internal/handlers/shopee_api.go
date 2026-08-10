@@ -48,6 +48,7 @@ type ShopeeAPIReadinessCheck struct {
 }
 
 type ShopeeAPIStatus struct {
+	CheckedAt        string                    `json:"checked_at"`
 	Mode             string                    `json:"mode"`
 	Enabled          bool                      `json:"enabled"`
 	Configured       bool                      `json:"configured"`
@@ -68,6 +69,17 @@ type ShopeeAPIStatus struct {
 	CanFetch         bool                      `json:"can_fetch"`
 	BlockingReason   string                    `json:"blocking_reason,omitempty"`
 	Checks           []ShopeeAPIReadinessCheck `json:"checks"`
+}
+
+type ShopeeAPIStatusSummary struct {
+	CheckedAt        string `json:"checked_at"`
+	Mode             string `json:"mode"`
+	Enabled          bool   `json:"enabled"`
+	Configured       bool   `json:"configured"`
+	Connected        bool   `json:"connected"`
+	CanFetch         bool   `json:"can_fetch"`
+	ShopName         string `json:"shop_name,omitempty"`
+	RedirectMismatch bool   `json:"redirect_mismatch"`
 }
 
 type ShopeeAPIConnection struct {
@@ -153,7 +165,22 @@ func (h *ShopeeImportHandler) GetAPIStatus(c *gin.Context) {
 			status.LastSyncAt = conn.LastSyncAt.Time.Format(time.RFC3339)
 		}
 	}
-	status.finalizeReadiness(time.Now())
+	now := time.Now()
+	status.CheckedAt = now.Format(time.RFC3339)
+	status.finalizeReadiness(now)
+	if c.Query("summary") == "1" {
+		c.JSON(http.StatusOK, ShopeeAPIStatusSummary{
+			CheckedAt:        status.CheckedAt,
+			Mode:             status.Mode,
+			Enabled:          status.Enabled,
+			Configured:       status.Configured,
+			Connected:        status.Connected,
+			CanFetch:         status.CanFetch,
+			ShopName:         status.ShopName,
+			RedirectMismatch: status.Mode == "direct" && shopeeRedirectHostMismatch(h.cfg.PublicBaseURL, status.RedirectURL),
+		})
+		return
+	}
 	c.JSON(http.StatusOK, status)
 }
 
@@ -832,6 +859,15 @@ func shopeeRedirectReady(raw string) (bool, string) {
 		return false, "Redirect URL ต้องชี้ไปที่ Shopee OAuth callback"
 	}
 	return true, "Redirect URL พร้อม"
+}
+
+func shopeeRedirectHostMismatch(publicBaseURL, redirectURL string) bool {
+	publicURL, publicErr := url.Parse(strings.TrimSpace(publicBaseURL))
+	redirect, redirectErr := url.Parse(strings.TrimSpace(redirectURL))
+	if publicErr != nil || redirectErr != nil || publicURL.Host == "" || redirect.Host == "" {
+		return false
+	}
+	return !strings.EqualFold(publicURL.Host, redirect.Host)
 }
 
 func httpsURLReady(raw string) (bool, string) {

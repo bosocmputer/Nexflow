@@ -2035,7 +2035,7 @@ func smlSendErrorMessage(statusCode int, resp smlMessageResponse, err error) str
 		msg := strings.TrimSpace(resp.GetMessage())
 		if msg == "" {
 			if statusCode == http.StatusNotFound {
-				return "HTTP 404 — ไม่พบ endpoint SML ที่ตั้งไว้ กรุณาตรวจ SML REST URL ใน /settings/instance และปลายทางใน /settings/channels"
+				return "HTTP 404 — ไม่พบ endpoint SML ที่ตั้งไว้ กรุณาตรวจปลายทางใน /settings/channels หรือติดต่อผู้ดูแลระบบ"
 			}
 			return fmt.Sprintf("HTTP %d", statusCode)
 		}

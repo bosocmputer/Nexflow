@@ -4,28 +4,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"os"
-	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"nexflow/internal/config"
+	"nexflow/internal/models"
 	"nexflow/internal/repository"
 )
 
 type InstanceSettingsHandler struct {
-	repo *repository.AppSettingsRepo
-	cfg  *config.Config
-	log  *zap.Logger
+	repo  *repository.AppSettingsRepo
+	audit *repository.AuditLogRepo
+	cfg   *config.Config
+	log   *zap.Logger
 }
 
-func NewInstanceSettingsHandler(repo *repository.AppSettingsRepo, cfg *config.Config, log *zap.Logger) *InstanceSettingsHandler {
-	return &InstanceSettingsHandler{repo: repo, cfg: cfg, log: log}
+func NewInstanceSettingsHandler(repo *repository.AppSettingsRepo, audit *repository.AuditLogRepo, cfg *config.Config, log *zap.Logger) *InstanceSettingsHandler {
+	return &InstanceSettingsHandler{repo: repo, audit: audit, cfg: cfg, log: log}
 }
 
 type settingDef struct {
@@ -33,12 +34,8 @@ type settingDef struct {
 	Label        string `json:"label"`
 	Group        string `json:"group"`
 	Type         string `json:"type"`
-	EnvKey       string `json:"env_key,omitempty"`
 	DefaultValue string `json:"default_value,omitempty"`
-	Secret       bool   `json:"secret,omitempty"`
-	Restart      bool   `json:"restart_required,omitempty"`
 	Required     bool   `json:"required,omitempty"`
-	Locked       bool   `json:"locked,omitempty"` // ค่าตายตัว ห้ามแก้ผ่าน UI
 	Description  string `json:"description,omitempty"`
 }
 
@@ -48,24 +45,9 @@ const (
 )
 
 var instanceSettingDefs = []settingDef{
-	{Key: "instance.name", Label: "ชื่อร้าน", Group: "instance", Type: "text", DefaultValue: "Nexflow", Description: "ไม่บังคับ ใช้ให้ทีมดูแลรู้ว่า Nexflow ชุดนี้เป็นของร้านไหน"},
-	{Key: "instance.slug", Label: "รหัสร้าน", Group: "instance", Type: "text", DefaultValue: "default", Description: "ไม่บังคับ ใช้เป็นชื่อสั้นสำหรับแยกเอกสาร backup และ deploy"},
-	{Key: "instance.support_contact", Label: "ผู้ดูแลระบบ", Group: "instance", Type: "text", DefaultValue: "", Description: "ไม่บังคับ เบอร์หรือชื่อคนที่ดูแลระบบชุดนี้"},
-
-	{Key: "sml.rest_base_url", Label: "sml-api-byboss URL", Group: "sml", Type: "url", Restart: true, Required: true, Description: "URL internal proxy จาก Nexflow backend ไป sml-api-byboss เช่น http://172.24.0.1:8200 ไม่ใช่ SML domain ปลายทางของ tenant"},
-	{Key: "sml.provider", Label: "Provider", Group: "sml", Type: "text", Restart: true, Required: true, Description: "รหัส provider ของ SML instance นี้ เช่น DATA ใช้กับ SML REST และ stock process"},
-	{Key: "sml.config_file", Label: "Config file", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อไฟล์ config ของ SML instance นี้ เช่น SMLConfigDATA.xml"},
-	{Key: "sml.database", Label: "Database (tenant)", Group: "sml", Type: "text", Restart: true, Required: true, Description: "ชื่อ database SML ของร้านนี้ ต้องเป็น lowercase เช่น sml1_2026 (sml-api-byboss แปลงเป็น lowercase เสมอ ห้ามใช้ตัวพิมพ์ใหญ่)"},
-	{Key: "sml.stock_request_url", Label: "Stock Request URL", Group: "sml", Type: "url", Restart: false, Required: false, Description: "URL ของ SML server คำนวณต้นทุนสต๊อก (ไม่ใช่ sml-api-byboss) — path /SMLJavaWebService/rest/v1/processstockrequest จะถูกเติมอัตโนมัติ เช่น http://192.168.2.248:8080 (ว่าง = ข้ามการคำนวณ)"},
-
-	{Key: "line.notify_channel_secret", Label: "LINE Channel secret", Group: "line", Type: "password", Secret: true, Restart: true, Description: "ใช้กับ LINE OA ที่ส่งแจ้งเตือนระบบ"},
-	{Key: "line.notify_channel_access_token", Label: "LINE Channel access token", Group: "line", Type: "password", Secret: true, Restart: true, Description: "ใช้ส่ง Push แจ้งเตือน error และสถานะระบบไปยังแอดมิน"},
-	{Key: "line.notify_admin_user_id", Label: "LINE admin user ID", Group: "line", Type: "text", Restart: true, Description: "userId ของผู้รับแจ้งเตือนระบบ เช่น SML error, email error, disk/tunnel warning"},
+	{Key: "instance.name", Label: "ชื่อร้าน", Group: "instance", Type: "text", DefaultValue: "Nexflow", Required: true, Description: "ชื่อที่ใช้ระบุร้านนี้ใน Nexflow"},
+	{Key: "instance.support_contact", Label: "ผู้ดูแลระบบ / ช่องทางติดต่อ", Group: "instance", Type: "text", DefaultValue: "", Description: "ชื่อ เบอร์โทร หรือช่องทางติดต่อผู้ดูแลของร้าน"},
 }
-
-var smlDatabaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
-var smlProviderPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
-var smlConfigFilePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func (h *InstanceSettingsHandler) Get(c *gin.Context) {
 	dbSettings, err := h.repo.All()
@@ -75,24 +57,17 @@ func (h *InstanceSettingsHandler) Get(c *gin.Context) {
 		return
 	}
 
-	runtimeValues := repository.RuntimeSettingValues(h.cfg)
 	settings := make([]gin.H, 0, len(instanceSettingDefs))
-	pendingKeys := []string{}
-	missingRequired := []string{}
 	for _, def := range instanceSettingDefs {
 		dbVal, fromDB := dbSettings[def.Key]
 		dbValue := ""
 		if fromDB {
 			dbValue = strings.TrimSpace(dbVal.Value)
 		}
-		runtimeValue := strings.TrimSpace(runtimeValues[def.Key])
 		value := dbValue
 		source := "unset"
 		if value != "" {
 			source = "database"
-		} else if runtimeValue != "" {
-			value = runtimeValue
-			source = "env"
 		} else if def.DefaultValue != "" {
 			value = def.DefaultValue
 			source = "default"
@@ -100,56 +75,33 @@ func (h *InstanceSettingsHandler) Get(c *gin.Context) {
 
 		missing := def.Required && value == ""
 
-		active := true
-		pendingRestart := false
-		if def.Restart && !def.Locked && dbValue != "" && runtimeValue != "" && dbValue != runtimeValue {
-			active = false
-			pendingRestart = true
-			pendingKeys = append(pendingKeys, def.Key)
-		}
-		if missing {
-			missingRequired = append(missingRequired, def.Key)
-		}
-
-		displayValue := value
-		displayRuntimeValue := runtimeValue
-		hasSecret := false
-		if def.Secret && value != "" {
-			hasSecret = true
-			displayValue = maskSecret(value)
-		}
-		if def.Secret && runtimeValue != "" {
-			displayRuntimeValue = maskSecret(runtimeValue)
-		}
-
 		settings = append(settings, gin.H{
 			"key":              def.Key,
 			"label":            def.Label,
 			"group":            def.Group,
 			"type":             def.Type,
-			"value":            displayValue,
+			"value":            value,
 			"source":           source,
-			"secret":           def.Secret,
-			"has_secret":       hasSecret,
+			"secret":           false,
+			"has_secret":       false,
 			"required":         def.Required,
-			"locked":           def.Locked,
+			"locked":           false,
 			"missing":          missing,
-			"restart_required": def.Restart,
+			"restart_required": false,
 			"description":      def.Description,
 			"overridden":       fromDB,
-			"runtime_value":    displayRuntimeValue,
-			"active":           active,
-			"pending_restart":  pendingRestart,
+			"active":           true,
+			"pending_restart":  false,
 		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"settings":                 settings,
-		"restart_required":         len(pendingKeys) > 0,
-		"pending_restart":          len(pendingKeys) > 0,
-		"pending_restart_settings": pendingKeys,
-		"missing_required":         missingRequired,
-		"setup_complete":           len(missingRequired) == 0,
+		"restart_required":         false,
+		"pending_restart":          false,
+		"pending_restart_settings": []string{},
+		"missing_required":         []string{},
+		"setup_complete":           true,
 	})
 }
 
@@ -163,181 +115,101 @@ func (h *InstanceSettingsHandler) Update(c *gin.Context) {
 	}
 
 	allowed := map[string]settingDef{}
-	secretKeys := map[string]bool{}
 	for _, def := range instanceSettingDefs {
 		allowed[def.Key] = def
-		if def.Secret {
-			secretKeys[def.Key] = true
-		}
-	}
-
-	// optional fields that may be explicitly cleared to empty string
-	clearableKeys := map[string]bool{
-		"sml.stock_request_url": true,
 	}
 
 	values := map[string]string{}
 	for key, value := range body.Settings {
-		def, ok := allowed[key]
+		_, ok := allowed[key]
 		if !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown setting: " + key})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":  "setting_not_editable",
+				"error": "ค่านี้จัดการโดยผู้ดูแลระบบและไม่สามารถแก้จากหน้านี้ได้",
+				"key":   key,
+			})
 			return
 		}
-		if def.Locked {
-			continue // ค่าตายตัว ไม่อนุญาตให้แก้ผ่าน API
-		}
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			if clearableKeys[key] {
-				values[key] = "" // explicit clear allowed for optional fields
-			}
-			continue // skip blank for non-clearable fields
-		}
-		if def.Secret && strings.Contains(trimmed, "••••••••") {
-			continue // skip masked placeholder — user didn't change the secret
-		}
-		if normalized, msg := normalizeInstanceSetting(def, trimmed); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": msg, "key": key})
+		normalized, err := normalizeInstanceProfileValue(key, value)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": "invalid_setting", "error": err.Error(), "key": key})
 			return
-		} else {
-			trimmed = normalized
 		}
-		values[key] = trimmed
+		values[key] = normalized
 	}
 
 	if len(values) == 0 {
-		c.JSON(http.StatusOK, gin.H{"ok": true, "updated": 0})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "updated": 0, "restart_required": false})
+		return
+	}
+	current, err := h.repo.All()
+	if err != nil {
+		h.log.Error("instance profile current values", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
+	changed := map[string]string{}
+	for key, value := range values {
+		currentValue := strings.TrimSpace(current[key].Value)
+		if key == "instance.name" && currentValue == "" {
+			currentValue = "Nexflow"
+		}
+		if value != currentValue {
+			changed[key] = value
+		}
+	}
+	if len(changed) == 0 {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "updated": 0, "restart_required": false})
 		return
 	}
 
 	userID := c.GetString("user_id")
-	if err := h.repo.UpsertMany(values, secretKeys, userID); err != nil {
+	if err := h.repo.UpsertMany(changed, map[string]bool{}, userID); err != nil {
 		h.log.Error("instance settings update", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
+	h.auditProfileUpdate(c, changed)
 
 	c.JSON(http.StatusOK, gin.H{
 		"ok":               true,
-		"updated":          len(values),
-		"restart_required": true,
+		"updated":          len(changed),
+		"restart_required": false,
 	})
 }
 
 func (h *InstanceSettingsHandler) Restart(c *gin.Context) {
-	h.log.Warn("admin requested backend restart",
+	h.log.Warn("deprecated instance restart endpoint called",
 		zap.String("user_id", c.GetString("user_id")),
 		zap.String("user_email", c.GetString("user_email")),
 	)
-	c.JSON(http.StatusAccepted, gin.H{
-		"ok":      true,
-		"message": "backend restart scheduled",
+	c.JSON(http.StatusOK, gin.H{
+		"ok":         true,
+		"deprecated": true,
+		"restarted":  false,
+		"message":    "การ restart จัดการผ่านระบบ deploy แล้ว",
 	})
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		os.Exit(0)
-	}()
 }
 
-// effectiveValue is kept only for optional fields that have a built-in default
-// (instance.name / instance.slug). All SML/LINE values must be set via UI.
-func (h *InstanceSettingsHandler) effectiveValue(def settingDef, dbSettings map[string]repository.AppSetting) (string, string) {
-	if s, ok := dbSettings[def.Key]; ok && strings.TrimSpace(s.Value) != "" {
-		return s.Value, "database"
-	}
-	if def.DefaultValue != "" {
-		return def.DefaultValue, "default"
-	}
-	return "", "unset"
-}
-
-// TestConnections tests SML and LINE connectivity using saved DB values.
-// Each check is independent — partial success is returned so the UI can show per-service status.
+// TestConnection is retained for compatibility and only checks the active
+// server-side runtime configuration. Client-supplied connection targets are ignored.
 func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
-	dbSettings, err := h.repo.All()
+	runtimeSettings, err := h.repo.SMLRuntimeSettings(h.cfg)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลด config ไม่ได้"})
 		return
 	}
 
-	allowed := map[string]settingDef{}
-	for _, def := range instanceSettingDefs {
-		allowed[def.Key] = def
-	}
-	var body struct {
-		Settings map[string]string `json:"settings"`
-	}
-	if c.Request.Body != nil && c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&body); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-	}
-	overrides := map[string]string{}
-	for key, value := range body.Settings {
-		def, ok := allowed[key]
-		if !ok || def.Locked {
-			continue
-		}
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" || (def.Secret && strings.Contains(trimmed, "••••••••")) {
-			continue
-		}
-		if normalized, msg := normalizeInstanceSetting(def, trimmed); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": msg, "key": key})
-			return
-		} else {
-			overrides[key] = normalized
-		}
-	}
-
-	cfgFallback := repository.RuntimeSettingValues(h.cfg)
-	get := func(key string) string {
-		if v := strings.TrimSpace(overrides[key]); v != "" {
-			return v
-		}
-		if v := strings.TrimSpace(dbSettings[key].Value); v != "" {
-			return v
-		}
-		return strings.TrimSpace(cfgFallback[key])
-	}
-
 	httpClient := &http.Client{Timeout: instanceConnectionTimeout}
 
 	// ── SML ──────────────────────────────────────────────────────────────────
-	baseURL := get("sml.rest_base_url")
+	baseURL := runtimeSettings.RestBaseURL
 	guid := h.cfg.ShopeeSMLGUID // ค่าตายตัวจาก .env ใช้ร่วมกันทุก instance
-	database := get("sml.database")
-	stockURL := get("sml.stock_request_url")
+	database := runtimeSettings.Database
+	stockURL := runtimeSettings.StockRequestURL
 	var smlProxyResult, smlTenantResult, smlStockResult checkResult
 
-	// ── LINE ─────────────────────────────────────────────────────────────────
-	lineResult := checkResult{}
-	lineToken := get("line.notify_channel_access_token")
-	if lineToken == "" {
-		lineResult.Error = "ยังไม่ได้ตั้งค่า LINE Channel access token"
-	} else {
-		code, body, latencyMS, err := doInstanceGET(httpClient, "https://api.line.me/v2/bot/info",
-			map[string]string{"Authorization": "Bearer " + lineToken})
-		lineResult.HTTPStatus = code
-		lineResult.LatencyMS = latencyMS
-		if err != nil {
-			lineResult.Error = fmt.Sprintf("เชื่อมต่อ LINE API ไม่ได้: %v", err)
-		} else if code == http.StatusOK {
-			lineResult.OK = true
-			// extract displayName from JSON cheaply
-			s := string(body)
-			if i := strings.Index(s, `"displayName":"`); i >= 0 {
-				rest := s[i+15:]
-				if j := strings.Index(rest, `"`); j >= 0 {
-					lineResult.Detail = rest[:j]
-				}
-			}
-		} else {
-			lineResult.Error = "access token ไม่ถูกต้องหรือหมดอายุแล้ว"
-		}
-	}
+	lineResult := checkResult{OK: true, Skipped: true, Layer: "line", Detail: "จัดการ LINE OA และผู้รับแจ้งเตือนในหน้า LINE แจ้งเตือน"}
 
 	var wg sync.WaitGroup
 	run := func(fn func()) {
@@ -367,6 +239,7 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 	allOK := checkPassed(smlResult) && checkPassed(lineResult)
 	c.JSON(http.StatusOK, gin.H{
 		"ok":                allOK,
+		"checked_at":        time.Now().Format(time.RFC3339),
 		"sml":               smlResult,
 		"sml_proxy":         smlProxyResult,
 		"sml_tenant":        smlTenantResult,
@@ -374,6 +247,53 @@ func (h *InstanceSettingsHandler) TestConnection(c *gin.Context) {
 		"line":              lineResult,
 		"ai_enabled":        false,
 	})
+}
+
+func normalizeInstanceProfileValue(key, value string) (string, error) {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	switch key {
+	case "instance.name":
+		if normalized == "" {
+			return "", fmt.Errorf("กรุณากรอกชื่อร้าน")
+		}
+		if utf8.RuneCountInString(normalized) > 120 {
+			return "", fmt.Errorf("ชื่อร้านต้องไม่เกิน 120 ตัวอักษร")
+		}
+	case "instance.support_contact":
+		if utf8.RuneCountInString(normalized) > 200 {
+			return "", fmt.Errorf("ข้อมูลผู้ดูแลระบบต้องไม่เกิน 200 ตัวอักษร")
+		}
+	default:
+		return "", fmt.Errorf("ค่านี้ไม่สามารถแก้จากหน้านี้ได้")
+	}
+	return normalized, nil
+}
+
+func (h *InstanceSettingsHandler) auditProfileUpdate(c *gin.Context, changed map[string]string) {
+	if h.audit == nil || len(changed) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(changed))
+	for key := range changed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var userID *string
+	if id := strings.TrimSpace(c.GetString("user_id")); id != "" {
+		userID = &id
+	}
+	targetID := "instance_profile"
+	if err := h.audit.Log(models.AuditEntry{
+		Action:   "instance_profile_updated",
+		TargetID: &targetID,
+		UserID:   userID,
+		Source:   "instance_settings",
+		Level:    "info",
+		TraceID:  c.GetString("trace_id"),
+		Detail:   gin.H{"changed_keys": keys},
+	}); err != nil && h.log != nil {
+		h.log.Warn("instance profile audit failed", zap.Error(err))
+	}
 }
 
 type checkResult struct {
@@ -561,52 +481,4 @@ func logFailedInstanceCheck(log *zap.Logger, layer string, result checkResult) {
 		zap.Int64("latency_ms", result.LatencyMS),
 		zap.String("error", result.Error),
 	)
-}
-
-func maskSecret(v string) string {
-	if len(v) <= 8 {
-		return "••••••••"
-	}
-	return v[:4] + "••••••••" + v[len(v)-4:]
-}
-
-func normalizeInstanceSetting(def settingDef, value string) (string, string) {
-	value = strings.TrimSpace(value)
-	switch def.Key {
-	case "sml.rest_base_url":
-		return normalizeInstanceURL(value)
-	case "sml.stock_request_url":
-		if value == "" {
-			return "", "" // allow clear
-		}
-		return normalizeInstanceURL(value)
-	case "sml.provider":
-		if !smlProviderPattern.MatchString(value) {
-			return "", "Provider ใช้ได้เฉพาะตัวอักษร ตัวเลข และ _ เท่านั้น"
-		}
-	case "sml.config_file":
-		if !smlConfigFilePattern.MatchString(value) {
-			return "", "Config file ใช้ได้เฉพาะตัวอักษร ตัวเลข จุด ขีดกลาง และ _ เท่านั้น"
-		}
-	case "sml.database":
-		if !smlDatabaseNamePattern.MatchString(value) {
-			return "", "Database (tenant) ใช้ได้เฉพาะตัวอักษร ตัวเลข และ _ เท่านั้น"
-		}
-	}
-	return value, ""
-}
-
-func normalizeInstanceURL(value string) (string, string) {
-	value = strings.TrimSpace(value)
-	u, err := url.Parse(value)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return "", "SML REST URL ต้องเป็น URL เต็ม เช่น http://192.168.2.109:8200"
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", "SML REST URL ต้องขึ้นต้นด้วย http:// หรือ https://"
-	}
-	u.Path = strings.TrimRight(u.Path, "/")
-	u.RawQuery = ""
-	u.Fragment = ""
-	return strings.TrimRight(u.String(), "/"), ""
 }

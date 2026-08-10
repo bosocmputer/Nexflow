@@ -192,6 +192,21 @@ func TestShopeeAPIStatusGatewayModeDoesNotRequireTenantPartnerKey(t *testing.T) 
 	}
 }
 
+func TestShopeeRedirectHostMismatchIsOnlyAboutDirectInstanceHost(t *testing.T) {
+	if shopeeRedirectHostMismatch(
+		"https://nexflow-aoy.nextstep-soft.com",
+		"https://nexflow-aoy.nextstep-soft.com/api/shopee-api/callback",
+	) {
+		t.Fatal("matching direct host should not be reported as mismatch")
+	}
+	if !shopeeRedirectHostMismatch(
+		"https://nexflow-aoy.nextstep-soft.com",
+		"https://nexflow.nextstep-soft.com/api/shopee-api/callback",
+	) {
+		t.Fatal("different direct host should be reported as mismatch")
+	}
+}
+
 func TestShopeeAPIErrorMessageMapsRateLimit(t *testing.T) {
 	got := shopeeAPIErrorMessage(nil, "shopee http 429: too many requests")
 	if got.Code != "rate_limited" || !got.Retryable {
