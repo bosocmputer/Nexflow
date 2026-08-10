@@ -26,6 +26,10 @@ floor(max(SML scope balance, 0) * stock percentage / 100 / unit factor)
 - A model is blocked when reserved Shopee stock exceeds its calculated target.
 - SKU/unit/mapping errors block only the affected model; valid models continue.
 - Multiple Shopee seller warehouse locations pause the shop in v1.
+- `warehouse.error_not_in_whitelist` means the shop does not use Shopee
+  multi-warehouse. Nexflow treats it as the supported default seller-stock
+  location and omits `location_id`, as required by Shopee's `update_stock`
+  contract. Other warehouse errors still fail closed.
 - Timed-out writes are `unknown_result`; Nexflow reads the product back before
   deciding whether the write succeeded.
 - Only changed, blocked, error, and unknown attempts are retained for 90 days.
