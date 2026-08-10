@@ -96,3 +96,26 @@ func TestGatewayClientRejectsGatewayError(t *testing.T) {
 		t.Fatalf("error = %#v", err)
 	}
 }
+
+func TestGatewayClientUpdateStockUsesDedicatedOperation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req gatewayExecuteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Operation != "update_stock" || req.ShopID != 123 {
+			t.Fatalf("request = %+v", req)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"response": map[string]any{"success_list": []map[string]any{{"model_id": 0}}}},
+		})
+	}))
+	defer server.Close()
+	client := NewGateway(GatewayConfig{BaseURL: server.URL, Tenant: "aoy", SharedSecret: "secret"})
+	out, err := client.UpdateStock(t.Context(), "", 123, UpdateStockRequest{
+		ItemID: 1, StockList: []ModelStock{{ModelID: 0, SellerStock: []SellerStock{{Stock: 10}}}},
+	})
+	if err != nil || len(out.Response.SuccessList) != 1 {
+		t.Fatalf("response=%+v error=%v", out, err)
+	}
+}

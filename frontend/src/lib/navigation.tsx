@@ -12,6 +12,7 @@ import {
   Settings2,
   ShieldCheck,
   ShoppingBag,
+  PackageCheck,
   Store,
   Tags,
   Upload,
@@ -116,6 +117,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'สินค้าและการจับคู่',
     items: [
       { menuKey: 'catalog', to: '/settings/catalog', label: 'สินค้าใน SML', icon: Database, hint: 'SML Catalog' },
+      { menuKey: 'shopee_stock', to: '/settings/shopee-stock', label: 'ซิงก์สต๊อก Shopee', icon: PackageCheck, hint: 'คุมสต๊อก Shopee จากยอดพร้อมขายใน SML', adminOnly: true },
     ],
   },
   {

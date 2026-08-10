@@ -48,9 +48,13 @@ shopee_order_snapshots         -- Shopee Realtime order state/timeline source
 shopee_order_payment_snapshots -- cached Shopee escrow/payment breakdowns
 shopee_sml_cancellations       -- Shopee cancelled-after-SML CN tracking
 line_notification_deliveries   -- LINE notification outbox with Flex payload fallback
+shopee_stock_settings          -- per-shop scope, percentage, interval, pause/dry-run state
+shopee_stock_products          -- local Shopee item/model stock catalog
+shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
+shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–073** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–074** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -223,4 +227,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-07-09 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-10 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442

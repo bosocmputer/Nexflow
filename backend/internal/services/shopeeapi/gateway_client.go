@@ -177,6 +177,34 @@ func (c *GatewayClient) GetOrderDetail(ctx context.Context, _ string, shopID int
 	return &out, c.execute(ctx, "get_order_detail", shopID, payload, &out)
 }
 
+func (c *GatewayClient) GetItemList(ctx context.Context, _ string, shopID int64, req ItemListRequest) (*ItemListResponse, error) {
+	var out ItemListResponse
+	return &out, c.execute(ctx, "get_item_list", shopID, req, &out)
+}
+
+func (c *GatewayClient) GetItemBaseInfo(ctx context.Context, _ string, shopID int64, itemIDs []int64) (*ItemBaseInfoResponse, error) {
+	var out ItemBaseInfoResponse
+	return &out, c.execute(ctx, "get_item_base_info", shopID, map[string][]int64{"item_id_list": itemIDs}, &out)
+}
+
+func (c *GatewayClient) GetModelList(ctx context.Context, _ string, shopID, itemID int64) (*ModelListResponse, error) {
+	var out ModelListResponse
+	return &out, c.execute(ctx, "get_model_list", shopID, map[string]int64{"item_id": itemID}, &out)
+}
+
+func (c *GatewayClient) GetWarehouseDetail(ctx context.Context, _ string, shopID int64) (*WarehouseDetailResponse, error) {
+	var out WarehouseDetailResponse
+	return &out, c.execute(ctx, "get_warehouse_detail", shopID, nil, &out)
+}
+
+func (c *GatewayClient) UpdateStock(ctx context.Context, _ string, shopID int64, req UpdateStockRequest) (*UpdateStockResponse, error) {
+	if err := ValidateUpdateStockRequest(req); err != nil {
+		return nil, err
+	}
+	var out UpdateStockResponse
+	return &out, c.execute(ctx, "update_stock", shopID, req, &out)
+}
+
 func (c *GatewayClient) GetShippingParameter(ctx context.Context, _ string, shopID int64, orderSN, packageNumber string) (*ShippingParameterResponse, error) {
 	var out ShippingParameterResponse
 	payload := map[string]string{"order_sn": orderSN, "package_number": packageNumber}

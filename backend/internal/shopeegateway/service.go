@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/url"
 	"strconv"
 	"strings"
@@ -291,7 +292,7 @@ func (s *Service) executeOperationWithRetry(ctx context.Context, operation strin
 		if err == nil || isShopeeTokenError(err) || !isRetryableShopeeError(err) || attempt == maxAttempts-1 {
 			return result, err
 		}
-		delay := time.Duration(attempt+1) * 250 * time.Millisecond
+		delay := time.Duration(1<<attempt)*250*time.Millisecond + time.Duration(rand.IntN(150))*time.Millisecond
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -304,6 +305,7 @@ func (s *Service) executeOperationWithRetry(ctx context.Context, operation strin
 func retryableOperation(operation string) bool {
 	switch operation {
 	case "get_shop_info", "get_shop_profile", "get_order_list", "get_order_detail",
+		"get_item_list", "get_item_base_info", "get_model_list", "get_warehouse_detail",
 		"get_escrow_list", "get_escrow_detail", "get_shipping_parameter",
 		"get_tracking_number", "get_tracking_info", "get_shipping_document_info",
 		"get_shipping_document_parameter", "get_shipping_document_result", "download_shipping_document":
@@ -350,6 +352,42 @@ func (s *Service) executeOperation(ctx context.Context, operation string, shopID
 			return nil, errors.New("order_sn_list must contain 1-50 orders")
 		}
 		return s.provider.GetOrderDetail(ctx, accessToken, shopID, req.OrderSNs, req.OptionalFields)
+	case "get_item_list":
+		var req shopeeapi.ItemListRequest
+		if err := decodePayload(payload, &req); err != nil {
+			return nil, err
+		}
+		return s.provider.GetItemList(ctx, accessToken, shopID, req)
+	case "get_item_base_info":
+		var req struct {
+			ItemIDs []int64 `json:"item_id_list"`
+		}
+		if err := decodePayload(payload, &req); err != nil || len(req.ItemIDs) == 0 || len(req.ItemIDs) > 50 {
+			return nil, errors.New("item_id_list must contain 1-50 items")
+		}
+		return s.provider.GetItemBaseInfo(ctx, accessToken, shopID, req.ItemIDs)
+	case "get_model_list":
+		var req struct {
+			ItemID int64 `json:"item_id"`
+		}
+		if err := decodePayload(payload, &req); err != nil || req.ItemID <= 0 {
+			return nil, errors.New("item_id is required")
+		}
+		return s.provider.GetModelList(ctx, accessToken, shopID, req.ItemID)
+	case "get_warehouse_detail":
+		if err := decodePayload(payload, &struct{}{}); err != nil {
+			return nil, err
+		}
+		return s.provider.GetWarehouseDetail(ctx, accessToken, shopID)
+	case "update_stock":
+		var req shopeeapi.UpdateStockRequest
+		if err := decodePayload(payload, &req); err != nil {
+			return nil, err
+		}
+		if err := shopeeapi.ValidateUpdateStockRequest(req); err != nil {
+			return nil, err
+		}
+		return s.provider.UpdateStock(ctx, accessToken, shopID, req)
 	case "get_escrow_list":
 		var req shopeeapi.EscrowListRequest
 		if err := decodePayload(payload, &req); err != nil {

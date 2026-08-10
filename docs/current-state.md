@@ -49,7 +49,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–073** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–074** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -72,6 +72,7 @@ Key recent migrations:
 | 067 | LINE MyShop multi-account connections, snapshots, webhook events, `line_myshop` source/channel |
 | 068–072 | multi-tenant notification, permissions, gateway, and operational hardening |
 | 073 | sales-only mode, disabled embeddings, verified mappings, active aliases, catalog search indexes |
+| 074 | SML warehouse stock catalog, Shopee stock mappings/settings, dry-run/sync history, DB leases |
 
 ---
 

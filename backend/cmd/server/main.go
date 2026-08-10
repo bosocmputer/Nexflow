@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,8 @@ import (
 	"nexflow/internal/services/mapper"
 	"nexflow/internal/services/media"
 	nextstepnotifications "nexflow/internal/services/nextstep_notifications"
+	"nexflow/internal/services/shopeeapi"
+	"nexflow/internal/services/shopeestock"
 	"nexflow/internal/services/sml"
 	"nexflow/internal/worker"
 )
@@ -332,6 +335,24 @@ func main() {
 	smlWarehouseH := handlers.NewSMLWarehouseHandler(warehouseCache, logger)
 	logH := handlers.NewLogHandler(auditLogRepo, logger)
 	userSettingsH := handlers.NewUserSettingsHandler(userRepo, auditLogRepo, logger)
+	stockSMLClient := sml.NewStockSyncClient(sml.PartyConfig{
+		BaseURL: cfg.ShopeeSMLURL, GUID: cfg.ShopeeSMLGUID, Provider: cfg.ShopeeSMLProvider,
+		ConfigFile: cfg.ShopeeSMLConfigFile, Database: cfg.ShopeeSMLDatabase,
+	})
+	var stockShopeeClient shopeeapi.APIClient
+	if strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway") {
+		stockShopeeClient = shopeeapi.NewGateway(shopeeapi.GatewayConfig{
+			BaseURL: cfg.ShopeeGatewayBaseURL, Tenant: cfg.ShopeeGatewayTenant, SharedSecret: cfg.ShopeeGatewayInternalSecret,
+		})
+	}
+	stockService := shopeestock.NewService(shopeestock.NewStore(db), stockSMLClient, stockShopeeClient, shopeestock.Config{
+		Enabled:     cfg.ShopeeOpenAPIEnabled,
+		GatewayMode: strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
+		Environment: cfg.ShopeeOpenAPIEnv,
+		InstanceID:  cfg.ShopeeGatewayTenant,
+	}, logger)
+	shopeestock.NewWorker(stockService, logger).Start(appCtx)
+	shopeeStockH := handlers.NewShopeeStockHandler(stockService, auditLogRepo, logger)
 
 	// Webhooks (no auth)
 	// Webhook routes:
@@ -473,6 +494,13 @@ func main() {
 		// Shopee import — saleinvoice REST API (SML 224)
 		api.GET("/settings/shopee-config", shopeeH.GetConfig)
 		api.GET("/settings/shopee-api/status", middleware.RequireRole("admin", "staff"), shopeeH.GetAPIStatus)
+		api.GET("/settings/shopee-stock", middleware.RequireRole("admin"), shopeeStockH.Overview)
+		api.GET("/settings/shopee-stock/catalog-search", middleware.RequireRole("admin"), shopeeStockH.SearchCatalog)
+		api.PUT("/settings/shopee-stock/:shop_id", middleware.RequireRole("admin"), shopeeStockH.UpdateSettings)
+		api.POST("/settings/shopee-stock/:shop_id/catalog-sync", middleware.RequireRole("admin"), shopeeStockH.SyncCatalog)
+		api.POST("/settings/shopee-stock/:shop_id/preview", middleware.RequireRole("admin"), shopeeStockH.Preview)
+		api.POST("/settings/shopee-stock/:shop_id/run", middleware.RequireRole("admin"), shopeeStockH.Run)
+		api.PUT("/settings/shopee-stock/:shop_id/mappings/:item_id/:model_id", middleware.RequireRole("admin"), shopeeStockH.UpdateMapping)
 		api.GET("/settings/shopee-settlement-defaults", middleware.RequireRole("admin", "staff"), shopeeH.GetSettlementDefaults)
 		api.PUT("/settings/shopee-settlement-defaults", middleware.RequireRole("admin"), shopeeH.UpdateSettlementDefaults)
 		api.GET("/shopee-api/connections", middleware.RequireRole("admin", "staff"), shopeeH.ListAPIConnections)

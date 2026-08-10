@@ -215,6 +215,42 @@ func TestServiceExecuteUsesGatewayOwnedAccessToken(t *testing.T) {
 	}
 }
 
+func TestServiceDoesNotBlindRetryUpdateStock(t *testing.T) {
+	var requests atomic.Int32
+	shopee := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != shopeeapi.PathProductUpdateStock {
+			http.NotFound(w, r)
+			return
+		}
+		requests.Add(1)
+		http.Error(w, `{"error":"temporary"}`, http.StatusInternalServerError)
+	}))
+	defer shopee.Close()
+
+	service := newGatewayTestService(t, shopee.URL)
+	now := time.Unix(1784070000, 0)
+	service.now = func() time.Time { return now }
+	store := service.store.(*fakeGatewayStore)
+	accessCipher, accessNonce, _ := service.cipher.Encrypt("access-token", tokenAAD("aoy", 123, "access"))
+	refreshCipher, refreshNonce, _ := service.cipher.Encrypt("refresh-token", tokenAAD("aoy", 123, "refresh"))
+	store.connection = EncryptedConnection{
+		ID: "conn-1", TenantID: store.tenant.ID, TenantSlug: "aoy", ShopID: 123, Environment: "live",
+		AccessTokenCipher: accessCipher, AccessTokenNonce: accessNonce,
+		RefreshTokenCipher: refreshCipher, RefreshTokenNonce: refreshNonce,
+		AccessExpiresAt: now.Add(time.Hour), RefreshExpiresAt: now.Add(24 * time.Hour),
+	}
+	payload, _ := json.Marshal(shopeeapi.UpdateStockRequest{
+		ItemID: 1, StockList: []shopeeapi.ModelStock{{ModelID: 0, SellerStock: []shopeeapi.SellerStock{{Stock: 10}}}},
+	})
+	_, err := service.Execute(t.Context(), "aoy", GatewayExecuteRequest{Operation: "update_stock", ShopID: 123, Payload: payload})
+	if err == nil {
+		t.Fatal("expected update_stock error")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want exactly one", requests.Load())
+	}
+}
+
 func TestServiceRefreshesExpiringTokenAndQueuesMetadata(t *testing.T) {
 	var refreshRequests atomic.Int32
 	shopee := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

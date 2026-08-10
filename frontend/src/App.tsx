@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
@@ -27,6 +28,8 @@ import Showcase from './pages/Showcase'
 import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
 import SetupCenter from './pages/SetupCenter'
 import { canViewMenu, firstVisibleNavPath } from './lib/navigation'
+
+const ShopeeStock = lazy(() => import('./pages/ShopeeStock'))
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -109,6 +112,7 @@ export default function App() {
           <Route path="settings/catalog" element={<RequireMenu menuKey="catalog"><CatalogSettings /></RequireMenu>} />
           <Route path="settings/email" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><RequireMenu menuKey="shopee_connections"><ShopeeConnections /></RequireMenu></RequireAdmin>} />
+          <Route path="settings/shopee-stock" element={<RequireAdmin><RequireMenu menuKey="shopee_stock"><Suspense fallback={<div className="p-6 text-sm text-muted-foreground">กำลังโหลด...</div>}><ShopeeStock /></Suspense></RequireMenu></RequireAdmin>} />
           <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><RequireMenu menuKey="line_myshop"><LineMyShopSettings /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/channels" element={<RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu>} />
           <Route path="settings/instance" element={<RequireAdmin><RequireMenu menuKey="instance_settings"><InstanceSettings /></RequireMenu></RequireAdmin>} />
