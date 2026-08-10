@@ -416,7 +416,7 @@ export default function InstanceSettings() {
 
       <div className="flex items-start gap-2 rounded-md border bg-muted/25 px-4 py-3 text-sm text-muted-foreground">
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />
-        <p>ค่าระบบและข้อมูลลับดูแลผ่านระบบ deployment เพื่อป้องกันการแก้ผิดและไม่แสดงในหน้านี้</p>
+        <p>ค่าระบบและข้อมูลลับดูแลโดยทีมผู้ดูแลระบบ เพื่อป้องกันการแก้ไขผิดพลาดและไม่แสดงในหน้านี้</p>
       </div>
     </div>
   )
