@@ -41,6 +41,44 @@ func TestCalculateTarget(t *testing.T) {
 	}
 }
 
+func TestNormalizeSelectedScopeRequiresWarehouseAndLocation(t *testing.T) {
+	tests := []struct {
+		name      string
+		request   SettingsUpdate
+		wantError bool
+	}{
+		{name: "unconfigured", request: SettingsUpdate{ScopeMode: "unconfigured"}, wantError: true},
+		{name: "legacy all", request: SettingsUpdate{ScopeMode: "all", Locations: []LocationPair{{Warehouse: "W1", Location: "S1"}}}, wantError: true},
+		{name: "selected without location", request: SettingsUpdate{ScopeMode: "selected"}, wantError: true},
+		{name: "selected with blank location", request: SettingsUpdate{ScopeMode: "selected", Locations: []LocationPair{{Warehouse: "W1"}}}, wantError: true},
+		{name: "selected", request: SettingsUpdate{ScopeMode: " SELECTED ", Locations: []LocationPair{{Warehouse: " W1 ", Location: " S1 "}, {Warehouse: "W1", Location: "S1"}}, AcknowledgeAllScopeWarnings: true}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := normalizeSelectedScope(test.request)
+			if test.wantError {
+				if !errors.Is(err, ErrScopeRequired) {
+					t.Fatalf("error = %v, want ErrScopeRequired", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeSelectedScope: %v", err)
+			}
+			if got.ScopeMode != "selected" || len(got.Locations) != 1 {
+				t.Fatalf("normalized scope = %+v", got)
+			}
+			if got.Locations[0].Warehouse != "W1" || got.Locations[0].Location != "S1" {
+				t.Fatalf("normalized location = %+v", got.Locations[0])
+			}
+			if got.AcknowledgeAllScopeWarnings {
+				t.Fatal("legacy all-scope acknowledgement must be ignored")
+			}
+		})
+	}
+}
+
 func TestWriteErrorClassification(t *testing.T) {
 	rateLimit := &shopeeapi.GatewayError{Code: "rate_limited", Retryable: true}
 	if !isRetryableWrite(rateLimit) || isUnknownWrite(rateLimit) {

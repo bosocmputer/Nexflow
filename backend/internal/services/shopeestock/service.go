@@ -22,8 +22,7 @@ import (
 var (
 	ErrUnavailable      = errors.New("ระบบซิงก์สต๊อก Shopee ยังไม่พร้อมใช้งาน")
 	ErrGatewayOnly      = errors.New("ซิงก์สต๊อก v1 รองรับเฉพาะ Central Shopee Gateway")
-	ErrScopeRequired    = errors.New("กรุณาเลือกขอบเขตคลังและพื้นที่เก็บก่อนตรวจผลกระทบ")
-	ErrWarningsNotAcked = errors.New("กรุณารับทราบยอดในพื้นที่ว่างหรือไม่อยู่ใน master ก่อนใช้รวมทุกคลัง")
+	ErrScopeRequired    = errors.New("กรุณาเลือกคลังและพื้นที่เก็บอย่างน้อย 1 รายการ")
 	ErrSelectedLocation = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
 	ErrSyncInProgress   = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
 )
@@ -131,16 +130,9 @@ func (s *Service) UpdateSettings(ctx context.Context, shopID int64, request Sett
 	if request.IntervalSeconds < 300 || request.IntervalSeconds > 86400 {
 		return nil, invalid("รอบซิงก์ต้องอยู่ระหว่าง 5 นาทีถึง 24 ชั่วโมง")
 	}
-	request.ScopeMode = strings.ToLower(strings.TrimSpace(request.ScopeMode))
-	if request.ScopeMode != "unconfigured" && request.ScopeMode != "all" && request.ScopeMode != "selected" {
+	request, err := normalizeSelectedScope(request)
+	if err != nil {
 		return nil, ErrScopeRequired
-	}
-	request.Locations = normalizeLocations(request.Locations)
-	if request.ScopeMode == "selected" && len(request.Locations) == 0 {
-		return nil, ErrScopeRequired
-	}
-	if request.ScopeMode != "selected" {
-		request.Locations = []LocationPair{}
 	}
 	if request.Enabled && !s.Available() {
 		return nil, ErrUnavailable
@@ -438,7 +430,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if settings.CredentialMode != "gateway" {
 		return nil, ErrGatewayOnly
 	}
-	if settings.ScopeMode == "unconfigured" {
+	if settings.ScopeMode != "selected" || len(settings.Locations) == 0 {
 		return nil, ErrScopeRequired
 	}
 	runID, err := s.store.CreateRun(ctx, shopID, runType, trigger, asOfDate)
@@ -449,14 +441,11 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		_ = s.store.FinishRun(context.Background(), runID, "failed", nil, 1, userSafeError(cause))
 		return nil, cause
 	}
-	locations, diagnostics, err := s.cachedLocations(ctx, true)
+	locations, _, err := s.cachedLocations(ctx, true)
 	if err != nil {
 		return fail(err)
 	}
-	if settings.ScopeMode == "all" && nonZeroDiagnostics(diagnostics) && !settings.AllScopeWarningAcknowledged {
-		return fail(ErrWarningsNotAcked)
-	}
-	if settings.ScopeMode == "selected" && !selectedLocationsExist(settings.Locations, locations) {
+	if !selectedLocationsExist(settings.Locations, locations) {
 		_ = s.store.SetPaused(context.Background(), shopID, "sml_location_missing", ErrSelectedLocation.Error())
 		return fail(ErrSelectedLocation)
 	}
@@ -783,6 +772,17 @@ func normalizeLocations(values []LocationPair) []LocationPair {
 	}
 	return out
 }
+
+func normalizeSelectedScope(request SettingsUpdate) (SettingsUpdate, error) {
+	request.ScopeMode = strings.ToLower(strings.TrimSpace(request.ScopeMode))
+	request.Locations = normalizeLocations(request.Locations)
+	request.AcknowledgeAllScopeWarnings = false
+	if request.ScopeMode != "selected" || len(request.Locations) == 0 {
+		return request, ErrScopeRequired
+	}
+	return request, nil
+}
+
 func selectedLocationsExist(selected []LocationPair, available []Location) bool {
 	set := map[string]struct{}{}
 	for _, item := range available {
@@ -794,14 +794,6 @@ func selectedLocationsExist(selected []LocationPair, available []Location) bool 
 		}
 	}
 	return true
-}
-func nonZeroDiagnostics(values []LocationDiagnostic) bool {
-	for _, item := range values {
-		if item.Balance != 0 {
-			return true
-		}
-	}
-	return false
 }
 func appendUnique(values []string, value string) []string {
 	for _, existing := range values {

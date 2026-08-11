@@ -224,8 +224,18 @@ function sameSettings(left: StockSetting | null, right?: StockSetting) {
     left.stock_pct === right.stock_pct &&
     left.interval_seconds === right.interval_seconds &&
     left.scope_mode === right.scope_mode &&
-    left.all_scope_warning_acknowledged === right.all_scope_warning_acknowledged &&
     sameLocations(left.locations, right.locations)
+}
+
+function normalizeStockSetting(setting: StockSetting): StockSetting {
+  const locations = setting.scope_mode === 'selected' ? [...setting.locations] : []
+  return {
+    ...setting,
+    enabled: locations.length > 0 ? setting.enabled : false,
+    scope_mode: locations.length > 0 ? 'selected' : 'unconfigured',
+    locations,
+    all_scope_warning_acknowledged: false,
+  }
 }
 
 export default function ShopeeStock() {
@@ -252,11 +262,12 @@ export default function ShopeeStock() {
         params: { shop_id: preferredShopID || undefined, status: tab === 'history' ? undefined : tab, page, size: 50, q: search || undefined },
       })
       if (sequence.current !== current) return
-      setData(response.data)
-      const selected = preferredShopID || response.data.settings[0]?.shop_id || 0
+      const normalizedData = { ...response.data, settings: response.data.settings.map(normalizeStockSetting) }
+      setData(normalizedData)
+      const selected = preferredShopID || normalizedData.settings[0]?.shop_id || 0
       setShopID(selected)
-      const setting = response.data.settings.find((item) => item.shop_id === selected) ?? null
-      setDraft(setting ? { ...setting, locations: [...setting.locations] } : null)
+      const setting = normalizedData.settings.find((item) => item.shop_id === selected) ?? null
+      setDraft(setting)
     } catch (error) {
       if (sequence.current === current) toast.error(errorText(error))
     } finally {
@@ -280,10 +291,7 @@ export default function ShopeeStock() {
   const productNames = useMemo(() => new Map((data?.products ?? []).map((product) => [`${product.item_id}:${product.model_id}`, productDisplayName(product)])), [data?.products])
   const productCounts = data?.product_counts ?? { ready: 0, fix: 0, excluded: 0 }
   const stockPctValid = !!draft && Number.isFinite(draft.stock_pct) && draft.stock_pct >= 1 && draft.stock_pct <= 100
-  const scopeReady = !!draft && (
-    (draft.scope_mode === 'selected' && draft.locations.length > 0) ||
-    (draft.scope_mode === 'all' && (!data?.diagnostics?.length || draft.all_scope_warning_acknowledged))
-  )
+  const scopeReady = !!draft && draft.scope_mode === 'selected' && draft.locations.length > 0
   const settingsDirty = !sameSettings(draft, selectedSetting)
 
   useEffect(() => {
@@ -307,7 +315,6 @@ export default function ShopeeStock() {
       interval_seconds: draft.interval_seconds,
       scope_mode: draft.scope_mode,
       locations: draft.locations,
-      acknowledge_all_scope_warnings: draft.all_scope_warning_acknowledged,
     })
     setDraft(response.data)
     toast.success('บันทึกการตั้งค่าสต๊อกแล้ว')
@@ -329,7 +336,6 @@ export default function ShopeeStock() {
       interval_seconds: draft.interval_seconds,
       scope_mode: draft.scope_mode,
       locations: draft.locations,
-      acknowledge_all_scope_warnings: draft.all_scope_warning_acknowledged,
     })
     const response = await client.post<Preview>(`/api/settings/shopee-stock/${shopID}/preview`, { as_of_date: bangkokDate() }, { timeout: 60000 })
     setPreview(response.data)
@@ -348,7 +354,14 @@ export default function ShopeeStock() {
     const pair = { warehouse: location.warehouse_code, location: location.location_code }
     const key = locationKey(pair)
     const next = checked ? [...draft.locations.filter((item) => locationKey(item) !== key), pair] : draft.locations.filter((item) => locationKey(item) !== key)
-    setDraft({ ...draft, locations: next, enabled: false, dry_run_required: true })
+    setDraft({
+      ...draft,
+      scope_mode: next.length > 0 ? 'selected' : 'unconfigured',
+      locations: next,
+      all_scope_warning_acknowledged: false,
+      enabled: false,
+      dry_run_required: true,
+    })
   }
 
   const previewDisabledReason = !data?.available
@@ -357,13 +370,9 @@ export default function ShopeeStock() {
       ? 'เลือกร้าน Shopee ก่อน'
       : !stockPctValid
         ? 'กำหนดสัดส่วนส่ง Shopee ระหว่าง 1-100%'
-        : draft.scope_mode === 'unconfigured'
-          ? 'เลือกขอบเขตสต๊อก SML ก่อน'
-          : draft.scope_mode === 'selected' && draft.locations.length === 0
-            ? 'เลือกคลังหรือพื้นที่อย่างน้อย 1 รายการ'
-            : draft.scope_mode === 'all' && !!data?.diagnostics?.length && !draft.all_scope_warning_acknowledged
-              ? 'รับทราบยอดในพื้นที่ว่างหรือไม่อยู่ใน master ก่อน'
-              : ''
+        : !scopeReady
+          ? 'เลือกคลังหรือพื้นที่อย่างน้อย 1 รายการ'
+          : ''
   const syncDisabledReason = !draft?.enabled
     ? 'เปิดซิงก์อัตโนมัติและบันทึกก่อนใช้ปุ่มนี้'
     : draft.dry_run_required
@@ -372,9 +381,7 @@ export default function ShopeeStock() {
   const setupSteps = [
     {
       label: 'เลือกขอบเขตสต๊อก',
-      detail: draft?.scope_mode === 'all'
-        ? 'รวมทุกคลังใน SML'
-        : draft?.scope_mode === 'selected' && draft.locations.length
+      detail: draft?.scope_mode === 'selected' && draft.locations.length
           ? `เลือกแล้ว ${formatNumber(draft.locations.length)} พื้นที่`
           : 'ยังไม่ได้เลือกคลังหรือพื้นที่',
       done: scopeReady,
@@ -431,7 +438,7 @@ export default function ShopeeStock() {
       )}
 
       {data?.diagnostics?.length ? (
-        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>พบยอดในพื้นที่ว่างหรือไม่อยู่ใน master SML</AlertTitle><AlertDescription>รวม {data.diagnostics.length} ตำแหน่ง หากเลือก “รวมทุกคลัง” ต้องรับทราบก่อน dry-run เพื่อให้ผู้ใช้กลับไปแก้ master ใน SML ได้</AlertDescription></Alert>
+        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>พบยอดในพื้นที่ว่างหรือไม่อยู่ใน master SML</AlertTitle><AlertDescription>รวม {formatNumber(data.diagnostics.length)} ตำแหน่ง ระบบจะไม่นำยอดเหล่านี้มาคำนวณ กรุณาแก้ master คลัง/พื้นที่ใน SML หากต้องการนำมาใช้</AlertDescription></Alert>
       ) : null}
 
       <section className="rounded-md border bg-card px-4 py-3" aria-labelledby="stock-setup-steps">
@@ -489,44 +496,22 @@ export default function ShopeeStock() {
           </div>
           <div className="space-y-1.5 xl:col-span-2"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอกตัวเลขระหว่าง 1-100</p>}</div>
           <div className="space-y-1.5 xl:col-span-2">
-            <Label htmlFor="shopee-stock-scope">ขอบเขตสต๊อก SML</Label>
-            <Select
-              value={draft?.scope_mode ?? 'unconfigured'}
-              disabled={!draft}
-              onValueChange={(value) => draft && setDraft({
-                ...draft,
-                scope_mode: value as StockSetting['scope_mode'],
-                locations: [],
-                all_scope_warning_acknowledged: false,
-                enabled: false,
-                dry_run_required: true,
-              })}
-            >
-              <SelectTrigger id="shopee-stock-scope" className="h-10">
-                <SelectValue placeholder="เลือกขอบเขตสต๊อก" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="unconfigured">ยังไม่ได้เลือก</SelectItem>
-                <SelectItem value="all">รวมทุกคลัง</SelectItem>
-                <SelectItem value="selected">เลือกคลัง/พื้นที่</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label>ขอบเขตสต๊อก SML</Label>
+            <div className={cn('flex h-10 items-center rounded-md border px-3 text-sm', scopeReady ? 'border-success/50 bg-success/10 text-foreground' : 'text-muted-foreground')}>
+              {scopeReady ? `เลือกแล้ว ${formatNumber(draft?.locations.length ?? 0)} พื้นที่` : 'เลือกคลัง / พื้นที่ด้านล่าง'}
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 md:col-span-2 xl:col-span-3"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก {formatInterval(draft?.interval_seconds)}</p><p className="text-xs text-muted-foreground">{draft?.dry_run_required ? 'ต้องผ่าน Dry-run ก่อนจึงจะเปิดได้' : 'ปิดแล้วไม่เปลี่ยนยอดที่อยู่ใน Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
-          <Button className="w-full md:justify-self-end xl:col-span-2" onClick={saveSettings} disabled={!draft || !stockPctValid || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 md:col-span-2 xl:col-span-3"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก {formatInterval(draft?.interval_seconds)}</p><p className="text-xs text-muted-foreground">{draft?.dry_run_required ? 'ต้องผ่าน Dry-run ก่อนจึงจะเปิดได้' : 'ปิดแล้วไม่เปลี่ยนยอดที่อยู่ใน Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !scopeReady || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
+          <Button className="w-full md:justify-self-end xl:col-span-2" onClick={saveSettings} disabled={!draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
         </CardContent>
       </Card>
 
-      {draft?.scope_mode === 'selected' && (
+      {draft && (
         <section className="rounded-md border bg-card p-4">
           <div className="mb-3"><h2 className="text-sm font-semibold">คลังและพื้นที่ที่นำมาคำนวณ</h2><p className="text-xs text-muted-foreground">เลือกอย่างน้อย 1 พื้นที่ ระบบจะแสดงยอดที่ถูกตัดออกใน dry-run</p></div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{warehouses.map((warehouse) => <div key={warehouse.code} className="rounded-md border p-3"><p className="mb-2 text-sm font-medium">{warehouse.code} · {warehouse.name}</p><div className="space-y-2">{warehouse.locations.map((location) => { const checked = draft.locations.some((item) => locationKey(item) === locationKey({ warehouse: location.warehouse_code, location: location.location_code })); return <label key={`${location.warehouse_code}:${location.location_code}`} className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={checked} onCheckedChange={(value) => toggleLocation(location, value === true)} /><span>{location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}</span></label> })}</div></div>)}</div>
         </section>
       )}
-
-      {draft?.scope_mode === 'all' && data?.diagnostics?.length ? (
-        <label className="flex items-start gap-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={draft.all_scope_warning_acknowledged} onCheckedChange={(value) => setDraft({ ...draft, all_scope_warning_acknowledged: value === true, enabled: false, dry_run_required: true })} /><span>รับทราบว่ารอบนี้จะรวมยอดในพื้นที่ว่าง/orphan ด้วย และจะตรวจ master คลังใน SML ให้ถูกต้อง</span></label>
-      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังดึงสินค้า...' : 'อัปเดต Catalog'}</Button>

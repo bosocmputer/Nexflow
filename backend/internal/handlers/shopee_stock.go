@@ -173,7 +173,7 @@ func (h *ShopeeStockHandler) fail(c *gin.Context, err error) {
 	var validation *shopeestock.ValidationError
 	var gatewayErr *shopeeapi.GatewayError
 	if errors.As(err, &validation) || errors.Is(err, shopeestock.ErrScopeRequired) ||
-		errors.Is(err, shopeestock.ErrWarningsNotAcked) || errors.Is(err, shopeestock.ErrSelectedLocation) ||
+		errors.Is(err, shopeestock.ErrSelectedLocation) ||
 		errors.Is(err, shopeestock.ErrDryRunRequired) {
 		status = http.StatusUnprocessableEntity
 	}

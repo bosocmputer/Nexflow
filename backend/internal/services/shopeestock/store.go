@@ -127,12 +127,12 @@ func (s *Store) UpdateSettings(ctx context.Context, shopID int64, request Settin
 		       interval_seconds = $4,
 		       scope_mode = $5,
 		       locations = $6,
-		       all_scope_warning_acknowledged = $7,
-		       dry_run_required = CASE WHEN $8 THEN true ELSE dry_run_required END,
-		       updated_by = $9::uuid,
+		       all_scope_warning_acknowledged = false,
+		       dry_run_required = CASE WHEN $7 THEN true ELSE dry_run_required END,
+		       updated_by = $8::uuid,
 		       updated_at = NOW()
 		 WHERE shop_id = $1`, shopID, request.Enabled, request.StockPct, request.IntervalSeconds,
-		request.ScopeMode, locations, request.AcknowledgeAllScopeWarnings, changedCalculation, updatedBy)
+		request.ScopeMode, locations, changedCalculation, updatedBy)
 	if err != nil {
 		return nil, err
 	}
