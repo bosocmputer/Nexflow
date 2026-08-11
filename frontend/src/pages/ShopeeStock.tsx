@@ -501,7 +501,7 @@ export default function ShopeeStock() {
           </div>
           <div className="space-y-1.5"><Label htmlFor="stock-pct">ส่งไป Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอก 1-100</p>}</div>
           <div className="space-y-1.5">
-            <p className="text-sm font-medium leading-none">ขอบเขตสต๊อก SML</p>
+            <Label>ขอบเขตสต๊อก SML</Label>
             <div className={cn('flex h-10 items-center rounded-md border px-3 text-sm', scopeReady ? 'border-success/50 bg-success/10 text-foreground' : 'text-muted-foreground')}>
               {scopeReady ? `เลือกแล้ว ${formatNumber(draft?.locations.length ?? 0)} พื้นที่` : 'เลือกคลัง / พื้นที่ด้านล่าง'}
             </div>
@@ -591,7 +591,7 @@ export default function ShopeeStock() {
 
         {tab === 'history' ? <HistoryList runs={data?.runs ?? []} /> : (
           <>
-            <div className="hidden grid-cols-[minmax(220px,1.35fr)_minmax(170px,1fr)_minmax(270px,auto)_110px] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
+            <div className="hidden grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_96px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
               <span>สินค้า Shopee</span>
               <span>สินค้าที่จับคู่ใน SML</span>
               <div className="grid grid-cols-3 gap-3 text-right">
@@ -639,18 +639,20 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
       ? `1 ${sellingUnit} = ${formatNumber(product.unit_factor)} ${baseUnit}`
       : `หน่วยที่ใช้คำนวณ: ${sellingUnit}`
     : ''
+  const shopeeIdentity = `SKU ${sku} · Item ${product.item_id}${product.model_id ? ` / Model ${product.model_id}` : ''}`
   return (
-    <div className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(220px,1.35fr)_minmax(170px,1fr)_minmax(270px,auto)_110px] lg:items-center">
+    <div className="grid gap-3 px-3 py-2 lg:grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_96px] lg:items-center">
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium" title={itemName}>{itemName}</p>
-        {optionName && (
-          <div className="mt-1 min-w-0 border-l-2 border-primary pl-2" title={optionName}>
-            <p className="text-[11px] leading-none text-muted-foreground">ตัวเลือกสินค้า</p>
-            <p className="mt-0.5 truncate text-sm font-semibold text-foreground">{optionName}</p>
-          </div>
-        )}
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">SKU {sku} · Item {product.item_id}{product.model_id ? ` / Model ${product.model_id}` : ''}</p>
-        {product.warning_codes.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
+        <p className="truncate text-sm font-medium leading-5" title={itemName}>{itemName}</p>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
+          {optionName && (
+            <span className="max-w-[45%] shrink-0 truncate rounded-sm border border-primary/25 bg-primary/10 px-1.5 py-0.5 font-semibold text-primary" title={`ตัวเลือกสินค้า: ${optionName}`}>
+              ตัวเลือก: {optionName}
+            </span>
+          )}
+          <span className="min-w-0 truncate text-muted-foreground" title={shopeeIdentity}>{shopeeIdentity}</span>
+        </div>
+        {product.warning_codes.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
       </div>
       <div className="min-w-0">
         <p className="truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p>
@@ -659,23 +661,20 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
       <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">คงเหลือ SML</p>
-          <p className="font-mono text-sm font-medium">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</p>
-          {product.last_preview_balance != null && baseUnit && <p className="text-[11px] text-muted-foreground">{baseUnit}</p>}
+          <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</span>{product.last_preview_balance != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
           {!!product.last_preview_excluded_balance && <p className="text-[11px] text-warning">นอกขอบเขต {formatNumber(product.last_preview_excluded_balance)}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">Shopee ตอนนี้</p>
-          <p className="font-mono text-sm font-medium">{formatNumber(product.shopee_available)}</p>
-          {sellingUnit && <p className="text-[11px] text-muted-foreground">{sellingUnit}</p>}
+          <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{formatNumber(product.shopee_available)}</span>{sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
           {product.shopee_reserved > 0 && <p className="text-[11px] text-warning">จอง {formatNumber(product.shopee_reserved)}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">จะส่ง Shopee</p>
-          <p className="font-mono text-sm font-medium">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</p>
-          {product.last_preview_target != null && sellingUnit && <p className="text-[11px] text-muted-foreground">{sellingUnit}</p>}
+          <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</span>{product.last_preview_target != null && sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
         </div>
       </div>
-      <Button variant="outline" size="sm" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>
+      <Button variant="outline" size="sm" className="px-2" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>
     </div>
   )
 }
