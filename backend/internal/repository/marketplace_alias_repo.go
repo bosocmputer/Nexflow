@@ -296,9 +296,9 @@ func (r *MarketplaceAliasRepo) List(source, query string, page, perPage int) ([]
 		           )
 		           AND ((a.external_item_id <> '' AND bi.source_item_id = a.external_item_id AND bi.source_variant_id = a.external_variant_id)
 		             OR (a.external_item_id = '' AND a.source_sku <> '' AND btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), '')) = a.source_sku)
-		             OR (a.external_item_id = '' AND a.source_sku = ''
-		                 AND btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), '')) = ''
-		                 AND btrim(regexp_replace(replace(bi.raw_name, chr(65279), ''), '\s+', ' ', 'g')) = a.normalized_key)),
+			             OR (a.external_item_id = '' AND a.source_sku = ''
+			                 AND btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), '')) = ''
+			                 AND btrim(regexp_replace(replace(bi.raw_name, chr(65279), ''), '\s+', ' ', 'g')) = a.normalized_key))),
 		       (SELECT COUNT(*) FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id = a.id)
 		FROM marketplace_item_aliases a
 		LEFT JOIN sml_catalog c ON c.item_code = a.item_code
