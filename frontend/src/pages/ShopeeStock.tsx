@@ -24,10 +24,10 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -283,7 +283,7 @@ export default function ShopeeStock() {
       const setting = normalizedData.settings.find((item) => item.shop_id === selected) ?? null
       setDraft(setting)
       setWarehouseCode(setting?.locations[0]?.warehouse ?? '')
-      setLocationsOpen(!setting?.locations.length)
+      setLocationsOpen(false)
     } catch (error) {
       if (sequence.current === current) toast.error(errorText(error))
     } finally {
@@ -394,6 +394,7 @@ export default function ShopeeStock() {
       enabled: false,
       dry_run_required: true,
     })
+    setLocationsOpen(false)
   }
 
   const previewDisabledReason = !data?.available
@@ -516,9 +517,60 @@ export default function ShopeeStock() {
           <div className="space-y-1.5"><Label htmlFor="stock-pct">ส่งไป Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอก 1-100</p>}</div>
           <div className="space-y-1.5">
             <Label>ขอบเขตสต๊อก SML</Label>
-            <div className={cn('flex h-10 items-center rounded-md border px-3 text-sm', scopeReady ? 'border-success/50 bg-success/10 text-foreground' : 'text-muted-foreground')}>
-              {scopeReady ? scopeSummary : 'เลือก 1 คลัง / 1 พื้นที่ด้านล่าง'}
-            </div>
+            <Popover open={locationsOpen} onOpenChange={setLocationsOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn(
+                    'h-10 w-full justify-between px-3 font-normal',
+                    scopeReady ? 'border-success/50 bg-success/10 text-foreground hover:bg-success/10' : 'text-muted-foreground',
+                  )}
+                  disabled={!draft || !data?.available}
+                  aria-label={scopeReady ? `ขอบเขตสต๊อก SML ${scopeSummary}` : 'เลือกขอบเขตสต๊อก SML'}
+                >
+                  <span className="truncate">{scopeReady ? scopeSummary : 'เลือก 1 คลัง / 1 พื้นที่เก็บ'}</span>
+                  <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform motion-reduce:transition-none', locationsOpen && 'rotate-180')} aria-hidden="true" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="shopee-stock-warehouse">คลัง SML</Label>
+                    <Select value={warehouseCode || undefined} onValueChange={selectWarehouse}>
+                      <SelectTrigger id="shopee-stock-warehouse" className="h-10">
+                        <SelectValue placeholder="เลือกคลัง" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {warehouses.map((warehouse) => (
+                          <SelectItem key={warehouse.code} value={warehouse.code}>
+                            {warehouse.code} · {warehouse.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="shopee-stock-location">พื้นที่เก็บ</Label>
+                    <Select value={selectedPair?.location || undefined} onValueChange={selectLocation} disabled={!selectedWarehouse}>
+                      <SelectTrigger id="shopee-stock-location" className="h-10">
+                        <SelectValue placeholder={selectedWarehouse ? 'เลือกพื้นที่เก็บ' : 'เลือกคลังก่อน'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(selectedWarehouse?.locations ?? []).map((location) => (
+                          <SelectItem key={location.location_code} value={location.location_code}>
+                            {location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                    ระบบคำนวณและส่งสต๊อกจากคลังและพื้นที่เก็บคู่นี้เท่านั้น การเปลี่ยนค่าจะปิดซิงก์และต้องตรวจ Dry-run ใหม่
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="flex h-10 items-center justify-between gap-3 rounded-md border px-3"><div className="min-w-0"><p className="truncate text-sm font-medium">ซิงก์ทุก {formatInterval(draft?.interval_seconds)}</p><p className="truncate text-[11px] text-muted-foreground">{draft?.dry_run_required ? 'ต้องตรวจสต๊อกก่อนเปิด' : 'ปิดแล้วไม่เปลี่ยนยอด Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !scopeReady || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
           <Button className="w-full sm:col-span-2 sm:w-auto sm:justify-self-end xl:col-span-1" onClick={saveSettings} disabled={!draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
@@ -561,45 +613,6 @@ export default function ShopeeStock() {
         </div>
         {nextActionMessage && <p className="hidden border-t px-3 py-1.5 text-xs text-amber-800 dark:text-amber-200 sm:block"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
       </section>
-
-      {draft && (
-        <Collapsible open={locationsOpen} onOpenChange={setLocationsOpen}>
-          <section className="overflow-hidden rounded-md border bg-card">
-            <CollapsibleTrigger asChild>
-              <button type="button" className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted/40">
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold">คลังและพื้นที่ที่นำมาคำนวณ</h2>
-                  <p className="text-xs text-muted-foreground">{scopeReady ? `เลือกแล้ว ${scopeSummary}` : 'ต้องเลือก 1 คลังและ 1 พื้นที่เก็บก่อนตรวจสต๊อก'}</p>
-                </div>
-                <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', locationsOpen && 'rotate-180')} aria-hidden="true" />
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="grid gap-3 border-t p-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="shopee-stock-warehouse">คลัง SML</Label>
-                  <Select value={warehouseCode || undefined} onValueChange={selectWarehouse}>
-                    <SelectTrigger id="shopee-stock-warehouse" className="h-10"><SelectValue placeholder="เลือกคลัง" /></SelectTrigger>
-                    <SelectContent>
-                      {warehouses.map((warehouse) => <SelectItem key={warehouse.code} value={warehouse.code}>{warehouse.code} · {warehouse.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="shopee-stock-location">พื้นที่เก็บ</Label>
-                  <Select value={selectedPair?.location || undefined} onValueChange={selectLocation} disabled={!selectedWarehouse}>
-                    <SelectTrigger id="shopee-stock-location" className="h-10"><SelectValue placeholder={selectedWarehouse ? 'เลือกพื้นที่เก็บ' : 'เลือกคลังก่อน'} /></SelectTrigger>
-                    <SelectContent>
-                      {(selectedWarehouse?.locations ?? []).map((location) => <SelectItem key={location.location_code} value={location.location_code}>{location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <p className="text-xs text-muted-foreground sm:col-span-2">ระบบคำนวณและส่งสต๊อกจากคลังและพื้นที่เก็บคู่นี้เท่านั้น การเปลี่ยนค่าจะปิดซิงก์และต้องตรวจ Dry-run ใหม่</p>
-              </div>
-            </CollapsibleContent>
-          </section>
-        </Collapsible>
-      )}
 
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ระบบหยุดร้านนี้เพื่อความปลอดภัย</AlertTitle><AlertDescription>{draft.paused_reason}{draft.last_error ? ` · ${draft.last_error}` : ''}</AlertDescription></Alert>}
       {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? 'ระบบหยุดทั้งร้านเพื่อความปลอดภัย' : preview.blocked_count ? `พร้อมเปิดซิงก์ โดยเว้น ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'Dry-run ผ่านแล้ว'}</AlertTitle><AlertDescription>ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)} · ยอดนอกขอบเขต {formatNumber(preview.excluded_balance)}{preview.circuit_breaker && ` · ${preview.circuit_breaker}`}</AlertDescription></Alert>}
