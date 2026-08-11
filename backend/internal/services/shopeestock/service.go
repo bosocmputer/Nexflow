@@ -454,7 +454,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		return fail(err)
 	}
 	if len(products) == 0 {
-		return fail(errors.New("ยังไม่มี Shopee Product Catalog กรุณากดรีเฟรช catalog ก่อน"))
+		return fail(errors.New("ยังไม่มีรายการสินค้า Shopee กรุณากดอัปเดตรายการสินค้าก่อน"))
 	}
 	otherShopItems, err := s.store.EnabledSMLItemsOtherShops(ctx, shopID)
 	if err != nil {

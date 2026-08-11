@@ -4,9 +4,11 @@ import {
   AlertTriangle,
   Boxes,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleOff,
+  Info,
   Loader2,
   PackageCheck,
   Play,
@@ -19,12 +21,11 @@ import { toast } from 'sonner'
 
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { PageHeader } from '@/components/common/PageHeader'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -37,6 +38,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 type LocationPair = { warehouse: string; location: string }
@@ -250,6 +252,8 @@ export default function ShopeeStock() {
   const [busy, setBusy] = useState('')
   const [preview, setPreview] = useState<Preview | null>(null)
   const [mapping, setMapping] = useState<ProductRow | null>(null)
+  const [catalogInfoOpen, setCatalogInfoOpen] = useState(false)
+  const [locationsOpen, setLocationsOpen] = useState(false)
   const sequence = useRef(0)
   const autoSelectedShops = useRef(new Set<number>())
 
@@ -268,6 +272,7 @@ export default function ShopeeStock() {
       setShopID(selected)
       const setting = normalizedData.settings.find((item) => item.shop_id === selected) ?? null
       setDraft(setting)
+      setLocationsOpen(!setting?.locations.length)
     } catch (error) {
       if (sequence.current === current) toast.error(errorText(error))
     } finally {
@@ -316,7 +321,8 @@ export default function ShopeeStock() {
       scope_mode: draft.scope_mode,
       locations: draft.locations,
     })
-    setDraft(response.data)
+    setDraft(normalizeStockSetting(response.data))
+    setLocationsOpen(false)
     toast.success('บันทึกการตั้งค่าสต๊อกแล้ว')
     await load(shopID)
   })
@@ -419,19 +425,34 @@ export default function ShopeeStock() {
         ? { title: 'ไม่มีรายการที่ต้องแก้', description: 'สินค้าที่ใช้งานอยู่พร้อมสำหรับขั้นตอน Dry-run แล้ว' }
         : tab === 'excluded'
           ? { title: 'ยังไม่มีสินค้าที่ถูกยกเว้น', description: 'สินค้าที่ไม่ต้องการซิงก์จะปรากฏในแท็บนี้' }
-          : { title: 'ยังไม่มีสินค้าในแท็บนี้', description: selectedSetting?.last_catalog_sync_at ? 'ลองตรวจแท็บอื่นหรืออัปเดต Catalog อีกครั้ง' : 'อัปเดต Catalog เพื่อดึงสินค้า Shopee และสินค้า SML' }
+          : { title: 'ยังไม่มีสินค้าในแท็บนี้', description: selectedSetting?.last_catalog_sync_at ? 'ลองตรวจแท็บอื่นหรืออัปเดตรายการสินค้าอีกครั้ง' : 'อัปเดตรายการสินค้าเพื่อดึงข้อมูลจาก Shopee และ SML' }
 
   if (loading && !data) {
     return <div className="flex min-h-[320px] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
   }
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
-      <PageHeader
-        title="ซิงก์สต๊อก Shopee"
-        description="คุมสต๊อก Shopee จากยอดพร้อมขายใน SML โดยกันสต๊อกส่วนหนึ่งไว้สำหรับหน้าร้าน"
-        actions={<Button variant="outline" onClick={() => load(shopID)} disabled={loading || !!busy}><RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />รีเฟรช</Button>}
-      />
+    <TooltipProvider delayDuration={150}>
+      <div className="space-y-3 p-3 sm:p-4">
+        <header className="flex items-start justify-between gap-3 sm:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold text-foreground">ซิงก์สต๊อก Shopee</h1>
+              <Badge variant="outline" className={cn('h-6', selectedSetting?.enabled ? 'border-success/50 bg-success/10 text-emerald-800 dark:text-emerald-200' : 'text-muted-foreground')}>
+                {selectedSetting?.enabled ? 'กำลังซิงก์อัตโนมัติ' : 'ยังไม่เปิดซิงก์'}
+              </Badge>
+            </div>
+            <p className="mt-0.5 text-sm text-muted-foreground">ส่งสต๊อกตามคลังที่เลือก โดยกันสินค้าไว้ขายหน้าร้านตามสัดส่วนที่กำหนด</p>
+          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="icon" onClick={() => load(shopID)} disabled={loading || !!busy} aria-label="รีเฟรชข้อมูลหน้านี้">
+                <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>รีเฟรชข้อมูลหน้านี้</TooltipContent>
+          </Tooltip>
+        </header>
 
       {!data?.available && (
         <Alert><CircleOff className="h-4 w-4" /><AlertTitle>ยังไม่เปิดใช้งานสำหรับร้านนี้</AlertTitle><AlertDescription>{data?.availability_text || 'ติดต่อผู้ดูแลระบบเพื่อเปิด Shopee Open API ผ่าน Central Gateway'}</AlertDescription></Alert>
@@ -441,36 +462,9 @@ export default function ShopeeStock() {
         <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>พบยอดในพื้นที่ว่างหรือไม่อยู่ใน master SML</AlertTitle><AlertDescription>รวม {formatNumber(data.diagnostics.length)} ตำแหน่ง ระบบจะไม่นำยอดเหล่านี้มาคำนวณ กรุณาแก้ master คลัง/พื้นที่ใน SML หากต้องการนำมาใช้</AlertDescription></Alert>
       ) : null}
 
-      <section className="rounded-md border bg-card px-4 py-3" aria-labelledby="stock-setup-steps">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 id="stock-setup-steps" className="text-sm font-semibold">เริ่มใช้งานตามลำดับ</h2>
-            <p className="text-xs text-muted-foreground">ระบบจะยังไม่ส่งยอดไป Shopee จนกว่าจะผ่าน Dry-run และเปิดซิงก์</p>
-          </div>
-          {productCounts.fix > 0 && (
-            <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => { setTab('fix'); setPage(1) }}>
-              เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})
-            </Button>
-          )}
-        </div>
-        <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {setupSteps.map((step, index) => (
-            <li key={step.label} className={cn('flex min-w-0 gap-3 sm:border-l sm:pl-3 first:sm:border-l-0 first:sm:pl-0', step.done ? 'text-foreground' : 'text-muted-foreground')}>
-              <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold', step.done && 'border-success bg-success/15 text-emerald-800 dark:text-emerald-200')}>
-                {step.done ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : index + 1}
-              </span>
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">{step.label}</p>
-                <p className="mt-0.5 text-xs">{step.detail}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <Card>
-        <CardContent className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-12 xl:items-end">
-          <div className="space-y-1.5 xl:col-span-3">
+      <section className="overflow-hidden rounded-md border bg-card" aria-label="ตั้งค่าและควบคุมการซิงก์สต๊อก">
+        <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 xl:grid-cols-[minmax(180px,1.4fr)_120px_minmax(170px,1fr)_minmax(230px,1.35fr)_auto] xl:items-end">
+          <div className="space-y-1.5">
             <Label htmlFor="shopee-stock-shop">ร้าน Shopee</Label>
             <Select
               value={shopID ? String(shopID) : undefined}
@@ -479,6 +473,7 @@ export default function ShopeeStock() {
                 setShopID(id)
                 setPage(1)
                 setPreview(null)
+                setLocationsOpen(false)
                 void load(id)
               }}
             >
@@ -494,32 +489,73 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 xl:col-span-2"><Label htmlFor="stock-pct">สัดส่วนส่ง Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอกตัวเลขระหว่าง 1-100</p>}</div>
-          <div className="space-y-1.5 xl:col-span-2">
-            <Label>ขอบเขตสต๊อก SML</Label>
+          <div className="space-y-1.5"><Label htmlFor="stock-pct">ส่งไป Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอก 1-100</p>}</div>
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium leading-none">ขอบเขตสต๊อก SML</p>
             <div className={cn('flex h-10 items-center rounded-md border px-3 text-sm', scopeReady ? 'border-success/50 bg-success/10 text-foreground' : 'text-muted-foreground')}>
               {scopeReady ? `เลือกแล้ว ${formatNumber(draft?.locations.length ?? 0)} พื้นที่` : 'เลือกคลัง / พื้นที่ด้านล่าง'}
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 md:col-span-2 xl:col-span-3"><div><p className="text-sm font-medium">ซิงก์อัตโนมัติทุก {formatInterval(draft?.interval_seconds)}</p><p className="text-xs text-muted-foreground">{draft?.dry_run_required ? 'ต้องผ่าน Dry-run ก่อนจึงจะเปิดได้' : 'ปิดแล้วไม่เปลี่ยนยอดที่อยู่ใน Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !scopeReady || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
-          <Button className="w-full md:justify-self-end xl:col-span-2" onClick={saveSettings} disabled={!draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
-        </CardContent>
-      </Card>
+          <div className="flex h-10 items-center justify-between gap-3 rounded-md border px-3"><div className="min-w-0"><p className="truncate text-sm font-medium">ซิงก์ทุก {formatInterval(draft?.interval_seconds)}</p><p className="truncate text-[11px] text-muted-foreground">{draft?.dry_run_required ? 'ต้องตรวจสต๊อกก่อนเปิด' : 'ปิดแล้วไม่เปลี่ยนยอด Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !scopeReady || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
+          <Button className="w-full sm:col-span-2 sm:w-auto sm:justify-self-end xl:col-span-1" onClick={saveSettings} disabled={!draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-3 py-2" aria-labelledby="stock-setup-steps">
+          <span id="stock-setup-steps" className="text-xs font-medium text-muted-foreground">สถานะ:</span>
+          {setupSteps.map((step) => (
+            <span key={step.label} className={cn('inline-flex min-w-0 items-center gap-1.5 text-xs', step.done ? 'text-foreground' : 'text-muted-foreground')} title={step.detail}>
+              {step.done ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" /> : <span className="h-2 w-2 shrink-0 rounded-full border" aria-hidden="true" />}
+              <span className="font-medium">{step.label}</span>
+              <span className="hidden text-muted-foreground xl:inline">{step.detail}</span>
+            </span>
+          ))}
+          {productCounts.fix > 0 && (
+            <Button type="button" variant="link" size="sm" className="ml-auto h-auto px-0 text-xs" onClick={() => { setTab('fix'); setPage(1) }}>
+              เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})
+            </Button>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center">
+              <Button variant="outline" size="sm" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังดึงข้อมูล...' : 'อัปเดตรายการสินค้า'}</Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCatalogInfoOpen(true)} aria-label="อัปเดตรายการสินค้าคืออะไร">
+                    <Info className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>อัปเดตรายการสินค้าคืออะไร</TooltipContent>
+              </Tooltip>
+            </div>
+            <Button variant="outline" size="sm" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจสต๊อก'}</Button>
+            <Button size="sm" onClick={syncNow} disabled={!!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
+          </div>
+          <span className="min-w-0 text-xs text-muted-foreground sm:max-w-[48%] sm:text-right xl:max-w-none">สินค้า {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ตรวจ {formatDateTime(selectedSetting?.last_preview_at)}{draft?.dry_run_required && selectedSetting?.last_preview_at ? ' (ต้องตรวจใหม่)' : ''} · ซิงก์ {formatDateTime(selectedSetting?.last_success_at)}</span>
+          {nextActionMessage && <p className="basis-full text-xs text-amber-800 dark:text-amber-200 sm:hidden"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
+        </div>
+        {nextActionMessage && <p className="hidden border-t px-3 py-1.5 text-xs text-amber-800 dark:text-amber-200 sm:block"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
+      </section>
 
       {draft && (
-        <section className="rounded-md border bg-card p-4">
-          <div className="mb-3"><h2 className="text-sm font-semibold">คลังและพื้นที่ที่นำมาคำนวณ</h2><p className="text-xs text-muted-foreground">เลือกอย่างน้อย 1 พื้นที่ ระบบจะแสดงยอดที่ถูกตัดออกใน dry-run</p></div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{warehouses.map((warehouse) => <div key={warehouse.code} className="rounded-md border p-3"><p className="mb-2 text-sm font-medium">{warehouse.code} · {warehouse.name}</p><div className="space-y-2">{warehouse.locations.map((location) => { const checked = draft.locations.some((item) => locationKey(item) === locationKey({ warehouse: location.warehouse_code, location: location.location_code })); return <label key={`${location.warehouse_code}:${location.location_code}`} className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={checked} onCheckedChange={(value) => toggleLocation(location, value === true)} /><span>{location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}</span></label> })}</div></div>)}</div>
-        </section>
+        <Collapsible open={locationsOpen} onOpenChange={setLocationsOpen}>
+          <section className="overflow-hidden rounded-md border bg-card">
+            <CollapsibleTrigger asChild>
+              <button type="button" className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted/40">
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold">คลังและพื้นที่ที่นำมาคำนวณ</h2>
+                  <p className="text-xs text-muted-foreground">{scopeReady ? `เลือกแล้ว ${formatNumber(draft.locations.length)} พื้นที่` : 'ต้องเลือกอย่างน้อย 1 พื้นที่ก่อนตรวจสต๊อก'}</p>
+                </div>
+                <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', locationsOpen && 'rotate-180')} aria-hidden="true" />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-3">{warehouses.map((warehouse) => <div key={warehouse.code} className="rounded-md border p-3"><p className="mb-2 text-sm font-medium">{warehouse.code} · {warehouse.name}</p><div className="space-y-2">{warehouse.locations.map((location) => { const checked = draft.locations.some((item) => locationKey(item) === locationKey({ warehouse: location.warehouse_code, location: location.location_code })); return <label key={`${location.warehouse_code}:${location.location_code}`} className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={checked} onCheckedChange={(value) => toggleLocation(location, value === true)} /><span>{location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}</span></label> })}</div></div>)}</div>
+            </CollapsibleContent>
+          </section>
+        </Collapsible>
       )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังดึงสินค้า...' : 'อัปเดต Catalog'}</Button>
-        <Button variant="outline" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจสต๊อก'}</Button>
-        <Button onClick={syncNow} disabled={!!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
-        <span className="text-xs text-muted-foreground">Catalog ล่าสุด {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ตรวจสต๊อกล่าสุด {formatDateTime(selectedSetting?.last_preview_at)}{draft?.dry_run_required && selectedSetting?.last_preview_at ? ' (ต้องตรวจใหม่)' : ''} · ซิงก์สำเร็จล่าสุด {formatDateTime(selectedSetting?.last_success_at)}</span>
-        {nextActionMessage && <p className="basis-full text-xs text-amber-800 dark:text-amber-200"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
-      </div>
 
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ระบบหยุดร้านนี้เพื่อความปลอดภัย</AlertTitle><AlertDescription>{draft.paused_reason}{draft.last_error ? ` · ${draft.last_error}` : ''}</AlertDescription></Alert>}
       {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? 'ระบบหยุดทั้งร้านเพื่อความปลอดภัย' : preview.blocked_count ? `พร้อมเปิดซิงก์ โดยเว้น ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'Dry-run ผ่านแล้ว'}</AlertTitle><AlertDescription>ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)} · ยอดนอกขอบเขต {formatNumber(preview.excluded_balance)}{preview.circuit_breaker && ` · ${preview.circuit_breaker}`}</AlertDescription></Alert>}
@@ -566,7 +602,7 @@ export default function ShopeeStock() {
                 ) : tab === 'ready' && productCounts.fix > 0 ? (
                   <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setTab('fix'); setPage(1) }}>เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})</Button>
                 ) : !selectedSetting?.last_catalog_sync_at ? (
-                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดต Catalog</Button>
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดตรายการสินค้า</Button>
                 ) : null}
               </div>
             )}
@@ -576,7 +612,9 @@ export default function ShopeeStock() {
       </section>
 
       <MappingDialog product={mapping} shopID={shopID} onClose={() => setMapping(null)} onSaved={async () => { setMapping(null); setPreview(null); await load(shopID) }} />
-    </div>
+      <CatalogInfoDialog open={catalogInfoOpen} onOpenChange={setCatalogInfoOpen} />
+      </div>
+    </TooltipProvider>
   )
 }
 
@@ -621,7 +659,38 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
 
 function HistoryList({ runs }: { runs: SyncRun[] }) {
   if (!runs.length) return <div className="px-4 py-12 text-center text-sm text-muted-foreground">ยังไม่มีประวัติ</div>
-  return <div className="divide-y">{runs.map((run) => <div key={run.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[140px_1fr_auto] sm:items-center"><div><Badge variant="outline">{run.run_type === 'catalog' ? 'Catalog' : run.run_type === 'preview' ? 'Dry-run' : 'Sync'}</Badge><p className="mt-1 text-xs text-muted-foreground">{formatDateTime(run.started_at)}</p></div><div className="text-sm">ตรวจ {formatNumber(run.total_count)} · เปลี่ยน {formatNumber(run.changed_count)} · block {formatNumber(run.blocked_count)} · error {formatNumber(run.error_count)}{run.error_message && <p className="mt-1 text-xs text-destructive">{run.error_message}</p>}</div><Badge variant={run.status === 'success' ? 'default' : 'outline'}>{run.status}</Badge></div>)}</div>
+  return <div className="divide-y">{runs.map((run) => <div key={run.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[140px_1fr_auto] sm:items-center"><div><Badge variant="outline">{run.run_type === 'catalog' ? 'รายการสินค้า' : run.run_type === 'preview' ? 'Dry-run' : 'Sync'}</Badge><p className="mt-1 text-xs text-muted-foreground">{formatDateTime(run.started_at)}</p></div><div className="text-sm">ตรวจ {formatNumber(run.total_count)} · เปลี่ยน {formatNumber(run.changed_count)} · block {formatNumber(run.blocked_count)} · error {formatNumber(run.error_count)}{run.error_message && <p className="mt-1 text-xs text-destructive">{run.error_message}</p>}</div><Badge variant={run.status === 'success' ? 'default' : 'outline'}>{run.status}</Badge></div>)}</div>
+}
+
+function CatalogInfoDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>อัปเดตรายการสินค้าคืออะไร</DialogTitle>
+          <DialogDescription>ดึงข้อมูลล่าสุดมาไว้ใน Nexflow เพื่อเตรียมตรวจและจับคู่สินค้า</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div>
+            <p className="font-medium text-foreground">ข้อมูลที่ระบบอัปเดต</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5 text-muted-foreground">
+              <li>สินค้า ตัวเลือก SKU และสต๊อกปัจจุบันจาก Shopee</li>
+              <li>รหัสสินค้า บาร์โค้ด และหน่วยนับจาก SML</li>
+              <li>สถานะการจับคู่ เพื่อแยกรายการพร้อมซิงก์และรายการที่ต้องแก้</li>
+            </ul>
+          </div>
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertTitle>ขั้นตอนนี้ยังไม่แก้สต๊อก</AlertTitle>
+            <AlertDescription>ระบบจะไม่สร้างสินค้า ไม่แก้ข้อมูลใน SML และไม่ส่งยอดไป Shopee จนกว่าจะตรวจสต๊อกและกดซิงก์</AlertDescription>
+          </Alert>
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={() => onOpenChange(false)}>เข้าใจแล้ว</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function MappingDialog({ product, shopID, onClose, onSaved }: { product: ProductRow | null; shopID: number; onClose: () => void; onSaved: () => Promise<void> }) {
