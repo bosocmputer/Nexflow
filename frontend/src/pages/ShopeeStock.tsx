@@ -402,7 +402,7 @@ export default function ShopeeStock() {
     },
   ]
   const nextActionMessage = previewDisabledReason || (draft?.dry_run_required
-    ? 'กด “บันทึกและตรวจ Dry-run” เพื่อคำนวณเป้าหมายโดยยังไม่ส่งไป Shopee'
+    ? 'กด “บันทึกและตรวจสต๊อก” เพื่อคำนวณยอด SML และเป้าหมายโดยยังไม่ส่งไป Shopee'
     : syncDisabledReason)
   const emptyState = search
     ? { title: `ไม่พบรายการที่ตรงกับ “${search}”`, description: 'ลองค้นหาด้วย SKU รหัสสินค้า หรือชื่อที่สั้นลง' }
@@ -530,9 +530,9 @@ export default function ShopeeStock() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังดึงสินค้า...' : 'อัปเดต Catalog'}</Button>
-        <Button variant="outline" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจ Dry-run'}</Button>
+        <Button variant="outline" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจสต๊อก'}</Button>
         <Button onClick={syncNow} disabled={!!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
-        <span className="text-xs text-muted-foreground">Catalog ล่าสุด {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ซิงก์สำเร็จล่าสุด {formatDateTime(selectedSetting?.last_success_at)}</span>
+        <span className="text-xs text-muted-foreground">Catalog ล่าสุด {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ตรวจสต๊อกล่าสุด {formatDateTime(selectedSetting?.last_preview_at)}{draft?.dry_run_required && selectedSetting?.last_preview_at ? ' (ต้องตรวจใหม่)' : ''} · ซิงก์สำเร็จล่าสุด {formatDateTime(selectedSetting?.last_success_at)}</span>
         {nextActionMessage && <p className="basis-full text-xs text-amber-800 dark:text-amber-200"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
       </div>
 
@@ -560,7 +560,16 @@ export default function ShopeeStock() {
 
         {tab === 'history' ? <HistoryList runs={data?.runs ?? []} /> : (
           <>
-            <div className="hidden grid-cols-[minmax(240px,1.4fr)_minmax(220px,1.2fr)_90px_90px_120px] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid"><span>สินค้า Shopee</span><span>สินค้าและยอด SML</span><span className="text-right">Shopee ตั้งไว้</span><span className="text-right">เป้าหมาย</span><span /></div>
+            <div className="hidden grid-cols-[minmax(220px,1.35fr)_minmax(170px,1fr)_minmax(270px,auto)_110px] gap-3 border-b bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid">
+              <span>สินค้า Shopee</span>
+              <span>สินค้าที่จับคู่ใน SML</span>
+              <div className="grid grid-cols-3 gap-3 text-right">
+                <span>คงเหลือ SML</span>
+                <span>Shopee ตอนนี้</span>
+                <span>จะส่ง Shopee</span>
+              </div>
+              <span />
+            </div>
             <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} />)}</div>
             {!data?.products.length && (
               <div className="flex flex-col items-center px-4 py-10 text-center">
@@ -590,7 +599,39 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
   const itemName = productItemName(product)
   const optionName = productOptionName(product)
-  return <div className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(240px,1.4fr)_minmax(220px,1.2fr)_90px_90px_120px] lg:items-center"><div className="min-w-0"><p className="truncate text-sm font-medium" title={itemName}>{itemName}</p>{optionName && <p className="mt-0.5 truncate text-xs text-foreground/80" title={optionName}><span className="text-muted-foreground">ตัวเลือก:</span> {optionName}</p>}<p className="mt-0.5 truncate text-xs text-muted-foreground">SKU {sku} · Item {product.item_id}{product.model_id ? ` / Model ${product.model_id}` : ''}</p>{product.warning_codes.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}</div><div className="min-w-0"><p className="truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p><p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${product.sml_unit_code} · 1 หน่วยขาย = ${formatNumber(product.unit_factor)} หน่วยเล็ก${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>{product.last_preview_balance != null && <p className="mt-1 text-xs text-muted-foreground">คงเหลือ {formatNumber(product.last_preview_balance)} · ขั้นต่ำ {formatNumber(product.last_preview_min_qty)} · สูงสุด {formatNumber(product.last_preview_max_qty)}{product.last_preview_excluded_balance ? ` · นอกขอบเขต ${formatNumber(product.last_preview_excluded_balance)}` : ''}</p>}</div><div className="text-left lg:text-right"><span className="text-xs text-muted-foreground lg:hidden">Shopee ตั้งไว้ </span><span className="font-mono text-sm">{formatNumber(product.shopee_available)}</span>{product.shopee_reserved > 0 && <p className="text-xs text-warning">จอง {formatNumber(product.shopee_reserved)}</p>}</div><div className="text-left lg:text-right"><span className="text-xs text-muted-foreground lg:hidden">เป้าหมาย </span><span className="font-mono text-sm">{product.last_preview_target == null ? '-' : formatNumber(product.last_preview_target)}</span></div><Button variant="outline" size="sm" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button></div>
+  return (
+    <div className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(220px,1.35fr)_minmax(170px,1fr)_minmax(270px,auto)_110px] lg:items-center">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium" title={itemName}>{itemName}</p>
+        {optionName && <p className="mt-0.5 truncate text-xs text-foreground/80" title={optionName}><span className="text-muted-foreground">ตัวเลือก:</span> {optionName}</p>}
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">SKU {sku} · Item {product.item_id}{product.model_id ? ` / Model ${product.model_id}` : ''}</p>
+        {product.warning_codes.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p>
+        <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${product.sml_unit_code} · 1 หน่วยขาย = ${formatNumber(product.unit_factor)} หน่วยเล็ก${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
+      </div>
+      <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
+        <div className="min-w-0 text-left lg:text-right">
+          <p className="text-[11px] text-muted-foreground lg:hidden">คงเหลือ SML</p>
+          <p className="font-mono text-sm font-medium">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</p>
+          {product.last_preview_balance != null && <p className="text-[11px] text-muted-foreground">หน่วยเล็ก</p>}
+          {!!product.last_preview_excluded_balance && <p className="text-[11px] text-warning">นอกขอบเขต {formatNumber(product.last_preview_excluded_balance)}</p>}
+        </div>
+        <div className="min-w-0 text-left lg:text-right">
+          <p className="text-[11px] text-muted-foreground lg:hidden">Shopee ตอนนี้</p>
+          <p className="font-mono text-sm font-medium">{formatNumber(product.shopee_available)}</p>
+          {product.shopee_reserved > 0 && <p className="text-[11px] text-warning">จอง {formatNumber(product.shopee_reserved)}</p>}
+        </div>
+        <div className="min-w-0 text-left lg:text-right">
+          <p className="text-[11px] text-muted-foreground lg:hidden">จะส่ง Shopee</p>
+          <p className="font-mono text-sm font-medium">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</p>
+          {product.last_preview_target != null && <p className="text-[11px] text-muted-foreground">หน่วยขาย</p>}
+        </div>
+      </div>
+      <Button variant="outline" size="sm" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>
+    </div>
+  )
 }
 
 function HistoryList({ runs }: { runs: SyncRun[] }) {
