@@ -49,7 +49,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–075** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–076** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -74,6 +74,7 @@ Key recent migrations:
 | 073 | sales-only mode, disabled embeddings, verified mappings, active aliases, catalog search indexes |
 | 074 | SML warehouse stock catalog, Shopee stock mappings/settings, dry-run/sync history, DB leases |
 | 075 | Require explicit SML warehouse/location selection for Shopee stock sync |
+| 076 | Require exactly one SML warehouse/location pair per Shopee stock setting |
 
 ---
 

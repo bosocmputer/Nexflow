@@ -22,7 +22,7 @@ import (
 var (
 	ErrUnavailable      = errors.New("ระบบซิงก์สต๊อก Shopee ยังไม่พร้อมใช้งาน")
 	ErrGatewayOnly      = errors.New("ซิงก์สต๊อก v1 รองรับเฉพาะ Central Shopee Gateway")
-	ErrScopeRequired    = errors.New("กรุณาเลือกคลังและพื้นที่เก็บอย่างน้อย 1 รายการ")
+	ErrScopeRequired    = errors.New("กรุณาเลือก 1 คลังและ 1 พื้นที่เก็บ")
 	ErrSelectedLocation = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
 	ErrSyncInProgress   = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
 )
@@ -430,7 +430,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if settings.CredentialMode != "gateway" {
 		return nil, ErrGatewayOnly
 	}
-	if settings.ScopeMode != "selected" || len(settings.Locations) == 0 {
+	if settings.ScopeMode != "selected" || len(settings.Locations) != 1 {
 		return nil, ErrScopeRequired
 	}
 	runID, err := s.store.CreateRun(ctx, shopID, runType, trigger, asOfDate)
@@ -777,7 +777,7 @@ func normalizeSelectedScope(request SettingsUpdate) (SettingsUpdate, error) {
 	request.ScopeMode = strings.ToLower(strings.TrimSpace(request.ScopeMode))
 	request.Locations = normalizeLocations(request.Locations)
 	request.AcknowledgeAllScopeWarnings = false
-	if request.ScopeMode != "selected" || len(request.Locations) == 0 {
+	if request.ScopeMode != "selected" || len(request.Locations) != 1 {
 		return request, ErrScopeRequired
 	}
 	return request, nil

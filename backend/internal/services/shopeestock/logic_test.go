@@ -51,6 +51,7 @@ func TestNormalizeSelectedScopeRequiresWarehouseAndLocation(t *testing.T) {
 		{name: "legacy all", request: SettingsUpdate{ScopeMode: "all", Locations: []LocationPair{{Warehouse: "W1", Location: "S1"}}}, wantError: true},
 		{name: "selected without location", request: SettingsUpdate{ScopeMode: "selected"}, wantError: true},
 		{name: "selected with blank location", request: SettingsUpdate{ScopeMode: "selected", Locations: []LocationPair{{Warehouse: "W1"}}}, wantError: true},
+		{name: "selected with multiple locations", request: SettingsUpdate{ScopeMode: "selected", Locations: []LocationPair{{Warehouse: "W1", Location: "S1"}, {Warehouse: "W1", Location: "S2"}}}, wantError: true},
 		{name: "selected", request: SettingsUpdate{ScopeMode: " SELECTED ", Locations: []LocationPair{{Warehouse: " W1 ", Location: " S1 "}, {Warehouse: "W1", Location: "S1"}}, AcknowledgeAllScopeWarnings: true}},
 	}
 

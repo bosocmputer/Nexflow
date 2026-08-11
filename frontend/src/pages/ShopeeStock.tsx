@@ -24,7 +24,6 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -240,7 +239,7 @@ function sameSettings(left: StockSetting | null, right?: StockSetting) {
 }
 
 function normalizeStockSetting(setting: StockSetting): StockSetting {
-  const locations = setting.scope_mode === 'selected' ? [...setting.locations] : []
+  const locations = setting.scope_mode === 'selected' && setting.locations.length === 1 ? [setting.locations[0]] : []
   return {
     ...setting,
     enabled: locations.length > 0 ? setting.enabled : false,
@@ -264,6 +263,7 @@ export default function ShopeeStock() {
   const [mapping, setMapping] = useState<ProductRow | null>(null)
   const [catalogInfoOpen, setCatalogInfoOpen] = useState(false)
   const [locationsOpen, setLocationsOpen] = useState(false)
+  const [warehouseCode, setWarehouseCode] = useState('')
   const sequence = useRef(0)
   const autoSelectedShops = useRef(new Set<number>())
 
@@ -282,6 +282,7 @@ export default function ShopeeStock() {
       setShopID(selected)
       const setting = normalizedData.settings.find((item) => item.shop_id === selected) ?? null
       setDraft(setting)
+      setWarehouseCode(setting?.locations[0]?.warehouse ?? '')
       setLocationsOpen(!setting?.locations.length)
     } catch (error) {
       if (sequence.current === current) toast.error(errorText(error))
@@ -306,7 +307,10 @@ export default function ShopeeStock() {
   const productNames = useMemo(() => new Map((data?.products ?? []).map((product) => [`${product.item_id}:${product.model_id}`, productDisplayName(product)])), [data?.products])
   const productCounts = data?.product_counts ?? { ready: 0, fix: 0, excluded: 0 }
   const stockPctValid = !!draft && Number.isFinite(draft.stock_pct) && draft.stock_pct >= 1 && draft.stock_pct <= 100
-  const scopeReady = !!draft && draft.scope_mode === 'selected' && draft.locations.length > 0
+  const scopeReady = !!draft && draft.scope_mode === 'selected' && draft.locations.length === 1
+  const selectedWarehouse = warehouses.find((warehouse) => warehouse.code === warehouseCode)
+  const selectedPair = draft?.locations[0]
+  const scopeSummary = scopeReady && selectedPair ? `${selectedPair.warehouse} · ${selectedPair.location}` : ''
   const settingsDirty = !sameSettings(draft, selectedSetting)
 
   useEffect(() => {
@@ -365,15 +369,27 @@ export default function ShopeeStock() {
     await load(shopID)
   })
 
-  const toggleLocation = (location: StockLocation, checked: boolean) => {
+  const selectWarehouse = (value: string) => {
     if (!draft) return
-    const pair = { warehouse: location.warehouse_code, location: location.location_code }
-    const key = locationKey(pair)
-    const next = checked ? [...draft.locations.filter((item) => locationKey(item) !== key), pair] : draft.locations.filter((item) => locationKey(item) !== key)
+    setWarehouseCode(value)
+    const current = draft.locations[0]
+    const next = current?.warehouse === value ? [current] : []
     setDraft({
       ...draft,
       scope_mode: next.length > 0 ? 'selected' : 'unconfigured',
       locations: next,
+      all_scope_warning_acknowledged: false,
+      enabled: false,
+      dry_run_required: true,
+    })
+  }
+
+  const selectLocation = (locationCode: string) => {
+    if (!draft || !warehouseCode) return
+    setDraft({
+      ...draft,
+      scope_mode: 'selected',
+      locations: [{ warehouse: warehouseCode, location: locationCode }],
       all_scope_warning_acknowledged: false,
       enabled: false,
       dry_run_required: true,
@@ -387,7 +403,7 @@ export default function ShopeeStock() {
       : !stockPctValid
         ? 'กำหนดสัดส่วนส่ง Shopee ระหว่าง 1-100%'
         : !scopeReady
-          ? 'เลือกคลังหรือพื้นที่อย่างน้อย 1 รายการ'
+          ? 'เลือก 1 คลังและ 1 พื้นที่เก็บ'
           : ''
   const syncDisabledReason = !draft?.enabled
     ? 'เปิดซิงก์อัตโนมัติและบันทึกก่อนใช้ปุ่มนี้'
@@ -397,9 +413,7 @@ export default function ShopeeStock() {
   const setupSteps = [
     {
       label: 'เลือกขอบเขตสต๊อก',
-      detail: draft?.scope_mode === 'selected' && draft.locations.length
-          ? `เลือกแล้ว ${formatNumber(draft.locations.length)} พื้นที่`
-          : 'ยังไม่ได้เลือกคลังหรือพื้นที่',
+      detail: scopeReady ? scopeSummary : 'ยังไม่ได้เลือกคลังและพื้นที่เก็บ',
       done: scopeReady,
     },
     {
@@ -503,7 +517,7 @@ export default function ShopeeStock() {
           <div className="space-y-1.5">
             <Label>ขอบเขตสต๊อก SML</Label>
             <div className={cn('flex h-10 items-center rounded-md border px-3 text-sm', scopeReady ? 'border-success/50 bg-success/10 text-foreground' : 'text-muted-foreground')}>
-              {scopeReady ? `เลือกแล้ว ${formatNumber(draft?.locations.length ?? 0)} พื้นที่` : 'เลือกคลัง / พื้นที่ด้านล่าง'}
+              {scopeReady ? scopeSummary : 'เลือก 1 คลัง / 1 พื้นที่ด้านล่าง'}
             </div>
           </div>
           <div className="flex h-10 items-center justify-between gap-3 rounded-md border px-3"><div className="min-w-0"><p className="truncate text-sm font-medium">ซิงก์ทุก {formatInterval(draft?.interval_seconds)}</p><p className="truncate text-[11px] text-muted-foreground">{draft?.dry_run_required ? 'ต้องตรวจสต๊อกก่อนเปิด' : 'ปิดแล้วไม่เปลี่ยนยอด Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !scopeReady || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
@@ -555,13 +569,33 @@ export default function ShopeeStock() {
               <button type="button" className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted/40">
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold">คลังและพื้นที่ที่นำมาคำนวณ</h2>
-                  <p className="text-xs text-muted-foreground">{scopeReady ? `เลือกแล้ว ${formatNumber(draft.locations.length)} พื้นที่` : 'ต้องเลือกอย่างน้อย 1 พื้นที่ก่อนตรวจสต๊อก'}</p>
+                  <p className="text-xs text-muted-foreground">{scopeReady ? `เลือกแล้ว ${scopeSummary}` : 'ต้องเลือก 1 คลังและ 1 พื้นที่เก็บก่อนตรวจสต๊อก'}</p>
                 </div>
                 <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', locationsOpen && 'rotate-180')} aria-hidden="true" />
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="grid gap-3 border-t p-3 sm:grid-cols-2 xl:grid-cols-3">{warehouses.map((warehouse) => <div key={warehouse.code} className="rounded-md border p-3"><p className="mb-2 text-sm font-medium">{warehouse.code} · {warehouse.name}</p><div className="space-y-2">{warehouse.locations.map((location) => { const checked = draft.locations.some((item) => locationKey(item) === locationKey({ warehouse: location.warehouse_code, location: location.location_code })); return <label key={`${location.warehouse_code}:${location.location_code}`} className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={checked} onCheckedChange={(value) => toggleLocation(location, value === true)} /><span>{location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}</span></label> })}</div></div>)}</div>
+              <div className="grid gap-3 border-t p-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="shopee-stock-warehouse">คลัง SML</Label>
+                  <Select value={warehouseCode || undefined} onValueChange={selectWarehouse}>
+                    <SelectTrigger id="shopee-stock-warehouse" className="h-10"><SelectValue placeholder="เลือกคลัง" /></SelectTrigger>
+                    <SelectContent>
+                      {warehouses.map((warehouse) => <SelectItem key={warehouse.code} value={warehouse.code}>{warehouse.code} · {warehouse.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="shopee-stock-location">พื้นที่เก็บ</Label>
+                  <Select value={selectedPair?.location || undefined} onValueChange={selectLocation} disabled={!selectedWarehouse}>
+                    <SelectTrigger id="shopee-stock-location" className="h-10"><SelectValue placeholder={selectedWarehouse ? 'เลือกพื้นที่เก็บ' : 'เลือกคลังก่อน'} /></SelectTrigger>
+                    <SelectContent>
+                      {(selectedWarehouse?.locations ?? []).map((location) => <SelectItem key={location.location_code} value={location.location_code}>{location.location_code} · {location.location_name || 'ไม่ระบุชื่อ'}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-xs text-muted-foreground sm:col-span-2">ระบบคำนวณและส่งสต๊อกจากคลังและพื้นที่เก็บคู่นี้เท่านั้น การเปลี่ยนค่าจะปิดซิงก์และต้องตรวจ Dry-run ใหม่</p>
+              </div>
             </CollapsibleContent>
           </section>
         </Collapsible>
