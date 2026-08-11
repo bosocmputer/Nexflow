@@ -176,6 +176,8 @@ export function BillItemsTable({
                   key={item.id}
                   item={item}
                   billId={bill.id}
+                  source={bill.source}
+                  sourceAccountKey={bill.source_account_key ?? 'default'}
                   editable={canEdit}
                   onUpdated={onItemUpdated}
                   onDeleted={onItemDeleted}

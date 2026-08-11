@@ -75,6 +75,7 @@ Key recent migrations:
 | 074 | SML warehouse stock catalog, Shopee stock mappings/settings, dry-run/sync history, DB leases |
 | 075 | Require explicit SML warehouse/location selection for Shopee stock sync |
 | 076 | Require exactly one SML warehouse/location pair per Shopee stock setting |
+| 077 | scoped Marketplace Product Master, bill item identities, stock mapping links, impact indexes |
 
 ---
 

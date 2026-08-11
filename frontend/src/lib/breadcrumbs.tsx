@@ -50,15 +50,15 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     pattern: '/messages',
     crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'ข้อความลูกค้า' }],
   },
-  { pattern: '/mappings', crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'ตารางจับคู่สินค้า' }] },
+  { pattern: '/mappings', crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'จับคู่สินค้า Marketplace' }] },
   {
     pattern: '/marketplace-aliases',
-    crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'การจับคู่สินค้า' }],
+    crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'จับคู่สินค้า Marketplace' }],
   },
   { pattern: '/settings', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ตั้งค่าทั่วไป' }] },
   {
     pattern: '/settings/catalog',
-    crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'สินค้าใน SML' }],
+    crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'รายการสินค้า SML' }],
   },
   {
     pattern: '/settings/channels',
@@ -70,7 +70,7 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   },
   {
     pattern: '/settings/shopee-stock',
-    crumbs: [{ label: 'สินค้าและการจับคู่' }, { label: 'ซิงก์สต๊อก Shopee' }],
+    crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'ซิงก์สต๊อก Shopee' }],
   },
   {
     pattern: '/settings/instance',

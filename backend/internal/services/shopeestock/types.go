@@ -49,33 +49,35 @@ type LocationDiagnostic struct {
 }
 
 type ProductRow struct {
-	ShopID                     int64     `json:"shop_id"`
-	ItemID                     int64     `json:"item_id"`
-	ModelID                    int64     `json:"model_id"`
-	ItemName                   string    `json:"item_name"`
-	ModelName                  string    `json:"model_name"`
-	ItemSKU                    string    `json:"item_sku"`
-	ModelSKU                   string    `json:"model_sku"`
-	ShopeeAvailable            int64     `json:"shopee_available"`
-	ShopeeReserved             int64     `json:"shopee_reserved"`
-	SMLItemCode                string    `json:"sml_item_code"`
-	SMLItemName                string    `json:"sml_item_name"`
-	SMLUnitCode                string    `json:"sml_unit_code"`
-	SMLUnitName                string    `json:"sml_unit_name"`
-	SMLBaseUnitCode            string    `json:"sml_base_unit_code"`
-	SMLBaseUnitName            string    `json:"sml_base_unit_name"`
-	UnitFactor                 float64   `json:"unit_factor"`
-	ManualUnitFactor           *float64  `json:"manual_unit_factor,omitempty"`
-	MatchSource                string    `json:"match_source"`
-	Excluded                   bool      `json:"excluded"`
-	WarningCodes               []string  `json:"warning_codes"`
-	LastPreviewBalance         *float64  `json:"last_preview_balance,omitempty"`
-	LastPreviewExcludedBalance *float64  `json:"last_preview_excluded_balance,omitempty"`
-	LastPreviewMinQty          *float64  `json:"last_preview_min_qty,omitempty"`
-	LastPreviewMaxQty          *float64  `json:"last_preview_max_qty,omitempty"`
-	LastPreviewTarget          *int64    `json:"last_preview_target,omitempty"`
-	LastSuccessTarget          *int64    `json:"last_success_target,omitempty"`
-	UpdatedAt                  time.Time `json:"updated_at"`
+	ShopID                     int64      `json:"shop_id"`
+	ItemID                     int64      `json:"item_id"`
+	ModelID                    int64      `json:"model_id"`
+	ItemName                   string     `json:"item_name"`
+	ModelName                  string     `json:"model_name"`
+	ItemSKU                    string     `json:"item_sku"`
+	ModelSKU                   string     `json:"model_sku"`
+	ShopeeAvailable            int64      `json:"shopee_available"`
+	ShopeeReserved             int64      `json:"shopee_reserved"`
+	SMLItemCode                string     `json:"sml_item_code"`
+	SMLItemName                string     `json:"sml_item_name"`
+	SMLUnitCode                string     `json:"sml_unit_code"`
+	SMLUnitName                string     `json:"sml_unit_name"`
+	SMLBaseUnitCode            string     `json:"sml_base_unit_code"`
+	SMLBaseUnitName            string     `json:"sml_base_unit_name"`
+	UnitFactor                 float64    `json:"unit_factor"`
+	ManualUnitFactor           *float64   `json:"manual_unit_factor,omitempty"`
+	MatchSource                string     `json:"match_source"`
+	MarketplaceAliasID         string     `json:"marketplace_alias_id,omitempty"`
+	MarketplaceAliasUpdatedAt  *time.Time `json:"marketplace_alias_updated_at,omitempty"`
+	Excluded                   bool       `json:"excluded"`
+	WarningCodes               []string   `json:"warning_codes"`
+	LastPreviewBalance         *float64   `json:"last_preview_balance,omitempty"`
+	LastPreviewExcludedBalance *float64   `json:"last_preview_excluded_balance,omitempty"`
+	LastPreviewMinQty          *float64   `json:"last_preview_min_qty,omitempty"`
+	LastPreviewMaxQty          *float64   `json:"last_preview_max_qty,omitempty"`
+	LastPreviewTarget          *int64     `json:"last_preview_target,omitempty"`
+	LastSuccessTarget          *int64     `json:"last_success_target,omitempty"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
 }
 
 type ProductCounts struct {
@@ -126,11 +128,13 @@ type ProductFilter struct {
 }
 
 type MappingUpdate struct {
-	SMLItemCode      string    `json:"sml_item_code"`
-	SMLUnitCode      string    `json:"sml_unit_code"`
-	ManualUnitFactor *float64  `json:"manual_unit_factor,omitempty"`
-	Excluded         bool      `json:"excluded"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	SMLItemCode               string     `json:"sml_item_code"`
+	SMLUnitCode               string     `json:"sml_unit_code"`
+	ManualUnitFactor          *float64   `json:"manual_unit_factor,omitempty"`
+	Excluded                  bool       `json:"excluded"`
+	UpdatedAt                 time.Time  `json:"updated_at"`
+	MarketplaceAliasID        string     `json:"marketplace_alias_id,omitempty"`
+	MarketplaceAliasUpdatedAt *time.Time `json:"marketplace_alias_updated_at,omitempty"`
 }
 
 type CatalogDue struct {

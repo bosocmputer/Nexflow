@@ -5,37 +5,66 @@ import "time"
 // MarketplaceItemAlias maps a marketplace raw_name / source_sku to an SML item_code.
 // One row per (source, source_sku) or (source, normalized_key).
 type MarketplaceItemAlias struct {
-	ID            string     `json:"id"`
-	Source        string     `json:"source"`
-	SourceSKU     string     `json:"source_sku"`
-	RawName       string     `json:"raw_name"`
-	NormalizedKey string     `json:"normalized_key"`
-	ItemCode      string     `json:"item_code"`
-	UnitCode      string     `json:"unit_code"`
-	Confidence    float64    `json:"confidence"`
-	ConfirmedBy   *string    `json:"confirmed_by,omitempty"`
-	UsageCount    int        `json:"usage_count"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	IsActive      bool       `json:"is_active"`
-	ItemName      string     `json:"item_name,omitempty"`
-	ConfirmedName string     `json:"confirmed_name,omitempty"`
-	ProductActive bool       `json:"product_active"`
-	OpenItemCount int        `json:"open_item_count"`
+	ID                string     `json:"id"`
+	Source            string     `json:"source"`
+	AccountKey        string     `json:"account_key"`
+	AccountName       string     `json:"account_name,omitempty"`
+	ExternalItemID    string     `json:"external_item_id"`
+	ExternalVariantID string     `json:"external_variant_id"`
+	SourceSKU         string     `json:"source_sku"`
+	RawName           string     `json:"raw_name"`
+	NormalizedKey     string     `json:"normalized_key"`
+	ItemCode          string     `json:"item_code"`
+	UnitCode          string     `json:"unit_code"`
+	Confidence        float64    `json:"confidence"`
+	ConfirmedBy       *string    `json:"confirmed_by,omitempty"`
+	UsageCount        int        `json:"usage_count"`
+	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	IsActive          bool       `json:"is_active"`
+	MatchMethod       string     `json:"match_method"`
+	ScopeConfirmed    bool       `json:"scope_confirmed"`
+	ItemName          string     `json:"item_name,omitempty"`
+	ConfirmedName     string     `json:"confirmed_name,omitempty"`
+	ProductActive     bool       `json:"product_active"`
+	OpenItemCount     int        `json:"open_item_count"`
+	StockMappingCount int        `json:"stock_mapping_count"`
 }
 
 // MarketplaceAliasReviewGroup groups unmatched bill items by their normalized key
 // for bulk review in the admin UI.
 type MarketplaceAliasReviewGroup struct {
-	GroupKey      string `json:"group_key"`
-	Source        string `json:"source"`
-	BillType      string `json:"bill_type"`
-	SourceSKU     string `json:"source_sku"`
-	RawName       string `json:"raw_name"`
-	NormalizedKey string `json:"normalized_key"`
-	ItemCount     int    `json:"item_count"`
-	BillCount     int    `json:"bill_count"`
+	GroupKey          string `json:"group_key"`
+	Source            string `json:"source"`
+	AccountKey        string `json:"account_key"`
+	AccountName       string `json:"account_name,omitempty"`
+	ExternalItemID    string `json:"external_item_id"`
+	ExternalVariantID string `json:"external_variant_id"`
+	BillType          string `json:"bill_type"`
+	SourceSKU         string `json:"source_sku"`
+	RawName           string `json:"raw_name"`
+	NormalizedKey     string `json:"normalized_key"`
+	ItemCount         int    `json:"item_count"`
+	BillCount         int    `json:"bill_count"`
+}
+
+type MarketplaceAliasIdentity struct {
+	Source            string `json:"source"`
+	AccountKey        string `json:"account_key"`
+	ExternalItemID    string `json:"external_item_id"`
+	ExternalVariantID string `json:"external_variant_id"`
+	SourceSKU         string `json:"source_sku"`
+	RawName           string `json:"raw_name"`
+	NormalizedKey     string `json:"normalized_key"`
+}
+
+type MarketplaceAliasImpact struct {
+	OpenItems      int  `json:"open_items"`
+	OpenBills      int  `json:"open_bills"`
+	StockMappings  int  `json:"stock_mappings"`
+	StockConflicts int  `json:"stock_conflicts"`
+	DryRunRequired bool `json:"dry_run_required"`
 }
 
 // MarketplaceAliasReviewFilter controls pagination + filtering for ReviewGroupsPaged.

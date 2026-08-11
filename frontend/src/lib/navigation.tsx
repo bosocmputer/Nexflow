@@ -100,7 +100,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
-      { menuKey: 'marketplace_aliases', to: '/marketplace-aliases', label: 'การจับคู่สินค้า', icon: Tags, hasBadge: 'marketplace_aliases', hint: 'ยืนยันและแก้ไขการจับคู่สินค้า marketplace', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'bulk_send_jobs', to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },
     ],
   },
@@ -114,9 +113,10 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'สินค้าและการจับคู่',
+    label: 'สินค้าและสต๊อก',
     items: [
-      { menuKey: 'catalog', to: '/settings/catalog', label: 'สินค้าใน SML', icon: Database, hint: 'SML Catalog' },
+      { menuKey: 'marketplace_aliases', to: '/marketplace-aliases', label: 'จับคู่สินค้า Marketplace', icon: Tags, hasBadge: 'marketplace_aliases', hint: 'จัดการความสัมพันธ์สินค้า Marketplace ไปยัง SML', enabled: ENABLE_SALES_ORDERS },
+      { menuKey: 'catalog', to: '/settings/catalog', label: 'รายการสินค้า SML', icon: Database, hint: 'ดู ค้นหา และรีเฟรชสินค้าปลายทางจาก SML' },
       { menuKey: 'shopee_stock', to: '/settings/shopee-stock', label: 'ซิงก์สต๊อก Shopee', icon: PackageCheck, hint: 'คุมสต๊อก Shopee จากยอดพร้อมขายใน SML', adminOnly: true },
     ],
   },

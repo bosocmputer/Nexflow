@@ -12,10 +12,12 @@ import {
 } from '@/components/ui/tooltip'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { UnitSelect } from '@/components/common/UnitSelect'
+import { Checkbox } from '@/components/ui/checkbox'
 import { money } from '@/lib/shopeeBill'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/store/auth'
 import api from '@/api/client'
-import type { BillItem, CatalogMatch } from '@/types'
+import type { BillItem, CatalogMatch, MarketplaceAliasImpact } from '@/types'
 import { useMatchInfo } from '../hooks/useMatchInfo'
 import { rowIssueReason } from '../utils/validation'
 import { MapItemModal } from './MapItemModal'
@@ -30,6 +32,8 @@ export interface DiscountInfo {
 interface Props {
   item: BillItem
   billId: string
+  source: string
+  sourceAccountKey: string
   editable: boolean
   onUpdated: (updated: BillItem) => void
   onDeleted: (itemId: string) => void
@@ -56,6 +60,8 @@ function IssueBadge({ reason }: { reason: string }) {
 export function BillItemRow({
   item,
   billId,
+  source,
+  sourceAccountKey,
   editable,
   onUpdated,
   onDeleted,
@@ -88,6 +94,14 @@ export function BillItemRow({
   const [showMapModal, setShowMapModal] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [pickedMatch, setPickedMatch] = useState<CatalogMatch | null>(null)
+  const [saveImpact, setSaveImpact] = useState<MarketplaceAliasImpact | null>(null)
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin')
+  const canRememberMapping = Boolean(
+    isAdmin &&
+    ['shopee', 'lazada', 'tiktok'].includes(source) &&
+    !(source === 'shopee' && sourceAccountKey === 'default' && !item.source_item_id),
+  )
+  const [rememberMapping, setRememberMapping] = useState(false)
   const [draft, setDraft] = useState({
     item_code: item.item_code ?? '',
     unit_code: item.unit_code ?? '',
@@ -97,6 +111,7 @@ export function BillItemRow({
 
   const reset = () => {
     setPickedMatch(null)
+    setRememberMapping(false)
     setDraft({
       item_code: item.item_code ?? '',
       unit_code: item.unit_code ?? '',
@@ -105,7 +120,7 @@ export function BillItemRow({
     })
   }
 
-  const handleSave = async () => {
+  const performSave = async () => {
     setSaving(true)
     try {
       await api.put(`/api/bills/${billId}/items/${item.id}`, {
@@ -113,11 +128,12 @@ export function BillItemRow({
         unit_code: draft.unit_code,
         qty: Number(draft.qty),
         price: Number(draft.price),
+        remember_mapping: canRememberMapping && rememberMapping,
       })
 
       const prevCode = item.item_code ?? ''
-      if (draft.item_code && draft.item_code !== prevCode) {
-        toast.success('✓ จดจำการจับคู่นี้แล้ว — ครั้งถัดไประบบจะ map ให้อัตโนมัติ', {
+      if (draft.item_code && draft.item_code !== prevCode && rememberMapping) {
+        toast.success('บันทึก Product Master แล้ว ครั้งถัดไประบบจะจับคู่ให้อัตโนมัติ', {
           duration: 3500,
         })
       }
@@ -132,9 +148,35 @@ export function BillItemRow({
       })
       setEditing(false)
       setPickedMatch(null)
+      setRememberMapping(false)
     } catch (err) {
       console.error('update item failed', err)
       toast.error('บันทึกไม่สำเร็จ')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!canRememberMapping || !rememberMapping) {
+      await performSave()
+      return
+    }
+    setSaving(true)
+    try {
+      const response = await api.post<MarketplaceAliasImpact>('/api/marketplace-aliases/impact-preview', {
+        alias_id: item.marketplace_alias_id ?? '',
+        source,
+        account_key: sourceAccountKey,
+        external_item_id: item.source_item_id ?? '',
+        external_variant_id: item.source_variant_id ?? '',
+        source_sku: item.source_sku ?? '',
+        raw_name: item.raw_name,
+        item_code: draft.item_code,
+      })
+      setSaveImpact(response.data)
+    } catch {
+      toast.error('ตรวจสอบผลกระทบของ Product Master ไม่สำเร็จ กรุณาลองใหม่')
     } finally {
       setSaving(false)
     }
@@ -152,7 +194,7 @@ export function BillItemRow({
       })
       await onRefresh()
       toast.success('ยืนยันการจับคู่สินค้าแล้ว', {
-        description: 'ระบบจะจดจำและเปิดให้ส่ง SML เมื่อทุกรายการยืนยันครบ',
+        description: 'บิลนี้จะพร้อมส่ง SML เมื่อทุกรายการยืนยันครบ',
       })
     } catch (err) {
       console.error('confirm item match failed', err)
@@ -350,15 +392,23 @@ export function BillItemRow({
           )}
         </TableRow>
 
-        <ConfirmDialog
-          open={deleteOpen}
+      <ConfirmDialog
+        open={deleteOpen}
           onOpenChange={setDeleteOpen}
           title="ลบรายการสินค้า"
           description={`ยืนยันลบ "${item.raw_name.slice(0, 50)}${item.raw_name.length > 50 ? '...' : ''}" ?`}
           confirmLabel="ลบรายการ"
           variant="destructive"
-          onConfirm={handleDelete}
-        />
+        onConfirm={handleDelete}
+      />
+      <ConfirmDialog
+        open={saveImpact !== null}
+        onOpenChange={(open) => !open && setSaveImpact(null)}
+        title="ยืนยันบันทึกเป็น Product Master?"
+        description={saveImpact ? `สินค้า SML: ${draft.item_code}\nเอกสารเปิด: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? ` · พบ conflict ${saveImpact.stock_conflicts.toLocaleString()}` : ''}${saveImpact.dry_run_required ? '\nหลังบันทึกต้องทำ Dry-run ใหม่ก่อนซิงก์สต๊อก' : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน` : undefined}
+        confirmLabel="บันทึก Master"
+        onConfirm={async () => { setSaveImpact(null); await performSave() }}
+      />
       </>
     )
   }
@@ -378,6 +428,7 @@ export function BillItemRow({
           onPick={(code, unit, picked) => {
             setDraft((d) => ({ ...d, item_code: code, unit_code: unit || '' }))
             setPickedMatch(picked ?? null)
+            if (canRememberMapping) setRememberMapping(true)
           }}
           onClose={() => setShowMapModal(false)}
         />
@@ -418,9 +469,14 @@ export function BillItemRow({
                     )}
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  ระบบจะจดจำสินค้าที่ผู้ใช้ยืนยันหลังบันทึก
-                </p>
+                {canRememberMapping ? (
+                  <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                    <Checkbox checked={rememberMapping} onCheckedChange={(checked) => setRememberMapping(checked === true)} />
+                    <span>บันทึกเป็น Product Master และใช้กับเอกสารเปิดรายการอื่น</span>
+                  </label>
+                ) : (
+                  <p className="text-xs text-muted-foreground">แก้เฉพาะบิลนี้ ไม่สร้าง Product Master</p>
+                )}
               </div>
 
               <div className={cn('grid gap-3', showDiscountColumn ? 'grid-cols-4' : 'grid-cols-3')}>
@@ -492,6 +548,14 @@ export function BillItemRow({
           </div>
         </TableCell>
       </TableRow>
+      <ConfirmDialog
+        open={saveImpact !== null}
+        onOpenChange={(open) => !open && setSaveImpact(null)}
+        title="ยืนยันบันทึกเป็น Product Master?"
+        description={saveImpact ? `สินค้า SML: ${draft.item_code}\nเอกสารเปิด: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? ` · พบ conflict ${saveImpact.stock_conflicts.toLocaleString()}` : ''}${saveImpact.dry_run_required ? '\nหลังบันทึกต้องทำ Dry-run ใหม่ก่อนซิงก์สต๊อก' : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน` : undefined}
+        confirmLabel="บันทึก Master"
+        onConfirm={async () => { setSaveImpact(null); await performSave() }}
+      />
     </>
   )
 }

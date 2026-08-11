@@ -6,31 +6,32 @@ import (
 )
 
 type Bill struct {
-	ID            string             `json:"id"`
-	BillType      string             `json:"bill_type"`
-	Source        string             `json:"source"`
-	Status        string             `json:"status"`
-	DocumentRoute string             `json:"document_route"`
-	RawData       json.RawMessage    `json:"raw_data,omitempty"`
-	SMLDocNo      *string            `json:"sml_doc_no,omitempty"`
-	SMLOrderID    string             `json:"sml_order_id,omitempty"`
-	SMLPayload    json.RawMessage    `json:"sml_payload,omitempty"`
-	SMLResponse   json.RawMessage    `json:"sml_response,omitempty"`
-	AIConfidence  *float64           `json:"-"` // retained in storage for historical audit only
-	Anomalies     json.RawMessage    `json:"anomalies"`
-	ErrorMsg      *string            `json:"error_msg,omitempty"`
-	CreatedBy     *string            `json:"created_by,omitempty"`
-	CreatedAt     time.Time          `json:"created_at"`
-	SentAt        *time.Time         `json:"sent_at,omitempty"`
-	ArchivedAt    *time.Time         `json:"archived_at,omitempty"`
-	ArchivedBy    *string            `json:"archived_by,omitempty"`
-	ArchiveReason string             `json:"archive_reason,omitempty"`
-	TotalAmount   *float64           `json:"total_amount,omitempty"`
-	Remark        string             `json:"remark"`
-	Items         []BillItem         `json:"items,omitempty"`
-	EmailGroup    *BillEmailGroup    `json:"email_group,omitempty"`
-	ShopeeStatus  *ShopeeOrderEvent  `json:"shopee_status,omitempty"`
-	ShopeeEvents  []ShopeeOrderEvent `json:"shopee_events,omitempty"`
+	ID               string             `json:"id"`
+	BillType         string             `json:"bill_type"`
+	Source           string             `json:"source"`
+	SourceAccountKey string             `json:"source_account_key"`
+	Status           string             `json:"status"`
+	DocumentRoute    string             `json:"document_route"`
+	RawData          json.RawMessage    `json:"raw_data,omitempty"`
+	SMLDocNo         *string            `json:"sml_doc_no,omitempty"`
+	SMLOrderID       string             `json:"sml_order_id,omitempty"`
+	SMLPayload       json.RawMessage    `json:"sml_payload,omitempty"`
+	SMLResponse      json.RawMessage    `json:"sml_response,omitempty"`
+	AIConfidence     *float64           `json:"-"` // retained in storage for historical audit only
+	Anomalies        json.RawMessage    `json:"anomalies"`
+	ErrorMsg         *string            `json:"error_msg,omitempty"`
+	CreatedBy        *string            `json:"created_by,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	SentAt           *time.Time         `json:"sent_at,omitempty"`
+	ArchivedAt       *time.Time         `json:"archived_at,omitempty"`
+	ArchivedBy       *string            `json:"archived_by,omitempty"`
+	ArchiveReason    string             `json:"archive_reason,omitempty"`
+	TotalAmount      *float64           `json:"total_amount,omitempty"`
+	Remark           string             `json:"remark"`
+	Items            []BillItem         `json:"items,omitempty"`
+	EmailGroup       *BillEmailGroup    `json:"email_group,omitempty"`
+	ShopeeStatus     *ShopeeOrderEvent  `json:"shopee_status,omitempty"`
+	ShopeeEvents     []ShopeeOrderEvent `json:"shopee_events,omitempty"`
 	// True when a Shopee Realtime snapshot currently points at this bill.
 	// The UI uses this to hide destructive delete actions and direct users to
 	// the route-change flow instead.
@@ -103,21 +104,24 @@ type DailyInsight struct {
 }
 
 type BillItem struct {
-	ID             string          `json:"id"`
-	BillID         string          `json:"bill_id"`
-	RawName        string          `json:"raw_name"`
-	SourceSKU      string          `json:"source_sku,omitempty"`
-	SourceImageURL string          `json:"source_image_url,omitempty"`
-	ItemCode       *string         `json:"item_code,omitempty"`
-	HasHiddenChars bool            `json:"has_hidden_chars"`
-	CleanItemCode  string          `json:"clean_item_code,omitempty"`
-	Qty            float64         `json:"qty"`
-	UnitCode       *string         `json:"unit_code,omitempty"`
-	Price          *float64        `json:"price,omitempty"`
-	DiscountAmount float64         `json:"discount_amount"`
-	Mapped         bool            `json:"mapped"`
-	MappingID      *string         `json:"mapping_id,omitempty"`
-	Candidates     json.RawMessage `json:"-"` // retained in storage for migration compatibility only
+	ID                 string          `json:"id"`
+	BillID             string          `json:"bill_id"`
+	RawName            string          `json:"raw_name"`
+	SourceSKU          string          `json:"source_sku,omitempty"`
+	SourceItemID       string          `json:"source_item_id,omitempty"`
+	SourceVariantID    string          `json:"source_variant_id,omitempty"`
+	MarketplaceAliasID *string         `json:"marketplace_alias_id,omitempty"`
+	SourceImageURL     string          `json:"source_image_url,omitempty"`
+	ItemCode           *string         `json:"item_code,omitempty"`
+	HasHiddenChars     bool            `json:"has_hidden_chars"`
+	CleanItemCode      string          `json:"clean_item_code,omitempty"`
+	Qty                float64         `json:"qty"`
+	UnitCode           *string         `json:"unit_code,omitempty"`
+	Price              *float64        `json:"price,omitempty"`
+	DiscountAmount     float64         `json:"discount_amount"`
+	Mapped             bool            `json:"mapped"`
+	MappingID          *string         `json:"mapping_id,omitempty"`
+	Candidates         json.RawMessage `json:"-"` // retained in storage for migration compatibility only
 }
 
 const ShopeeShippingSourceSKU = "__shopee_shipping__"

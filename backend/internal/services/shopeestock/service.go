@@ -399,8 +399,12 @@ func isShopeeSingleWarehouseFallback(err error) bool {
 func (s *Service) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64, request MappingUpdate, userID string) (*ProductRow, error) {
 	request.SMLItemCode = strings.TrimSpace(request.SMLItemCode)
 	request.SMLUnitCode = strings.TrimSpace(request.SMLUnitCode)
+	request.MarketplaceAliasID = strings.TrimSpace(request.MarketplaceAliasID)
 	if request.UpdatedAt.IsZero() || (!request.Excluded && (request.SMLItemCode == "" || request.SMLUnitCode == "")) {
 		return nil, invalid("กรุณาเลือกสินค้า/หน่วย SML และรีเฟรชรายการก่อนแก้ไข")
+	}
+	if !request.Excluded && request.MarketplaceAliasID != "" && request.MarketplaceAliasUpdatedAt == nil {
+		return nil, invalid("ข้อมูล Product Master ไม่ครบ กรุณารีเฟรชรายการแล้วลองใหม่")
 	}
 	if request.ManualUnitFactor != nil && (math.IsNaN(*request.ManualUnitFactor) || math.IsInf(*request.ManualUnitFactor, 0) || *request.ManualUnitFactor < 1 || *request.ManualUnitFactor > 1_000_000_000) {
 		return nil, ErrInvalidManualFactor

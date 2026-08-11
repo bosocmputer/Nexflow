@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -26,12 +27,15 @@ const marketplaceCatalogReadThroughLimit = 50
 
 type matchResolution struct {
 	alias   *models.MarketplaceItemAlias
-	learned *models.Mapping
+	learned *models.Mapping // legacy review hint only; never auto-applied
 }
 
 type marketplaceResolutionBatch struct {
-	catalog     map[string]*models.CatalogItem
-	resolutions map[string]matchResolution
+	catalog      map[string]*models.CatalogItem
+	resolutions  map[string]matchResolution
+	exactMasters map[string]*models.MarketplaceItemAlias
+	aliasUsage   map[string]int
+	mode         string
 }
 
 func marketplaceResolutionKey(sourceSKU, rawName string) string {
@@ -46,8 +50,28 @@ func (b *marketplaceResolutionBatch) catalogLookup(code string) *models.CatalogI
 }
 
 func (b *marketplaceResolutionBatch) resolution(sourceSKU, rawName string) matchResolution {
+	return b.resolutionScoped("default", "", "", sourceSKU, rawName)
+}
+
+func (b *marketplaceResolutionBatch) resolutionScoped(accountKey, externalItemID, externalVariantID, sourceSKU, rawName string) matchResolution {
 	if b == nil {
 		return matchResolution{}
+	}
+	if accountKey == "" {
+		accountKey = "default"
+	}
+	if externalItemID != "" {
+		if resolved, ok := b.resolutions["identity\x00"+accountKey+"\x00"+externalItemID+"\x00"+externalVariantID]; ok && resolved.alias != nil {
+			return resolved
+		}
+	}
+	if sku := normalizeMarketplaceSKU(sourceSKU); sku != "" {
+		if resolved, ok := b.resolutions["sku\x00"+accountKey+"\x00"+sku]; ok && resolved.alias != nil {
+			return resolved
+		}
+	}
+	if resolved, ok := b.resolutions["name\x00"+accountKey+"\x00"+marketplace.NormalizeKey(rawName, "")]; ok {
+		return resolved
 	}
 	return b.resolutions[marketplaceResolutionKey(sourceSKU, rawName)]
 }
@@ -69,8 +93,14 @@ func prepareMarketplaceResolution(
 		return nil, fmt.Errorf("catalog repository is not configured")
 	}
 
-	type itemRef struct{ sku, rawName string }
+	type itemRef struct{ accountKey, itemID, variantID, sku, rawName string }
 	refs := make([]itemRef, 0)
+	accountKeysSet := map[string]struct{}{}
+	accountKeys := make([]string, 0)
+	externalItemIDsSet := map[string]struct{}{}
+	externalItemIDs := make([]string, 0)
+	externalVariantIDsSet := map[string]struct{}{}
+	externalVariantIDs := make([]string, 0)
 	codesSet := map[string]struct{}{}
 	codes := make([]string, 0)
 	rawNamesSet := map[string]struct{}{}
@@ -81,10 +111,27 @@ func prepareMarketplaceResolution(
 		if selected != nil && !selected[order.OrderID] {
 			continue
 		}
+		accountKey := marketplaceSourceAccountKey(source, order.ShopeeShopID)
+		if _, exists := accountKeysSet[accountKey]; !exists {
+			accountKeysSet[accountKey] = struct{}{}
+			accountKeys = append(accountKeys, accountKey)
+		}
 		for _, item := range order.Items {
 			rawName := shopeeItemRawName(item.ProductName, item.OptionName, item.RawName)
 			sku := normalizeMarketplaceSKU(item.SKU)
-			refs = append(refs, itemRef{sku: sku, rawName: rawName})
+			itemID := strings.TrimSpace(item.SourceItemID)
+			variantID := strings.TrimSpace(item.SourceVariantID)
+			refs = append(refs, itemRef{accountKey: accountKey, itemID: itemID, variantID: variantID, sku: sku, rawName: rawName})
+			if itemID != "" {
+				if _, exists := externalItemIDsSet[itemID]; !exists {
+					externalItemIDsSet[itemID] = struct{}{}
+					externalItemIDs = append(externalItemIDs, itemID)
+				}
+				if _, exists := externalVariantIDsSet[variantID]; !exists {
+					externalVariantIDsSet[variantID] = struct{}{}
+					externalVariantIDs = append(externalVariantIDs, variantID)
+				}
+			}
 			if sku != "" {
 				if _, exists := codesSet[sku]; !exists {
 					codesSet[sku] = struct{}{}
@@ -158,7 +205,7 @@ func prepareMarketplaceResolution(
 
 	aliasByKey := map[string]*models.MarketplaceItemAlias{}
 	if aliasRepo != nil {
-		aliasByKey, err = aliasRepo.FindMany(source, codes, normalizedKeys)
+		aliasByKey, err = aliasRepo.FindManyScoped(source, accountKeys, externalItemIDs, externalVariantIDs, codes, normalizedKeys)
 		if err != nil {
 			return nil, fmt.Errorf("preload aliases: %w", err)
 		}
@@ -171,30 +218,84 @@ func prepareMarketplaceResolution(
 		}
 	}
 
-	resolutions := make(map[string]matchResolution, len(refs))
+	resolutions := make(map[string]matchResolution, len(refs)*3)
+	exactSKUMatches, identityMatches, skuMatches, nameMatches, legacyHints, shadowMismatches, unmatched := 0, 0, 0, 0, 0, 0, 0
 	for _, ref := range refs {
 		var resolved matchResolution
-		if ref.sku != "" {
-			resolved.alias = aliasByKey["sku\x00"+ref.sku]
-		} else {
-			resolved.alias = aliasByKey["name\x00"+marketplace.NormalizeKey(ref.rawName, "")]
-			resolved.learned = mappingByName[marketplace.NormalizeKey(ref.rawName, "")]
+		exactSKU := ref.sku != "" && catalogItems[ref.sku] != nil
+		if exactSKU {
+			exactSKUMatches++
 		}
+		if ref.itemID != "" {
+			resolved.alias = aliasByKey["identity\x00"+ref.accountKey+"\x00"+ref.itemID+"\x00"+ref.variantID]
+			if resolved.alias != nil {
+				identityMatches++
+			}
+		}
+		if resolved.alias == nil && ref.sku != "" {
+			resolved.alias = aliasByKey["sku\x00"+ref.accountKey+"\x00"+ref.sku]
+			if resolved.alias != nil {
+				skuMatches++
+			}
+		}
+		if resolved.alias == nil && ref.sku == "" && ref.itemID == "" {
+			resolved.alias = aliasByKey["name\x00"+ref.accountKey+"\x00"+marketplace.NormalizeKey(ref.rawName, "")]
+			if resolved.alias != nil {
+				nameMatches++
+			}
+		}
+		if ref.sku == "" {
+			resolved.learned = mappingByName[marketplace.NormalizeKey(ref.rawName, "")]
+			if resolved.learned != nil {
+				legacyHints++
+				if resolved.alias == nil || resolved.alias.ItemCode != resolved.learned.ItemCode || resolved.alias.UnitCode != resolved.learned.UnitCode {
+					shadowMismatches++
+				}
+			}
+		}
+		if !exactSKU && resolved.alias == nil {
+			unmatched++
+		}
+		if ref.itemID != "" {
+			resolutions["identity\x00"+ref.accountKey+"\x00"+ref.itemID+"\x00"+ref.variantID] = resolved
+		}
+		if ref.sku != "" {
+			resolutions["sku\x00"+ref.accountKey+"\x00"+ref.sku] = resolved
+		}
+		resolutions["name\x00"+ref.accountKey+"\x00"+marketplace.NormalizeKey(ref.rawName, "")] = resolved
 		resolutions[marketplaceResolutionKey(ref.sku, ref.rawName)] = resolved
 	}
-	return &marketplaceResolutionBatch{catalog: catalogItems, resolutions: resolutions}, nil
+	if logger != nil {
+		logger.Info("marketplace_mapping_resolution_batch",
+			zap.String("source", source), zap.Int("items", len(refs)), zap.Int("exact_sku", exactSKUMatches), zap.Int("identity", identityMatches),
+			zap.Int("scoped_sku", skuMatches), zap.Int("scoped_name", nameMatches),
+			zap.Int("legacy_review_hint", legacyHints), zap.Int("shadow_mismatch", shadowMismatches), zap.Int("unmatched", unmatched))
+	}
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("PRODUCT_MAPPING_MASTER_MODE")))
+	if mode != "shadow" {
+		mode = "active"
+	}
+	return &marketplaceResolutionBatch{catalog: catalogItems, resolutions: resolutions, exactMasters: map[string]*models.MarketplaceItemAlias{}, aliasUsage: map[string]int{}, mode: mode}, nil
 }
 
-func recordMarketplaceResolutionUsage(aliasRepo *repository.MarketplaceAliasRepo, mappingRepo *repository.MappingRepo, resolved matchResolution, exactSKU bool) {
+func recordMarketplaceResolutionUsage(batch *marketplaceResolutionBatch, resolved matchResolution, exactSKU bool) {
 	if exactSKU {
 		return
 	}
-	if resolved.alias != nil && aliasRepo != nil {
-		_ = aliasRepo.IncrementUsage(resolved.alias.ID)
+	if batch != nil && resolved.alias != nil {
+		if batch.aliasUsage == nil {
+			batch.aliasUsage = map[string]int{}
+		}
+		batch.aliasUsage[resolved.alias.ID]++
+	}
+}
+
+func flushMarketplaceResolutionUsage(batch *marketplaceResolutionBatch, aliasRepo *repository.MarketplaceAliasRepo, logger *zap.Logger) {
+	if batch == nil || aliasRepo == nil || len(batch.aliasUsage) == 0 {
 		return
 	}
-	if resolved.learned != nil && mappingRepo != nil {
-		_ = mappingRepo.IncrementUsage(resolved.learned.ID)
+	if err := aliasRepo.IncrementUsageCounts(batch.aliasUsage); err != nil && logger != nil {
+		logger.Warn("marketplace mapping usage update failed", zap.Error(err), zap.Int("mappings", len(batch.aliasUsage)))
 	}
 }
 
@@ -265,13 +366,94 @@ func marketplaceBillItemFromMatch(
 		bi.Mapped = true
 		return bi, true
 	case sourceSKU == "" && learned != nil:
-		bi.ItemCode = &learned.ItemCode
-		bi.UnitCode = &learned.UnitCode
-		bi.MappingID = &learned.ID
-		bi.Mapped = true
-		return bi, true
+		// Legacy raw-name mappings are surfaced in the review queue only. They
+		// are intentionally not trusted for automatic document creation.
+		bi.Mapped = false
+		return bi, false
 	default:
 		bi.Mapped = false
 		return bi, false
 	}
+}
+
+func marketplaceBillItemFromResolution(
+	source, accountKey string,
+	item ShopeeExcelItem,
+	defaultUnit string,
+	resolved matchResolution,
+	batch *marketplaceResolutionBatch,
+	aliasRepo *repository.MarketplaceAliasRepo,
+	confirmedBy string,
+) (models.BillItem, bool, error) {
+	rawName := shopeeItemRawName(item.ProductName, item.OptionName, item.RawName)
+	price := item.Price
+	exactSKU := normalizeMarketplaceSKU(item.SKU) != "" && batch.catalogLookup(item.SKU) != nil
+	bi, mapped := marketplaceBillItemFromMatch(rawName, item.SKU, item.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, batch.catalogLookup, 1)
+	if batch.mode == "shadow" && !mapped && normalizeMarketplaceSKU(item.SKU) == "" && resolved.learned != nil {
+		bi.ItemCode = &resolved.learned.ItemCode
+		bi.UnitCode = &resolved.learned.UnitCode
+		bi.Mapped = true
+		mapped = true
+	}
+	bi.SourceItemID = strings.TrimSpace(item.SourceItemID)
+	bi.SourceVariantID = strings.TrimSpace(item.SourceVariantID)
+	if resolved.alias != nil {
+		id := resolved.alias.ID
+		bi.MarketplaceAliasID = &id
+	}
+	if !exactSKU || aliasRepo == nil {
+		return bi, mapped, nil
+	}
+	// Shopee Excel without a selected shop may resolve exact SKU for this bill,
+	// but cannot create a reusable cross-shop master safely.
+	if source == "shopee" && accountKey == "default" && bi.SourceItemID == "" {
+		return bi, mapped, nil
+	}
+	cat := batch.catalogLookup(item.SKU)
+	if cat == nil {
+		return bi, mapped, nil
+	}
+	identity := models.MarketplaceAliasIdentity{
+		Source: source, AccountKey: accountKey, ExternalItemID: bi.SourceItemID,
+		ExternalVariantID: bi.SourceVariantID, SourceSKU: item.SKU, RawName: rawName,
+	}
+	masterKey := "sku\x00" + accountKey + "\x00" + normalizeMarketplaceSKU(item.SKU)
+	if bi.SourceItemID != "" {
+		masterKey = "identity\x00" + accountKey + "\x00" + bi.SourceItemID + "\x00" + bi.SourceVariantID
+	}
+	if batch.exactMasters == nil {
+		batch.exactMasters = map[string]*models.MarketplaceItemAlias{}
+	}
+	if existing := batch.exactMasters[masterKey]; existing != nil {
+		bi.MarketplaceAliasID = &existing.ID
+		batch.aliasUsage[existing.ID]++
+		return bi, mapped, nil
+	}
+	mutation := repository.MarketplaceAliasMutation{
+		Identity: identity,
+		BillType: "sale", ItemCode: cat.ItemCode, UnitCode: cat.UnitCode,
+		MatchMethod: "exact_sku", ScopeConfirmed: true, ConfirmedBy: confirmedBy,
+	}
+	if resolved.alias != nil {
+		version := resolved.alias.UpdatedAt
+		mutation.ID = resolved.alias.ID
+		mutation.Version = &version
+	}
+	result, err := aliasRepo.SaveAndApply(mutation)
+	if err != nil {
+		return bi, false, fmt.Errorf("save exact SKU master: %w", err)
+	}
+	if result != nil && result.Alias != nil {
+		bi.MarketplaceAliasID = &result.Alias.ID
+		batch.exactMasters[masterKey] = result.Alias
+		batch.aliasUsage[result.Alias.ID]++
+	}
+	return bi, mapped, nil
+}
+
+func marketplaceSourceAccountKey(source, shopID string) string {
+	if source == "shopee" && strings.TrimSpace(shopID) != "" {
+		return "shop:" + strings.TrimSpace(shopID)
+	}
+	return "default"
 }

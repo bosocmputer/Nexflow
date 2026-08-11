@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,26 +27,27 @@ import (
 )
 
 type BillHandler struct {
-	billRepo           *repository.BillRepo
-	mapperSvc          *mapper.Service
-	invoiceClient      *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
-	saleOrderClient    *sml.SaleOrderClient     // SML 248 saleorder REST (default)
-	poClient           *sml.PurchaseOrderClient // SML 248 purchaseorder REST
-	docNoClient        *sml.DocNoClient         // SML authoritative doc_no running
-	cfg                *config.Config
-	lineSvc            *lineservice.Service
-	auditRepo          *repository.AuditLogRepo
-	catalogRepo        *repository.SMLCatalogRepo     // for unit_code defaults on item edit
-	channelDefaults    *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
-	docCounters        *repository.DocCounterRepo     // atomic doc_no generator
-	bulkJobRepo        *repository.SMLBulkJobRepo     // async SML bulk send jobs
-	artifactSvc        *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
-	warehouseCache     *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
-	smlReadiness       *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
-	appSettingsRepo    *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
-	shopeeRealtimeRepo *repository.ShopeeRealtimeRepo
-	eventBroker        *events.Broker
-	log                *zap.Logger
+	billRepo             *repository.BillRepo
+	mapperSvc            *mapper.Service
+	invoiceClient        *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
+	saleOrderClient      *sml.SaleOrderClient     // SML 248 saleorder REST (default)
+	poClient             *sml.PurchaseOrderClient // SML 248 purchaseorder REST
+	docNoClient          *sml.DocNoClient         // SML authoritative doc_no running
+	cfg                  *config.Config
+	lineSvc              *lineservice.Service
+	auditRepo            *repository.AuditLogRepo
+	catalogRepo          *repository.SMLCatalogRepo     // for unit_code defaults on item edit
+	channelDefaults      *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
+	docCounters          *repository.DocCounterRepo     // atomic doc_no generator
+	bulkJobRepo          *repository.SMLBulkJobRepo     // async SML bulk send jobs
+	artifactSvc          *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
+	warehouseCache       *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
+	smlReadiness         *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
+	appSettingsRepo      *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
+	shopeeRealtimeRepo   *repository.ShopeeRealtimeRepo
+	marketplaceAliasRepo *repository.MarketplaceAliasRepo
+	eventBroker          *events.Broker
+	log                  *zap.Logger
 }
 
 func NewBillHandler(
@@ -96,6 +98,10 @@ func (h *BillHandler) SetShopeeRealtimeSync(repo *repository.ShopeeRealtimeRepo,
 	}
 	h.shopeeRealtimeRepo = repo
 	h.eventBroker = broker
+}
+
+func (h *BillHandler) SetMarketplaceAliasRepo(repo *repository.MarketplaceAliasRepo) {
+	h.marketplaceAliasRepo = repo
 }
 
 func (h *BillHandler) blockPurchaseFlow(c *gin.Context, billType string) bool {
@@ -3527,10 +3533,11 @@ func (h *BillHandler) DeleteItemRow(c *gin.Context) {
 
 // PUT /api/bills/:id/items/:item_id — edit item code/unit/qty/price before sending.
 type updateItemRequest struct {
-	ItemCode *string  `json:"item_code"`
-	UnitCode *string  `json:"unit_code"`
-	Qty      *float64 `json:"qty"`
-	Price    *float64 `json:"price"`
+	ItemCode        *string  `json:"item_code"`
+	UnitCode        *string  `json:"unit_code"`
+	Qty             *float64 `json:"qty"`
+	Price           *float64 `json:"price"`
+	RememberMapping bool     `json:"remember_mapping"`
 }
 
 func (h *BillHandler) UpdateItem(c *gin.Context) {
@@ -3586,76 +3593,53 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		}
 	}
 
+	if req.RememberMapping {
+		if c.GetString("user_role") != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "เฉพาะผู้ดูแลระบบเท่านั้นที่บันทึก Product Master ได้"})
+			return
+		}
+		if !isMarketplaceSource(bill.Source) || h.marketplaceAliasRepo == nil || req.ItemCode == nil || *req.ItemCode == "" {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "บิลนี้ไม่สามารถสร้าง Product Master ได้"})
+			return
+		}
+		if bill.Source == "shopee" && bill.SourceAccountKey == "default" && existingItem.SourceItemID == "" {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ไฟล์ Shopee นี้ไม่ได้ระบุร้าน จึงแก้บิลได้แต่ห้ามบันทึกเป็น Product Master"})
+			return
+		}
+		unit := ""
+		if req.UnitCode != nil {
+			unit = *req.UnitCode
+		}
+		method := "manual_name"
+		if existingItem.SourceItemID != "" {
+			method = "manual_identity"
+		} else if existingItem.SourceSKU != "" {
+			method = "manual_sku"
+		}
+		if _, err := h.marketplaceAliasRepo.SaveAndApply(repository.MarketplaceAliasMutation{
+			Identity: models.MarketplaceAliasIdentity{Source: bill.Source, AccountKey: bill.SourceAccountKey,
+				ExternalItemID: existingItem.SourceItemID, ExternalVariantID: existingItem.SourceVariantID,
+				SourceSKU: existingItem.SourceSKU, RawName: existingItem.RawName},
+			BillType: bill.BillType, ItemCode: *req.ItemCode, UnitCode: unit, MatchMethod: method,
+			ScopeConfirmed: true, ConfirmedBy: c.GetString("user_id"),
+		}); err != nil {
+			if errors.Is(err, repository.ErrMarketplaceAliasConflict) {
+				c.JSON(http.StatusConflict, gin.H{"error": "การจับคู่นี้ถูกแก้ไขหรือมีข้อมูลซ้ำ กรุณารีเฟรชแล้วลองใหม่"})
+				return
+			}
+			h.log.Error("UpdateItem: save marketplace master", zap.String("bill_id", billID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึก Product Master ไม่สำเร็จ และยังไม่มีบิลอื่นถูกเปลี่ยน"})
+			return
+		}
+	}
+
 	if err := h.billRepo.UpdateBillItemFields(itemID, req.ItemCode, req.UnitCode, req.Qty, req.Price); err != nil {
 		h.log.Error("UpdateItem", zap.String("bill", billID), zap.String("item", itemID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
 
-	// F1 learning loop: if the user supplies a non-empty item_code, treat the
-	// save as human confirmation when the code changed OR when the row was still
-	// an unconfirmed low-confidence match. This covers marketplace imports where
-	// AI prefilled the same code but still left the bill in needs_review.
-	if req.ItemCode != nil && *req.ItemCode != "" && existingItem.RawName != "" {
-		prev := ""
-		if existingItem.ItemCode != nil {
-			prev = *existingItem.ItemCode
-		}
-		wasUnconfirmed := !existingItem.Mapped || existingItem.MappingID == nil || *existingItem.MappingID == ""
-		if prev != *req.ItemCode || wasUnconfirmed {
-			unit := ""
-			if req.UnitCode != nil {
-				unit = *req.UnitCode
-			}
-			if err := h.mapperSvc.LearnFromFeedback(existingItem.RawName, *req.ItemCode, unit, &billID); err != nil {
-				h.log.Warn("UpdateItem: F1 feedback save failed",
-					zap.String("raw_name", existingItem.RawName),
-					zap.String("item_code", *req.ItemCode),
-					zap.Error(err))
-			} else {
-				appliedItems, readyBills, applyErr := h.billRepo.ApplyVerifiedMappingToOpenItems(
-					bill.Source,
-					bill.BillType,
-					existingItem.RawName,
-					*req.ItemCode,
-					unit,
-				)
-				if applyErr != nil {
-					h.log.Warn("UpdateItem: apply learned mapping to open bills failed",
-						zap.String("source", bill.Source),
-						zap.String("bill_type", bill.BillType),
-						zap.String("raw_name", existingItem.RawName),
-						zap.String("item_code", *req.ItemCode),
-						zap.Error(applyErr))
-				}
-				if h.auditRepo != nil {
-					var userID *string
-					if uid := c.GetString("user_id"); uid != "" {
-						userID = &uid
-					}
-					_ = h.auditRepo.Log(models.AuditEntry{
-						Action:   "mapping_feedback",
-						TargetID: &itemID,
-						UserID:   userID,
-						Source:   bill.Source,
-						Level:    "info",
-						Detail: map[string]interface{}{
-							"raw_name":           existingItem.RawName,
-							"prev_code":          prev,
-							"new_code":           *req.ItemCode,
-							"unit_code":          unit,
-							"bill_id":            billID,
-							"confirmed_existing": prev == *req.ItemCode,
-							"applied_items":      appliedItems,
-							"ready_bills":        readyBills,
-						},
-					})
-				}
-			}
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "item updated"})
+	c.JSON(http.StatusOK, gin.H{"message": "item updated", "master_saved": req.RememberMapping})
 }
 
 // ─── Source artifact endpoints ────────────────────────────────────────────────

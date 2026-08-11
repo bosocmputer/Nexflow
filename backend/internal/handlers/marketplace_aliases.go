@@ -76,13 +76,16 @@ func (h *MarketplaceAliasHandler) ReviewGroups(c *gin.Context) {
 
 func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 	var req struct {
-		Source        string `json:"source" binding:"required"`
-		BillType      string `json:"bill_type" binding:"required"`
-		SourceSKU     string `json:"source_sku"`
-		RawName       string `json:"raw_name"`
-		NormalizedKey string `json:"normalized_key"`
-		ItemCode      string `json:"item_code" binding:"required"`
-		UnitCode      string `json:"unit_code"`
+		Source            string `json:"source" binding:"required"`
+		AccountKey        string `json:"account_key"`
+		ExternalItemID    string `json:"external_item_id"`
+		ExternalVariantID string `json:"external_variant_id"`
+		BillType          string `json:"bill_type" binding:"required"`
+		SourceSKU         string `json:"source_sku"`
+		RawName           string `json:"raw_name"`
+		NormalizedKey     string `json:"normalized_key"`
+		ItemCode          string `json:"item_code" binding:"required"`
+		UnitCode          string `json:"unit_code"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -90,6 +93,10 @@ func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 	}
 	if !isMarketplaceSource(req.Source) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported marketplace source"})
+		return
+	}
+	if req.Source == "shopee" && !strings.HasPrefix(strings.TrimSpace(req.AccountKey), "shop:") {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "รายการ Shopee นี้ไม่ได้ระบุร้าน จึงแก้เฉพาะบิลได้แต่ห้ามสร้าง Product Master"})
 		return
 	}
 
@@ -108,48 +115,36 @@ func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 		unitCode = product.UnitCode
 	}
 	userID := c.GetString("user_id")
-	alias, err := h.aliasRepo.Upsert(req.Source, req.SourceSKU, req.RawName, req.ItemCode, unitCode, userID)
+	method := "manual_name"
+	if strings.TrimSpace(req.ExternalItemID) != "" {
+		method = "manual_identity"
+	} else if strings.TrimSpace(req.SourceSKU) != "" {
+		method = "manual_sku"
+	}
+	result, err := h.aliasRepo.SaveAndApply(repository.MarketplaceAliasMutation{
+		Identity: models.MarketplaceAliasIdentity{
+			Source: req.Source, AccountKey: req.AccountKey, ExternalItemID: req.ExternalItemID,
+			ExternalVariantID: req.ExternalVariantID, SourceSKU: req.SourceSKU,
+			RawName: req.RawName, NormalizedKey: req.NormalizedKey,
+		},
+		BillType: req.BillType, ItemCode: req.ItemCode, UnitCode: unitCode,
+		MatchMethod: method, ScopeConfirmed: true,
+		ConfirmedBy: userID,
+	})
+	if errors.Is(err, repository.ErrMarketplaceAliasConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": "สินค้าต้นทางนี้มีการจับคู่ในขอบเขตร้านแล้ว กรุณารีเฟรชและตรวจรายการเดิม"})
+		return
+	}
 	if err != nil {
 		h.logger.Error("confirm marketplace alias", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save alias"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกการจับคู่ไม่สำเร็จ และยังไม่มีข้อมูลใดถูกเปลี่ยน"})
 		return
-	}
-	normalizedKey := req.NormalizedKey
-	if alias != nil {
-		normalizedKey = alias.NormalizedKey
-	}
-	applied, ready, err := h.aliasRepo.ApplyToOpenItems(req.Source, req.BillType, req.SourceSKU, normalizedKey, req.RawName, req.ItemCode, unitCode)
-	if err != nil {
-		h.logger.Error("apply marketplace alias", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to apply alias"})
-		return
-	}
-	if h.auditRepo != nil && alias != nil {
-		var auditUserID *string
-		if userID != "" {
-			auditUserID = &userID
-		}
-		_ = h.auditRepo.Log(models.AuditEntry{
-			Action: "marketplace_alias_confirmed",
-			UserID: auditUserID,
-			Source: req.Source,
-			Level:  "info",
-			Detail: map[string]interface{}{
-				"alias_id":       alias.ID,
-				"source_sku":     alias.SourceSKU,
-				"normalized_key": alias.NormalizedKey,
-				"raw_name":       alias.RawName,
-				"item_code":      alias.ItemCode,
-				"unit_code":      alias.UnitCode,
-				"applied_items":  applied,
-				"ready_bills":    ready,
-			},
-		})
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"alias":         alias,
-		"applied_items": applied,
-		"ready_bills":   ready,
+		"alias":         result.Alias,
+		"applied_items": result.AppliedItems,
+		"ready_bills":   result.ReadyBills,
+		"impact":        result.Impact,
 	})
 }
 
@@ -183,28 +178,31 @@ func (h *MarketplaceAliasHandler) Update(c *gin.Context) {
 		unitCode = product.UnitCode
 	}
 	userID := c.GetString("user_id")
-	alias, err := h.aliasRepo.Update(c.Param("id"), product.ItemCode, unitCode, userID, version)
+	current, err := h.aliasRepo.GetByID(c.Param("id"))
+	if err != nil || current == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบการจับคู่นี้"})
+		return
+	}
+	result, err := h.aliasRepo.SaveAndApply(repository.MarketplaceAliasMutation{
+		ID: current.ID, Identity: models.MarketplaceAliasIdentity{
+			Source: current.Source, AccountKey: current.AccountKey, ExternalItemID: current.ExternalItemID,
+			ExternalVariantID: current.ExternalVariantID, SourceSKU: current.SourceSKU,
+			RawName: current.RawName, NormalizedKey: current.NormalizedKey,
+		},
+		BillType: req.BillType, ItemCode: product.ItemCode, UnitCode: unitCode,
+		MatchMethod: current.MatchMethod, ScopeConfirmed: current.ScopeConfirmed,
+		ConfirmedBy: userID, Version: &version,
+	})
 	if errors.Is(err, repository.ErrMarketplaceAliasConflict) {
 		c.JSON(http.StatusConflict, gin.H{"error": "รายการนี้ถูกแก้ไขโดยผู้ใช้อื่นแล้ว กรุณารีเฟรชหน้า"})
 		return
 	}
 	if err != nil {
 		h.logger.Error("update marketplace alias", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "แก้ไขการจับคู่ไม่สำเร็จ"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "แก้ไขการจับคู่ไม่สำเร็จ และยังไม่มีข้อมูลใดถูกเปลี่ยน"})
 		return
 	}
-	billType := strings.TrimSpace(req.BillType)
-	if billType == "" {
-		billType = "sale"
-	}
-	applied, ready, err := h.aliasRepo.ApplyToOpenItems(alias.Source, billType, alias.SourceSKU, alias.NormalizedKey, alias.RawName, alias.ItemCode, alias.UnitCode)
-	if err != nil {
-		h.logger.Error("apply updated marketplace alias", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกแล้วแต่ปรับเอกสารเปิดไม่สำเร็จ กรุณาลองใหม่"})
-		return
-	}
-	h.audit(c, "marketplace_alias_updated", alias, gin.H{"applied_items": applied, "ready_bills": ready})
-	c.JSON(http.StatusOK, gin.H{"alias": alias, "applied_items": applied, "ready_bills": ready})
+	c.JSON(http.StatusOK, gin.H{"alias": result.Alias, "applied_items": result.AppliedItems, "ready_bills": result.ReadyBills, "impact": result.Impact})
 }
 
 func (h *MarketplaceAliasHandler) Delete(c *gin.Context) {
@@ -220,25 +218,50 @@ func (h *MarketplaceAliasHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลเวอร์ชันไม่ถูกต้อง กรุณารีเฟรชหน้า"})
 		return
 	}
-	deleted, err := h.aliasRepo.Deactivate(c.Param("id"), version)
+	impact, err := h.aliasRepo.DeactivateWithImpact(c.Param("id"), version, c.GetString("user_id"))
+	if errors.Is(err, repository.ErrMarketplaceAliasConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": "รายการนี้ถูกแก้ไขหรือลบแล้ว กรุณารีเฟรชหน้า"})
+		return
+	}
 	if err != nil {
 		h.logger.Error("delete marketplace alias", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ลบการจับคู่ไม่สำเร็จ"})
 		return
 	}
-	if !deleted {
-		c.JSON(http.StatusConflict, gin.H{"error": "รายการนี้ถูกแก้ไขหรือลบแล้ว กรุณารีเฟรชหน้า"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "impact": impact})
+}
+
+func (h *MarketplaceAliasHandler) ImpactPreview(c *gin.Context) {
+	var req struct {
+		AliasID           string `json:"alias_id"`
+		Source            string `json:"source" binding:"required"`
+		AccountKey        string `json:"account_key"`
+		ExternalItemID    string `json:"external_item_id"`
+		ExternalVariantID string `json:"external_variant_id"`
+		SourceSKU         string `json:"source_sku"`
+		RawName           string `json:"raw_name"`
+		NormalizedKey     string `json:"normalized_key"`
+		ItemCode          string `json:"item_code" binding:"required"`
+		Deactivate        bool   `json:"deactivate"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || !isMarketplaceSource(req.Source) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลสำหรับตรวจผลกระทบไม่ครบ"})
 		return
 	}
-	if h.auditRepo != nil {
-		userID := c.GetString("user_id")
-		var auditUserID *string
-		if userID != "" {
-			auditUserID = &userID
-		}
-		_ = h.auditRepo.Log(models.AuditEntry{Action: "marketplace_alias_deleted", UserID: auditUserID, Source: "marketplace_alias", Level: "info", Detail: map[string]interface{}{"alias_id": c.Param("id")}})
+	impact, err := h.aliasRepo.PreviewImpact(models.MarketplaceAliasIdentity{
+		Source: req.Source, AccountKey: req.AccountKey, ExternalItemID: req.ExternalItemID,
+		ExternalVariantID: req.ExternalVariantID, SourceSKU: req.SourceSKU,
+		RawName: req.RawName, NormalizedKey: req.NormalizedKey,
+	}, req.AliasID, strings.TrimSpace(req.ItemCode))
+	if err != nil {
+		h.logger.Error("preview marketplace alias impact", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจผลกระทบไม่สำเร็จ"})
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	if req.Deactivate {
+		impact.DryRunRequired = impact.StockMappings > 0
+	}
+	c.JSON(http.StatusOK, impact)
 }
 
 func (h *MarketplaceAliasHandler) audit(c *gin.Context, action string, alias *models.MarketplaceItemAlias, detail gin.H) {

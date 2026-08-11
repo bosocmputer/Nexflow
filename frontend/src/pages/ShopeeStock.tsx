@@ -18,9 +18,11 @@ import {
   Settings2,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Link } from 'react-router-dom'
 
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { MarketplaceMappingDrawer } from '@/components/marketplace/MarketplaceMappingDrawer'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,6 +41,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import type { CatalogMatch, MarketplaceAliasImpact } from '@/types'
 
 type LocationPair = { warehouse: string; location: string }
 type StockLocation = { warehouse_code: string; warehouse_name: string; location_code: string; location_name: string }
@@ -71,6 +74,8 @@ type ProductRow = {
   model_name: string
   item_sku: string
   model_sku: string
+  marketplace_alias_id?: string | null
+  marketplace_alias_updated_at?: string | null
   shopee_available: number
   shopee_reserved: number
   sml_item_code: string
@@ -160,6 +165,8 @@ const WARNING_LABEL: Record<string, string> = {
   duplicate_sml_item: 'สินค้า SML ถูกใช้ซ้ำ',
   stock_balance_missing: 'ไม่พบยอดคงเหลือ',
   reserved_stock_exceeds_target: 'สต๊อกจอง Shopee สูงกว่าเป้าหมาย',
+  master_target_changed: 'Master เปลี่ยนสินค้า ต้องเลือกหน่วยและทำ Dry-run ใหม่',
+  master_inactive: 'Master ถูกปิดใช้งาน กรุณาจับคู่ใหม่',
 }
 
 function errorText(error: unknown) {
@@ -704,6 +711,7 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
       <div className="min-w-0">
         <p className="truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p>
         <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${conversionText}${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
+        {product.marketplace_alias_id && <Link to={`/marketplace-aliases?q=${encodeURIComponent(product.model_sku || product.item_sku || String(product.item_id))}`} className="mt-0.5 inline-flex text-[11px] font-medium text-primary hover:underline">ดูใน Product Master</Link>}
       </div>
       <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
         <div className="min-w-0 text-left lg:text-right">
@@ -763,8 +771,6 @@ function CatalogInfoDialog({ open, onOpenChange }: { open: boolean; onOpenChange
 }
 
 function MappingDialog({ product, shopID, onClose, onSaved }: { product: ProductRow | null; shopID: number; onClose: () => void; onSaved: () => Promise<void> }) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<StockCatalogOption[]>([])
   const [selected, setSelected] = useState<StockCatalogOption | null>(null)
   const [units, setUnits] = useState<StockCatalogUnit[]>([])
   const [unitCode, setUnitCode] = useState('')
@@ -772,12 +778,12 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
   const [manualFactor, setManualFactor] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmExclude, setConfirmExclude] = useState(false)
+  const [saveImpact, setSaveImpact] = useState<MarketplaceAliasImpact | null>(null)
 
   useEffect(() => {
     let active = true
     setConfirmExclude(false)
-    setQuery(product?.sml_item_code || '')
-    setResults([])
+    setSaveImpact(null)
     setSelected(product?.sml_item_code ? { item_code: product.sml_item_code, item_name: product.sml_item_name, standard_unit: product.sml_unit_code, units: [] } : null)
     setUnits([])
     setUnitCode(product?.sml_unit_code || '')
@@ -796,23 +802,78 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
     }
     return () => { active = false }
   }, [product?.item_id, product?.model_id, product?.sml_item_code, product?.sml_item_name, product?.sml_unit_code, product?.manual_unit_factor])
-  const searchCatalog = async () => {
-    if (query.trim().length < 2) { toast.error('กรอกอย่างน้อย 2 ตัวอักษร'); return }
+
+  const selectProduct = async (picked: CatalogMatch) => {
     setBusy(true)
-    try { const response = await client.get<{ items: StockCatalogOption[] }>('/api/settings/shopee-stock/catalog-search', { params: { q: query.trim() } }); setResults(response.data.items ?? []) } catch (error) { toast.error(errorText(error)) } finally { setBusy(false) }
+    try {
+      const response = await client.get<{ items: StockCatalogOption[] }>('/api/settings/shopee-stock/catalog-search', { params: { q: picked.item_code } })
+      const item = (response.data.items ?? []).find((candidate) => candidate.item_code === picked.item_code)
+      if (!item) {
+        toast.error('ไม่พบข้อมูลหน่วยของสินค้านี้ กรุณาอัปเดตรายการสินค้าแล้วลองใหม่')
+        return
+      }
+      setSelected(item)
+      const next = item.units ?? []
+      setUnits(next)
+      setUnitCode(next.find((unit) => unit.code === item.standard_unit)?.code || next[0]?.code || '')
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setBusy(false)
+    }
   }
-  const selectProduct = (item: StockCatalogOption) => {
-    setSelected(item)
-    const next = item.units ?? []
-    setUnits(next)
-    setUnitCode(next.find((unit) => unit.code === item.standard_unit)?.code || next[0]?.code || '')
+  const validateSelection = () => {
+    const parsedManualFactor = Number(manualFactor)
+    if (!selected || !unitCode) return null
+    if (useManualFactor && (!Number.isFinite(parsedManualFactor) || parsedManualFactor < 1)) {
+      toast.error('อัตราส่วนที่กำหนดเองต้องไม่น้อยกว่า 1')
+      return null
+    }
+    return parsedManualFactor
+  }
+  const previewSave = async () => {
+    if (!product || !selected || validateSelection() == null) return
+    setBusy(true)
+    try {
+      const response = await client.post<MarketplaceAliasImpact>('/api/marketplace-aliases/impact-preview', {
+        alias_id: product.marketplace_alias_id || '',
+        source: 'shopee',
+        account_key: `shop:${shopID}`,
+        external_item_id: String(product.item_id),
+        external_variant_id: String(product.model_id),
+        source_sku: product.model_sku || product.item_sku || '',
+        raw_name: productDisplayName(product),
+        item_code: selected.item_code,
+      })
+      setSaveImpact(response.data)
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setBusy(false)
+    }
   }
   const save = async (excluded = false) => {
     if (!product || (!excluded && (!selected || !unitCode))) return
-    const parsedManualFactor = Number(manualFactor)
-    if (!excluded && useManualFactor && (!Number.isFinite(parsedManualFactor) || parsedManualFactor < 1)) { toast.error('อัตราส่วนที่กำหนดเองต้องไม่น้อยกว่า 1'); return }
+    const parsedManualFactor = excluded ? 0 : validateSelection()
+    if (!excluded && parsedManualFactor == null) return
     setBusy(true)
-    try { await client.put(`/api/settings/shopee-stock/${shopID}/mappings/${product.item_id}/${product.model_id}`, { sml_item_code: excluded ? '' : selected?.item_code, sml_unit_code: excluded ? '' : unitCode, manual_unit_factor: !excluded && useManualFactor ? parsedManualFactor : null, excluded, updated_at: product.updated_at }); toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : 'บันทึกการจับคู่แล้ว ต้อง dry-run ใหม่'); await onSaved() } catch (error) { toast.error(errorText(error)) } finally { setBusy(false) }
+    try {
+      await client.put(`/api/settings/shopee-stock/${shopID}/mappings/${product.item_id}/${product.model_id}`, {
+        sml_item_code: excluded ? '' : selected?.item_code,
+        sml_unit_code: excluded ? '' : unitCode,
+        manual_unit_factor: !excluded && useManualFactor ? parsedManualFactor : null,
+        excluded,
+        updated_at: product.updated_at,
+        marketplace_alias_id: product.marketplace_alias_id || '',
+        marketplace_alias_updated_at: product.marketplace_alias_updated_at || null,
+      })
+      toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : 'บันทึก Product Master แล้ว ต้อง Dry-run ใหม่')
+      await onSaved()
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setBusy(false)
+    }
   }
   const selectedUnit = units.find((unit) => unit.code === unitCode)
   const baseUnit = useMemo(() => [...units].sort((left, right) =>
@@ -823,28 +884,24 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
   const selectedFactor = selectedUnit ? (selectedUnit.stand_value ?? 0) / (selectedUnit.divide_value || 1) : 0
   return (
     <>
-      <Dialog open={!!product} onOpenChange={(open) => !open && !busy && onClose()}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>จับคู่สินค้า SML</DialogTitle>
-            <DialogDescription>{product ? `${productDisplayName(product)} · SKU ${product.model_sku || product.item_sku || 'ไม่มี'}` : ''}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void searchCatalog() }}>
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหารหัสหรือชื่อสินค้า SML" />
-              <Button type="submit" variant="outline" disabled={busy}><Search className="h-4 w-4" />ค้นหา</Button>
-            </form>
-            <div className="max-h-52 divide-y overflow-y-auto rounded-md border">
-              {results.map((item) => (
-                <button key={item.item_code} type="button" onClick={() => selectProduct(item)} className={cn('block w-full px-3 py-2 text-left hover:bg-muted', selected?.item_code === item.item_code && 'bg-primary/10')}>
-                  <p className="text-sm font-medium">{item.item_code}</p>
-                  <p className="text-xs text-muted-foreground">{item.item_name}</p>
-                </button>
-              ))}
-              {!results.length && <p className="p-4 text-center text-sm text-muted-foreground">{query.trim().length >= 2 ? 'ไม่พบสินค้าที่ตรงกับคำค้นหา' : 'ค้นหาด้วยรหัสหรือชื่อสินค้า แล้วเลือกสินค้าจาก SML'}</p>}
-            </div>
-            {selected && (
-              <div className="space-y-3">
+      <MarketplaceMappingDrawer
+        open={!!product}
+        rawName={product ? productDisplayName(product) : ''}
+        currentCode={product?.sml_item_code || ''}
+        currentUnit={product?.sml_unit_code || ''}
+        rawNameLabel={product ? `สินค้า Shopee · SKU ${product.model_sku || product.item_sku || 'ไม่มี'}` : 'สินค้า Shopee'}
+        closeOnPick={false}
+        onPick={(_, __, picked) => { if (picked) void selectProduct(picked) }}
+        onOpenChange={(open) => !open && !busy && onClose()}
+        footer={(
+          <div className="flex flex-wrap justify-between gap-2">
+            <Button type="button" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirmExclude(true)} disabled={busy}>ยกเว้นสินค้านี้</Button>
+            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={previewSave} disabled={busy || !selected || !unitCode || (useManualFactor && !manualFactor)}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}ตรวจผลกระทบ</Button></div>
+          </div>
+        )}
+      >
+        {selected && (
+              <div className="mt-4 space-y-3 border-t pt-4">
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">สินค้าที่เลือก</p>
                   <p className="mt-0.5 text-sm font-medium">{selected.item_code} · {selected.item_name}</p>
@@ -873,13 +930,7 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
                 </div>
               </div>
             )}
-          </div>
-          <DialogFooter className="gap-2 sm:justify-between">
-            <Button type="button" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirmExclude(true)} disabled={busy}>ยกเว้นสินค้านี้</Button>
-            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={() => save(false)} disabled={busy || !selected || !unitCode || (useManualFactor && !manualFactor)}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}บันทึกการจับคู่</Button></div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </MarketplaceMappingDrawer>
       <ConfirmDialog
         open={confirmExclude}
         onOpenChange={setConfirmExclude}
@@ -888,6 +939,14 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
         confirmLabel="ยืนยันการยกเว้น"
         variant="destructive"
         onConfirm={() => save(true)}
+      />
+      <ConfirmDialog
+        open={saveImpact !== null}
+        onOpenChange={(open) => !open && setSaveImpact(null)}
+        title="ยืนยัน Product Master และหน่วยสต๊อก?"
+        description={saveImpact && product && selected ? `${productDisplayName(product)}\nสินค้า SML: ${selected.item_code} · ${selected.item_name}\nบิลเปิดที่จะอัปเดต: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping ที่เกี่ยวข้อง: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? `\nพบสินค้าซ้ำใน Stock ${saveImpact.stock_conflicts.toLocaleString()} รายการ` : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน และต้องทำ Dry-run ก่อนซิงก์` : undefined}
+        confirmLabel="บันทึกและบังคับ Dry-run"
+        onConfirm={() => save(false)}
       />
     </>
   )

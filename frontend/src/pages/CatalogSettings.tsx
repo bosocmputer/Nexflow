@@ -100,7 +100,7 @@ export default function CatalogSettings() {
   return (
     <div className="space-y-4 p-4 sm:p-6">
       <PageHeader
-        title="สินค้าใน SML"
+        title="รายการสินค้า SML"
         description="ข้อมูลสินค้าที่ใช้ค้นหาและจับคู่แบบตรงจากฐานข้อมูล SML"
         actions={canManageCatalog ? (
           <div className="flex flex-wrap gap-2">

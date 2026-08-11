@@ -180,16 +180,18 @@ type ShopeeConfigRequest struct {
 // ShopeeExcelItem is one parsed Shopee Excel line. SKU is optional in real
 // Seller Center exports; when it is missing RawName becomes the matching key.
 type ShopeeExcelItem struct {
-	SKU         string  `json:"sku"`
-	LazadaSKU   string  `json:"lazada_sku,omitempty"`
-	TikTokSKU   string  `json:"tiktok_sku,omitempty"`
-	OrderItemID string  `json:"order_item_id,omitempty"`
-	ProductName string  `json:"product_name"`
-	OptionName  string  `json:"option_name,omitempty"`
-	RawName     string  `json:"raw_name"`
-	Price       float64 `json:"price"`
-	Qty         float64 `json:"qty"`
-	NoSKU       bool    `json:"no_sku,omitempty"`
+	SKU             string  `json:"sku"`
+	LazadaSKU       string  `json:"lazada_sku,omitempty"`
+	TikTokSKU       string  `json:"tiktok_sku,omitempty"`
+	OrderItemID     string  `json:"order_item_id,omitempty"`
+	SourceItemID    string  `json:"source_item_id,omitempty"`
+	SourceVariantID string  `json:"source_variant_id,omitempty"`
+	ProductName     string  `json:"product_name"`
+	OptionName      string  `json:"option_name,omitempty"`
+	RawName         string  `json:"raw_name"`
+	Price           float64 `json:"price"`
+	Qty             float64 `json:"qty"`
+	NoSKU           bool    `json:"no_sku,omitempty"`
 }
 
 // ShopeeOrder is one parsed Shopee order (returned in preview).
@@ -614,6 +616,14 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 	}
 	traceID := c.GetString("trace_id")
 	confirmStart := time.Now()
+	if selectedConn != nil {
+		shopID := strconv.FormatInt(selectedConn.ShopID, 10)
+		for i := range req.Orders {
+			req.Orders[i].ShopeeShopID = shopID
+			req.Orders[i].ShopeeConnectionID = selectedConn.ID
+			req.Orders[i].ShopeeShopLabel = selectedConn.DisplayLabel()
+		}
+	}
 
 	resolutionBatch, err := prepareMarketplaceResolution(
 		c.Request.Context(), "shopee", req.Orders, selectedSet,
@@ -624,6 +634,7 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog_unavailable", "message": "เตรียมข้อมูลสินค้า SML ไม่สำเร็จ กรุณาลองใหม่"})
 		return
 	}
+	defer flushMarketplaceResolutionUsage(resolutionBatch, h.aliasRepo, h.logger)
 
 	// Pull the original .xlsx bytes once so we can attach the same artifact
 	// to every bill the import creates. May be nil when artifact service is
@@ -706,13 +717,20 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 
 		for _, it := range order.Items {
 			rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
-			resolved := resolutionBatch.resolution(it.SKU, rawName)
-
-			price := it.Price
+			accountKey := marketplaceSourceAccountKey("shopee", shopID)
+			resolved := resolutionBatch.resolutionScoped(accountKey, it.SourceItemID, it.SourceVariantID, it.SKU, rawName)
+			confirmedBy := ""
+			if userID != nil {
+				confirmedBy = *userID
+			}
+			bi, mapped, resolveErr := marketplaceBillItemFromResolution("shopee", accountKey, it, defaultUnit, resolved, resolutionBatch, h.aliasRepo, confirmedBy)
+			if resolveErr != nil {
+				h.logger.Warn("shopee_import: save product master failed", zap.Error(resolveErr))
+				allHigh = false
+			}
 			exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
-			bi, mapped := marketplaceBillItemFromMatch(rawName, it.SKU, it.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, resolutionBatch.catalogLookup, 1)
 			if mapped {
-				recordMarketplaceResolutionUsage(h.aliasRepo, h.mappingRepo, resolved, exactSKU)
+				recordMarketplaceResolutionUsage(resolutionBatch, resolved, exactSKU)
 			}
 			if !mapped {
 				allHigh = false
@@ -767,13 +785,14 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 		}
 		rawData, _ := json.Marshal(raw)
 		bill := &models.Bill{
-			BillType:      "sale",
-			Source:        "shopee",
-			Status:        status,
-			DocumentRoute: documentRoute,
-			AIConfidence:  nil,
-			RawData:       rawData,
-			SMLOrderID:    order.OrderID,
+			BillType:         "sale",
+			Source:           "shopee",
+			SourceAccountKey: marketplaceSourceAccountKey("shopee", shopID),
+			Status:           status,
+			DocumentRoute:    documentRoute,
+			AIConfidence:     nil,
+			RawData:          rawData,
+			SMLOrderID:       order.OrderID,
 		}
 		if userID != nil {
 			bill.CreatedBy = userID
@@ -1381,18 +1400,25 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 	if err != nil {
 		return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "เตรียมข้อมูลสินค้า SML ไม่สำเร็จ"}, err
 	}
+	defer flushMarketplaceResolutionUsage(resolutionBatch, h.aliasRepo, h.logger)
 	enriched := []itemEnriched{}
 	allHigh := true
 
 	for _, it := range order.Items {
 		rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
-		resolved := resolutionBatch.resolution(it.SKU, rawName)
-
-		price := it.Price
+		accountKey := marketplaceSourceAccountKey("shopee", shopID)
+		resolved := resolutionBatch.resolutionScoped(accountKey, it.SourceItemID, it.SourceVariantID, it.SKU, rawName)
+		confirmedBy := ""
+		if opts.UserID != nil {
+			confirmedBy = *opts.UserID
+		}
+		bi, mapped, resolveErr := marketplaceBillItemFromResolution("shopee", accountKey, it, defaultUnit, resolved, resolutionBatch, h.aliasRepo, confirmedBy)
+		if resolveErr != nil {
+			return ConfirmResult{OrderID: order.OrderID, Success: false, Message: "บันทึก Product Master ไม่สำเร็จ"}, resolveErr
+		}
 		exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
-		bi, mapped := marketplaceBillItemFromMatch(rawName, it.SKU, it.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, resolutionBatch.catalogLookup, 1)
 		if mapped {
-			recordMarketplaceResolutionUsage(h.aliasRepo, h.mappingRepo, resolved, exactSKU)
+			recordMarketplaceResolutionUsage(resolutionBatch, resolved, exactSKU)
 		}
 		if !mapped {
 			allHigh = false
@@ -1451,13 +1477,14 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 	}
 	rawData, _ := json.Marshal(raw)
 	bill := &models.Bill{
-		BillType:      "sale",
-		Source:        "shopee",
-		Status:        status,
-		DocumentRoute: documentRoute,
-		AIConfidence:  nil,
-		RawData:       rawData,
-		SMLOrderID:    order.OrderID,
+		BillType:         "sale",
+		Source:           "shopee",
+		SourceAccountKey: marketplaceSourceAccountKey("shopee", shopID),
+		Status:           status,
+		DocumentRoute:    documentRoute,
+		AIConfidence:     nil,
+		RawData:          rawData,
+		SMLOrderID:       order.OrderID,
 	}
 	if opts.UserID != nil {
 		bill.CreatedBy = opts.UserID

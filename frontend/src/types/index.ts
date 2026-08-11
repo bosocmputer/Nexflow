@@ -106,6 +106,9 @@ export interface BillItem {
   bill_id: string
   raw_name: string
   source_sku?: string
+  source_item_id?: string
+  source_variant_id?: string
+  marketplace_alias_id?: string | null
   source_image_url?: string
   item_code?: string | null
   has_hidden_chars?: boolean
@@ -201,6 +204,7 @@ export interface Bill {
   id: string
   bill_type: string
   source: string
+  source_account_key?: string
   status: BillStatus
   document_route?: string
   raw_data?: Record<string, unknown> | null
@@ -280,6 +284,10 @@ export interface MappingStats {
 export interface MarketplaceAliasReviewGroup {
   group_key: string
   source: string
+  account_key: string
+  account_name?: string
+  external_item_id: string
+  external_variant_id: string
   bill_type: string
   source_sku: string
   raw_name: string
@@ -291,6 +299,10 @@ export interface MarketplaceAliasReviewGroup {
 export interface MarketplaceItemAlias {
   id: string
   source: string
+  account_key: string
+  account_name?: string
+  external_item_id: string
+  external_variant_id: string
   source_sku: string
   raw_name: string
   normalized_key: string
@@ -304,8 +316,19 @@ export interface MarketplaceItemAlias {
   created_at: string
   updated_at: string
   is_active: boolean
+  match_method: 'exact_sku' | 'manual_identity' | 'manual_sku' | 'manual_name' | 'legacy'
+  scope_confirmed: boolean
   product_active: boolean
   open_item_count: number
+  stock_mapping_count: number
+}
+
+export interface MarketplaceAliasImpact {
+  open_items: number
+  open_bills: number
+  stock_mappings: number
+  stock_conflicts: number
+  dry_run_required: boolean
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────

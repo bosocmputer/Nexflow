@@ -311,6 +311,7 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog_unavailable", "message": "เตรียมข้อมูลสินค้า SML ไม่สำเร็จ กรุณาลองใหม่"})
 		return
 	}
+	defer flushMarketplaceResolutionUsage(resolutionBatch, h.aliasRepo, h.logger)
 
 	var uploadBytes []byte
 	var uploadFilename string
@@ -348,12 +349,19 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 			if it.OrderItemID != "" {
 				orderItemIDs = append(orderItemIDs, it.OrderItemID)
 			}
-			resolved := resolutionBatch.resolution(it.SKU, rawName)
-			price := it.Price
+			resolved := resolutionBatch.resolutionScoped("default", it.SourceItemID, it.SourceVariantID, it.SKU, rawName)
+			confirmedBy := ""
+			if userID != nil {
+				confirmedBy = *userID
+			}
+			bi, mapped, resolveErr := marketplaceBillItemFromResolution("tiktok", "default", it, defaultUnit, resolved, resolutionBatch, h.aliasRepo, confirmedBy)
+			if resolveErr != nil {
+				h.logger.Warn("tiktok_import: save product master failed", zap.Error(resolveErr))
+				allHigh = false
+			}
 			exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
-			bi, mapped := marketplaceBillItemFromMatch(rawName, it.SKU, it.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, resolutionBatch.catalogLookup, 1)
 			if mapped {
-				recordMarketplaceResolutionUsage(h.aliasRepo, h.mappingRepo, resolved, exactSKU)
+				recordMarketplaceResolutionUsage(resolutionBatch, resolved, exactSKU)
 			}
 			if !mapped {
 				allHigh = false
@@ -392,13 +400,14 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 			"sml_destination":    destinationName,
 		})
 		bill := &models.Bill{
-			BillType:      "sale",
-			Source:        "tiktok",
-			Status:        status,
-			DocumentRoute: documentRoute,
-			AIConfidence:  nil,
-			RawData:       rawData,
-			SMLOrderID:    order.OrderID,
+			BillType:         "sale",
+			Source:           "tiktok",
+			SourceAccountKey: "default",
+			Status:           status,
+			DocumentRoute:    documentRoute,
+			AIConfidence:     nil,
+			RawData:          rawData,
+			SMLOrderID:       order.OrderID,
 		}
 		if userID != nil {
 			bill.CreatedBy = userID

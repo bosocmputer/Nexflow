@@ -171,7 +171,7 @@ func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 	}
 }
 
-func TestMarketplaceBillItemUsesVerifiedNameMappingOnlyWithoutSKU(t *testing.T) {
+func TestMarketplaceBillItemKeepsLegacyNameMappingAsReviewHint(t *testing.T) {
 	learned := &models.Mapping{
 		ID:       "map-verified",
 		ItemCode: "NAME-CODE",
@@ -192,14 +192,35 @@ func TestMarketplaceBillItemUsesVerifiedNameMappingOnlyWithoutSKU(t *testing.T) 
 		0,
 	)
 
-	if !high || !item.Mapped {
-		t.Fatalf("high/mapped = %v/%v, want true/true", high, item.Mapped)
+	if high || item.Mapped {
+		t.Fatalf("high/mapped = %v/%v, want false/false", high, item.Mapped)
 	}
-	if item.ItemCode == nil || *item.ItemCode != "NAME-CODE" {
-		t.Fatalf("ItemCode = %v, want NAME-CODE", item.ItemCode)
+	if item.ItemCode != nil {
+		t.Fatalf("ItemCode = %v, want nil until scoped Master is confirmed", item.ItemCode)
 	}
-	if item.MappingID == nil || *item.MappingID != "map-verified" {
-		t.Fatalf("MappingID = %v, want map-verified", item.MappingID)
+	if item.MappingID != nil {
+		t.Fatalf("MappingID = %v, want nil", item.MappingID)
+	}
+}
+
+func TestMarketplaceResolutionIsolatesShopsAndPrefersStableIdentity(t *testing.T) {
+	shopOneIdentity := &models.MarketplaceItemAlias{ID: "identity-1", ItemCode: "SML-A"}
+	shopOneSKU := &models.MarketplaceItemAlias{ID: "sku-1", ItemCode: "SML-B"}
+	shopTwoSKU := &models.MarketplaceItemAlias{ID: "sku-2", ItemCode: "SML-C"}
+	batch := &marketplaceResolutionBatch{resolutions: map[string]matchResolution{
+		"identity\x00shop:1\x00100\x00200": {alias: shopOneIdentity},
+		"sku\x00shop:1\x00SKU-X":           {alias: shopOneSKU},
+		"sku\x00shop:2\x00SKU-X":           {alias: shopTwoSKU},
+	}}
+
+	if got := batch.resolutionScoped("shop:1", "100", "200", "SKU-X", "สินค้า").alias; got != shopOneIdentity {
+		t.Fatalf("stable identity did not win: %#v", got)
+	}
+	if got := batch.resolutionScoped("shop:2", "", "", "SKU-X", "สินค้า").alias; got != shopTwoSKU {
+		t.Fatalf("shop 2 resolved wrong alias: %#v", got)
+	}
+	if got := batch.resolutionScoped("shop:3", "", "", "SKU-X", "สินค้า").alias; got != nil {
+		t.Fatalf("shop isolation failed: %#v", got)
 	}
 }
 

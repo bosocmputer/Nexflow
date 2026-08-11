@@ -243,7 +243,11 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.Logger(logger))
-	logger.Info("runtime capabilities", zap.Bool("ai_enabled", false), zap.Bool("purchase_flow_enabled", cfg.PurchaseFlowEnabled))
+	mappingMode := strings.ToLower(strings.TrimSpace(os.Getenv("PRODUCT_MAPPING_MASTER_MODE")))
+	if mappingMode != "shadow" {
+		mappingMode = "active"
+	}
+	logger.Info("runtime capabilities", zap.Bool("ai_enabled", false), zap.Bool("purchase_flow_enabled", cfg.PurchaseFlowEnabled), zap.String("product_mapping_master_mode", mappingMode))
 
 	// CORS
 	r.Use(func(c *gin.Context) {
@@ -322,6 +326,7 @@ func main() {
 	shopeeRealtimeH.SetSMLCancelClient(saleInvoiceCancelClient)
 	shopeeGatewayInternalH := handlers.NewShopeeGatewayInternalHandler(db, cfg, shopeeRealtimeH, logger)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
+	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
 	lazadaH.SetArtifactService(artifactSvc)
 	tiktokH := handlers.NewTikTokImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
@@ -555,8 +560,9 @@ func main() {
 		// Marketplace aliases (review queue)
 		api.GET("/marketplace-aliases/review-groups", middleware.RequireRole("admin", "staff"), aliasH.ReviewGroups)
 		api.GET("/marketplace-aliases", middleware.RequireRole("admin", "staff"), aliasH.List)
-		api.POST("/marketplace-aliases/confirm", middleware.RequireRole("admin", "staff"), aliasH.Confirm)
-		api.PUT("/marketplace-aliases/:id", middleware.RequireRole("admin", "staff"), aliasH.Update)
+		api.POST("/marketplace-aliases/impact-preview", middleware.RequireRole("admin"), aliasH.ImpactPreview)
+		api.POST("/marketplace-aliases/confirm", middleware.RequireRole("admin"), aliasH.Confirm)
+		api.PUT("/marketplace-aliases/:id", middleware.RequireRole("admin"), aliasH.Update)
 		api.DELETE("/marketplace-aliases/:id", middleware.RequireRole("admin"), aliasH.Delete)
 
 		// Platform column mappings

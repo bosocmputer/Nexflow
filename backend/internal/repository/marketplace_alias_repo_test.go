@@ -1,11 +1,14 @@
 package repository
 
 import (
+	"errors"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"nexflow/internal/models"
 )
 
 func TestMarketplaceAliasIncrementUsageDoesNotChangeVersion(t *testing.T) {
@@ -21,6 +24,87 @@ func TestMarketplaceAliasIncrementUsageDoesNotChangeVersion(t *testing.T) {
 
 	if err := NewMarketplaceAliasRepo(db).IncrementUsage("alias-1"); err != nil {
 		t.Fatalf("IncrementUsage: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasIncrementUsageCountsUsesOneBatchUpdate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectExec(`(?s)UPDATE marketplace_item_aliases a.*unnest\(\$1::uuid\[\],\$2::bigint\[\]\).*WHERE a\.id=batch\.id`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	if err := NewMarketplaceAliasRepo(db).IncrementUsageCounts(map[string]int{"00000000-0000-0000-0000-000000000001": 2}); err != nil {
+		t.Fatalf("IncrementUsageCounts: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasImpactExcludesItemsWithExactActiveSKU(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\), COUNT\(DISTINCT b\.id\).*NOT EXISTS.*FROM sml_catalog c.*c\.item_code=btrim.*source_sku.*\$3`).
+		WithArgs("lazada", "default", "SELLER-SKU").
+		WillReturnRows(sqlmock.NewRows([]string{"items", "bills"}).AddRow(3, 2))
+
+	impact, err := NewMarketplaceAliasRepo(db).PreviewImpact(models.MarketplaceAliasIdentity{
+		Source: "lazada", AccountKey: "default", SourceSKU: "SELLER-SKU",
+	}, "", "SML-001")
+	if err != nil {
+		t.Fatalf("PreviewImpact: %v", err)
+	}
+	if impact.OpenItems != 3 || impact.OpenBills != 2 {
+		t.Fatalf("impact = %#v, want 3 items in 2 bills", impact)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasSaveAndApplyRejectsStaleVersionAndRollsBack(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	version := time.Date(2026, 8, 11, 9, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT id::text FROM marketplace_item_aliases.*FOR UPDATE`).
+		WithArgs("alias-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("alias-1"))
+	mock.ExpectQuery(`(?s)UPDATE marketplace_item_aliases a.*external_item_id=\$3.*updated_at=\$14.*RETURNING`).
+		WithArgs("shopee", "shop:1", "10", "20", "", "", "", "SML-NEW", "PCS", "user-1", "", false, "alias-1", version).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "account_key", "external_item_id", "external_variant_id",
+			"source_sku", "raw_name", "normalized_key", "item_code", "unit_code",
+			"confidence", "confirmed_by", "usage_count", "last_used_at", "created_at", "updated_at",
+			"is_active", "match_method", "scope_confirmed",
+		}))
+	mock.ExpectRollback()
+
+	_, err = NewMarketplaceAliasRepo(db).SaveAndApply(MarketplaceAliasMutation{
+		ID: "alias-1",
+		Identity: models.MarketplaceAliasIdentity{
+			Source: "shopee", AccountKey: "shop:1", ExternalItemID: "10", ExternalVariantID: "20",
+		},
+		BillType: "sale", ItemCode: "SML-NEW", UnitCode: "PCS", ConfirmedBy: "user-1", Version: &version,
+	})
+	if !errors.Is(err, ErrMarketplaceAliasConflict) {
+		t.Fatalf("SaveAndApply error = %v, want ErrMarketplaceAliasConflict", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -70,18 +154,19 @@ func TestMarketplaceAliasNoSKUUpsertUsesContiguousPostgresParameters(t *testing.
 	defer db.Close()
 	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 
-	mock.ExpectQuery(`(?s)UPDATE marketplace_item_aliases.*SET raw_name = \$2.*item_code = \$4.*unit_code = \$5.*COALESCE\(\$6, confirmed_by\).*source = \$1.*= \$3`).
-		WithArgs("shopee", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", "user-1").
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_item_aliases.*ON CONFLICT DO NOTHING`).
+		WithArgs("shopee", "default", "", "", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", "user-1", "manual_name", true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`(?s)UPDATE marketplace_item_aliases a.*source_sku=\$4.*raw_name=\$5.*item_code=\$7.*WHERE a\.source=\$1 AND a\.account_key=\$2.*normalized_key=\$3`).
+		WithArgs("shopee", "default", "ชื่อ สินค้า", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", "user-1", "manual_name", true).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "source", "source_sku", "raw_name", "normalized_key", "item_code", "unit_code",
-			"confidence", "confirmed_by", "usage_count", "last_used_at", "created_at", "updated_at", "is_active",
-		}))
-	mock.ExpectQuery(`(?s)INSERT INTO marketplace_item_aliases.*VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, 1\.0, \$7`).
-		WithArgs("shopee", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", "user-1").
-		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "source", "source_sku", "raw_name", "normalized_key", "item_code", "unit_code",
-			"confidence", "confirmed_by", "usage_count", "last_used_at", "created_at", "updated_at", "is_active",
-		}).AddRow("alias-1", "shopee", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", 1.0, "user-1", 1, now, now, now, true))
+			"id", "source", "account_key", "external_item_id", "external_variant_id",
+			"source_sku", "raw_name", "normalized_key", "item_code", "unit_code",
+			"confidence", "confirmed_by", "usage_count", "last_used_at", "created_at", "updated_at",
+			"is_active", "match_method", "scope_confirmed",
+		}).AddRow("alias-1", "shopee", "default", "", "", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", 1.0, "user-1", 0, now, now, now, true, "manual_name", true))
+	mock.ExpectCommit()
 
 	alias, err := NewMarketplaceAliasRepo(db).Upsert("shopee", "", "  ชื่อ   สินค้า  ", "SKU-1", "PCS", "user-1")
 	if err != nil {

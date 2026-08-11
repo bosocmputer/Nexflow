@@ -1531,14 +1531,16 @@ func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.Order
 				noSKUCount++
 			}
 			items = append(items, ShopeeExcelItem{
-				SKU:         sku,
-				OrderItemID: strconv.FormatInt(item.ItemID, 10),
-				ProductName: strings.TrimSpace(item.ItemName),
-				OptionName:  strings.TrimSpace(item.ModelName),
-				RawName:     rawName,
-				Price:       price,
-				Qty:         qty,
-				NoSKU:       noSKU,
+				SKU:             sku,
+				OrderItemID:     strconv.FormatInt(item.ItemID, 10),
+				SourceItemID:    strconv.FormatInt(item.ItemID, 10),
+				SourceVariantID: strconv.FormatInt(item.ModelID, 10),
+				ProductName:     strings.TrimSpace(item.ItemName),
+				OptionName:      strings.TrimSpace(item.ModelName),
+				RawName:         rawName,
+				Price:           price,
+				Qty:             qty,
+				NoSKU:           noSKU,
 			})
 			totalQty += qty
 			gross += price * qty

@@ -35,6 +35,7 @@ Production ports:
 bills               -- source, bill_type, status, sml_doc_no
 bill_items          -- item_code, qty, unit_code, price, discount_amount
 mappings            -- verified exact raw_name → item_code fallback when SKU is absent
+marketplace_item_aliases -- scoped Marketplace Product Master shared by imports, bills, and Shopee stock
 channel_defaults    -- per-(channel, bill_type): cust_code, endpoint, doc_format, WH/VAT overrides
 imap_accounts       -- retained schema; runtime disabled in sales-only mode
 app_settings        -- instance config UI (replaces most env vars)
@@ -54,7 +55,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–076** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–077** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -227,4 +228,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-10 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-11 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442

@@ -136,11 +136,6 @@ func (h *ShopeeStockHandler) UpdateMapping(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	h.auditChange(c, "shopee_stock_mapping_updated", shopID, map[string]any{
-		"item_id": itemID, "model_id": modelID, "sml_item_code": result.SMLItemCode,
-		"sml_unit_code": result.SMLUnitCode, "manual_unit_factor": result.ManualUnitFactor,
-		"excluded": result.Excluded,
-	})
 	c.JSON(http.StatusOK, result)
 }
 

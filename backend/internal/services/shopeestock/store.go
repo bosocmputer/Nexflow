@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lib/pq"
+
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/sml"
 )
@@ -378,14 +380,15 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 	defer productStmt.Close()
 	mappingStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO shopee_stock_mappings
-		 (shop_id,item_id,model_id,sml_item_code,sml_unit_code,unit_factor,match_source,warning_codes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		 (shop_id,item_id,model_id,sml_item_code,sml_unit_code,unit_factor,match_source,warning_codes,marketplace_alias_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid)
 		ON CONFLICT (shop_id,item_id,model_id) DO UPDATE SET
 		 sml_item_code=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.sml_item_code ELSE EXCLUDED.sml_item_code END,
 		 sml_unit_code=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.sml_unit_code ELSE EXCLUDED.sml_unit_code END,
 		 unit_factor=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.unit_factor ELSE EXCLUDED.unit_factor END,
 		 match_source=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.match_source ELSE EXCLUDED.match_source END,
 		 warning_codes=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.warning_codes ELSE EXCLUDED.warning_codes END,
+		 marketplace_alias_id=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.marketplace_alias_id ELSE EXCLUDED.marketplace_alias_id END,
 		 updated_at=NOW()`)
 	if err != nil {
 		return err
@@ -403,7 +406,16 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 			match.Warnings = []string{"sku_not_found"}
 		}
 		warnings, _ := json.Marshal(match.Warnings)
-		if _, err := mappingStmt.ExecContext(ctx, shopID, product.ItemID, product.ModelID, match.ItemCode, match.UnitCode, match.Factor, match.Source, warnings); err != nil {
+		aliasID := ""
+		if ok && match.Source == "sku" && match.ItemCode != "" {
+			aliasID, err = upsertShopeeStockMasterTx(ctx, tx, shopID, product.ItemID, product.ModelID,
+				product.ItemName, product.ModelName, product.ItemSKU, product.ModelSKU, match.ItemCode, match.UnitCode,
+				"exact_sku", "", "", nil)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := mappingStmt.ExecContext(ctx, shopID, product.ItemID, product.ModelID, match.ItemCode, match.UnitCode, match.Factor, match.Source, warnings, aliasID); err != nil {
 			return err
 		}
 	}
@@ -551,13 +563,24 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
 		       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
 		       COALESCE(c.units,'[]'::jsonb),
-		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.excluded,m.warning_codes,
+		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
 		       m.last_preview_target,m.last_success_target,m.updated_at
 		  FROM shopee_stock_products p
 		  JOIN shopee_stock_mappings m USING (shop_id,item_id,model_id)
 		  LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
+		  LEFT JOIN LATERAL (
+		    SELECT master.id,master.updated_at
+		      FROM marketplace_item_aliases master
+		     WHERE master.is_active=true AND master.source='shopee'
+		       AND ((master.id=m.marketplace_alias_id)
+		         OR (master.account_key='shop:'||p.shop_id::text
+		           AND master.external_item_id=p.item_id::text
+		           AND master.external_variant_id=p.model_id::text))
+		     ORDER BY (master.id=m.marketplace_alias_id) DESC
+		     LIMIT 1
+		  ) a ON true
 		 WHERE p.shop_id=$1 AND p.is_active=true`+whereStatus+queryFilter+`
 		 ORDER BY (jsonb_array_length(m.warning_codes)>0) DESC,p.item_name,p.model_name,p.item_id,p.model_id
 		 LIMIT $`+strconv.Itoa(limitArg)+` OFFSET $`+strconv.Itoa(offsetArg), args...)
@@ -571,7 +594,7 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		var warnings, unitsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
 			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
-			&item.MatchSource, &item.Excluded, &warnings,
+			&item.MatchSource, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
 			&item.LastPreviewTarget, &item.LastSuccessTarget, &item.UpdatedAt); err != nil {
 			return nil, 0, ProductCounts{}, err
@@ -588,37 +611,44 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 }
 
 func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64, request MappingUpdate, userID string) (*ProductRow, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var productName, modelName, itemSKU, modelSKU string
+	if err := tx.QueryRowContext(ctx, `SELECT item_name,model_name,item_sku,model_sku FROM shopee_stock_products
+		WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND is_active=true FOR UPDATE`, shopID, itemID, modelID).Scan(&productName, &modelName, &itemSKU, &modelSKU); err != nil {
+		return nil, err
+	}
 	if request.Excluded && strings.TrimSpace(request.SMLItemCode) == "" {
-		result, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_mappings
+		result, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings
 			SET excluded=true,updated_by=NULLIF($5,'')::uuid,updated_at=NOW()
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`, shopID, itemID, modelID, request.UpdatedAt, userID)
 		if err != nil {
 			return nil, err
 		}
-		affected, _ := result.RowsAffected()
-		if affected == 0 {
+		if affected, _ := result.RowsAffected(); affected == 0 {
 			return nil, ErrMappingConflict
 		}
-		if err := s.SetDryRunRequired(ctx, shopID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 			return nil, err
 		}
-		if err := s.RefreshDuplicateMappings(ctx); err != nil {
+		if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, "", "", true); err != nil {
 			return nil, err
 		}
-		products, err := s.ListProducts(ctx, shopID)
-		if err != nil {
+		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
-		for index := range products {
-			if products[index].ItemID == itemID && products[index].ModelID == modelID {
-				return &products[index], nil
-			}
-		}
-		return nil, sql.ErrNoRows
+		// The mapping transaction is already committed. Duplicate warnings can be
+		// rebuilt by the next catalog refresh; do not report a successful save as
+		// failed because this derived-state refresh was temporarily unavailable.
+		_ = s.RefreshDuplicateMappings(ctx)
+		return s.findProduct(ctx, shopID, itemID, modelID)
 	}
 	var item sml.StockCatalogItem
 	var unitsJSON, barcodesJSON []byte
-	err := s.db.QueryRowContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0))
+	err = tx.QueryRowContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0))
 		FROM shopee_stock_sml_catalog WHERE item_code=$1 AND is_active=true`, request.SMLItemCode).Scan(
 		&item.ItemCode, &item.ItemName, &item.StandardUnit, &unitsJSON, &barcodesJSON, &item.UpdatedAt)
 	if err != nil {
@@ -637,6 +667,23 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 	if !found {
 		return nil, ErrInvalidUnit
 	}
+	exactSKU := strings.TrimSpace(modelSKU)
+	if exactSKU == "" {
+		exactSKU = strings.TrimSpace(itemSKU)
+	}
+	masterMatchMethod := "manual_identity"
+	if exactSKU != "" {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM shopee_stock_sml_catalog WHERE item_code=$1 AND is_active=true)`, exactSKU).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists && exactSKU != item.ItemCode {
+			return nil, invalid("SKU ตรงกับสินค้า SML " + exactSKU + " อยู่แล้ว จึงไม่สามารถจับคู่ข้ามรหัสได้")
+		}
+		if exists {
+			masterMatchMethod = "exact_sku"
+		}
+	}
 	factor := UnitFactor(unit)
 	warningsList := UnitWarnings(unit)
 	if request.ManualUnitFactor != nil {
@@ -647,12 +694,20 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 		warningsList = nil
 	}
 	warnings, _ := json.Marshal(warningsList)
-	result, err := s.db.ExecContext(ctx, `
+	aliasID, err := upsertShopeeStockMasterTx(ctx, tx, shopID, itemID, modelID, productName, modelName, itemSKU, modelSKU,
+		item.ItemCode, item.StandardUnit, masterMatchMethod, userID, request.MarketplaceAliasID, request.MarketplaceAliasUpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyShopeeStockMasterToOpenBillsTx(ctx, tx, shopID, itemID, modelID, aliasID, item.ItemCode, item.StandardUnit); err != nil {
+		return nil, err
+	}
+	result, err := tx.ExecContext(ctx, `
 		UPDATE shopee_stock_mappings
 		   SET sml_item_code=$5,sml_unit_code=$6,unit_factor=$7,manual_unit_factor=$8,match_source='manual',excluded=$9,
-		       warning_codes=$10,updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
+		       warning_codes=$10,marketplace_alias_id=$12,updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
 		 WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`,
-		shopID, itemID, modelID, request.UpdatedAt, item.ItemCode, unit.Code, factor, request.ManualUnitFactor, request.Excluded, warnings, userID)
+		shopID, itemID, modelID, request.UpdatedAt, item.ItemCode, unit.Code, factor, request.ManualUnitFactor, request.Excluded, warnings, userID, aliasID)
 	if err != nil {
 		return nil, err
 	}
@@ -660,12 +715,33 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 	if affected == 0 {
 		return nil, ErrMappingConflict
 	}
-	if err := s.SetDryRunRequired(ctx, shopID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 		return nil, err
 	}
-	if err := s.RefreshDuplicateMappings(ctx); err != nil {
+	if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, aliasID, item.ItemCode, request.Excluded); err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	_ = s.RefreshDuplicateMappings(ctx)
+	return s.findProduct(ctx, shopID, itemID, modelID)
+}
+
+func insertStockMappingAuditTx(ctx context.Context, tx *sql.Tx, userID string, shopID, itemID, modelID int64, aliasID, itemCode string, excluded bool) error {
+	detail, err := json.Marshal(map[string]interface{}{
+		"shop_id": shopID, "item_id": itemID, "model_id": modelID,
+		"marketplace_alias_id": aliasID, "item_code": itemCode, "excluded": excluded,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,detail)
+		VALUES('shopee_stock_mapping_updated',NULLIF($1,'')::uuid,'shopee','info',$2)`, userID, detail)
+	return err
+}
+
+func (s *Store) findProduct(ctx context.Context, shopID, itemID, modelID int64) (*ProductRow, error) {
 	products, err := s.ListProducts(ctx, shopID)
 	if err != nil {
 		return nil, err
@@ -676,6 +752,148 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 		}
 	}
 	return nil, sql.ErrNoRows
+}
+
+func upsertShopeeStockMasterTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	shopID, itemID, modelID int64,
+	itemName, modelName, itemSKU, modelSKU, smlItemCode, standardUnit, matchMethod, userID, expectedAliasID string,
+	expectedAliasUpdatedAt *time.Time,
+) (string, error) {
+	sourceSKU := strings.TrimSpace(modelSKU)
+	if sourceSKU == "" {
+		sourceSKU = strings.TrimSpace(itemSKU)
+	}
+	rawName := strings.TrimSpace(strings.Join(nonEmptyStrings(itemName, modelName), " / "))
+	normalized := strings.Join(strings.Fields(strings.ReplaceAll(rawName, "\ufeff", "")), " ")
+	accountKey := "shop:" + strconv.FormatInt(shopID, 10)
+	externalItemID := strconv.FormatInt(itemID, 10)
+	externalVariantID := strconv.FormatInt(modelID, 10)
+
+	if expectedAliasID != "" {
+		if expectedAliasUpdatedAt == nil {
+			return "", ErrMappingConflict
+		}
+		var currentUpdatedAt time.Time
+		if err := tx.QueryRowContext(ctx, `SELECT updated_at FROM marketplace_item_aliases
+			WHERE id=$1 AND source='shopee' AND account_key=$2 AND external_item_id=$3
+			  AND external_variant_id=$4 AND is_active=true FOR UPDATE`,
+			expectedAliasID, accountKey, externalItemID, externalVariantID).Scan(&currentUpdatedAt); err != nil {
+			if err == sql.ErrNoRows {
+				return "", ErrMappingConflict
+			}
+			return "", err
+		}
+		if !currentUpdatedAt.Equal(*expectedAliasUpdatedAt) {
+			return "", ErrMappingConflict
+		}
+		return updateShopeeStockMasterTx(ctx, tx, expectedAliasID, sourceSKU, rawName, normalized, smlItemCode, standardUnit, matchMethod, userID)
+	}
+
+	var existingID string
+	err := tx.QueryRowContext(ctx, `SELECT id::text FROM marketplace_item_aliases
+		WHERE source='shopee' AND account_key=$1 AND external_item_id=$2
+		  AND external_variant_id=$3 AND is_active=true FOR UPDATE`, accountKey, externalItemID, externalVariantID).Scan(&existingID)
+	if err == nil {
+		return updateShopeeStockMasterTx(ctx, tx, existingID, sourceSKU, rawName, normalized, smlItemCode, standardUnit, matchMethod, userID)
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	// A historical SKU/name Master may predate stable Shopee IDs. Promote it
+	// only when it already points to the same SML item; otherwise require admin
+	// review instead of silently changing an established mapping.
+	candidateWhere := `source='shopee' AND account_key=$1 AND external_item_id='' AND source_sku='' AND normalized_key=$2`
+	candidateArgs := []interface{}{accountKey, normalized, smlItemCode}
+	if sourceSKU != "" {
+		candidateWhere = `source='shopee' AND account_key=$1 AND external_item_id='' AND source_sku=$2`
+		candidateArgs = []interface{}{accountKey, sourceSKU, smlItemCode}
+	}
+	err = tx.QueryRowContext(ctx, `SELECT id::text FROM marketplace_item_aliases WHERE `+candidateWhere+`
+		AND item_code=$3 AND is_active=true FOR UPDATE`, candidateArgs...).Scan(&existingID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE marketplace_item_aliases
+			SET external_item_id=$2,external_variant_id=$3,updated_at=NOW()
+			WHERE id=$1`, existingID, externalItemID, externalVariantID)
+		if err != nil {
+			return "", marketplaceMasterConflict(err)
+		}
+		return updateShopeeStockMasterTx(ctx, tx, existingID, sourceSKU, rawName, normalized, smlItemCode, standardUnit, matchMethod, userID)
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	err = tx.QueryRowContext(ctx, `INSERT INTO marketplace_item_aliases(
+		source,account_key,external_item_id,external_variant_id,source_sku,raw_name,normalized_key,
+		item_code,unit_code,confidence,confirmed_by,usage_count,last_used_at,match_method,scope_confirmed,is_active)
+		VALUES('shopee',$1,$2,$3,$4,$5,$6,$7,$8,1.0,NULLIF($10,'')::uuid,0,NOW(),$9,true,true)
+		ON CONFLICT DO NOTHING RETURNING id::text`, accountKey, externalItemID, externalVariantID, sourceSKU, rawName, normalized, smlItemCode, standardUnit, matchMethod, userID).Scan(&existingID)
+	if err == sql.ErrNoRows {
+		return "", invalid("SKU หรือรหัสตัวเลือกนี้มี Product Master อื่นในร้านแล้ว กรุณาตรวจรายการจับคู่สินค้า Marketplace")
+	}
+	if err != nil {
+		return "", marketplaceMasterConflict(err)
+	}
+	return existingID, nil
+}
+
+func updateShopeeStockMasterTx(ctx context.Context, tx *sql.Tx, aliasID, sourceSKU, rawName, normalized, itemCode, unitCode, matchMethod, userID string) (string, error) {
+	_, err := tx.ExecContext(ctx, `UPDATE marketplace_item_aliases SET
+		source_sku=$2,raw_name=$3,normalized_key=$4,item_code=$5,unit_code=$6,confidence=1.0,
+		confirmed_by=COALESCE(NULLIF($7,'')::uuid,confirmed_by),match_method=$8,
+		scope_confirmed=true,is_active=true,
+		updated_at=CASE WHEN source_sku IS DISTINCT FROM $2 OR raw_name IS DISTINCT FROM $3
+			OR normalized_key IS DISTINCT FROM $4 OR item_code IS DISTINCT FROM $5
+			OR unit_code IS DISTINCT FROM $6 OR match_method IS DISTINCT FROM $8
+			THEN NOW() ELSE updated_at END
+		WHERE id=$1`, aliasID, sourceSKU, rawName, normalized, itemCode, unitCode, userID, matchMethod)
+	if err != nil {
+		return "", marketplaceMasterConflict(err)
+	}
+	return aliasID, nil
+}
+
+func marketplaceMasterConflict(err error) error {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		return invalid("SKU หรือรหัสตัวเลือกนี้มี Product Master อื่นในร้านแล้ว กรุณาตรวจรายการจับคู่สินค้า Marketplace")
+	}
+	return err
+}
+
+func applyShopeeStockMasterToOpenBillsTx(ctx context.Context, tx *sql.Tx, shopID, itemID, modelID int64, aliasID, itemCode, unitCode string) error {
+	accountKey := "shop:" + strconv.FormatInt(shopID, 10)
+	_, err := tx.ExecContext(ctx, `UPDATE bill_items bi
+		SET item_code=$1,unit_code=$2,mapped=true,marketplace_alias_id=$3
+		FROM bills b
+		WHERE bi.bill_id=b.id AND b.source='shopee' AND b.source_account_key=$4
+		  AND b.bill_type='sale' AND b.status IN ('pending','needs_review') AND b.archived_at IS NULL
+		  AND bi.source_item_id=$5 AND bi.source_variant_id=$6
+		  AND NOT EXISTS (SELECT 1 FROM sml_catalog c WHERE c.is_active=true
+		    AND c.item_code=btrim(replace(COALESCE(bi.source_sku,''),chr(65279),'')))`,
+		itemCode, unitCode, aliasID, accountKey, strconv.FormatInt(itemID, 10), strconv.FormatInt(modelID, 10))
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE bills b SET status='pending',error_msg=NULL
+		WHERE b.source='shopee' AND b.source_account_key=$1 AND b.bill_type='sale'
+		  AND b.status='needs_review' AND b.archived_at IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM bill_items bi WHERE bi.bill_id=b.id
+		    AND (COALESCE(bi.item_code,'')='' OR bi.mapped IS DISTINCT FROM true))`, accountKey)
+	return err
+}
+
+func nonEmptyStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" && (len(out) == 0 || out[len(out)-1] != value) {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func (s *Store) SetDryRunRequired(ctx context.Context, shopID int64) error {
