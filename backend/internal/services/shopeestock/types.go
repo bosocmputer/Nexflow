@@ -61,6 +61,9 @@ type ProductRow struct {
 	SMLItemCode                string    `json:"sml_item_code"`
 	SMLItemName                string    `json:"sml_item_name"`
 	SMLUnitCode                string    `json:"sml_unit_code"`
+	SMLUnitName                string    `json:"sml_unit_name"`
+	SMLBaseUnitCode            string    `json:"sml_base_unit_code"`
+	SMLBaseUnitName            string    `json:"sml_base_unit_name"`
 	UnitFactor                 float64   `json:"unit_factor"`
 	ManualUnitFactor           *float64  `json:"manual_unit_factor,omitempty"`
 	MatchSource                string    `json:"match_source"`

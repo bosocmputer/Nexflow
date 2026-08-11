@@ -550,6 +550,7 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
 		       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
+		       COALESCE(c.units,'[]'::jsonb),
 		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
@@ -567,15 +568,20 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 	products := []ProductRow{}
 	for rows.Next() {
 		var item ProductRow
-		var warnings []byte
+		var warnings, unitsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
-			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &item.UnitFactor, &item.ManualUnitFactor,
+			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
 			&item.MatchSource, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
 			&item.LastPreviewTarget, &item.LastSuccessTarget, &item.UpdatedAt); err != nil {
 			return nil, 0, ProductCounts{}, err
 		}
 		_ = json.Unmarshal(warnings, &item.WarningCodes)
+		var units []sml.StockCatalogUnit
+		if err := json.Unmarshal(unitsJSON, &units); err != nil {
+			return nil, 0, ProductCounts{}, fmt.Errorf("decode SML units for %s: %w", item.SMLItemCode, err)
+		}
+		populateProductUnitNames(&item, units)
 		products = append(products, item)
 	}
 	return products, total, counts, rows.Err()

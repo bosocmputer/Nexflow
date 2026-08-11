@@ -129,6 +129,22 @@ func chooseSmallestUnit(item sml.StockCatalogItem) (sml.StockCatalogUnit, bool) 
 	return units[0], true
 }
 
+func populateProductUnitNames(product *ProductRow, units []sml.StockCatalogUnit) {
+	if product == nil || len(units) == 0 {
+		return
+	}
+	if baseUnit, ok := chooseSmallestUnit(sml.StockCatalogItem{Units: units}); ok {
+		product.SMLBaseUnitCode = baseUnit.Code
+		product.SMLBaseUnitName = baseUnit.Name
+	}
+	for _, unit := range units {
+		if unit.Code == product.SMLUnitCode {
+			product.SMLUnitName = unit.Name
+			return
+		}
+	}
+}
+
 func ZeroDropCircuit(previousTargets, nextTargets []int64) string {
 	if len(previousTargets) != len(nextTargets) || len(previousTargets) == 0 {
 		return ""

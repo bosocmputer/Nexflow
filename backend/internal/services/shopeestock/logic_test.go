@@ -135,6 +135,20 @@ func TestCatalogResolveUsesSmallestUnitPriorityForItemCode(t *testing.T) {
 	}
 }
 
+func TestPopulateProductUnitNamesUsesSMLPriorityAndSelectedUnit(t *testing.T) {
+	product := ProductRow{SMLUnitCode: "BOX"}
+	populateProductUnitNames(&product, []sml.StockCatalogUnit{
+		{Code: "BOX", Name: "กล่อง", RowOrder: 2, LineNumber: 2},
+		{Code: "PCS", Name: "ชิ้น", RowOrder: 1, LineNumber: 1},
+	})
+	if product.SMLBaseUnitCode != "PCS" || product.SMLBaseUnitName != "ชิ้น" {
+		t.Fatalf("base unit = %s/%s, want PCS/ชิ้น", product.SMLBaseUnitCode, product.SMLBaseUnitName)
+	}
+	if product.SMLUnitName != "กล่อง" {
+		t.Fatalf("selected unit name = %q, want กล่อง", product.SMLUnitName)
+	}
+}
+
 func TestCatalogResolveDoesNotGuessAmbiguousBarcode(t *testing.T) {
 	items := []sml.StockCatalogItem{
 		{ItemCode: "A", Units: []sml.StockCatalogUnit{{Code: "PCS", StandValue: 1, DivideValue: 1, Ratio: 1}}, Barcodes: []sml.StockCatalogBarcode{{Barcode: "SAME", UnitCode: "PCS"}}},

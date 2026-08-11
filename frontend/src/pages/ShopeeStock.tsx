@@ -77,6 +77,9 @@ type ProductRow = {
   sml_item_code: string
   sml_item_name: string
   sml_unit_code: string
+  sml_unit_name: string
+  sml_base_unit_code: string
+  sml_base_unit_name: string
   unit_factor: number
   manual_unit_factor?: number
   match_source: string
@@ -181,6 +184,13 @@ function formatInterval(seconds?: number) {
   if (value < 3600) return `${Math.max(1, Math.round(value / 60))} นาที`
   if (value % 3600 === 0) return `${value / 3600} ชั่วโมง`
   return `${Math.round(value / 60)} นาที`
+}
+
+function formatUnitLabel(code?: string, name?: string) {
+  const unitCode = code?.trim() ?? ''
+  const unitName = name?.trim() ?? ''
+  if (unitName && unitCode && unitName !== unitCode) return `${unitName} (${unitCode})`
+  return unitName || unitCode
 }
 
 function bangkokDate() {
@@ -463,7 +473,7 @@ export default function ShopeeStock() {
       ) : null}
 
       <section className="overflow-hidden rounded-md border bg-card" aria-label="ตั้งค่าและควบคุมการซิงก์สต๊อก">
-        <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 xl:grid-cols-[minmax(180px,1.4fr)_120px_minmax(170px,1fr)_minmax(230px,1.35fr)_auto] xl:items-end">
+        <div className="grid gap-3 px-3 py-3 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(220px,1fr)_auto] xl:items-end">
           <div className="space-y-1.5">
             <Label htmlFor="shopee-stock-shop">ร้าน Shopee</Label>
             <Select
@@ -622,34 +632,47 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
   const itemName = productItemName(product)
   const optionName = productOptionName(product)
+  const sellingUnit = formatUnitLabel(product.sml_unit_code, product.sml_unit_name)
+  const baseUnit = formatUnitLabel(product.sml_base_unit_code, product.sml_base_unit_name)
+  const conversionText = sellingUnit
+    ? baseUnit && !(product.unit_factor === 1 && sellingUnit === baseUnit)
+      ? `1 ${sellingUnit} = ${formatNumber(product.unit_factor)} ${baseUnit}`
+      : `หน่วยที่ใช้คำนวณ: ${sellingUnit}`
+    : ''
   return (
     <div className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(220px,1.35fr)_minmax(170px,1fr)_minmax(270px,auto)_110px] lg:items-center">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium" title={itemName}>{itemName}</p>
-        {optionName && <p className="mt-0.5 truncate text-xs text-foreground/80" title={optionName}><span className="text-muted-foreground">ตัวเลือก:</span> {optionName}</p>}
+        {optionName && (
+          <div className="mt-1 min-w-0 border-l-2 border-primary pl-2" title={optionName}>
+            <p className="text-[11px] leading-none text-muted-foreground">ตัวเลือกสินค้า</p>
+            <p className="mt-0.5 truncate text-sm font-semibold text-foreground">{optionName}</p>
+          </div>
+        )}
         <p className="mt-0.5 truncate text-xs text-muted-foreground">SKU {sku} · Item {product.item_id}{product.model_id ? ` / Model ${product.model_id}` : ''}</p>
         {product.warning_codes.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
       </div>
       <div className="min-w-0">
         <p className="truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p>
-        <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${product.sml_unit_code} · 1 หน่วยขาย = ${formatNumber(product.unit_factor)} หน่วยเล็ก${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
+        <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${conversionText}${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
       </div>
       <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">คงเหลือ SML</p>
           <p className="font-mono text-sm font-medium">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</p>
-          {product.last_preview_balance != null && <p className="text-[11px] text-muted-foreground">หน่วยเล็ก</p>}
+          {product.last_preview_balance != null && baseUnit && <p className="text-[11px] text-muted-foreground">{baseUnit}</p>}
           {!!product.last_preview_excluded_balance && <p className="text-[11px] text-warning">นอกขอบเขต {formatNumber(product.last_preview_excluded_balance)}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">Shopee ตอนนี้</p>
           <p className="font-mono text-sm font-medium">{formatNumber(product.shopee_available)}</p>
+          {sellingUnit && <p className="text-[11px] text-muted-foreground">{sellingUnit}</p>}
           {product.shopee_reserved > 0 && <p className="text-[11px] text-warning">จอง {formatNumber(product.shopee_reserved)}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">จะส่ง Shopee</p>
           <p className="font-mono text-sm font-medium">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</p>
-          {product.last_preview_target != null && <p className="text-[11px] text-muted-foreground">หน่วยขาย</p>}
+          {product.last_preview_target != null && sellingUnit && <p className="text-[11px] text-muted-foreground">{sellingUnit}</p>}
         </div>
       </div>
       <Button variant="outline" size="sm" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>
@@ -746,6 +769,12 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
     try { await client.put(`/api/settings/shopee-stock/${shopID}/mappings/${product.item_id}/${product.model_id}`, { sml_item_code: excluded ? '' : selected?.item_code, sml_unit_code: excluded ? '' : unitCode, manual_unit_factor: !excluded && useManualFactor ? parsedManualFactor : null, excluded, updated_at: product.updated_at }); toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : 'บันทึกการจับคู่แล้ว ต้อง dry-run ใหม่'); await onSaved() } catch (error) { toast.error(errorText(error)) } finally { setBusy(false) }
   }
   const selectedUnit = units.find((unit) => unit.code === unitCode)
+  const baseUnit = useMemo(() => [...units].sort((left, right) =>
+    left.row_order - right.row_order || left.line_number - right.line_number || left.code.localeCompare(right.code),
+  )[0], [units])
+  const baseUnitLabel = formatUnitLabel(baseUnit?.code, baseUnit?.name)
+  const selectedUnitLabel = formatUnitLabel(selectedUnit?.code, selectedUnit?.name)
+  const selectedFactor = selectedUnit ? (selectedUnit.stand_value ?? 0) / (selectedUnit.divide_value || 1) : 0
   return (
     <>
       <Dialog open={!!product} onOpenChange={(open) => !open && !busy && onClose()}>
@@ -775,15 +804,19 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
                   <p className="mt-0.5 text-sm font-medium">{selected.item_code} · {selected.item_name}</p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="shopee-stock-unit">หน่วยขายบน Shopee</Label>
+                  <Label htmlFor="shopee-stock-unit">หน่วย SML ต่อสินค้า Shopee 1 ชิ้น</Label>
                   <Select value={unitCode || undefined} onValueChange={setUnitCode}>
                     <SelectTrigger id="shopee-stock-unit" className="h-10"><SelectValue placeholder={units.length ? 'เลือกหน่วย' : 'ไม่พบหน่วยใน SML'} /></SelectTrigger>
                     <SelectContent>
-                      {units.length ? units.map((unit) => <SelectItem key={unit.code} value={unit.code}>{unit.code}{unit.name ? ` · ${unit.name}` : ''} ({formatNumber((unit.stand_value ?? 0) / (unit.divide_value || 1))} หน่วยเล็ก)</SelectItem>) : <SelectItem value="__empty" disabled>ไม่พบหน่วยใน SML</SelectItem>}
+                      {units.length ? units.map((unit) => <SelectItem key={unit.code} value={unit.code}>{formatUnitLabel(unit.code, unit.name)}{baseUnitLabel ? ` · เท่ากับ ${formatNumber((unit.stand_value ?? 0) / (unit.divide_value || 1))} ${baseUnitLabel}` : ''}</SelectItem>) : <SelectItem value="__empty" disabled>ไม่พบหน่วยใน SML</SelectItem>}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">ระบบเลือกหน่วยมาตรฐานให้ก่อน กรุณาตรวจสอบว่าตรงกับหน่วยที่ขายบน Shopee</p>
-                  {selectedUnit && <p className="text-xs font-medium text-foreground">1 {selectedUnit.code} = {formatNumber((selectedUnit.stand_value ?? 0) / (selectedUnit.divide_value || 1))} หน่วยเล็กใน SML</p>}
+                  <p className="text-xs text-muted-foreground">เลือกหน่วย SML ที่ต้องตัด เมื่อสินค้า Shopee รุ่นนี้ขายได้ 1 ชิ้น</p>
+                  {selectedUnit && (
+                    <p className="text-xs font-medium text-foreground">
+                      Shopee 1 ชิ้น = 1 {selectedUnitLabel}{baseUnitLabel && (selectedFactor !== 1 || selectedUnitLabel !== baseUnitLabel) ? ` = ${formatNumber(selectedFactor)} ${baseUnitLabel}` : ''}
+                    </p>
+                  )}
                 </div>
                 <div className="rounded-md border p-3">
                   <div className="flex items-center justify-between gap-3">
