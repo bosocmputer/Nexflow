@@ -50,6 +50,7 @@ import {
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
+import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
 
 type Connection = {
@@ -746,6 +747,7 @@ export default function ShopeeOperations() {
       toast.success(res.data.message || 'สร้างเอกสารใน Nexflow แล้ว')
       setERPDialogOpen(false)
       await refreshVisibleList()
+      notifyWorkQueueChanged()
     } catch (e) {
       toast.error('สร้างเอกสารไม่สำเร็จ: ' + apiError(e))
     } finally {
@@ -869,6 +871,7 @@ export default function ShopeeOperations() {
       setBulkResult(res.data)
       setSelectedOrderKeys(new Set())
       await refreshVisibleList()
+      notifyWorkQueueChanged()
       const created = Number(res.data.created_count ?? 0)
       const reused = Number(res.data.reused_count ?? 0)
       const failed = Number(res.data.failed_count ?? 0)

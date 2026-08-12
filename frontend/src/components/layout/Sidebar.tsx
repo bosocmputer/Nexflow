@@ -34,6 +34,7 @@ import {
 import { ThemeToggle } from '@/components/common/ThemeToggle'
 import { NexflowLogo } from '@/components/common/NexflowLogo'
 import { useAuth } from '@/hooks/useAuth'
+import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { useUIStore } from '@/lib/ui-store'
 import { cn } from '@/lib/utils'
@@ -56,13 +57,9 @@ async function countDocumentQueue(base: Record<string, string>) {
 
 async function countMarketplaceAliasQueue() {
   if (!ENABLE_SALES_ORDERS) return 0
-  try {
-    const params = new URLSearchParams({ bill_type: 'sale', page: '1', per_page: '1' })
-    const res = await client.get<{ total?: number }>(`/api/marketplace-aliases/review-groups?${params}`)
-    return res.data.total ?? 0
-  } catch {
-    return 0
-  }
+  const params = new URLSearchParams({ bill_type: 'sale', page: '1', per_page: '1' })
+  const res = await client.get<{ total?: number }>(`/api/marketplace-aliases/review-groups?${params}`)
+  return res.data.total ?? 0
 }
 
 const MENU_COUNT_BADGE_CLASS =
@@ -102,26 +99,40 @@ export default function Sidebar() {
   const mobileOpen = useUIStore((s) => s.mobileNavOpen)
   const setMobileOpen = useUIStore((s) => s.setMobileNavOpen)
   const unreadBySource = useNotificationsStore((s) => s.unreadBySource)
+  const subscribe = useEventsStore((s) => s.subscribe)
   const [queueCounts, setQueueCounts] = useState({ saleorder: 0, saleinvoice: 0, marketplaceAliases: 0 })
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const statsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const statsRequestSeq = useRef(0)
 
-  // Sales queue counts use a 60s poll as a safety net. Notification badges
-  // update separately through the shared SSE notification store.
+  // Queue counts refresh from local/SSE events; the 60s poll is only a safety net.
   const fetchStats = useCallback(async () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       return
     }
-    try {
-      const [saleorder, saleinvoice, marketplaceAliases] = await Promise.all([
-        countDocumentQueue({ bill_type: 'sale', document_route: 'saleorder' }),
-        countDocumentQueue({ bill_type: 'sale', document_route: 'saleinvoice' }),
-        countMarketplaceAliasQueue(),
-      ])
-      setQueueCounts({ saleorder, saleinvoice, marketplaceAliases })
-    } catch {
-      /* silent */
-    }
+    const requestSeq = ++statsRequestSeq.current
+    const [saleorder, saleinvoice, marketplaceAliases] = await Promise.allSettled([
+      countDocumentQueue({ bill_type: 'sale', document_route: 'saleorder' }),
+      countDocumentQueue({ bill_type: 'sale', document_route: 'saleinvoice' }),
+      countMarketplaceAliasQueue(),
+    ])
+    if (requestSeq !== statsRequestSeq.current) return
+    setQueueCounts((current) => ({
+      saleorder: saleorder.status === 'fulfilled' ? saleorder.value : current.saleorder,
+      saleinvoice: saleinvoice.status === 'fulfilled' ? saleinvoice.value : current.saleinvoice,
+      marketplaceAliases: marketplaceAliases.status === 'fulfilled'
+        ? marketplaceAliases.value
+        : current.marketplaceAliases,
+    }))
   }, [])
+
+  const scheduleStatsRefresh = useCallback((delay = 250) => {
+    if (statsRefreshTimerRef.current) clearTimeout(statsRefreshTimerRef.current)
+    statsRefreshTimerRef.current = setTimeout(() => {
+      statsRefreshTimerRef.current = null
+      void fetchStats()
+    }, delay)
+  }, [fetchStats])
 
   useEffect(() => {
     fetchStats()
@@ -136,17 +147,26 @@ export default function Sidebar() {
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
+      if (statsRefreshTimerRef.current) clearTimeout(statsRefreshTimerRef.current)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [fetchStats])
 
   useEffect(() => {
     const onWorkQueueChanged = () => {
-      void fetchStats()
+      scheduleStatsRefresh(0)
     }
     window.addEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
     return () => window.removeEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
-  }, [fetchStats])
+  }, [scheduleStatsRefresh])
+
+  useEffect(() => subscribe((type: ServerEventType, payload: any) => {
+    const isShopeeNotification = type === 'notification_created'
+      && payload?.notification?.source === 'shopee_realtime'
+    if (type === 'hello' || type === 'shopee_realtime_changed' || isShopeeNotification) {
+      scheduleStatsRefresh()
+    }
+  }), [scheduleStatsRefresh, subscribe])
 
   // Hotkey [ to toggle sidebar
   useEffect(() => {

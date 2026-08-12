@@ -41,6 +41,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import type { CatalogMatch, MarketplaceAliasImpact } from '@/types'
 
 type LocationPair = { warehouse: string; location: string }
@@ -868,6 +869,7 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
         marketplace_alias_updated_at: product.marketplace_alias_updated_at || null,
       })
       toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : 'บันทึก Product Master แล้ว ต้อง Dry-run ใหม่')
+      notifyWorkQueueChanged()
       await onSaved()
     } catch (error) {
       toast.error(errorText(error))

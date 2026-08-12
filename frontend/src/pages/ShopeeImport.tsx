@@ -41,6 +41,7 @@ import { DateRangePicker, type DateRangePreset } from '@/components/common/DateR
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { cn } from '@/lib/utils'
+import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 
 interface ShopeeConfig {
   server_url: string
@@ -599,6 +600,7 @@ export default function ShopeeImport() {
       }, { timeout: 120000 })
       setResults(res.data)
       setStep('done')
+      notifyWorkQueueChanged()
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??

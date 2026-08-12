@@ -31,6 +31,7 @@ import {
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { cn } from '@/lib/utils'
+import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 
 interface TikTokConfig {
   server_url: string
@@ -326,6 +327,7 @@ export default function TikTokImport() {
       }, { timeout: 120000 })
       setResults(res.data)
       setStep('done')
+      notifyWorkQueueChanged()
     } catch (err: unknown) {
       setError(
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??

@@ -164,6 +164,7 @@ export default function MarketplaceAliases() {
           data: { updated_at: action.alias.updated_at },
         })
         toast.success('หยุดใช้การจับคู่นี้แล้ว เอกสารเดิมไม่ถูกแก้ไข')
+        notifyWorkQueueChanged()
       }
       setAction(null)
       await load()

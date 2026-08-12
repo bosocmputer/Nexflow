@@ -23,6 +23,8 @@ type NotificationWriteResponse = {
   unread_by_source?: NotificationUnreadBySource
 }
 
+type NotificationCountResponse = NotificationWriteResponse
+
 const SOUND_STORAGE_KEY = 'nexflow.notifications.sound_enabled'
 const ORDER_ALERT_SEEN_STORAGE_KEY = 'nexflow.notifications.order_alert_seen_at'
 const SOUND_BURST_WINDOW_MS = 900
@@ -71,6 +73,8 @@ export function NotificationBell() {
   const audioCtxRef = useRef<AudioContext | null>(null)
   const lastSoundAtRef = useRef(0)
   const alarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const notificationRequestSeq = useRef(0)
+  const countSyncInFlight = useRef(false)
   const subscribe = useEventsStore((s) => s.subscribe)
   const unread = useNotificationsStore((s) => s.unread)
   const items = useNotificationsStore((s) => s.items)
@@ -237,11 +241,13 @@ export function NotificationBell() {
     }
   }, [acknowledgeOrderAlerts, open, orderAttentionActive])
 
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async (showLoading = true) => {
     if (!canUseNotifications) return
-    setLoading(true)
+    const requestSeq = ++notificationRequestSeq.current
+    if (showLoading) setLoading(true)
     try {
       const res = await client.get<NotificationListResponse>('/api/notifications?limit=30')
+      if (requestSeq !== notificationRequestSeq.current) return
       setItems(res.data.data ?? [])
       setUnread(res.data.unread ?? 0, res.data.unread_by_source)
     } catch {
@@ -249,31 +255,75 @@ export function NotificationBell() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [canUseNotifications, setItems, setUnread])
+
+  const syncNotificationState = useCallback(async () => {
+    if (!canUseNotifications || countSyncInFlight.current || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return
+    countSyncInFlight.current = true
+    const stateVersion = notificationRequestSeq.current
+    try {
+      const res = await client.get<NotificationCountResponse>('/api/notifications/count')
+      if (stateVersion !== notificationRequestSeq.current) return
+      const nextUnread = Math.max(0, Number(res.data.unread) || 0)
+      const nextBySource = res.data.unread_by_source ?? {}
+      const current = useNotificationsStore.getState()
+      const changed = current.unread !== nextUnread || !sameUnreadBySource(current.unreadBySource, nextBySource)
+      current.setUnread(nextUnread, nextBySource)
+      if (changed) await loadNotifications(false)
+    } catch {
+      /* SSE remains the primary path; keep the last known count on fallback errors. */
+    } finally {
+      countSyncInFlight.current = false
+    }
+  }, [canUseNotifications, loadNotifications])
 
   useEffect(() => {
-    void loadNotifications()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUseNotifications])
+    void loadNotifications(true)
+  }, [loadNotifications])
 
   useEffect(() => {
     if (!canUseNotifications) return
     return subscribe((type: ServerEventType, payload: any) => {
+      if (type === 'hello') {
+        void loadNotifications(false)
+        return
+      }
       if (type === 'notification_unread_changed') {
+        notificationRequestSeq.current += 1
         setUnread(payload?.total ?? 0, payload?.unread_by_source)
         return
       }
       if (type !== 'notification_created') return
       const notification = payload?.notification as AppNotification | undefined
       if (!notification?.id) return
-      const nextUnread = Number(payload?.unread_count ?? unread + 1)
+      notificationRequestSeq.current += 1
+      const nextUnread = Number(payload?.unread_count ?? useNotificationsStore.getState().unread + 1)
       upsertFromEvent(notification, nextUnread, payload?.unread_by_source)
       const opts = notification.body ? { description: notification.body } : undefined
       if (notification.severity === 'error') toast.error(notification.title, opts)
       else if (notification.severity === 'warning') toast.warning(notification.title, opts)
       else toast.info(notification.title, opts)
     })
-  }, [canUseNotifications, setUnread, subscribe, unread, upsertFromEvent])
+  }, [canUseNotifications, loadNotifications, setUnread, subscribe, upsertFromEvent])
+
+  useEffect(() => {
+    if (!canUseNotifications) return
+    const interval = window.setInterval(() => void syncNotificationState(), 30_000)
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void syncNotificationState()
+    }
+    window.addEventListener('focus', refreshWhenVisible)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshWhenVisible)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }, [canUseNotifications, syncNotificationState])
+
+  useEffect(() => {
+    if (open) void loadNotifications(false)
+  }, [loadNotifications, open])
 
   const markOneRead = async (notification: AppNotification, navigateToAction: boolean) => {
     try {
@@ -466,4 +516,15 @@ function notificationTimeMs(value: string): number {
   if (!value) return 0
   const n = new Date(value).getTime()
   return Number.isFinite(n) ? n : 0
+}
+
+function sameUnreadBySource(
+  left: NotificationUnreadBySource,
+  right: NotificationUnreadBySource,
+): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
+  for (const key of keys) {
+    if ((Number(left[key]) || 0) !== (Number(right[key]) || 0)) return false
+  }
+  return true
 }

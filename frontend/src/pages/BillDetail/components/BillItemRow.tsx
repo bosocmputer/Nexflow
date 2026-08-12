@@ -15,6 +15,7 @@ import { UnitSelect } from '@/components/common/UnitSelect'
 import { Checkbox } from '@/components/ui/checkbox'
 import { money } from '@/lib/shopeeBill'
 import { cn } from '@/lib/utils'
+import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
 import api from '@/api/client'
 import type { BillItem, CatalogMatch, MarketplaceAliasImpact } from '@/types'
@@ -149,6 +150,7 @@ export function BillItemRow({
       setEditing(false)
       setPickedMatch(null)
       setRememberMapping(false)
+      notifyWorkQueueChanged()
     } catch (err) {
       console.error('update item failed', err)
       toast.error('บันทึกไม่สำเร็จ')
@@ -193,6 +195,7 @@ export function BillItemRow({
         price: item.price ?? undefined,
       })
       await onRefresh()
+      notifyWorkQueueChanged()
       toast.success('ยืนยันการจับคู่สินค้าแล้ว', {
         description: 'บิลนี้จะพร้อมส่ง SML เมื่อทุกรายการยืนยันครบ',
       })
@@ -207,6 +210,7 @@ export function BillItemRow({
   const handleDelete = async () => {
     await api.delete(`/api/bills/${billId}/items/${item.id}`)
     onDeleted(item.id)
+    notifyWorkQueueChanged()
   }
 
   const matchInfo = useMatchInfo(item)
