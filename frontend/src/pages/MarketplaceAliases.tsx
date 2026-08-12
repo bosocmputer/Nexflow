@@ -316,7 +316,7 @@ function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: b
   return (
     <div className="overflow-x-auto">
       <Table>
-        <TableHeader><TableRow><TableHead className="min-w-[340px]">สินค้า Marketplace</TableHead><TableHead className="min-w-[260px]">จับคู่กับสินค้า SML</TableHead><TableHead className="text-right">การใช้งาน</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead className="min-w-[340px]">สินค้า Marketplace</TableHead><TableHead className="min-w-[260px]">จับคู่กับสินค้า SML</TableHead><TableHead className="w-[150px] min-w-[150px] whitespace-nowrap text-right">การใช้งาน</TableHead><TableHead className="w-[88px] min-w-[88px] text-right">จัดการ</TableHead></TableRow></TableHeader>
         <TableBody>
           {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => (
             <TableRow key={row.id}>
@@ -330,7 +330,7 @@ function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: b
                 </div>
               </TableCell>
               <TableCell><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{row.item_code}</span>{!row.product_active && <Badge variant="destructive">สินค้าไม่พร้อม</Badge>}</div><div className="text-xs text-muted-foreground">{row.item_name || 'ไม่พบชื่อสินค้า'} · {row.unit_code || '-'}</div></TableCell>
-              <TableCell className="text-right tabular-nums"><div>ใช้แล้ว {row.usage_count.toLocaleString()} ครั้ง</div>{row.open_item_count > 0 && <div className="text-xs text-warning">รออัปเดต {row.open_item_count.toLocaleString()} รายการ</div>}{row.stock_mapping_count > 0 && <div className="text-xs text-muted-foreground">ใช้กับซิงก์สต๊อก</div>}</TableCell>
+              <TableCell className="whitespace-nowrap text-right tabular-nums"><div>ใช้แล้ว {row.usage_count.toLocaleString()} ครั้ง</div>{row.open_item_count > 0 && <div className="text-xs text-warning">รออัปเดต {row.open_item_count.toLocaleString()} รายการ</div>}{row.stock_mapping_count > 0 && <div className="text-xs text-muted-foreground">ใช้กับซิงก์สต๊อก</div>}</TableCell>
               <TableCell className="text-right">{canManage ? <div className="flex justify-end gap-1"><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(row)} aria-label="แก้ไขการจับคู่" title="แก้ไขการจับคู่"><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(row)} aria-label="หยุดใช้การจับคู่" title="หยุดใช้การจับคู่"><Unlink className="h-4 w-4" /></Button></div> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</TableCell>
             </TableRow>
           ))}
