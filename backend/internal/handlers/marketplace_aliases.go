@@ -25,7 +25,8 @@ func isMarketplaceSource(source string) bool {
 func (h *MarketplaceAliasHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
-	aliases, total, err := h.aliasRepo.List(strings.TrimSpace(c.Query("source")), strings.TrimSpace(c.Query("q")), page, perPage)
+	usableOnly, _ := strconv.ParseBool(c.DefaultQuery("usable_only", "false"))
+	aliases, total, err := h.aliasRepo.List(strings.TrimSpace(c.Query("source")), strings.TrimSpace(c.Query("q")), usableOnly, page, perPage)
 	if err != nil {
 		h.logger.Error("list marketplace aliases", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดรายการจับคู่สินค้าไม่สำเร็จ"})

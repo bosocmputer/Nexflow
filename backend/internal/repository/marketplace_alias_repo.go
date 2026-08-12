@@ -250,7 +250,7 @@ func aliasIdentityWhere(identity models.MarketplaceAliasIdentity) (string, []int
 		[]interface{}{identity.Source, identity.AccountKey, identity.NormalizedKey}
 }
 
-func (r *MarketplaceAliasRepo) List(source, query string, page, perPage int) ([]models.MarketplaceItemAlias, int, error) {
+func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page, perPage int) ([]models.MarketplaceItemAlias, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -259,6 +259,9 @@ func (r *MarketplaceAliasRepo) List(source, query string, page, perPage int) ([]
 	}
 	conditions := []string{"a.is_active = TRUE"}
 	args := []interface{}{}
+	if usableOnly {
+		conditions = append(conditions, "a.scope_confirmed = TRUE")
+	}
 	if source != "" {
 		args = append(args, source)
 		conditions = append(conditions, fmt.Sprintf("a.source = $%d", len(args)))

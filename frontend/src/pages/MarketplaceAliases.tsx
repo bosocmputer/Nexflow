@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Pencil, RefreshCw, Search, Tags, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
-import type { CatalogMatch, Mapping, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceItemAlias } from '@/types'
+import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceItemAlias } from '@/types'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -39,10 +39,9 @@ export default function MarketplaceAliases() {
   const canManage = useAuthStore((state) => state.user?.role === 'admin')
   const [searchParams] = useSearchParams()
   const initialQuery = searchParams.get('q')?.trim() ?? ''
-  const [tab, setTab] = useState<TabKey>('pending')
+  const [tab, setTab] = useState<TabKey>(initialQuery ? 'saved' : 'pending')
   const [pending, setPending] = useState<MarketplaceAliasReviewGroup[]>([])
   const [saved, setSaved] = useState<MarketplaceItemAlias[]>([])
-  const [legacyMappings, setLegacyMappings] = useState<Mapping[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [source, setSource] = useState<SourceFilter>('all')
@@ -73,20 +72,10 @@ export default function MarketplaceAliases() {
         setPending(response.data.data ?? [])
         setTotal(response.data.total ?? 0)
       } else {
-        const [aliasResponse, mappingResponse] = await Promise.all([
-          client.get<{ data: MarketplaceItemAlias[]; total: number }>('/api/marketplace-aliases', { params }),
-          source === 'all'
-            ? client.get<{ data: Mapping[] }>('/api/mappings')
-            : Promise.resolve({ data: { data: [] as Mapping[] } }),
-        ])
+        const aliasResponse = await client.get<{ data: MarketplaceItemAlias[]; total: number }>('/api/marketplace-aliases', {
+          params: { ...params, usable_only: true },
+        })
         setSaved(aliasResponse.data.data ?? [])
-        const normalizedQuery = query.toLocaleLowerCase('th-TH')
-        setLegacyMappings((mappingResponse.data.data ?? []).filter((item) => (
-          !normalizedQuery ||
-          item.raw_name.toLocaleLowerCase('th-TH').includes(normalizedQuery) ||
-          item.item_code.toLocaleLowerCase('th-TH').includes(normalizedQuery) ||
-          (item.item_name ?? '').toLocaleLowerCase('th-TH').includes(normalizedQuery)
-        )))
         setTotal(aliasResponse.data.total ?? 0)
       }
     } catch (error) {
@@ -193,7 +182,7 @@ export default function MarketplaceAliases() {
     <div className="space-y-4 p-4 sm:p-6">
       <PageHeader
         title="จับคู่สินค้า Marketplace"
-        description="Master กลางสำหรับจับคู่สินค้า Shopee, Lazada และ TikTok ไปยังสินค้า SML"
+        description="ตรวจสินค้าที่ยังจับคู่ไม่ได้ และแก้ไขสินค้าที่ระบบจดจำไว้สำหรับออเดอร์ครั้งถัดไป"
         actions={(
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> รีเฟรช
@@ -203,8 +192,8 @@ export default function MarketplaceAliases() {
 
       <Tabs value={tab} onValueChange={changeTab}>
         <TabsList>
-          <TabsTrigger value="pending">รอยืนยัน</TabsTrigger>
-          <TabsTrigger value="saved">บันทึกแล้ว</TabsTrigger>
+          <TabsTrigger value="pending">รอจับคู่</TabsTrigger>
+          <TabsTrigger value="saved">จับคู่แล้ว</TabsTrigger>
         </TabsList>
 
         <div className="mt-3 rounded-lg border bg-card">
@@ -217,7 +206,7 @@ export default function MarketplaceAliases() {
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') { setQuery(draft.trim()); setPage(1) }
                 }}
-                placeholder="ค้นหาชื่อสินค้า, SKU หรือรหัส SML"
+                placeholder={tab === 'pending' ? 'ค้นหาสินค้าที่ต้องจับคู่' : 'ค้นหาสินค้า Marketplace หรือรหัส SML'}
                 className="pl-8 pr-8"
               />
               {(draft || query) && (
@@ -245,21 +234,14 @@ export default function MarketplaceAliases() {
             <SavedTable
               loading={loading}
               rows={saved}
-              showEmpty={source !== 'all' || legacyMappings.length === 0}
               canManage={canManage}
               onEdit={setPickerAlias}
               onDelete={(alias) => void prepareDelete(alias)}
             />
-            {source === 'all' && page === 1 && (
-              <LegacyMappingTable
-                loading={loading}
-                rows={legacyMappings}
-              />
-            )}
           </TabsContent>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-            <span>{tab === 'pending' ? `${total.toLocaleString()} กลุ่ม · ${pendingItems.toLocaleString()} รายการในหน้านี้` : `${total.toLocaleString()} SKU/ช่องทาง · ${legacyMappings.length.toLocaleString()} ชื่อเดิม`} · หน้า {page}/{pages}</span>
+            <span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่ · ${pendingItems.toLocaleString()} รายการในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า {page}/{pages}</span>
             <div className="flex gap-1">
               <Button size="icon" variant="outline" className="h-8 w-8" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)} aria-label="หน้าก่อน"><ChevronLeft className="h-4 w-4" /></Button>
               <Button size="icon" variant="outline" className="h-8 w-8" disabled={page >= pages || loading} onClick={() => setPage((value) => value + 1)} aria-label="หน้าถัดไป"><ChevronRight className="h-4 w-4" /></Button>
@@ -275,7 +257,7 @@ export default function MarketplaceAliases() {
           currentCode=""
           currentUnit=""
           currentPrice={0}
-          rawNameLabel="สินค้า marketplace ที่รอยืนยัน"
+          rawNameLabel="สินค้า Marketplace ที่ต้องจับคู่"
           onPick={(_, __, product) => { if (product) void prepareConfirm(pickerGroup, product); setPickerGroup(null) }}
           onClose={() => setPickerGroup(null)}
         />
@@ -295,28 +277,28 @@ export default function MarketplaceAliases() {
       <ConfirmDialog
         open={action !== null}
         onOpenChange={(open) => !open && setAction(null)}
-        title={action?.kind === 'delete' ? 'หยุดใช้การจับคู่นี้?' : action?.kind === 'update' ? 'ยืนยันการเปลี่ยนสินค้า?' : 'ยืนยันการจับคู่สินค้า?'}
+        title={action?.kind === 'delete' ? 'หยุดใช้การจับคู่นี้?' : action?.kind === 'update' ? 'เปลี่ยนสินค้า SML ที่จับคู่?' : 'บันทึกการจับคู่นี้?'}
         description={actionDescription(action)}
         confirmLabel={action?.kind === 'delete' ? 'หยุดใช้' : 'ยืนยัน'}
         variant={action?.kind === 'delete' ? 'destructive' : 'default'}
         onConfirm={confirmAction}
       />
-      {previewing && <div className="fixed inset-x-0 bottom-4 z-50 mx-auto w-fit rounded-md border bg-background px-3 py-2 text-sm shadow-md">กำลังตรวจผลกระทบ...</div>}
+      {previewing && <div className="fixed inset-x-0 bottom-4 z-50 mx-auto w-fit rounded-md border bg-background px-3 py-2 text-sm shadow-md">กำลังตรวจรายการที่ได้รับผลกระทบ...</div>}
     </div>
   )
 }
 
 function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; rows: MarketplaceAliasReviewGroup[]; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
-  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้ารอยืนยัน" description="สินค้าที่ SKU ไม่ตรงและยังไม่มีการจับคู่จะมาแสดงที่นี่" />
+  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="ออเดอร์ใหม่ที่ระบบหารหัสสินค้า SML ไม่พบจะมาแสดงที่นี่" />
   return (
     <div className="overflow-x-auto">
       <Table>
-        <TableHeader><TableRow><TableHead>ช่องทาง</TableHead><TableHead className="min-w-[280px]">สินค้า marketplace</TableHead><TableHead className="text-right">ผลกระทบ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead>ช่องทางและร้าน</TableHead><TableHead className="min-w-[280px]">สินค้า Marketplace</TableHead><TableHead className="text-right">รายการที่รอ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
         <TableBody>
           {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => (
             <TableRow key={row.group_key}>
-              <TableCell><div className="flex flex-col items-start gap-1"><Badge variant="secondary">{SOURCE_LABEL[row.source] ?? row.source}</Badge><span className="text-xs text-muted-foreground">{row.account_name || accountLabel(row.account_key)}</span></div></TableCell>
-              <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <code className="mt-1 block text-xs text-muted-foreground">SKU {row.source_sku}</code>}{row.external_item_id && <div className="mt-1 text-xs text-muted-foreground">Item {row.external_item_id}{row.external_variant_id && ` / Model ${row.external_variant_id}`}</div>}</TableCell>
+              <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} /></TableCell>
+              <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono">{row.source_sku}</span></div>}</TableCell>
               <TableCell className="text-right tabular-nums"><div>{row.item_count.toLocaleString()} รายการ</div><div className="text-xs text-muted-foreground">{row.bill_count.toLocaleString()} บิล</div></TableCell>
               <TableCell className="text-right">{canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button> : <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>}</TableCell>
             </TableRow>
@@ -327,23 +309,29 @@ function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; 
   )
 }
 
-function SavedTable({ loading, rows, showEmpty, canManage, onEdit, onDelete }: { loading: boolean; rows: MarketplaceItemAlias[]; showEmpty: boolean; canManage: boolean; onEdit: (row: MarketplaceItemAlias) => void; onDelete: (row: MarketplaceItemAlias) => void }) {
+function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: boolean; rows: MarketplaceItemAlias[]; canManage: boolean; onEdit: (row: MarketplaceItemAlias) => void; onDelete: (row: MarketplaceItemAlias) => void }) {
   if (!loading && rows.length === 0) {
-    return showEmpty ? <EmptyState icon={Tags} title="ยังไม่มีการจับคู่ที่บันทึก" description="เมื่อยืนยันสินค้า รายการจะมาแสดงและแก้ไขได้ที่แท็บนี้" /> : null
+    return <EmptyState icon={Tags} title="ยังไม่มีสินค้าที่จับคู่แล้ว" description="หลังเลือกสินค้า SML จากแท็บรอจับคู่ รายการที่ระบบจดจำไว้จะมาแสดงที่นี่" />
   }
   return (
     <div className="overflow-x-auto">
       <Table>
-        <TableHeader><TableRow><TableHead>ช่องทาง</TableHead><TableHead className="min-w-[240px]">SKU / ชื่อต้นทาง</TableHead><TableHead className="min-w-[220px]">สินค้า SML</TableHead><TableHead>ผู้ยืนยัน</TableHead><TableHead className="text-right">ใช้แล้ว</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead className="min-w-[340px]">สินค้า Marketplace</TableHead><TableHead className="min-w-[260px]">จับคู่กับสินค้า SML</TableHead><TableHead className="text-right">การใช้งาน</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
         <TableBody>
-          {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={6}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => (
+          {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => (
             <TableRow key={row.id}>
-              <TableCell><div className="flex flex-col items-start gap-1"><Badge variant="secondary">{SOURCE_LABEL[row.source] ?? row.source}</Badge><span className="text-xs text-muted-foreground">{row.account_name || accountLabel(row.account_key)}</span>{!row.scope_confirmed && <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">ต้องยืนยันขอบเขต</Badge>}</div></TableCell>
-              <TableCell><div className="flex flex-wrap items-center gap-1.5"><span className="font-mono text-xs">{row.source_sku || '-'}</span><Badge variant="outline">{matchMethodLabel(row.match_method)}</Badge></div><div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{row.raw_name}</div>{row.external_item_id && <div className="mt-1 text-xs text-muted-foreground">Item {row.external_item_id}{row.external_variant_id && ` / Model ${row.external_variant_id}`}</div>}</TableCell>
+              <TableCell>
+                <div className="flex items-start gap-3">
+                  <ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} />
+                  <div className="min-w-0">
+                    <div className="line-clamp-2 font-medium">{row.raw_name || row.source_sku}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">{row.source_sku ? <>SKU: <span className="font-mono">{row.source_sku}</span></> : 'ไม่มี SKU'}</div>
+                  </div>
+                </div>
+              </TableCell>
               <TableCell><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{row.item_code}</span>{!row.product_active && <Badge variant="destructive">สินค้าไม่พร้อม</Badge>}</div><div className="text-xs text-muted-foreground">{row.item_name || 'ไม่พบชื่อสินค้า'} · {row.unit_code || '-'}</div></TableCell>
-              <TableCell><div className="text-sm">{row.confirmed_name || '-'}</div><div className="text-xs text-muted-foreground">{new Date(row.updated_at).toLocaleString('th-TH')}</div></TableCell>
-              <TableCell className="text-right tabular-nums"><div>{row.usage_count.toLocaleString()} ครั้ง</div>{row.open_item_count > 0 && <div className="text-xs text-warning">กระทบ {row.open_item_count.toLocaleString()} รายการเปิด</div>}{row.stock_mapping_count > 0 && <div className="text-xs text-muted-foreground">Stock {row.stock_mapping_count.toLocaleString()} รายการ</div>}</TableCell>
-              <TableCell className="text-right">{canManage ? <div className="flex justify-end gap-1"><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(row)} aria-label="แก้ไข"><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(row)} aria-label="หยุดใช้"><Trash2 className="h-4 w-4" /></Button></div> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</TableCell>
+              <TableCell className="text-right tabular-nums"><div>ใช้แล้ว {row.usage_count.toLocaleString()} ครั้ง</div>{row.open_item_count > 0 && <div className="text-xs text-warning">รออัปเดต {row.open_item_count.toLocaleString()} รายการ</div>}{row.stock_mapping_count > 0 && <div className="text-xs text-muted-foreground">ใช้กับซิงก์สต๊อก</div>}</TableCell>
+              <TableCell className="text-right">{canManage ? <div className="flex justify-end gap-1"><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(row)} aria-label="แก้ไขการจับคู่" title="แก้ไขการจับคู่"><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(row)} aria-label="หยุดใช้การจับคู่" title="หยุดใช้การจับคู่"><Unlink className="h-4 w-4" /></Button></div> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -352,53 +340,21 @@ function SavedTable({ loading, rows, showEmpty, canManage, onEdit, onDelete }: {
   )
 }
 
-function LegacyMappingTable({ loading, rows }: { loading: boolean; rows: Mapping[] }) {
-  if (!loading && rows.length === 0) return null
-  return (
-    <div className="border-t">
-      <div className="px-3 pb-1 pt-3">
-        <h2 className="text-sm font-semibold">จับคู่จากชื่อเดิม</h2>
-        <p className="text-xs text-muted-foreground">เก็บไว้อ้างอิงเพื่อช่วยตรวจรายการเท่านั้น ต้องยืนยันร้านและช่องทางก่อนจึงจะใช้เป็น Master ได้</p>
-      </div>
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader><TableRow><TableHead className="min-w-[280px]">ชื่อต้นทาง</TableHead><TableHead className="min-w-[220px]">สินค้า SML</TableHead><TableHead>ผู้ยืนยัน</TableHead><TableHead className="text-right">ใช้แล้ว</TableHead><TableHead className="text-right">สถานะ</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {loading ? Array.from({ length: 4 }).map((_, index) => <TableRow key={index}><TableCell colSpan={5}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => (
-              <TableRow key={row.id}>
-                <TableCell><div className="font-medium">{row.raw_name}</div><Badge variant="outline" className="mt-1">ไม่มี SKU</Badge></TableCell>
-                <TableCell><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{row.item_code}</span>{!row.product_active && <Badge variant="destructive">สินค้าไม่พร้อม</Badge>}</div><div className="text-xs text-muted-foreground">{row.item_name || 'ไม่พบชื่อสินค้า'} · {row.unit_code || '-'}</div></TableCell>
-                <TableCell><div className="text-sm">{row.confirmed_name || '-'}</div><div className="text-xs text-muted-foreground">{new Date(row.updated_at).toLocaleString('th-TH')}</div></TableCell>
-                <TableCell className="text-right tabular-nums"><div>{row.usage_count.toLocaleString()} ครั้ง</div>{row.open_item_count > 0 && <div className="text-xs text-warning">กระทบ {row.open_item_count.toLocaleString()} รายการเปิด</div>}</TableCell>
-                <TableCell className="text-right"><Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">ต้องยืนยันขอบเขต</Badge></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  )
-}
-
 function actionDescription(action: PendingAction | null) {
   if (!action) return ''
   const impact = action.impact
-  const impactText = `เอกสารเปิด: ${impact.open_items.toLocaleString()} รายการ ใน ${impact.open_bills.toLocaleString()} บิล\nStock mapping: ${impact.stock_mappings.toLocaleString()} รายการ${impact.stock_conflicts ? ` · พบ conflict ${impact.stock_conflicts.toLocaleString()}` : ''}${impact.dry_run_required ? '\nหลังบันทึกต้องทำ Dry-run ใหม่ก่อนซิงก์สต๊อก' : ''}`
+  const impactText = `ออเดอร์ที่ยังไม่ส่ง: ${impact.open_items.toLocaleString()} รายการ ใน ${impact.open_bills.toLocaleString()} บิล\nการซิงก์สต๊อกที่เกี่ยวข้อง: ${impact.stock_mappings.toLocaleString()} รายการ${impact.stock_conflicts ? ` · พบการจับคู่สต๊อกซ้ำ ${impact.stock_conflicts.toLocaleString()}` : ''}${impact.dry_run_required ? '\nหลังบันทึกต้องตรวจสต๊อกใหม่ก่อนเปิดซิงก์' : ''}`
   if (action.kind === 'delete') return `หยุดใช้ ${action.alias.source_sku || action.alias.raw_name} ในอนาคต\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
   if (action.kind === 'update') return `ค่าเดิม: ${action.alias.item_code}\nค่าใหม่: ${action.product.item_code} · ${action.product.item_name}\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
   return `ต้นทาง: ${action.group.source_sku || action.group.raw_name}\nสินค้า SML: ${action.product.item_code} · ${action.product.item_name}\n${impactText}`
 }
 
-function accountLabel(accountKey: string) {
-  if (!accountKey || accountKey === 'default') return 'ยังไม่ระบุร้าน'
-  if (accountKey.startsWith('shop:')) return `ร้าน Shopee ${accountKey.slice(5)}`
-  return accountKey
-}
-
-function matchMethodLabel(method: MarketplaceItemAlias['match_method']) {
-  if (method === 'exact_sku') return 'SKU ตรง'
-  if (method === 'manual_identity') return 'Item/Model'
-  if (method === 'manual_sku') return 'SKU ยืนยัน'
-  if (method === 'legacy') return 'ข้อมูลเดิม'
-  return 'ชื่อยืนยัน'
+function ChannelAccount({ source, accountName, accountKey }: { source: string; accountName?: string; accountKey: string }) {
+  const name = accountName || (accountKey.startsWith('shop:') ? `ร้าน ${accountKey.slice(5)}` : '')
+  return (
+    <div className="flex shrink-0 flex-col items-start gap-1">
+      <Badge variant="secondary">{SOURCE_LABEL[source] ?? source}</Badge>
+      {name && <span className="max-w-[140px] truncate text-xs text-muted-foreground">{name}</span>}
+    </div>
+  )
 }

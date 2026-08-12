@@ -49,6 +49,31 @@ func TestMarketplaceAliasIncrementUsageCountsUsesOneBatchUpdate(t *testing.T) {
 	}
 }
 
+func TestMarketplaceAliasListUsableOnlyExcludesUnconfirmedScope(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*a\.is_active = TRUE AND a\.scope_confirmed = TRUE`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s)FROM marketplace_item_aliases a.*a\.is_active = TRUE AND a\.scope_confirmed = TRUE.*LIMIT \$1 OFFSET \$2`).
+		WithArgs(30, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	rows, total, err := NewMarketplaceAliasRepo(db).List("", "", true, 1, 30)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 0 || len(rows) != 0 {
+		t.Fatalf("List returned total=%d rows=%d, want 0/0", total, len(rows))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMarketplaceAliasImpactExcludesItemsWithExactActiveSKU(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
