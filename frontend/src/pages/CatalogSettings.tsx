@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Database, ImageIcon, Plus, RefreshCw, Search } from 'lucide-react'
+import { Boxes, Database, ImageIcon, Plus, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 
 import api from '@/api/client'
@@ -7,6 +7,7 @@ import { AuthImage } from '@/components/common/AuthImage'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
 import { ProductImagePreviewDialog } from '@/components/common/ProductImagePreviewDialog'
+import { SetProductDetailsDialog } from '@/components/catalog/SetProductDetailsDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -45,6 +46,7 @@ export default function CatalogSettings() {
   const [refreshingCode, setRefreshingCode] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [preview, setPreview] = useState<CatalogItem | null>(null)
+  const [setDetailsItem, setSetDetailsItem] = useState<CatalogItem | null>(null)
   const canManageCatalog = user?.role === 'admin'
   const totalPages = Math.max(1, Math.ceil((stats?.total ?? 0) / PER_PAGE))
 
@@ -127,6 +129,13 @@ export default function CatalogSettings() {
         </div>
       </div>
 
+      {items.some((item) => item.item_type === 3) && (
+        <div className="flex gap-2 border-l-2 border-primary px-3 py-1.5 text-xs text-muted-foreground">
+          <Boxes className="h-4 w-4 shrink-0 text-primary" />
+          <span>สินค้าชุดจับคู่ด้วยรหัสสินค้าแม่เพียงรายการเดียว ราคาบิลมาจาก Marketplace และสัดส่วน SML ใช้แบ่งรายการส่วนประกอบ</span>
+        </div>
+      )}
+
       <div className="rounded-lg border bg-card">
         <div className="flex gap-2 border-b p-3">
           <div className="relative flex-1">
@@ -154,7 +163,18 @@ export default function CatalogSettings() {
                   return (
                     <TableRow key={item.item_code}>
                       <TableCell><button type="button" className="h-10 w-10 rounded-md" disabled={!hasImage} onClick={() => hasImage && setPreview(item)}><AuthImage src={hasImage ? item.image_url : undefined} className="h-full w-full rounded-md border bg-muted/30" imgClassName="object-cover" fallback={<div className="flex h-full items-center justify-center"><ImageIcon className="h-4 w-4 text-muted-foreground" /></div>} /></button></TableCell>
-                      <TableCell><code className="font-semibold">{item.item_code}</code>{item.has_hidden_chars && <Badge variant="destructive" className="ml-2">รหัสผิดรูปแบบ</Badge>}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <code className="font-semibold">{item.item_code}</code>
+                          {item.item_type === 3 && <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary"><Boxes className="mr-1 h-3 w-3" />สินค้าชุด</Badge>}
+                          {item.has_hidden_chars && <Badge variant="destructive">รหัสผิดรูปแบบ</Badge>}
+                        </div>
+                        {item.item_type === 3 && (
+                          <Button type="button" variant="link" size="sm" className="mt-0.5 h-auto px-0 text-xs" onClick={() => setSetDetailsItem(item)}>
+                            ดูส่วนประกอบ {item.set_component_count ?? 0} รายการ
+                          </Button>
+                        )}
+                      </TableCell>
                       <TableCell><div className="font-medium">{item.item_name}</div>{item.item_name2 && <div className="text-xs text-muted-foreground">{item.item_name2}</div>}</TableCell>
                       <TableCell>{item.unit_code || '-'}</TableCell>
                       <TableCell className="text-right tabular-nums">{item.price == null ? '-' : new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(item.price)}</TableCell>
@@ -175,6 +195,17 @@ export default function CatalogSettings() {
 
       {canManageCatalog && <CreateProductDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={load} />}
       <ProductImagePreviewDialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)} imageUrl={preview?.image_url} itemCode={preview?.item_code} itemName={preview?.item_name} imageCount={preview?.image_count ?? 0} />
+      <SetProductDetailsDialog
+        open={setDetailsItem !== null}
+        onOpenChange={(open) => !open && setSetDetailsItem(null)}
+        itemCode={setDetailsItem?.item_code ?? ''}
+        itemName={setDetailsItem?.item_name ?? ''}
+        components={setDetailsItem?.set_components}
+        documentValid={setDetailsItem?.set_document_valid}
+        stockValid={setDetailsItem?.set_stock_valid}
+        warningCodes={setDetailsItem?.set_warning_codes}
+        showStockStatus
+      />
     </div>
   )
 }

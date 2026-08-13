@@ -49,6 +49,12 @@ func (b *marketplaceResolutionBatch) catalogLookup(code string) *models.CatalogI
 	return b.catalog[normalizeMarketplaceSKU(code)]
 }
 
+func catalogItemDocumentReady(item *models.CatalogItem) bool {
+	// Callers preload only active rows through GetActive/GetActiveMany. Keeping
+	// this helper focused on set validity also makes pure resolver tests explicit.
+	return item != nil && (item.ItemType != 3 || item.SetDocumentValid)
+}
+
 func (b *marketplaceResolutionBatch) resolution(sourceSKU, rawName string) matchResolution {
 	return b.resolutionScoped("default", "", "", sourceSKU, rawName)
 }
@@ -209,6 +215,25 @@ func prepareMarketplaceResolution(
 		if err != nil {
 			return nil, fmt.Errorf("preload aliases: %w", err)
 		}
+		aliasTargetSet := map[string]struct{}{}
+		aliasTargets := make([]string, 0)
+		for _, alias := range aliasByKey {
+			code := normalizeMarketplaceSKU(alias.ItemCode)
+			if code == "" {
+				continue
+			}
+			if _, ok := aliasTargetSet[code]; !ok {
+				aliasTargetSet[code] = struct{}{}
+				aliasTargets = append(aliasTargets, code)
+			}
+		}
+		loadedTargets, loadErr := catalogRepo.GetActiveMany(aliasTargets)
+		if loadErr != nil {
+			return nil, fmt.Errorf("preload alias targets: %w", loadErr)
+		}
+		for code, item := range loadedTargets {
+			catalogItems[code] = item
+		}
 	}
 	mappingByName := map[string]*models.Mapping{}
 	if mappingRepo != nil {
@@ -222,7 +247,7 @@ func prepareMarketplaceResolution(
 	exactSKUMatches, identityMatches, skuMatches, nameMatches, legacyHints, shadowMismatches, unmatched := 0, 0, 0, 0, 0, 0, 0
 	for _, ref := range refs {
 		var resolved matchResolution
-		exactSKU := ref.sku != "" && catalogItems[ref.sku] != nil
+		exactSKU := ref.sku != "" && catalogItemDocumentReady(catalogItems[ref.sku])
 		if exactSKU {
 			exactSKUMatches++
 		}
@@ -243,6 +268,9 @@ func prepareMarketplaceResolution(
 			if resolved.alias != nil {
 				nameMatches++
 			}
+		}
+		if resolved.alias != nil && !catalogItemDocumentReady(catalogItems[normalizeMarketplaceSKU(resolved.alias.ItemCode)]) {
+			resolved.alias = nil
 		}
 		if ref.sku == "" {
 			resolved.learned = mappingByName[marketplace.NormalizeKey(ref.rawName, "")]
@@ -346,7 +374,7 @@ func marketplaceBillItemFromMatch(
 	}
 
 	if sourceSKU != "" && lookup != nil {
-		if cat := lookup(sourceSKU); cat != nil {
+		if cat := lookup(sourceSKU); catalogItemDocumentReady(cat) {
 			code := cat.ItemCode
 			unit := cat.UnitCode
 			if unit == "" {
@@ -360,7 +388,7 @@ func marketplaceBillItemFromMatch(
 	}
 
 	switch {
-	case alias != nil && alias.IsActive:
+	case alias != nil && alias.IsActive && lookup != nil && catalogItemDocumentReady(lookup(alias.ItemCode)):
 		bi.ItemCode = &alias.ItemCode
 		bi.UnitCode = &alias.UnitCode
 		bi.Mapped = true

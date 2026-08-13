@@ -181,12 +181,17 @@ func (s *Store) storeSMLCatalog(ctx context.Context, items []sml.StockCatalogIte
 	}
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO shopee_stock_sml_catalog
-		  (item_code,item_name,standard_unit_code,units,barcodes,source_updated_at,synced_at,is_active)
-		VALUES ($1,$2,$3,$4,$5,$6,NOW(),true)
+		  (item_code,item_name,standard_unit_code,units,barcodes,source_updated_at,synced_at,is_active,
+		   item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes,set_components)
+		VALUES ($1,$2,$3,$4,$5,$6,NOW(),true,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (item_code) DO UPDATE SET
 		  item_name=EXCLUDED.item_name, standard_unit_code=EXCLUDED.standard_unit_code,
 		  units=EXCLUDED.units, barcodes=EXCLUDED.barcodes,
-		  source_updated_at=EXCLUDED.source_updated_at, synced_at=NOW(), is_active=true`)
+		  source_updated_at=EXCLUDED.source_updated_at, synced_at=NOW(), is_active=true,
+		  item_type=EXCLUDED.item_type,set_component_count=EXCLUDED.set_component_count,
+		  set_definition_hash=EXCLUDED.set_definition_hash,set_document_valid=EXCLUDED.set_document_valid,
+		  set_stock_valid=EXCLUDED.set_stock_valid,set_warning_codes=EXCLUDED.set_warning_codes,
+		  set_components=EXCLUDED.set_components`)
 	if err != nil {
 		return err
 	}
@@ -194,9 +199,36 @@ func (s *Store) storeSMLCatalog(ctx context.Context, items []sml.StockCatalogIte
 	for _, item := range items {
 		units, _ := json.Marshal(item.Units)
 		barcodes, _ := json.Marshal(item.Barcodes)
-		if _, err := stmt.ExecContext(ctx, item.ItemCode, item.ItemName, item.StandardUnit, units, barcodes, item.UpdatedAt); err != nil {
+		definition := item.SetDefinition
+		componentCount, definitionHash := 0, ""
+		documentValid, stockValid := item.ItemType != 3, item.ItemType != 3
+		warnings := []string{}
+		components := item.SetComponents
+		if definition != nil {
+			componentCount = definition.ComponentCount
+			definitionHash = definition.Hash
+			documentValid = definition.DocumentValid
+			stockValid = definition.StockValid
+			warnings = append(warnings, definition.WarningCodes...)
+			components = definition.Components
+		}
+		warningsJSON, _ := json.Marshal(warnings)
+		componentsJSON, _ := json.Marshal(components)
+		if _, err := stmt.ExecContext(ctx, item.ItemCode, item.ItemName, item.StandardUnit, units, barcodes, item.UpdatedAt,
+			item.ItemType, componentCount, definitionHash, documentValid, stockValid, warningsJSON, componentsJSON); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings st
+		SET enabled=false,dry_run_required=true,paused_reason='set_definition_changed',
+		    last_error='ส่วนประกอบสินค้าชุดเปลี่ยน กรุณาตรวจ Dry-run ใหม่',updated_at=NOW()
+		WHERE EXISTS (
+		  SELECT 1 FROM shopee_stock_mappings m
+		  JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code
+		  WHERE m.shop_id=st.shop_id AND m.excluded=false AND c.item_type=3
+		    AND m.set_definition_hash IS DISTINCT FROM c.set_definition_hash
+		)`); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -272,7 +304,8 @@ func (s *Store) RefreshManualMappings(ctx context.Context, items []sml.StockCata
 }
 
 func (s *Store) ListSMLCatalog(ctx context.Context) ([]sml.StockCatalogItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0))
+	rows, err := s.db.QueryContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0)),
+		item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes,set_components
 		FROM shopee_stock_sml_catalog WHERE is_active=true ORDER BY item_code`)
 	if err != nil {
 		return nil, err
@@ -281,8 +314,12 @@ func (s *Store) ListSMLCatalog(ctx context.Context) ([]sml.StockCatalogItem, err
 	items := []sml.StockCatalogItem{}
 	for rows.Next() {
 		var item sml.StockCatalogItem
-		var units, barcodes []byte
-		if err := rows.Scan(&item.ItemCode, &item.ItemName, &item.StandardUnit, &units, &barcodes, &item.UpdatedAt); err != nil {
+		var units, barcodes, warningsJSON, componentsJSON []byte
+		var componentCount int
+		var definitionHash string
+		var documentValid, stockValid bool
+		if err := rows.Scan(&item.ItemCode, &item.ItemName, &item.StandardUnit, &units, &barcodes, &item.UpdatedAt,
+			&item.ItemType, &componentCount, &definitionHash, &documentValid, &stockValid, &warningsJSON, &componentsJSON); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(units, &item.Units); err != nil {
@@ -290,6 +327,13 @@ func (s *Store) ListSMLCatalog(ctx context.Context) ([]sml.StockCatalogItem, err
 		}
 		if err := json.Unmarshal(barcodes, &item.Barcodes); err != nil {
 			return nil, err
+		}
+		if item.ItemType == 3 {
+			definition := &sml.StockSetDefinition{ItemCode: item.ItemCode, ComponentCount: componentCount, Hash: definitionHash, DocumentValid: documentValid, StockValid: stockValid}
+			_ = json.Unmarshal(warningsJSON, &definition.WarningCodes)
+			_ = json.Unmarshal(componentsJSON, &definition.Components)
+			item.SetDefinition = definition
+			item.SetComponents = append([]sml.StockSetComponent(nil), definition.Components...)
 		}
 		items = append(items, item)
 	}
@@ -300,7 +344,8 @@ func (s *Store) SearchSMLCatalog(ctx context.Context, query string, limit int) (
 	if limit < 1 || limit > 20 {
 		limit = 20
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT item_code,item_name,standard_unit_code,units
+	rows, err := s.db.QueryContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,
+		item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes,set_components
 		FROM shopee_stock_sml_catalog
 		WHERE is_active=true AND (item_code ILIKE $1 OR item_name ILIKE $1)
 		ORDER BY CASE
@@ -317,13 +362,17 @@ func (s *Store) SearchSMLCatalog(ctx context.Context, query string, limit int) (
 	items := []CatalogOption{}
 	for rows.Next() {
 		var item CatalogOption
-		var units []byte
-		if err := rows.Scan(&item.ItemCode, &item.ItemName, &item.StandardUnit, &units); err != nil {
+		var units, warningsJSON, componentsJSON []byte
+		if err := rows.Scan(&item.ItemCode, &item.ItemName, &item.StandardUnit, &units,
+			&item.ItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.SetDocumentValid,
+			&item.SetStockValid, &warningsJSON, &componentsJSON); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(units, &item.Units); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal(warningsJSON, &item.SetWarningCodes)
+		_ = json.Unmarshal(componentsJSON, &item.SetComponents)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -380,8 +429,8 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 	defer productStmt.Close()
 	mappingStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO shopee_stock_mappings
-		 (shop_id,item_id,model_id,sml_item_code,sml_unit_code,unit_factor,match_source,warning_codes,marketplace_alias_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid)
+		 (shop_id,item_id,model_id,sml_item_code,sml_unit_code,unit_factor,match_source,warning_codes,marketplace_alias_id,set_definition_hash)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,$10)
 		ON CONFLICT (shop_id,item_id,model_id) DO UPDATE SET
 		 sml_item_code=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.sml_item_code ELSE EXCLUDED.sml_item_code END,
 		 sml_unit_code=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.sml_unit_code ELSE EXCLUDED.sml_unit_code END,
@@ -389,6 +438,7 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 		 match_source=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.match_source ELSE EXCLUDED.match_source END,
 		 warning_codes=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.warning_codes ELSE EXCLUDED.warning_codes END,
 		 marketplace_alias_id=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.marketplace_alias_id ELSE EXCLUDED.marketplace_alias_id END,
+		 set_definition_hash=CASE WHEN shopee_stock_mappings.match_source='manual' THEN shopee_stock_mappings.set_definition_hash ELSE EXCLUDED.set_definition_hash END,
 		 updated_at=NOW()`)
 	if err != nil {
 		return err
@@ -407,7 +457,7 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 		}
 		warnings, _ := json.Marshal(match.Warnings)
 		aliasID := ""
-		if ok && match.Source == "sku" && match.ItemCode != "" {
+		if ok && match.Source == "sku" && match.ItemCode != "" && match.DocumentValid {
 			aliasID, err = upsertShopeeStockMasterTx(ctx, tx, shopID, product.ItemID, product.ModelID,
 				product.ItemName, product.ModelName, product.ItemSKU, product.ModelSKU, match.ItemCode, match.UnitCode,
 				"exact_sku", "", "", nil)
@@ -415,11 +465,21 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 				return err
 			}
 		}
-		if _, err := mappingStmt.ExecContext(ctx, shopID, product.ItemID, product.ModelID, match.ItemCode, match.UnitCode, match.Factor, match.Source, warnings, aliasID); err != nil {
+		if _, err := mappingStmt.ExecContext(ctx, shopID, product.ItemID, product.ModelID, match.ItemCode, match.UnitCode, match.Factor, match.Source, warnings, aliasID, match.SetDefinitionHash); err != nil {
 			return err
 		}
 	}
 	if err := markDuplicateMappings(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings st
+		SET enabled=false,dry_run_required=true,updated_at=NOW()
+		WHERE st.shop_id=$1 AND EXISTS (
+		  SELECT 1 FROM shopee_stock_mappings m
+		  JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
+		  WHERE m.shop_id=st.shop_id AND m.excluded=false AND c.item_type=3
+		    AND m.last_preview_target IS NULL
+		)`, shopID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -462,11 +522,19 @@ func (s *Store) RefreshDuplicateMappings(ctx context.Context) error {
 }
 
 func (s *Store) EnabledSMLItemsOtherShops(ctx context.Context, shopID int64) (map[string]struct{}, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT m.sml_item_code
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT consumed.item_code
 		FROM shopee_stock_mappings m
 		JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
 		JOIN shopee_stock_settings st USING(shop_id)
-		WHERE m.shop_id<>$1 AND st.enabled=true AND p.is_active=true AND m.excluded=false AND m.sml_item_code<>''`, shopID)
+		LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
+		CROSS JOIN LATERAL (
+		  SELECT m.sml_item_code AS item_code WHERE COALESCE(c.item_type,0)<>3
+		  UNION ALL
+		  SELECT component->>'item_code' FROM jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
+		  WHERE c.item_type=3
+		) consumed
+		WHERE m.shop_id<>$1 AND st.enabled=true AND p.is_active=true AND m.excluded=false
+		  AND COALESCE(consumed.item_code,'')<>''`, shopID)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +634,9 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
-		       m.last_preview_target,m.last_success_target,m.updated_at
+		       m.last_preview_target,m.last_success_target,m.updated_at,
+		       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
+		       COALESCE(c.set_document_valid,true),COALESCE(c.set_stock_valid,true),COALESCE(c.set_components,'[]'::jsonb)
 		  FROM shopee_stock_products p
 		  JOIN shopee_stock_mappings m USING (shop_id,item_id,model_id)
 		  LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
@@ -591,12 +661,14 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 	products := []ProductRow{}
 	for rows.Next() {
 		var item ProductRow
-		var warnings, unitsJSON []byte
+		var warnings, unitsJSON, componentsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
 			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
 			&item.MatchSource, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
-			&item.LastPreviewTarget, &item.LastSuccessTarget, &item.UpdatedAt); err != nil {
+			&item.LastPreviewTarget, &item.LastSuccessTarget, &item.UpdatedAt,
+			&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
+			&item.SetDocumentValid, &item.SetStockValid, &componentsJSON); err != nil {
 			return nil, 0, ProductCounts{}, err
 		}
 		_ = json.Unmarshal(warnings, &item.WarningCodes)
@@ -604,6 +676,7 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		if err := json.Unmarshal(unitsJSON, &units); err != nil {
 			return nil, 0, ProductCounts{}, fmt.Errorf("decode SML units for %s: %w", item.SMLItemCode, err)
 		}
+		_ = json.Unmarshal(componentsJSON, &item.SetComponents)
 		populateProductUnitNames(&item, units)
 		products = append(products, item)
 	}
@@ -647,15 +720,33 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 		return s.findProduct(ctx, shopID, itemID, modelID)
 	}
 	var item sml.StockCatalogItem
-	var unitsJSON, barcodesJSON []byte
-	err = tx.QueryRowContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0))
+	var unitsJSON, barcodesJSON, setWarningsJSON, setComponentsJSON []byte
+	var componentCount int
+	var definitionHash string
+	var documentValid, stockValid bool
+	err = tx.QueryRowContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0)),
+		item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes,set_components
 		FROM shopee_stock_sml_catalog WHERE item_code=$1 AND is_active=true`, request.SMLItemCode).Scan(
-		&item.ItemCode, &item.ItemName, &item.StandardUnit, &unitsJSON, &barcodesJSON, &item.UpdatedAt)
+		&item.ItemCode, &item.ItemName, &item.StandardUnit, &unitsJSON, &barcodesJSON, &item.UpdatedAt,
+		&item.ItemType, &componentCount, &definitionHash, &documentValid, &stockValid, &setWarningsJSON, &setComponentsJSON)
 	if err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal(unitsJSON, &item.Units)
 	_ = json.Unmarshal(barcodesJSON, &item.Barcodes)
+	if item.ItemType == 3 {
+		definition := &sml.StockSetDefinition{ItemCode: item.ItemCode, ComponentCount: componentCount, Hash: definitionHash, DocumentValid: documentValid, StockValid: stockValid}
+		_ = json.Unmarshal(setWarningsJSON, &definition.WarningCodes)
+		_ = json.Unmarshal(setComponentsJSON, &definition.Components)
+		item.SetDefinition = definition
+		item.SetComponents = append([]sml.StockSetComponent(nil), definition.Components...)
+		if !definition.StockValid {
+			return nil, invalid("สินค้าชุดนี้ยังไม่พร้อมซิงก์สต๊อก กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการ")
+		}
+		if !definition.DocumentValid {
+			return nil, invalid("สินค้าชุดนี้ยังไม่พร้อมใช้ใน Product Master กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการ")
+		}
+	}
 	var unit sml.StockCatalogUnit
 	found := false
 	for _, candidate := range item.Units {
@@ -686,6 +777,11 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 	}
 	factor := UnitFactor(unit)
 	warningsList := UnitWarnings(unit)
+	if item.ItemType == 3 {
+		for _, warning := range stockSetWarnings(item) {
+			warningsList = appendUnique(warningsList, warning)
+		}
+	}
 	if request.ManualUnitFactor != nil {
 		if *request.ManualUnitFactor < 1 {
 			return nil, ErrInvalidManualFactor
@@ -705,9 +801,9 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 	result, err := tx.ExecContext(ctx, `
 		UPDATE shopee_stock_mappings
 		   SET sml_item_code=$5,sml_unit_code=$6,unit_factor=$7,manual_unit_factor=$8,match_source='manual',excluded=$9,
-		       warning_codes=$10,marketplace_alias_id=$12,updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
+		       warning_codes=$10,marketplace_alias_id=$12,set_definition_hash=$13,updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
 		 WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`,
-		shopID, itemID, modelID, request.UpdatedAt, item.ItemCode, unit.Code, factor, request.ManualUnitFactor, request.Excluded, warnings, userID, aliasID)
+		shopID, itemID, modelID, request.UpdatedAt, item.ItemCode, unit.Code, factor, request.ManualUnitFactor, request.Excluded, warnings, userID, aliasID, definitionHash)
 	if err != nil {
 		return nil, err
 	}
@@ -927,9 +1023,12 @@ func (s *Store) SavePreview(ctx context.Context, shopID int64, result *PreviewRe
 	for _, line := range result.Lines {
 		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings SET
 			last_preview_balance=$4,last_preview_excluded_balance=$5,last_preview_min_qty=$6,
-			last_preview_max_qty=$7,last_preview_target=$8,updated_at=updated_at
+			last_preview_max_qty=$7,last_preview_target=$8,
+			set_definition_hash=CASE WHEN $9=3 AND $10=false THEN $11 ELSE set_definition_hash END,
+			updated_at=updated_at
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3`, shopID, line.ItemID, line.ModelID,
-			line.ScopeBalance, line.ExcludedBalance, line.MinQty, line.MaxQty, line.TargetStock); err != nil {
+			line.ScopeBalance, line.ExcludedBalance, line.MinQty, line.MaxQty, line.TargetStock,
+			line.ItemType, line.Blocked, line.SetDefinitionHash); err != nil {
 			return err
 		}
 		if !line.Changed && !line.Blocked {

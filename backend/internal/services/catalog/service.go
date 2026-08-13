@@ -108,6 +108,9 @@ type smlProductItem struct {
 	GroupCode             string            `json:"group_main"`
 	GroupCodeV1           string            `json:"group_code"`
 	BalanceQty            float64           `json:"balance_qty"`
+	ItemType              int               `json:"item_type"`
+	SetDefinition         *smlSetDefinition `json:"set_definition"`
+	SetComponents         []smlSetComponent `json:"set_components"`
 	Price                 float64           `json:"price"`
 	ImageCount            int               `json:"image_count"`
 	PrimaryImageRoworder  *int              `json:"primary_image_roworder"`
@@ -117,15 +120,42 @@ type smlProductItem struct {
 	InventoryPriceFormula []smlPriceFormula `json:"inventory_price_formula"`
 }
 
+type smlSetDefinition struct {
+	ComponentCount int               `json:"component_count"`
+	DocumentValid  bool              `json:"document_valid"`
+	StockValid     bool              `json:"stock_valid"`
+	WarningCodes   []string          `json:"warning_codes"`
+	Hash           string            `json:"hash"`
+	Components     []smlSetComponent `json:"components"`
+}
+
+type smlSetComponent struct {
+	LineNumber int     `json:"line_number"`
+	RowOrder   int     `json:"row_order"`
+	ItemCode   string  `json:"item_code"`
+	ItemName   string  `json:"item_name"`
+	ItemType   int     `json:"item_type"`
+	UnitCode   string  `json:"unit_code"`
+	Qty        float64 `json:"qty"`
+	Price      float64 `json:"price"`
+	SumAmount  float64 `json:"sum_amount"`
+	PriceRatio float64 `json:"price_ratio"`
+	UnitFactor float64 `json:"unit_factor"`
+	Active     bool    `json:"active"`
+	UnitValid  bool    `json:"unit_valid"`
+}
+
 // SyncFromAPI syncs catalog from SML /product/v4 endpoint.
 // Returns (inserted+updated, error).
 func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 	url := fmt.Sprintf("%s/api/v1/ic/products", s.smlBaseURL)
 	total := 0
 	page := 1
+	runStartedAt := time.Now().UTC()
+	upsertErrors := 0
 
 	for {
-		pageURL := fmt.Sprintf("%s?page=%d", url, page)
+		pageURL := fmt.Sprintf("%s?page=%d&size=200", url, page)
 		req, err := http.NewRequest("GET", pageURL, nil)
 		if err != nil {
 			return total, fmt.Errorf("build request: %w", err)
@@ -172,10 +202,31 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 				UnitCode:             unit,
 				Price:                &price,
 				GroupCode:            groupCode,
+				ItemType:             it.ItemType,
+				SetDocumentValid:     it.ItemType != 3,
+				SetStockValid:        it.ItemType != 3,
 				ImageCount:           it.ImageCount,
 				PrimaryImageRoworder: it.PrimaryImageRoworder,
 				PrimaryImageGuid:     it.PrimaryImageGuid,
 				ImageMetadataSynced:  true,
+			}
+			definition := it.SetDefinition
+			if definition != nil {
+				ci.SetComponentCount = definition.ComponentCount
+				ci.SetDefinitionHash = definition.Hash
+				ci.SetDocumentValid = definition.DocumentValid
+				ci.SetStockValid = definition.StockValid
+				ci.SetWarningCodes = append([]string(nil), definition.WarningCodes...)
+				for _, component := range definition.Components {
+					ci.SetComponents = append(ci.SetComponents, models.CatalogSetComponent{
+						LineNumber: component.LineNumber, RowOrder: component.RowOrder,
+						ItemCode: component.ItemCode, ItemName: component.ItemName,
+						ItemType: component.ItemType, UnitCode: component.UnitCode,
+						Qty: component.Qty, Price: component.Price, SumAmount: component.SumAmount,
+						PriceRatio: component.PriceRatio, UnitFactor: component.UnitFactor,
+						Active: component.Active, UnitValid: component.UnitValid,
+					})
+				}
 			}
 			if it.PrimaryImageBytes > 0 {
 				bytes := it.PrimaryImageBytes
@@ -183,7 +234,8 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 			}
 			qty := it.BalanceQty
 			ci.BalanceQty = &qty
-			if err := s.repo.Upsert(ci); err != nil {
+			if err := s.repo.UpsertAt(ci, runStartedAt); err != nil {
+				upsertErrors++
 				s.logger.Warn("catalog: upsert failed",
 					zap.String("code", it.Code), zap.Error(err))
 			} else {
@@ -198,6 +250,12 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 			break
 		}
 		page++
+	}
+	if upsertErrors > 0 {
+		return total, fmt.Errorf("catalog sync stored %d products but %d products failed; inactive products were not finalized", total, upsertErrors)
+	}
+	if err := s.repo.FinalizeSuccessfulSync(runStartedAt); err != nil {
+		return total, fmt.Errorf("finalize catalog sync: %w", err)
 	}
 
 	s.logger.Info("catalog: sync from API complete", zap.Int("count", total))
@@ -247,19 +305,22 @@ func (s *SMLCatalogService) SyncStatus() SyncStatus {
 type singleProductV3Response struct {
 	Success bool `json:"success"`
 	Data    struct {
-		Code         string  `json:"code"`
-		Name         string  `json:"name"`
-		Name1        string  `json:"name_1"`
-		Name2        string  `json:"name_2"`
-		UnitStandard string  `json:"unit_standard"`
-		GroupMain    string  `json:"group_main"`
-		GroupCode    string  `json:"group_code"`
-		BalanceQty   float64 `json:"balance_qty"`
-		ImageCount   int     `json:"image_count"`
-		ImageRow     *int    `json:"primary_image_roworder"`
-		ImageGuid    string  `json:"primary_image_guid"`
-		ImageBytes   int64   `json:"primary_image_bytes"`
-		Units        []struct {
+		Code          string            `json:"code"`
+		Name          string            `json:"name"`
+		Name1         string            `json:"name_1"`
+		Name2         string            `json:"name_2"`
+		UnitStandard  string            `json:"unit_standard"`
+		GroupMain     string            `json:"group_main"`
+		GroupCode     string            `json:"group_code"`
+		BalanceQty    float64           `json:"balance_qty"`
+		ImageCount    int               `json:"image_count"`
+		ImageRow      *int              `json:"primary_image_roworder"`
+		ImageGuid     string            `json:"primary_image_guid"`
+		ImageBytes    int64             `json:"primary_image_bytes"`
+		ItemType      int               `json:"item_type"`
+		SetDefinition *smlSetDefinition `json:"set_definition"`
+		SetComponents []smlSetComponent `json:"set_components"`
+		Units         []struct {
 			UnitCode string `json:"unit_code"`
 		} `json:"units"`
 	} `json:"data"`
@@ -338,6 +399,21 @@ func (s *SMLCatalogService) RefreshOneContext(ctx context.Context, itemCode stri
 		PrimaryImageRoworder: d.ImageRow,
 		PrimaryImageGuid:     d.ImageGuid,
 		ImageMetadataSynced:  true,
+		ItemType:             d.ItemType,
+		SetDocumentValid:     d.ItemType != 3,
+		SetStockValid:        d.ItemType != 3,
+	}
+	definition := d.SetDefinition
+	if definition != nil {
+		ci.SetComponentCount = definition.ComponentCount
+		ci.SetDefinitionHash = definition.Hash
+		ci.SetDocumentValid = definition.DocumentValid
+		ci.SetStockValid = definition.StockValid
+		ci.SetWarningCodes = append([]string(nil), definition.WarningCodes...)
+		ci.SetComponents = catalogSetComponents(definition.Components)
+	} else if len(d.SetComponents) > 0 {
+		ci.SetComponentCount = len(d.SetComponents)
+		ci.SetComponents = catalogSetComponents(d.SetComponents)
 	}
 	if d.ImageBytes > 0 {
 		bytes := d.ImageBytes
@@ -463,13 +539,15 @@ func (s *SMLCatalogService) SyncFromCSV(data []byte) (int, error) {
 		}
 
 		ci := models.CatalogItem{
-			ItemCode:  code,
-			ItemName:  name,
-			ItemName2: get("item_name2"),
-			UnitCode:  get("unit_code"),
-			WHCode:    get("wh_code"),
-			ShelfCode: get("shelf_code"),
-			GroupCode: get("group_code"),
+			ItemCode:         code,
+			ItemName:         name,
+			ItemName2:        get("item_name2"),
+			UnitCode:         get("unit_code"),
+			WHCode:           get("wh_code"),
+			ShelfCode:        get("shelf_code"),
+			GroupCode:        get("group_code"),
+			SetDocumentValid: true,
+			SetStockValid:    true,
 		}
 		if priceStr := get("price"); priceStr != "" {
 			if p, err := strconv.ParseFloat(priceStr, 64); err == nil {
@@ -492,6 +570,21 @@ func (s *SMLCatalogService) SyncFromCSV(data []byte) (int, error) {
 
 	s.logger.Info("catalog: CSV import complete", zap.Int("count", count))
 	return count, nil
+}
+
+func catalogSetComponents(components []smlSetComponent) []models.CatalogSetComponent {
+	result := make([]models.CatalogSetComponent, 0, len(components))
+	for _, component := range components {
+		result = append(result, models.CatalogSetComponent{
+			LineNumber: component.LineNumber, RowOrder: component.RowOrder,
+			ItemCode: component.ItemCode, ItemName: component.ItemName,
+			ItemType: component.ItemType, UnitCode: component.UnitCode,
+			Qty: component.Qty, Price: component.Price, SumAmount: component.SumAmount,
+			PriceRatio: component.PriceRatio, UnitFactor: component.UnitFactor,
+			Active: component.Active, UnitValid: component.UnitValid,
+		})
+	}
+	return result
 }
 
 func normalizeHeader(h string) string {

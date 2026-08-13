@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom'
 
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { SetProductDetailsDialog } from '@/components/catalog/SetProductDetailsDialog'
 import { MarketplaceMappingDrawer } from '@/components/marketplace/MarketplaceMappingDrawer'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -42,13 +43,25 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
-import type { CatalogMatch, MarketplaceAliasImpact } from '@/types'
+import type { CatalogMatch, CatalogSetComponent, MarketplaceAliasImpact } from '@/types'
 
 type LocationPair = { warehouse: string; location: string }
 type StockLocation = { warehouse_code: string; warehouse_name: string; location_code: string; location_name: string }
 type Diagnostic = { warehouse: string; location: string; balance_qty: number; code: string }
 type StockCatalogUnit = { code: string; name: string; stand_value: number; divide_value: number; ratio: number; row_order: number; line_number: number }
-type StockCatalogOption = { item_code: string; item_name: string; standard_unit: string; units: StockCatalogUnit[] }
+type StockCatalogOption = {
+  item_code: string
+  item_name: string
+  item_type?: number
+  standard_unit: string
+  set_component_count?: number
+  set_definition_hash?: string
+  set_document_valid?: boolean
+  set_stock_valid?: boolean
+  set_warning_codes?: string[]
+  set_components?: CatalogSetComponent[]
+  units: StockCatalogUnit[]
+}
 type StockSetting = {
   shop_id: number
   shop_name: string
@@ -85,6 +98,13 @@ type ProductRow = {
   sml_unit_name: string
   sml_base_unit_code: string
   sml_base_unit_name: string
+  sml_item_type: number
+  set_component_count: number
+  set_definition_hash?: string
+  mapping_set_definition_hash?: string
+  set_document_valid: boolean
+  set_stock_valid: boolean
+  set_components?: CatalogSetComponent[]
   unit_factor: number
   manual_unit_factor?: number
   match_source: string
@@ -147,6 +167,20 @@ type Preview = {
     target_stock: number
     blocked: boolean
     warning_codes: string[]
+    item_type: number
+    set_definition_hash?: string
+    set_components?: Array<{
+      item_code: string
+      item_name: string
+      component_qty: number
+      unit_code: string
+      balance_unit_code: string
+      balance_qty: number
+      required_base: number
+      possible_sets: number
+      bottleneck: boolean
+    }>
+    bottleneck_item_code?: string
   }>
 }
 
@@ -168,6 +202,18 @@ const WARNING_LABEL: Record<string, string> = {
   reserved_stock_exceeds_target: 'สต๊อกจอง Shopee สูงกว่าเป้าหมาย',
   master_target_changed: 'Master เปลี่ยนสินค้า ต้องเลือกหน่วยและทำ Dry-run ใหม่',
   master_inactive: 'Master ถูกปิดใช้งาน กรุณาจับคู่ใหม่',
+  set_stock_invalid: 'โครงสร้างสินค้าชุดยังใช้คำนวณสต๊อกไม่ได้',
+  set_stock_feature_disabled: 'ยังไม่เปิดการคำนวณสต๊อกสินค้าชุด',
+  set_definition_missing: 'ไม่พบส่วนประกอบสินค้าชุด',
+  set_definition_changed: 'ส่วนประกอบใน SML เปลี่ยน ต้องทำ Dry-run ใหม่',
+  nested_set_not_supported: 'ยังไม่รองรับสินค้าชุดซ้อนกัน',
+  set_component_inactive: 'มีส่วนประกอบที่หยุดใช้งาน',
+  set_component_not_stock_item: 'มีส่วนประกอบที่ไม่ใช่สินค้าสต๊อก',
+  set_component_qty_invalid: 'จำนวนส่วนประกอบไม่ถูกต้อง',
+  set_component_unit_invalid: 'หน่วยส่วนประกอบไม่ถูกต้อง',
+  set_allocation_invalid: 'สัดส่วนราคาส่วนประกอบไม่ถูกต้อง',
+  shared_component_stock: 'ส่วนประกอบถูกใช้ร่วมกับสินค้าชุดอื่น',
+  set_product_schema_unsupported: 'ฐานข้อมูล SML นี้ยังไม่รองรับข้อมูลสินค้าชุด',
 }
 
 function errorText(error: unknown) {
@@ -625,6 +671,7 @@ export default function ShopeeStock() {
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ระบบหยุดร้านนี้เพื่อความปลอดภัย</AlertTitle><AlertDescription>{draft.paused_reason}{draft.last_error ? ` · ${draft.last_error}` : ''}</AlertDescription></Alert>}
       {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? 'ระบบหยุดทั้งร้านเพื่อความปลอดภัย' : preview.blocked_count ? `พร้อมเปิดซิงก์ โดยเว้น ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'Dry-run ผ่านแล้ว'}</AlertTitle><AlertDescription>ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)} · ยอดนอกขอบเขต {formatNumber(preview.excluded_balance)}{preview.circuit_breaker && ` · ${preview.circuit_breaker}`}</AlertDescription></Alert>}
       {preview?.lines?.some((line) => line.blocked) && <section className="rounded-md border border-warning/40 bg-warning/5"><div className="border-b px-4 py-3"><h2 className="text-sm font-semibold">รายการที่ระบบจะไม่ส่งไป Shopee</h2><p className="text-xs text-muted-foreground">แก้ข้อมูลใน SML หรือกดจับคู่สินค้าแต่ละรายการ แล้วทำ Dry-run ใหม่</p></div><div className="divide-y">{(preview.lines ?? []).filter((line) => line.blocked).slice(0, 20).map((line) => <div key={`${line.item_id}:${line.model_id}`} className="grid gap-1 px-4 py-2 text-sm sm:grid-cols-[minmax(180px,1fr)_minmax(220px,1.4fr)]"><span className="truncate">{productNames.get(`${line.item_id}:${line.model_id}`) || `Item ${line.item_id}${line.model_id ? ` / Model ${line.model_id}` : ''}`}</span><span className="text-amber-800 dark:text-amber-200">{line.warning_codes.map((code) => WARNING_LABEL[code] || code).join(' · ')}</span></div>)}{preview.blocked_count > 20 && <p className="px-4 py-2 text-xs text-muted-foreground">แสดง 20 จาก {formatNumber(preview.blocked_count)} รายการ ใช้แท็บ “ต้องแก้” เพื่อจัดการต่อ</p>}</div></section>}
+      {preview?.lines?.some((line) => line.item_type === 3) && <SetStockPreviewList lines={preview.lines.filter((line) => line.item_type === 3)} productNames={productNames} />}
 
       <section className="overflow-hidden rounded-md border bg-card">
         <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -684,6 +731,7 @@ export default function ShopeeStock() {
 }
 
 function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => void }) {
+  const [setDetailsOpen, setSetDetailsOpen] = useState(false)
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
   const itemName = productItemName(product)
   const optionName = productOptionName(product)
@@ -696,6 +744,7 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
     : ''
   const shopeeIdentity = `SKU ${sku} · Item ${product.item_id}${product.model_id ? ` / Model ${product.model_id}` : ''}`
   return (
+    <>
     <div className="grid gap-3 px-3 py-2 lg:grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_96px] lg:items-center">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium leading-5" title={itemName}>{itemName}</p>
@@ -710,7 +759,14 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
         {product.warning_codes.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <p className="min-w-0 truncate text-sm">{product.sml_item_code ? `${product.sml_item_code} · ${product.sml_item_name}` : 'ยังไม่จับคู่'}</p>
+          {product.sml_item_type === 3 && (
+            <button type="button" className="shrink-0" onClick={() => setSetDetailsOpen(true)} aria-label={`ดูส่วนประกอบสินค้าชุด ${product.sml_item_code}`}>
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary"><Boxes className="mr-1 h-3 w-3" />ชุด {formatNumber(product.set_component_count)}</Badge>
+            </button>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${conversionText}${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
         {product.marketplace_alias_id && <Link to={`/marketplace-aliases?q=${encodeURIComponent(product.model_sku || product.item_sku || String(product.item_id))}`} className="mt-0.5 inline-flex text-[11px] font-medium text-primary hover:underline">ดูใน Product Master</Link>}
       </div>
@@ -732,6 +788,61 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
       </div>
       <Button variant="outline" size="sm" className="px-2" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>
     </div>
+    <SetProductDetailsDialog
+      open={setDetailsOpen}
+      onOpenChange={setSetDetailsOpen}
+      itemCode={product.sml_item_code}
+      itemName={product.sml_item_name}
+      components={product.set_components}
+      documentValid={product.set_document_valid}
+      stockValid={product.set_stock_valid}
+      warningCodes={product.warning_codes.filter((code) => code.startsWith('set_') || code === 'nested_set_not_supported')}
+      showStockStatus
+    />
+    </>
+  )
+}
+
+function availableSetCount(line: Preview['lines'][number]) {
+  const components = line.set_components ?? []
+  return components.length > 0 ? Math.min(...components.map((item) => item.possible_sets)) : 0
+}
+
+function SetStockPreviewList({ lines, productNames }: { lines: Preview['lines']; productNames: Map<string, string> }) {
+  return (
+    <section className="overflow-hidden rounded-md border bg-card">
+      <div className="border-b px-3 py-2">
+        <h2 className="text-sm font-semibold">ผลคำนวณสินค้าชุด</h2>
+        <p className="text-xs text-muted-foreground">จำนวนที่ส่ง Shopee จำกัดด้วยส่วนประกอบที่ประกอบสินค้าได้น้อยที่สุด</p>
+      </div>
+      <div className="divide-y">
+        {lines.slice(0, 20).map((line) => (
+          <details key={`${line.item_id}:${line.model_id}`} className="group px-3 py-2">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm">
+              <span className="min-w-0 truncate font-medium">{productNames.get(`${line.item_id}:${line.model_id}`) || line.sml_item_code}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">ประกอบได้ {formatNumber(availableSetCount(line))} ชุด · จะส่ง {formatNumber(line.target_stock)} · คอขวด {line.bottleneck_item_code || '-'}</span>
+            </summary>
+            <div className="mt-2 overflow-hidden rounded-md border">
+              <div className="hidden grid-cols-[90px_minmax(160px,1fr)_100px_110px] gap-3 border-b bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground sm:grid">
+                <span>รหัส</span><span>ส่วนประกอบ</span><span className="text-right">คงเหลือ SML</span><span className="text-right">ประกอบได้</span>
+              </div>
+              {(line.set_components ?? []).map((component) => (
+                <div key={component.item_code} className={cn('grid gap-1 px-3 py-1.5 text-xs sm:grid-cols-[90px_minmax(160px,1fr)_100px_110px] sm:items-center sm:gap-3', component.bottleneck && 'bg-warning/10')}>
+                  <span className="font-mono font-medium">{component.item_code}</span>
+                  <span className="min-w-0" title={component.item_name}>
+                    <span className="block truncate">{component.item_name || '-'}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">ใช้ต่อชุด {formatNumber(component.component_qty)} {component.unit_code}{component.required_base !== component.component_qty ? ` = ${formatNumber(component.required_base)} ${component.balance_unit_code || 'หน่วยเล็ก'}` : ''}</span>
+                  </span>
+                  <span className="tabular-nums sm:text-right">{formatNumber(component.balance_qty)} {component.balance_unit_code || 'หน่วยเล็ก'}</span>
+                  <span className="tabular-nums sm:text-right">{formatNumber(component.possible_sets)} ชุด{component.bottleneck ? ' · คอขวด' : ''}</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        ))}
+      </div>
+      {lines.length > 20 && <p className="border-t px-3 py-2 text-xs text-muted-foreground">แสดง 20 จาก {formatNumber(lines.length)} สินค้าชุด</p>}
+    </section>
   )
 }
 

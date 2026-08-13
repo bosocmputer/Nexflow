@@ -38,16 +38,22 @@ func TestRefreshOneUpsertsProductMissingFromLocalCatalog(t *testing.T) {
 	defer upstream.Close()
 
 	expectCatalogGetOne(mock, "SHIP_POL").WillReturnRows(sqlmock.NewRows(catalogGetOneColumns))
+	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO sml_catalog").
 		WithArgs(
 			"SHIP_POL", "ค่าขนส่งสินค้า", "", "ครั้ง", "", "",
 			nil, "SERVICE", sqlmock.AnyArg(), 0, nil, "", nil, true,
+			0, 0, "", true, true, sqlmock.AnyArg(), sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM sml_catalog_set_components").
+		WithArgs("SHIP_POL").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 	now := time.Now()
 	expectCatalogGetOne(mock, "SHIP_POL").WillReturnRows(
 		sqlmock.NewRows(catalogGetOneColumns).
-			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "ครั้ง", "", "", nil, "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now),
+			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "ครั้ง", "", "", nil, "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now, 0, 0, "", true, true, []byte(`[]`)),
 	)
 
 	svc := NewSMLCatalogService(repository.NewSMLCatalogRepo(db), upstream.URL, nil, zap.NewNop())
@@ -109,6 +115,12 @@ var catalogGetOneColumns = []string{
 	"image_synced_at",
 	"synced_at",
 	"created_at",
+	"item_type",
+	"set_component_count",
+	"set_definition_hash",
+	"set_document_valid",
+	"set_stock_valid",
+	"set_warning_codes",
 }
 
 func expectCatalogGetOne(mock sqlmock.Sqlmock, code string) *sqlmock.ExpectedQuery {

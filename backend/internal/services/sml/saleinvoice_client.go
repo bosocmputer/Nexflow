@@ -210,6 +210,7 @@ type InvoicePayload struct {
 	PayDetails     []interface{}   `json:"paydetails"`
 	Remark         string          `json:"remark,omitempty"`
 	Remark2        string          `json:"remark_2,omitempty"`
+	ExpandSetItems bool            `json:"expand_set_items"`
 }
 
 // InvoiceResponse handles both old restapi format and new v3 format.
@@ -248,6 +249,8 @@ func (r *InvoiceResponse) GetMessage() string {
 	}
 	return apiErrorMessage(r.Error)
 }
+
+func (r *InvoiceResponse) GetCode() string { return strings.TrimSpace(r.Code) }
 
 // CreateInvoice posts a saleinvoice to SML and returns the response.
 // urlOverride: empty = default; absolute URL = as-is; path = cfg.BaseURL + path.
@@ -390,7 +393,8 @@ type ShopeeOrderItem struct {
 }
 
 type InvoiceHeaderOptions struct {
-	Remark2 string
+	Remark2        string
+	ExpandSetItems bool
 }
 
 // BuildInvoicePayload constructs an InvoicePayload from a Shopee order.
@@ -507,5 +511,6 @@ func BuildInvoicePayload(
 		PayDetails:     []interface{}{},
 		Remark:         remark,
 		Remark2:        header.Remark2,
+		ExpandSetItems: header.ExpandSetItems,
 	}
 }

@@ -49,35 +49,42 @@ type LocationDiagnostic struct {
 }
 
 type ProductRow struct {
-	ShopID                     int64      `json:"shop_id"`
-	ItemID                     int64      `json:"item_id"`
-	ModelID                    int64      `json:"model_id"`
-	ItemName                   string     `json:"item_name"`
-	ModelName                  string     `json:"model_name"`
-	ItemSKU                    string     `json:"item_sku"`
-	ModelSKU                   string     `json:"model_sku"`
-	ShopeeAvailable            int64      `json:"shopee_available"`
-	ShopeeReserved             int64      `json:"shopee_reserved"`
-	SMLItemCode                string     `json:"sml_item_code"`
-	SMLItemName                string     `json:"sml_item_name"`
-	SMLUnitCode                string     `json:"sml_unit_code"`
-	SMLUnitName                string     `json:"sml_unit_name"`
-	SMLBaseUnitCode            string     `json:"sml_base_unit_code"`
-	SMLBaseUnitName            string     `json:"sml_base_unit_name"`
-	UnitFactor                 float64    `json:"unit_factor"`
-	ManualUnitFactor           *float64   `json:"manual_unit_factor,omitempty"`
-	MatchSource                string     `json:"match_source"`
-	MarketplaceAliasID         string     `json:"marketplace_alias_id,omitempty"`
-	MarketplaceAliasUpdatedAt  *time.Time `json:"marketplace_alias_updated_at,omitempty"`
-	Excluded                   bool       `json:"excluded"`
-	WarningCodes               []string   `json:"warning_codes"`
-	LastPreviewBalance         *float64   `json:"last_preview_balance,omitempty"`
-	LastPreviewExcludedBalance *float64   `json:"last_preview_excluded_balance,omitempty"`
-	LastPreviewMinQty          *float64   `json:"last_preview_min_qty,omitempty"`
-	LastPreviewMaxQty          *float64   `json:"last_preview_max_qty,omitempty"`
-	LastPreviewTarget          *int64     `json:"last_preview_target,omitempty"`
-	LastSuccessTarget          *int64     `json:"last_success_target,omitempty"`
-	UpdatedAt                  time.Time  `json:"updated_at"`
+	ShopID                     int64                   `json:"shop_id"`
+	ItemID                     int64                   `json:"item_id"`
+	ModelID                    int64                   `json:"model_id"`
+	ItemName                   string                  `json:"item_name"`
+	ModelName                  string                  `json:"model_name"`
+	ItemSKU                    string                  `json:"item_sku"`
+	ModelSKU                   string                  `json:"model_sku"`
+	ShopeeAvailable            int64                   `json:"shopee_available"`
+	ShopeeReserved             int64                   `json:"shopee_reserved"`
+	SMLItemCode                string                  `json:"sml_item_code"`
+	SMLItemName                string                  `json:"sml_item_name"`
+	SMLUnitCode                string                  `json:"sml_unit_code"`
+	SMLUnitName                string                  `json:"sml_unit_name"`
+	SMLBaseUnitCode            string                  `json:"sml_base_unit_code"`
+	SMLBaseUnitName            string                  `json:"sml_base_unit_name"`
+	SMLItemType                int                     `json:"sml_item_type"`
+	SetComponentCount          int                     `json:"set_component_count"`
+	SetDefinitionHash          string                  `json:"set_definition_hash,omitempty"`
+	MappingSetDefinitionHash   string                  `json:"mapping_set_definition_hash,omitempty"`
+	SetDocumentValid           bool                    `json:"set_document_valid"`
+	SetStockValid              bool                    `json:"set_stock_valid"`
+	SetComponents              []sml.StockSetComponent `json:"set_components,omitempty"`
+	UnitFactor                 float64                 `json:"unit_factor"`
+	ManualUnitFactor           *float64                `json:"manual_unit_factor,omitempty"`
+	MatchSource                string                  `json:"match_source"`
+	MarketplaceAliasID         string                  `json:"marketplace_alias_id,omitempty"`
+	MarketplaceAliasUpdatedAt  *time.Time              `json:"marketplace_alias_updated_at,omitempty"`
+	Excluded                   bool                    `json:"excluded"`
+	WarningCodes               []string                `json:"warning_codes"`
+	LastPreviewBalance         *float64                `json:"last_preview_balance,omitempty"`
+	LastPreviewExcludedBalance *float64                `json:"last_preview_excluded_balance,omitempty"`
+	LastPreviewMinQty          *float64                `json:"last_preview_min_qty,omitempty"`
+	LastPreviewMaxQty          *float64                `json:"last_preview_max_qty,omitempty"`
+	LastPreviewTarget          *int64                  `json:"last_preview_target,omitempty"`
+	LastSuccessTarget          *int64                  `json:"last_success_target,omitempty"`
+	UpdatedAt                  time.Time               `json:"updated_at"`
 }
 
 type ProductCounts struct {
@@ -143,10 +150,17 @@ type CatalogDue struct {
 }
 
 type CatalogOption struct {
-	ItemCode     string                 `json:"item_code"`
-	ItemName     string                 `json:"item_name"`
-	StandardUnit string                 `json:"standard_unit"`
-	Units        []sml.StockCatalogUnit `json:"units"`
+	ItemCode          string                  `json:"item_code"`
+	ItemName          string                  `json:"item_name"`
+	ItemType          int                     `json:"item_type"`
+	StandardUnit      string                  `json:"standard_unit"`
+	SetComponentCount int                     `json:"set_component_count"`
+	SetDefinitionHash string                  `json:"set_definition_hash,omitempty"`
+	SetDocumentValid  bool                    `json:"set_document_valid"`
+	SetStockValid     bool                    `json:"set_stock_valid"`
+	SetWarningCodes   []string                `json:"set_warning_codes,omitempty"`
+	SetComponents     []sml.StockSetComponent `json:"set_components,omitempty"`
+	Units             []sml.StockCatalogUnit  `json:"units"`
 }
 
 type SettingsUpdate struct {
@@ -159,20 +173,36 @@ type SettingsUpdate struct {
 }
 
 type PreviewLine struct {
-	ItemID          int64    `json:"item_id"`
-	ModelID         int64    `json:"model_id"`
-	SMLItemCode     string   `json:"sml_item_code"`
-	ScopeBalance    float64  `json:"scope_balance"`
-	ExcludedBalance float64  `json:"excluded_balance"`
-	MinQty          float64  `json:"min_qty"`
-	MaxQty          float64  `json:"max_qty"`
-	UnitFactor      float64  `json:"unit_factor"`
-	CurrentStock    int64    `json:"current_stock"`
-	ReservedStock   int64    `json:"reserved_stock"`
-	TargetStock     int64    `json:"target_stock"`
-	Changed         bool     `json:"changed"`
-	Blocked         bool     `json:"blocked"`
-	WarningCodes    []string `json:"warning_codes"`
+	ItemID             int64                      `json:"item_id"`
+	ModelID            int64                      `json:"model_id"`
+	SMLItemCode        string                     `json:"sml_item_code"`
+	ScopeBalance       float64                    `json:"scope_balance"`
+	ExcludedBalance    float64                    `json:"excluded_balance"`
+	MinQty             float64                    `json:"min_qty"`
+	MaxQty             float64                    `json:"max_qty"`
+	UnitFactor         float64                    `json:"unit_factor"`
+	CurrentStock       int64                      `json:"current_stock"`
+	ReservedStock      int64                      `json:"reserved_stock"`
+	TargetStock        int64                      `json:"target_stock"`
+	Changed            bool                       `json:"changed"`
+	Blocked            bool                       `json:"blocked"`
+	WarningCodes       []string                   `json:"warning_codes"`
+	ItemType           int                        `json:"item_type"`
+	SetDefinitionHash  string                     `json:"set_definition_hash,omitempty"`
+	SetComponents      []SetStockComponentPreview `json:"set_components,omitempty"`
+	BottleneckItemCode string                     `json:"bottleneck_item_code,omitempty"`
+}
+
+type SetStockComponentPreview struct {
+	ItemCode        string  `json:"item_code"`
+	ItemName        string  `json:"item_name"`
+	ComponentQty    float64 `json:"component_qty"`
+	UnitCode        string  `json:"unit_code"`
+	BalanceUnitCode string  `json:"balance_unit_code"`
+	BalanceQty      float64 `json:"balance_qty"`
+	RequiredBase    float64 `json:"required_base"`
+	PossibleSets    int64   `json:"possible_sets"`
+	Bottleneck      bool    `json:"bottleneck"`
 }
 
 type PreviewResult struct {

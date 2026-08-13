@@ -111,6 +111,10 @@ func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "สินค้านี้ไม่มีอยู่หรือปิดใช้งานใน SML กรุณารีเฟรชสินค้าแล้วเลือกใหม่"})
 		return
 	}
+	if product.ItemType == 3 && !product.SetDocumentValid {
+		c.JSON(http.StatusConflict, gin.H{"error": "สินค้าชุดนี้ยังไม่พร้อมสร้างเอกสาร กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการสินค้า"})
+		return
+	}
 	unitCode := req.UnitCode
 	if unitCode == "" {
 		unitCode = product.UnitCode
@@ -172,6 +176,10 @@ func (h *MarketplaceAliasHandler) Update(c *gin.Context) {
 	}
 	if product == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "สินค้านี้ไม่มีอยู่หรือปิดใช้งานใน SML กรุณารีเฟรชสินค้าแล้วเลือกใหม่"})
+		return
+	}
+	if product.ItemType == 3 && !product.SetDocumentValid {
+		c.JSON(http.StatusConflict, gin.H{"error": "สินค้าชุดนี้ยังไม่พร้อมสร้างเอกสาร กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการสินค้า"})
 		return
 	}
 	unitCode := strings.TrimSpace(req.UnitCode)

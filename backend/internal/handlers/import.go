@@ -551,6 +551,8 @@ func (h *ImportHandler) buildImportPayload(bill *models.Bill) (sml.SaleOrderPayl
 	}
 
 	docDate := bill.CreatedAt.Format("2006-01-02")
-	payload := sml.BuildSaleOrderPayload(docNo, docDate, "", "", items, cfg, "")
+	payload := sml.BuildSaleOrderPayload(docNo, docDate, "", "", items, cfg, "", sml.SaleOrderHeaderOptions{
+		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
+	})
 	return payload, docNo, nil
 }

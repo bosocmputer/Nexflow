@@ -29,6 +29,22 @@ export interface SMLReadiness {
 }
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
+export interface CatalogSetComponent {
+  line_number: number
+  row_order: number
+  item_code: string
+  item_name: string
+  item_type: number
+  unit_code: string
+  qty: number
+  price: number
+  sum_amount: number
+  price_ratio: number
+  unit_factor: number
+  active: boolean
+  unit_valid: boolean
+}
+
 export interface CatalogMatch {
   item_code: string
   item_name: string
@@ -45,6 +61,12 @@ export interface CatalogMatch {
   has_hidden_chars?: boolean
   clean_item_code?: string
   hidden_char_kinds?: string[]
+  item_type?: number
+  set_component_count?: number
+  set_definition_hash?: string
+  set_document_valid?: boolean
+  set_warning_codes?: string[]
+  set_components?: CatalogSetComponent[]
   score: number
   method?: 'database'
   match_type?: 'exact_code' | 'code_prefix' | 'code_contains' | 'product_name'
@@ -85,6 +107,13 @@ export interface CatalogItem {
   has_hidden_chars?: boolean
   clean_item_code?: string
   hidden_char_kinds?: string[]
+  item_type?: number
+  set_component_count?: number
+  set_definition_hash?: string
+  set_document_valid?: boolean
+  set_stock_valid?: boolean
+  set_warning_codes?: string[]
+  set_components?: CatalogSetComponent[]
   synced_at?: string | null
   last_seen_at?: string | null
   is_active?: boolean

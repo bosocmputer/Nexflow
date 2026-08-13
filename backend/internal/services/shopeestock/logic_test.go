@@ -100,6 +100,87 @@ func TestCalculateTargetConvertsSmallestUnitToShopeeSellingUnit(t *testing.T) {
 	}
 }
 
+func TestCalculateSetTargetUsesBottleneckComponentAndParentUnit(t *testing.T) {
+	definition := sml.StockSetDefinition{
+		ItemCode: "AH-0058", StockValid: true,
+		Components: []sml.StockSetComponent{
+			{LineNumber: 1, ItemCode: "AH-0001", ItemName: "สีเพ้นท์", ItemType: 0, UnitCode: "กล่อง", Qty: 3, UnitFactor: 1, Active: true, UnitValid: true},
+			{LineNumber: 2, ItemCode: "BOX", ItemName: "กล่องชุด", ItemType: 0, UnitCode: "ใบ", Qty: 1, UnitFactor: 1, Active: true, UnitValid: true},
+		},
+	}
+	balances := map[string]sml.StockBalanceItem{
+		"AH-0001": {ItemCode: "AH-0001", UnitCode: "แท่ง", BalanceQty: 31},
+		"BOX":     {ItemCode: "BOX", UnitCode: "ใบ", BalanceQty: 8},
+	}
+	target, available, components, warnings := CalculateSetTarget(definition, balances, 80, 2)
+	if available != 8 || target != 3 {
+		t.Fatalf("available/target = %d/%d, want 8/3", available, target)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if len(components) != 2 || components[0].PossibleSets != 10 || components[1].PossibleSets != 8 || !components[1].Bottleneck {
+		t.Fatalf("components = %+v", components)
+	}
+	if components[0].ComponentQty != 3 || components[0].UnitCode != "กล่อง" || components[0].BalanceUnitCode != "แท่ง" {
+		t.Fatalf("component units = %+v", components[0])
+	}
+}
+
+func TestCalculateSetTargetBlocksInvalidComponentUnit(t *testing.T) {
+	definition := sml.StockSetDefinition{StockValid: true, Components: []sml.StockSetComponent{{
+		ItemCode: "A", ItemType: 0, Qty: 2, UnitFactor: 0, Active: true, UnitValid: false,
+	}}}
+	_, _, _, warnings := CalculateSetTarget(definition, map[string]sml.StockBalanceItem{"A": {ItemCode: "A", BalanceQty: 10}}, 80, 1)
+	if !reflect.DeepEqual(warnings, []string{"set_component_unit_invalid"}) {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestCalculateSetTargetConvertsComponentUnitToSmallestUnit(t *testing.T) {
+	definition := sml.StockSetDefinition{StockValid: true, Components: []sml.StockSetComponent{{
+		ItemCode: "A", ItemType: 0, UnitCode: "แพ็ค", Qty: 2, UnitFactor: 6, Active: true, UnitValid: true,
+	}}}
+	target, available, components, warnings := CalculateSetTarget(
+		definition,
+		map[string]sml.StockBalanceItem{"A": {ItemCode: "A", UnitCode: "ชิ้น", BalanceQty: 25}},
+		100,
+		1,
+	)
+	if len(warnings) != 0 || available != 2 || target != 2 {
+		t.Fatalf("target/available/warnings = %d/%d/%v, want 2/2/[]", target, available, warnings)
+	}
+	if len(components) != 1 || components[0].RequiredBase != 12 || components[0].BalanceUnitCode != "ชิ้น" {
+		t.Fatalf("components = %+v", components)
+	}
+}
+
+func TestHasSharedComponentStockWithinShopAndAcrossShops(t *testing.T) {
+	owners := map[string]map[string]struct{}{
+		"A": {"item:1": {}, "item:2": {}},
+		"B": {"item:1": {}},
+	}
+	if !hasSharedComponentStock([]string{"A"}, owners, nil) {
+		t.Fatal("component used by two mappings in the same shop must be blocked")
+	}
+	if hasSharedComponentStock([]string{"B"}, owners, nil) {
+		t.Fatal("component with one owner and no other-shop mapping should be allowed")
+	}
+	if !hasSharedComponentStock([]string{"B"}, owners, map[string]struct{}{"B": {}}) {
+		t.Fatal("component used by another enabled shop must be blocked")
+	}
+}
+
+func TestSetDefinitionChangeBlocksSyncUntilManualPreview(t *testing.T) {
+	warnings := []string{"set_definition_changed"}
+	if !hasBlockingStockWarnings(warnings, false) {
+		t.Fatal("stock sync must block a stale set definition")
+	}
+	if hasBlockingStockWarnings(warnings, true) {
+		t.Fatal("manual dry-run should be allowed to adopt the current definition hash")
+	}
+}
+
 func TestUnitWarnings(t *testing.T) {
 	valid := sml.StockCatalogUnit{StandValue: 6, DivideValue: 1, Ratio: 6}
 	if got := UnitWarnings(valid); len(got) != 0 {

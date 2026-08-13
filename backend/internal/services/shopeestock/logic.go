@@ -24,6 +24,69 @@ func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 	return int64(math.Floor(balance * stockPct / 100 / unitFactor))
 }
 
+func CalculateSetTarget(
+	definition sml.StockSetDefinition,
+	balances map[string]sml.StockBalanceItem,
+	stockPct, parentUnitFactor float64,
+) (int64, int64, []SetStockComponentPreview, []string) {
+	warnings := append([]string(nil), definition.WarningCodes...)
+	if !definition.StockValid || len(definition.Components) == 0 {
+		if len(warnings) == 0 {
+			warnings = append(warnings, "set_stock_invalid")
+		}
+		return 0, 0, nil, warnings
+	}
+	if parentUnitFactor <= 0 {
+		warnings = appendUnique(warnings, "unit_factor_missing")
+		return 0, 0, nil, warnings
+	}
+	availableSets := int64(math.MaxInt64)
+	components := make([]SetStockComponentPreview, 0, len(definition.Components))
+	for _, component := range definition.Components {
+		required := component.Qty * component.UnitFactor
+		preview := SetStockComponentPreview{
+			ItemCode: component.ItemCode, ItemName: component.ItemName,
+			ComponentQty: component.Qty, UnitCode: component.UnitCode, RequiredBase: required,
+		}
+		if component.ItemType == 3 {
+			warnings = appendUnique(warnings, "nested_set_not_supported")
+		} else if component.ItemType != 0 {
+			warnings = appendUnique(warnings, "set_component_not_stock_item")
+		}
+		if !component.Active {
+			warnings = appendUnique(warnings, "set_component_inactive")
+		}
+		if !component.UnitValid || component.UnitFactor < 1 || required <= 0 || math.IsNaN(required) || math.IsInf(required, 0) {
+			warnings = appendUnique(warnings, "set_component_unit_invalid")
+		}
+		balance, ok := balances[component.ItemCode]
+		if !ok {
+			warnings = appendUnique(warnings, "stock_balance_missing")
+		} else {
+			preview.BalanceQty = balance.BalanceQty
+			preview.BalanceUnitCode = balance.UnitCode
+			if required > 0 {
+				preview.PossibleSets = int64(math.Floor(math.Max(balance.BalanceQty, 0) / required))
+				if preview.PossibleSets < availableSets {
+					availableSets = preview.PossibleSets
+				}
+			}
+		}
+		components = append(components, preview)
+	}
+	if availableSets == math.MaxInt64 {
+		availableSets = 0
+	}
+	for i := range components {
+		components[i].Bottleneck = components[i].PossibleSets == availableSets
+	}
+	target := int64(math.Floor(float64(availableSets) * stockPct / 100 / parentUnitFactor))
+	if target < 0 {
+		target = 0
+	}
+	return target, availableSets, components, warnings
+}
+
 func UnitWarnings(unit sml.StockCatalogUnit) []string {
 	warnings := []string{}
 	if unit.StandValue <= 0 || unit.DivideValue <= 0 {
@@ -55,11 +118,14 @@ func PreferredSKU(modelSKU, itemSKU string) string {
 }
 
 type CatalogMatch struct {
-	ItemCode string
-	UnitCode string
-	Factor   float64
-	Source   string
-	Warnings []string
+	ItemCode          string
+	UnitCode          string
+	Factor            float64
+	Source            string
+	ItemType          int
+	SetDefinitionHash string
+	DocumentValid     bool
+	Warnings          []string
 }
 
 type CatalogIndex struct {
@@ -86,7 +152,8 @@ func NewCatalogIndex(items []sml.StockCatalogItem) *CatalogIndex {
 			}
 			unit := unitByCode[normalizeExactKey(barcode.UnitCode)]
 			index.byBarcode[key] = append(index.byBarcode[key], CatalogMatch{
-				ItemCode: item.ItemCode, UnitCode: barcode.UnitCode, Factor: UnitFactor(unit), Source: "barcode", Warnings: UnitWarnings(unit),
+				ItemCode: item.ItemCode, UnitCode: barcode.UnitCode, Factor: UnitFactor(unit), Source: "barcode",
+				ItemType: item.ItemType, SetDefinitionHash: stockSetHash(item), DocumentValid: stockDocumentValid(item), Warnings: stockCatalogWarnings(item, unit),
 			})
 		}
 	}
@@ -102,14 +169,47 @@ func (i *CatalogIndex) Resolve(sku string) (CatalogMatch, bool) {
 		item := items[0]
 		unit, ok := chooseSmallestUnit(item)
 		if !ok {
-			return CatalogMatch{ItemCode: item.ItemCode, UnitCode: item.StandardUnit, Source: "sku", Warnings: []string{"unit_factor_missing"}}, true
+			return CatalogMatch{ItemCode: item.ItemCode, UnitCode: item.StandardUnit, Source: "sku", ItemType: item.ItemType, SetDefinitionHash: stockSetHash(item), DocumentValid: stockDocumentValid(item), Warnings: append(stockSetWarnings(item), "unit_factor_missing")}, true
 		}
-		return CatalogMatch{ItemCode: item.ItemCode, UnitCode: unit.Code, Factor: UnitFactor(unit), Source: "sku", Warnings: UnitWarnings(unit)}, true
+		return CatalogMatch{ItemCode: item.ItemCode, UnitCode: unit.Code, Factor: UnitFactor(unit), Source: "sku", ItemType: item.ItemType, SetDefinitionHash: stockSetHash(item), DocumentValid: stockDocumentValid(item), Warnings: stockCatalogWarnings(item, unit)}, true
 	}
 	if matches := i.byBarcode[key]; len(matches) == 1 {
 		return matches[0], true
 	}
 	return CatalogMatch{}, false
+}
+
+func stockSetHash(item sml.StockCatalogItem) string {
+	if item.SetDefinition == nil {
+		return ""
+	}
+	return item.SetDefinition.Hash
+}
+
+func stockDocumentValid(item sml.StockCatalogItem) bool {
+	return item.ItemType != 3 || (item.SetDefinition != nil && item.SetDefinition.DocumentValid)
+}
+
+func stockSetWarnings(item sml.StockCatalogItem) []string {
+	if item.ItemType != 3 {
+		return nil
+	}
+	if item.SetDefinition == nil {
+		return []string{"set_definition_missing"}
+	}
+	warnings := append([]string(nil), item.SetDefinition.WarningCodes...)
+	if !item.SetDefinition.StockValid && len(warnings) == 0 {
+		warnings = append(warnings, "set_stock_invalid")
+	}
+	return warnings
+}
+
+func stockCatalogWarnings(item sml.StockCatalogItem, unit sml.StockCatalogUnit) []string {
+	warnings := stockSetWarnings(item)
+	for _, warning := range UnitWarnings(unit) {
+		warnings = appendUnique(warnings, warning)
+	}
+	return warnings
 }
 
 func chooseSmallestUnit(item sml.StockCatalogItem) (sml.StockCatalogUnit, bool) {
@@ -170,6 +270,18 @@ func ZeroDropCircuit(previousTargets, nextTargets []int64) string {
 		return "mass_zero_drop"
 	}
 	return ""
+}
+
+func hasSharedComponentStock(consumed []string, owners map[string]map[string]struct{}, otherShopItems map[string]struct{}) bool {
+	for _, itemCode := range consumed {
+		if len(owners[itemCode]) > 1 {
+			return true
+		}
+		if _, duplicated := otherShopItems[itemCode]; duplicated {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeExactKey(value string) string {

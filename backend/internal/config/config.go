@@ -46,20 +46,22 @@ type Config struct {
 
 	// Shopee SML (REST API — saleinvoice).
 	// CustCode moved to channel_defaults table — manage via /settings/channels.
-	ShopeeSMLURL        string
-	ShopeeSMLGUID       string
-	ShopeeSMLProvider   string
-	ShopeeSMLConfigFile string
-	ShopeeSMLDatabase   string
-	ShopeeSMLDocFormat  string
-	ShopeeSMLSaleCode   string
-	ShopeeSMLBranchCode string
-	ShopeeSMLWHCode     string
-	ShopeeSMLShelfCode  string
-	ShopeeSMLUnitCode   string
-	ShopeeSMLVATType    int
-	ShopeeSMLVATRate    float64
-	ShopeeSMLDocTime    string
+	ShopeeSMLURL                  string
+	ShopeeSMLGUID                 string
+	ShopeeSMLProvider             string
+	ShopeeSMLConfigFile           string
+	ShopeeSMLDatabase             string
+	ShopeeSMLDocFormat            string
+	ShopeeSMLSaleCode             string
+	ShopeeSMLBranchCode           string
+	ShopeeSMLWHCode               string
+	ShopeeSMLShelfCode            string
+	ShopeeSMLUnitCode             string
+	ShopeeSMLVATType              int
+	ShopeeSMLVATRate              float64
+	ShopeeSMLDocTime              string
+	SMLSetProductExpansionEnabled bool
+	ShopeeSetStockEnabled         bool
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
@@ -134,6 +136,8 @@ func Load() *Config {
 		ShopeeSMLVATType:                   getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
 		ShopeeSMLVATRate:                   getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
 		ShopeeSMLDocTime:                   getEnv("SHOPEE_SML_DOC_TIME", ""),
+		SMLSetProductExpansionEnabled:      getEnvBool("SML_SET_PRODUCT_EXPANSION_ENABLED", false),
+		ShopeeSetStockEnabled:              getEnvBool("SHOPEE_SET_STOCK_ENABLED", false),
 		ShopeeOpenAPIEnabled:               getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
 		ShopeeOpenAPIEnv:                   getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
 		ShopeeOpenAPIBaseURL:               getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),

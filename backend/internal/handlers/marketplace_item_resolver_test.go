@@ -284,7 +284,12 @@ func TestMarketplaceBillItemUsesAliasBeforeNameMapping(t *testing.T) {
 		alias,
 		learned,
 		nil,
-		func(code string) *models.CatalogItem { return nil },
+		func(code string) *models.CatalogItem {
+			if code == "ALIAS-CODE" {
+				return &models.CatalogItem{ItemCode: code, UnitCode: "กล่อง"}
+			}
+			return nil
+		},
 		0.85,
 	)
 
@@ -293,6 +298,19 @@ func TestMarketplaceBillItemUsesAliasBeforeNameMapping(t *testing.T) {
 	}
 	if item.ItemCode == nil || *item.ItemCode != "ALIAS-CODE" {
 		t.Fatalf("ItemCode = %v, want ALIAS-CODE", item.ItemCode)
+	}
+}
+
+func TestMarketplaceBillItemBlocksInvalidSetTarget(t *testing.T) {
+	alias := &models.MarketplaceItemAlias{ID: "alias-set", ItemCode: "AH-0058", UnitCode: "ชุด", IsActive: true}
+	item, mapped := marketplaceBillItemFromMatch(
+		"ชุดสินค้า", "", 1, nil, "ชุด", alias, nil, nil,
+		func(code string) *models.CatalogItem {
+			return &models.CatalogItem{ItemCode: code, ItemType: 3, SetDocumentValid: false}
+		}, 0,
+	)
+	if mapped || item.Mapped || item.ItemCode != nil {
+		t.Fatalf("invalid set must remain unmapped: %+v", item)
 	}
 }
 

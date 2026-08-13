@@ -33,10 +33,11 @@ func (e *ValidationError) Error() string { return e.Message }
 func invalid(message string) error       { return &ValidationError{Message: message} }
 
 type Config struct {
-	Enabled     bool
-	GatewayMode bool
-	Environment string
-	InstanceID  string
+	Enabled         bool
+	GatewayMode     bool
+	SetStockEnabled bool
+	Environment     string
+	InstanceID      string
 }
 
 type Service struct {
@@ -464,10 +465,57 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if err != nil {
 		return fail(err)
 	}
-	itemSet := map[string]struct{}{}
+	setCodes := make([]string, 0)
+	setCodeSeen := map[string]struct{}{}
 	for _, product := range products {
-		if !product.Excluded && product.SMLItemCode != "" {
-			itemSet[product.SMLItemCode] = struct{}{}
+		if product.Excluded || product.SMLItemType != 3 || product.SMLItemCode == "" {
+			continue
+		}
+		if _, ok := setCodeSeen[product.SMLItemCode]; !ok {
+			setCodeSeen[product.SMLItemCode] = struct{}{}
+			setCodes = append(setCodes, product.SMLItemCode)
+		}
+	}
+	sort.Strings(setCodes)
+	liveSetDefinitions := map[string]sml.StockSetDefinition{}
+	if len(setCodes) > 0 && s.cfg.SetStockEnabled {
+		definitions, loadErr := s.loadSetDefinitions(ctx, setCodes)
+		if loadErr != nil {
+			return fail(loadErr)
+		}
+		liveSetDefinitions = definitions
+	}
+
+	consumedByProduct := make(map[string][]string, len(products))
+	componentOwners := map[string]map[string]struct{}{}
+	for _, product := range products {
+		if product.Excluded || product.SMLItemCode == "" {
+			continue
+		}
+		key := strconv.FormatInt(product.ItemID, 10) + ":" + strconv.FormatInt(product.ModelID, 10)
+		consumed := []string{product.SMLItemCode}
+		if product.SMLItemType == 3 {
+			consumed = nil
+			if definition, ok := liveSetDefinitions[product.SMLItemCode]; ok {
+				for _, component := range definition.Components {
+					if code := strings.TrimSpace(component.ItemCode); code != "" {
+						consumed = append(consumed, code)
+					}
+				}
+			}
+		}
+		consumedByProduct[key] = consumed
+		for _, code := range consumed {
+			if componentOwners[code] == nil {
+				componentOwners[code] = map[string]struct{}{}
+			}
+			componentOwners[code][key] = struct{}{}
+		}
+	}
+	itemSet := map[string]struct{}{}
+	for _, consumed := range consumedByProduct {
+		for _, code := range consumed {
+			itemSet[code] = struct{}{}
 		}
 	}
 	itemCodes := make([]string, 0, len(itemSet))
@@ -475,53 +523,79 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		itemCodes = append(itemCodes, code)
 	}
 	sort.Strings(itemCodes)
-	if len(itemCodes) == 0 {
-		return fail(errors.New("ยังไม่มีสินค้าที่จับคู่กับ SML"))
-	}
-	request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
-		ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes, ScopeMode: settings.ScopeMode,
-	}}}
-	for _, pair := range settings.Locations {
-		request.Scopes[0].Locations = append(request.Scopes[0].Locations, sml.StockLocationPair{Warehouse: pair.Warehouse, Location: pair.Location})
-	}
-	balances, err := s.sml.BalancesBatch(ctx, request)
-	if err != nil {
-		return fail(err)
-	}
-	if len(balances.Scopes) != 1 {
-		return fail(errors.New("SML stock response ไม่มี scope ที่ร้องขอ"))
-	}
 	balanceMap := map[string]sml.StockBalanceItem{}
-	for _, item := range balances.Scopes[0].Items {
-		balanceMap[item.ItemCode] = item
+	if len(itemCodes) > 0 {
+		request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
+			ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes, ScopeMode: settings.ScopeMode,
+		}}}
+		for _, pair := range settings.Locations {
+			request.Scopes[0].Locations = append(request.Scopes[0].Locations, sml.StockLocationPair{Warehouse: pair.Warehouse, Location: pair.Location})
+		}
+		balances, balanceErr := s.sml.BalancesBatch(ctx, request)
+		if balanceErr != nil {
+			return fail(balanceErr)
+		}
+		if len(balances.Scopes) != 1 {
+			return fail(errors.New("SML stock response ไม่มี scope ที่ร้องขอ"))
+		}
+		for _, item := range balances.Scopes[0].Items {
+			balanceMap[item.ItemCode] = item
+		}
 	}
 	result := &PreviewResult{RunID: runID, ShopID: shopID, AsOfDate: asOfDate, Lines: make([]PreviewLine, 0, len(products))}
 	previousTargets := make([]int64, 0, len(products))
 	nextTargets := make([]int64, 0, len(products))
 	for _, product := range products {
-		line := PreviewLine{ItemID: product.ItemID, ModelID: product.ModelID, SMLItemCode: product.SMLItemCode, UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved, WarningCodes: append([]string(nil), product.WarningCodes...)}
+		line := PreviewLine{ItemID: product.ItemID, ModelID: product.ModelID, SMLItemCode: product.SMLItemCode, UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved, WarningCodes: append([]string(nil), product.WarningCodes...), ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash}
 		if product.Excluded {
 			result.SkippedCount++
 			continue
 		}
 		result.TotalCount++
-		if _, duplicated := otherShopItems[product.SMLItemCode]; duplicated && product.SMLItemCode != "" {
-			line.WarningCodes = appendUnique(line.WarningCodes, "duplicate_sml_item")
+		key := strconv.FormatInt(product.ItemID, 10) + ":" + strconv.FormatInt(product.ModelID, 10)
+		if hasSharedComponentStock(consumedByProduct[key], componentOwners, otherShopItems) {
+			line.WarningCodes = appendUnique(line.WarningCodes, "shared_component_stock")
 		}
-		balance, exists := balanceMap[product.SMLItemCode]
-		if !exists || product.SMLItemCode == "" {
-			line.WarningCodes = appendUnique(line.WarningCodes, "stock_balance_missing")
+		if product.SMLItemType == 3 {
+			if !s.cfg.SetStockEnabled {
+				line.WarningCodes = appendUnique(line.WarningCodes, "set_stock_feature_disabled")
+			} else if definition, ok := liveSetDefinitions[product.SMLItemCode]; !ok {
+				line.WarningCodes = appendUnique(line.WarningCodes, "set_definition_missing")
+			} else {
+				line.SetDefinitionHash = definition.Hash
+				if product.MappingSetDefinitionHash != definition.Hash {
+					line.WarningCodes = appendUnique(line.WarningCodes, "set_definition_changed")
+					_ = s.store.SetDryRunRequired(context.Background(), shopID)
+				}
+				target, availableSets, components, setWarnings := CalculateSetTarget(definition, balanceMap, settings.StockPct, product.UnitFactor)
+				line.TargetStock = target
+				line.ScopeBalance = float64(availableSets)
+				line.SetComponents = components
+				for _, component := range components {
+					if component.Bottleneck && line.BottleneckItemCode == "" {
+						line.BottleneckItemCode = component.ItemCode
+					}
+				}
+				for _, warning := range setWarnings {
+					line.WarningCodes = appendUnique(line.WarningCodes, warning)
+				}
+			}
+		} else {
+			balance, exists := balanceMap[product.SMLItemCode]
+			if !exists || product.SMLItemCode == "" {
+				line.WarningCodes = appendUnique(line.WarningCodes, "stock_balance_missing")
+			}
+			line.ScopeBalance = balance.BalanceQty
+			line.ExcludedBalance = balance.ExcludedBalanceQty
+			line.MinQty = balance.MinQty
+			line.MaxQty = balance.MaxQty
+			result.ExcludedBalance += balance.ExcludedBalanceQty
+			line.TargetStock = CalculateTarget(line.ScopeBalance, settings.StockPct, line.UnitFactor)
 		}
-		line.ScopeBalance = balance.BalanceQty
-		line.ExcludedBalance = balance.ExcludedBalanceQty
-		line.MinQty = balance.MinQty
-		line.MaxQty = balance.MaxQty
-		result.ExcludedBalance += balance.ExcludedBalanceQty
-		line.TargetStock = CalculateTarget(line.ScopeBalance, settings.StockPct, line.UnitFactor)
 		if line.ReservedStock > int64(line.TargetStock) {
 			line.WarningCodes = appendUnique(line.WarningCodes, "reserved_stock_exceeds_target")
 		}
-		line.Blocked = len(line.WarningCodes) > 0
+		line.Blocked = hasBlockingStockWarnings(line.WarningCodes, savePreview)
 		line.Changed = line.TargetStock != line.CurrentStock
 		if line.Blocked {
 			result.BlockedCount++
@@ -557,6 +631,40 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) loadSetDefinitions(ctx context.Context, itemCodes []string) (map[string]sml.StockSetDefinition, error) {
+	definitions := make(map[string]sml.StockSetDefinition, len(itemCodes))
+	for start := 0; start < len(itemCodes); start += 500 {
+		end := start + 500
+		if end > len(itemCodes) {
+			end = len(itemCodes)
+		}
+		result, err := s.sml.ProductSetsBatch(ctx, itemCodes[start:end])
+		if err != nil {
+			return nil, err
+		}
+		for _, definition := range result.Definitions {
+			definitions[definition.ItemCode] = definition
+		}
+	}
+	return definitions, nil
+}
+
+func hasBlockingStockWarnings(warnings []string, allowDefinitionRefresh bool) bool {
+	for _, warning := range warnings {
+		warning = strings.TrimSpace(warning)
+		if warning == "" {
+			continue
+		}
+		if allowDefinitionRefresh && warning == "set_definition_changed" {
+			continue
+		}
+		if warning != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) fetchSMLCatalog(ctx context.Context, updatedFrom, updatedTo *time.Time) ([]sml.StockCatalogItem, error) {

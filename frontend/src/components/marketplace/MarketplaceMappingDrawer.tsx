@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ImageIcon, Search } from 'lucide-react'
+import { Boxes, ImageIcon, Search } from 'lucide-react'
 
 import api from '@/api/client'
 import { AuthImage } from '@/components/common/AuthImage'
 import { ProductImagePreviewDialog } from '@/components/common/ProductImagePreviewDialog'
+import { SetProductDetailsDialog } from '@/components/catalog/SetProductDetailsDialog'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -41,6 +42,7 @@ export function MarketplaceMappingDrawer({
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
   const [previewMatch, setPreviewMatch] = useState<CatalogMatch | null>(null)
+  const [setDetailsMatch, setSetDetailsMatch] = useState<CatalogMatch | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -104,15 +106,28 @@ export function MarketplaceMappingDrawer({
             <div className="space-y-1.5">
               {results.map((item) => {
                 const hasImage = Boolean(item.image_url && (item.image_count ?? 0) > 0)
+                const isInvalidSet = item.item_type === 3 && item.set_document_valid === false
                 return (
                   <div key={item.item_code} className="flex min-h-16 items-center gap-3 rounded-md border bg-background p-2 hover:bg-muted/35">
                     <button type="button" className="h-12 w-12 shrink-0 rounded-md" disabled={!hasImage} onClick={() => hasImage && setPreviewMatch(item)} aria-label={`ดูรูป ${item.item_code}`}>
                       <AuthImage src={hasImage ? item.image_url : undefined} className="h-full w-full rounded-md border bg-muted/30" imgClassName="object-cover" fallback={<div className="flex h-full items-center justify-center text-muted-foreground"><ImageIcon className="h-4 w-4" /></div>} />
                     </button>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { onPick(item.item_code, item.unit_code, item); if (closeOnPick) onOpenChange(false) }}>
-                      <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{item.item_code}</span><Badge variant="outline">หน่วย {item.unit_code || '-'}</Badge></div>
-                      <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.item_name}</div>
-                    </button>
+                    <div className="min-w-0 flex-1">
+                      <button type="button" disabled={isInvalidSet} className="w-full text-left disabled:cursor-not-allowed disabled:opacity-60" onClick={() => { onPick(item.item_code, item.unit_code, item); if (closeOnPick) onOpenChange(false) }}>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold">{item.item_code}</span>
+                          <Badge variant="outline">หน่วย {item.unit_code || '-'}</Badge>
+                          {item.item_type === 3 && <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary"><Boxes className="mr-1 h-3 w-3" />สินค้าชุด</Badge>}
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.item_name}</div>
+                      </button>
+                      {item.item_type === 3 && (
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span className={isInvalidSet ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>{isInvalidSet ? 'ต้องแก้โครงสร้างใน SML ก่อนเลือก' : `${item.set_component_count ?? 0} ส่วนประกอบ`}</span>
+                          <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => setSetDetailsMatch(item)}>ดูรายละเอียด</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )
               })}
@@ -123,6 +138,15 @@ export function MarketplaceMappingDrawer({
       </Sheet>
 
       <ProductImagePreviewDialog open={previewMatch !== null} onOpenChange={(value) => !value && setPreviewMatch(null)} itemCode={previewMatch?.item_code ?? ''} itemName={previewMatch?.item_name ?? ''} imageUrl={previewMatch?.image_url} imageCount={previewMatch?.image_count ?? 0} />
+      <SetProductDetailsDialog
+        open={setDetailsMatch !== null}
+        onOpenChange={(value) => !value && setSetDetailsMatch(null)}
+        itemCode={setDetailsMatch?.item_code ?? ''}
+        itemName={setDetailsMatch?.item_name ?? ''}
+        components={setDetailsMatch?.set_components}
+        documentValid={setDetailsMatch?.set_document_valid}
+        warningCodes={setDetailsMatch?.set_warning_codes}
+      />
     </>
   )
 }

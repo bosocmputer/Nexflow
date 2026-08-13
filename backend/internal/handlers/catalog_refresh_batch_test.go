@@ -39,17 +39,23 @@ func TestCatalogRefreshBatchPartialSuccessAndDuplicate(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	expectCatalogGetOneForBatch(mock, "SHIP_POL").WillReturnRows(sqlmock.NewRows(catalogUnitFallbackColumns()))
+	expectCatalogGetOneForBatch(mock, "SHIP_POL").WillReturnRows(sqlmock.NewRows(catalogGetOneWithSetColumns()))
+	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO sml_catalog").
 		WithArgs(
 			"SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "",
 			nil, "SERVICE", sqlmock.AnyArg(), 0, nil, "", nil, true,
+			0, 0, "", true, true, sqlmock.AnyArg(), sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM sml_catalog_set_components").
+		WithArgs("SHIP_POL").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 	now := time.Now()
 	expectCatalogGetOneForBatch(mock, "SHIP_POL").WillReturnRows(
-		sqlmock.NewRows(catalogUnitFallbackColumns()).
-			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "", nil, "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now),
+		sqlmock.NewRows(catalogGetOneWithSetColumns()).
+			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "", nil, "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now, 0, 0, "", true, true, []byte(`[]`)),
 	)
 
 	repo := repository.NewSMLCatalogRepo(db)

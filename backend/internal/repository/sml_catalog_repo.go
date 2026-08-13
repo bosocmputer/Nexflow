@@ -47,11 +47,25 @@ func (r *SMLCatalogRepo) CountUnmappedItems(billID string) (int, error) {
 
 // Upsert inserts or updates a catalog item (no embedding)
 func (r *SMLCatalogRepo) Upsert(item models.CatalogItem) error {
-	_, err := r.db.Exec(`
+	return r.UpsertAt(item, time.Now().UTC())
+}
+
+// UpsertAt stores one product and its set components atomically. last_seen_at
+// uses the full-sync start timestamp so a failed page never deactivates rows.
+func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Time) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	warnings, _ := json.Marshal(item.SetWarningCodes)
+	_, err = tx.Exec(`
 		INSERT INTO sml_catalog
 		  (item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		   price, group_code, balance_qty, image_count, primary_image_roworder,
-		   primary_image_guid, primary_image_bytes, image_synced_at, synced_at)
+		   primary_image_guid, primary_image_bytes, image_synced_at, synced_at,
+		   item_type, set_component_count, set_definition_hash,
+		   set_document_valid, set_stock_valid, set_warning_codes, last_seen_at)
 		VALUES (
 		  $1,$2,$3,$4,$5,$6,$7,$8,$9,
 		  CASE WHEN $14::boolean THEN $10::int ELSE 0 END,
@@ -59,7 +73,7 @@ func (r *SMLCatalogRepo) Upsert(item models.CatalogItem) error {
 		  CASE WHEN $14::boolean THEN $12::text ELSE '' END,
 		  CASE WHEN $14::boolean THEN $13::bigint ELSE NULL::bigint END,
 		  CASE WHEN $14::boolean THEN NOW() ELSE NULL END,
-		  NOW()
+		  NOW(),$15,$16,$17,$18,$19,$20,$21
 		)
 		ON CONFLICT (item_code) DO UPDATE SET
 		  item_name   = EXCLUDED.item_name,
@@ -70,9 +84,15 @@ func (r *SMLCatalogRepo) Upsert(item models.CatalogItem) error {
 		  price       = EXCLUDED.price,
 		  group_code  = EXCLUDED.group_code,
 		  balance_qty = EXCLUDED.balance_qty,
+		  item_type = EXCLUDED.item_type,
+		  set_component_count = EXCLUDED.set_component_count,
+		  set_definition_hash = EXCLUDED.set_definition_hash,
+		  set_document_valid = EXCLUDED.set_document_valid,
+		  set_stock_valid = EXCLUDED.set_stock_valid,
+		  set_warning_codes = EXCLUDED.set_warning_codes,
 		  is_active = TRUE,
 		  missing_at = NULL,
-		  last_seen_at = NOW(),
+		  last_seen_at = EXCLUDED.last_seen_at,
 		  image_count = CASE
 		    WHEN $14::boolean THEN EXCLUDED.image_count
 		    ELSE sml_catalog.image_count
@@ -109,7 +129,44 @@ func (r *SMLCatalogRepo) Upsert(item models.CatalogItem) error {
 		item.Price, item.GroupCode, item.BalanceQty,
 		item.ImageCount, item.PrimaryImageRoworder, item.PrimaryImageGuid,
 		item.PrimaryImageBytes, item.ImageMetadataSynced,
+		item.ItemType, item.SetComponentCount, item.SetDefinitionHash,
+		item.SetDocumentValid, item.SetStockValid, warnings, runStartedAt,
 	)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sml_catalog_set_components WHERE parent_item_code=$1`, item.ItemCode); err != nil {
+		return err
+	}
+	for _, component := range item.SetComponents {
+		if _, err := tx.Exec(`INSERT INTO sml_catalog_set_components (
+			parent_item_code,line_number,row_order,component_item_code,component_item_name,
+			component_item_type,unit_code,qty,price,sum_amount,price_ratio,unit_factor,
+			is_active,unit_valid,definition_hash,synced_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())`,
+			item.ItemCode, component.LineNumber, component.RowOrder, component.ItemCode, component.ItemName,
+			component.ItemType, component.UnitCode, component.Qty, component.Price, component.SumAmount,
+			component.PriceRatio, component.UnitFactor, component.Active, component.UnitValid, item.SetDefinitionHash,
+		); err != nil {
+			return err
+		}
+	}
+	if item.ItemType == 3 && !item.SetDocumentValid {
+		if _, err := tx.Exec(`UPDATE bills b
+			SET status='needs_review', error_msg='สินค้าชุดใน SML ไม่พร้อมใช้งาน กรุณาแก้ Master และอัปเดตรายการสินค้า'
+			FROM bill_items bi
+			WHERE bi.bill_id=b.id AND bi.item_code=$1
+			  AND b.archived_at IS NULL AND b.status IN ('pending','needs_review')`, item.ItemCode); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (r *SMLCatalogRepo) FinalizeSuccessfulSync(runStartedAt time.Time) error {
+	_, err := r.db.Exec(`UPDATE sml_catalog
+		SET is_active=false, missing_at=COALESCE(missing_at,NOW()), synced_at=NOW()
+		WHERE is_active=true AND (last_seen_at IS NULL OR last_seen_at < $1)`, runStartedAt)
 	return err
 }
 
@@ -248,7 +305,9 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 		       price, group_code, balance_qty, embedding_status, embedded_at,
 		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
-		       primary_image_bytes, image_synced_at, synced_at, created_at
+		       primary_image_bytes, image_synced_at, synced_at, created_at,
+		       item_type, set_component_count, set_definition_hash,
+		       set_document_valid, set_stock_valid, set_warning_codes
 		FROM sml_catalog
 		%s
 		ORDER BY item_code
@@ -267,6 +326,7 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 		var primaryRoworder sql.NullInt64
 		var primaryBytes sql.NullInt64
 		var imageSyncedAt sql.NullTime
+		var setWarnings []byte
 		if err := rows.Scan(
 			&it.ItemCode, &it.ItemName, &it.ItemName2,
 			&it.UnitCode, &it.WHCode, &it.ShelfCode,
@@ -275,14 +335,24 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 			&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 			&primaryBytes, &imageSyncedAt,
 			&it.SyncedAt, &it.CreatedAt,
+			&it.ItemType, &it.SetComponentCount, &it.SetDefinitionHash,
+			&it.SetDocumentValid, &it.SetStockValid, &setWarnings,
 		); err != nil {
 			continue
 		}
+		_ = json.Unmarshal(setWarnings, &it.SetWarningCodes)
 		applyItemCodeMetadata(&it)
 		applyCatalogImageScan(&it, primaryRoworder, primaryBytes, imageSyncedAt)
 		items = append(items, it)
 	}
-	return items, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	rows.Close()
+	if err := r.attachSetComponents(items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func joinAnd(parts []string) string {
@@ -401,12 +471,15 @@ func (r *SMLCatalogRepo) GetOne(itemCode string) (*models.CatalogItem, error) {
 	var primaryRoworder sql.NullInt64
 	var primaryBytes sql.NullInt64
 	var imageSyncedAt sql.NullTime
+	var setWarnings []byte
 	err := r.db.QueryRow(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		       price, group_code, balance_qty, embedding_status, embedded_at,
 		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
-		       primary_image_bytes, image_synced_at, synced_at, created_at
+		       primary_image_bytes, image_synced_at, synced_at, created_at,
+		       item_type,set_component_count,set_definition_hash,
+		       set_document_valid,set_stock_valid,set_warning_codes
 		FROM sml_catalog WHERE item_code = $1
 	`, itemCode).Scan(
 		&it.ItemCode, &it.ItemName, &it.ItemName2,
@@ -416,15 +489,63 @@ func (r *SMLCatalogRepo) GetOne(itemCode string) (*models.CatalogItem, error) {
 		&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 		&primaryBytes, &imageSyncedAt,
 		&it.SyncedAt, &it.CreatedAt,
+		&it.ItemType, &it.SetComponentCount, &it.SetDefinitionHash,
+		&it.SetDocumentValid, &it.SetStockValid, &setWarnings,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err == nil {
+		_ = json.Unmarshal(setWarnings, &it.SetWarningCodes)
 		applyItemCodeMetadata(&it)
 		applyCatalogImageScan(&it, primaryRoworder, primaryBytes, imageSyncedAt)
+		items := []models.CatalogItem{it}
+		if attachErr := r.attachSetComponents(items); attachErr != nil {
+			return nil, attachErr
+		}
+		it = items[0]
 	}
 	return &it, err
+}
+
+func (r *SMLCatalogRepo) attachSetComponents(items []models.CatalogItem) error {
+	indexes := make(map[string]int)
+	codes := make([]string, 0)
+	for i := range items {
+		if items[i].ItemType != 3 {
+			continue
+		}
+		indexes[items[i].ItemCode] = i
+		codes = append(codes, items[i].ItemCode)
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	rows, err := r.db.Query(`SELECT parent_item_code,line_number,row_order,
+		component_item_code,component_item_name,component_item_type,unit_code,
+		qty::float8,price::float8,sum_amount::float8,price_ratio::float8,
+		unit_factor::float8,is_active,unit_valid
+		FROM sml_catalog_set_components
+		WHERE parent_item_code = ANY($1)
+		ORDER BY parent_item_code,line_number,row_order,component_item_code`, pq.Array(codes))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var parentCode string
+		var component models.CatalogSetComponent
+		if err := rows.Scan(&parentCode, &component.LineNumber, &component.RowOrder,
+			&component.ItemCode, &component.ItemName, &component.ItemType, &component.UnitCode,
+			&component.Qty, &component.Price, &component.SumAmount, &component.PriceRatio,
+			&component.UnitFactor, &component.Active, &component.UnitValid); err != nil {
+			return err
+		}
+		if index, ok := indexes[parentCode]; ok {
+			items[index].SetComponents = append(items[index].SetComponents, component)
+		}
+	}
+	return rows.Err()
 }
 
 // CountPending returns number of items pending embedding
@@ -507,7 +628,8 @@ func (r *SMLCatalogRepo) GetActiveMany(itemCodes []string) (map[string]*models.C
 		return result, nil
 	}
 	rows, err := r.db.Query(`
-		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code, price
+		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code, price,
+		       item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes
 		FROM sml_catalog
 		WHERE is_active = TRUE AND item_code = ANY($1)
 	`, pq.Array(itemCodes))
@@ -517,13 +639,17 @@ func (r *SMLCatalogRepo) GetActiveMany(itemCodes []string) (map[string]*models.C
 	defer rows.Close()
 	for rows.Next() {
 		var item models.CatalogItem
+		var setWarnings []byte
 		if err := rows.Scan(
 			&item.ItemCode, &item.ItemName, &item.ItemName2,
 			&item.UnitCode, &item.WHCode, &item.ShelfCode, &item.Price,
+			&item.ItemType, &item.SetComponentCount, &item.SetDefinitionHash,
+			&item.SetDocumentValid, &item.SetStockValid, &setWarnings,
 		); err != nil {
 			return nil, err
 		}
 		item.IsActive = true
+		_ = json.Unmarshal(setWarnings, &item.SetWarningCodes)
 		result[item.ItemCode] = &item
 	}
 	return result, rows.Err()
@@ -545,6 +671,7 @@ func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.Catalog
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		       COALESCE(price, 0), image_count, primary_image_roworder,
 		       primary_image_guid, primary_image_bytes,
+		       item_type,set_component_count,set_definition_hash,set_document_valid,set_warning_codes,
 		       CASE
 		         WHEN item_code = $1 THEN 'exact_code'
 		         WHEN item_code LIKE $1 || '%' THEN 'code_prefix'
@@ -574,11 +701,14 @@ func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.Catalog
 		var match models.CatalogMatch
 		var primaryRoworder sql.NullInt64
 		var primaryBytes sql.NullInt64
+		var setWarnings []byte
 		if err := rows.Scan(
 			&match.ItemCode, &match.ItemName, &match.ItemName2,
 			&match.UnitCode, &match.WHCode, &match.ShelfCode,
 			&match.Price, &match.ImageCount, &primaryRoworder,
-			&match.PrimaryImageGuid, &primaryBytes, &match.MatchType,
+			&match.PrimaryImageGuid, &primaryBytes,
+			&match.ItemType, &match.SetComponentCount, &match.SetDefinitionHash,
+			&match.SetDocumentValid, &setWarnings, &match.MatchType,
 		); err != nil {
 			return nil, err
 		}
@@ -591,6 +721,7 @@ func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.Catalog
 			match.PrimaryImageBytes = &bytes
 		}
 		match.Method = "database"
+		_ = json.Unmarshal(setWarnings, &match.SetWarningCodes)
 		switch match.MatchType {
 		case "exact_code":
 			match.Score = 1
@@ -603,7 +734,56 @@ func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.Catalog
 		}
 		results = append(results, match)
 	}
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := r.attachSetComponentsToMatches(results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func (r *SMLCatalogRepo) attachSetComponentsToMatches(matches []models.CatalogMatch) error {
+	indexes := make(map[string]int)
+	codes := make([]string, 0)
+	for i := range matches {
+		if matches[i].ItemType != 3 {
+			continue
+		}
+		indexes[matches[i].ItemCode] = i
+		codes = append(codes, matches[i].ItemCode)
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	rows, err := r.db.Query(`SELECT parent_item_code,line_number,row_order,
+		component_item_code,component_item_name,component_item_type,unit_code,
+		qty::float8,price::float8,sum_amount::float8,price_ratio::float8,
+		unit_factor::float8,is_active,unit_valid
+		FROM sml_catalog_set_components
+		WHERE parent_item_code = ANY($1)
+		ORDER BY parent_item_code,line_number,row_order,component_item_code`, pq.Array(codes))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var parentCode string
+		var component models.CatalogSetComponent
+		if err := rows.Scan(&parentCode, &component.LineNumber, &component.RowOrder,
+			&component.ItemCode, &component.ItemName, &component.ItemType, &component.UnitCode,
+			&component.Qty, &component.Price, &component.SumAmount, &component.PriceRatio,
+			&component.UnitFactor, &component.Active, &component.UnitValid); err != nil {
+			return err
+		}
+		if index, ok := indexes[parentCode]; ok {
+			matches[index].SetComponents = append(matches[index].SetComponents, component)
+		}
+	}
+	return rows.Err()
 }
 
 func applyItemCodeMetadata(it *models.CatalogItem) {

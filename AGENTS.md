@@ -40,6 +40,7 @@ channel_defaults    -- per-(channel, bill_type): cust_code, endpoint, doc_format
 imap_accounts       -- retained schema; runtime disabled in sales-only mode
 app_settings        -- instance config UI (replaces most env vars)
 sml_catalog         -- active SML products for deterministic lookup
+sml_catalog_set_components -- normalized SML item_type=3 component definitions and diagnostics
 sml_bulk_jobs       -- async bulk SML send jobs
 shopee_api_connections   -- Shopee OAuth multi-shop
 doc_counters        -- atomic doc_no per prefix/period
@@ -55,7 +56,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–077** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–078** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -228,4 +229,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-11 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-13 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442

@@ -12,6 +12,11 @@ Target stock:
 floor(max(SML scope balance, 0) * stock percentage / 100 / unit factor)
 ```
 
+For an SML set product (`item_type=3`), Nexflow reads the current component
+definition from `sml-api-bybos`, calculates how many complete sets every
+component can form, uses the bottleneck component, then applies the shop
+percentage and parent unit factor. Components are never mapped manually.
+
 ## Safety Model
 
 - Every shop starts disabled with `stock_pct=80` and a 5-minute interval.
@@ -25,6 +30,9 @@ floor(max(SML scope balance, 0) * stock percentage / 100 / unit factor)
   of at least ten positive SKUs become zero.
 - A model is blocked when reserved Shopee stock exceeds its calculated target.
 - SKU/unit/mapping errors block only the affected model; valid models continue.
+- Set products fail closed unless `SHOPEE_SET_STOCK_ENABLED=true`. Nested sets,
+  inactive components, invalid units, changed definition hashes, and components
+  shared by multiple active mappings are blocked before any Shopee write.
 - Multiple Shopee seller warehouse locations pause the shop in v1.
 - `warehouse.error_not_in_whitelist` means the shop does not use Shopee
   multi-warehouse. Nexflow treats it as the supported default seller-stock
@@ -45,10 +53,12 @@ floor(max(SML scope balance, 0) * stock percentage / 100 / unit factor)
    and barcode matching are case-sensitive; Nexflow does not guess units from
    product names. A manual unit factor is allowed only after an admin explicitly
    confirms it, and that override is audited.
-5. Choose **All warehouses** or explicit warehouse/location pairs. Acknowledge
-   orphan or blank-location stock only after checking SML master data.
+5. Choose exactly one SML warehouse and one location. Orphan or blank-location
+   balances are diagnostics only and are never included in the selected scope.
 6. Run dry-run and review changed, blocked, and excluded balances. Blocked models
    remain untouched in Shopee and do not stop valid models from syncing.
+   For set products, expand the calculation and verify every component balance,
+   required quantity, possible sets, and the bottleneck component.
 7. Enable the shop and save settings.
 8. Run one manual sync and verify selected products in Shopee Seller Centre.
 
@@ -58,3 +68,16 @@ Turn off the shop toggle. This stops future updates and does not alter the stock
 already stored in Shopee. For an instance-wide stop, set
 `SHOPEE_OPEN_API_ENABLED=false` and restart only that Nexflow instance. Database
 migrations do not need to be rolled back.
+
+## Set Product Release Gate
+
+1. Keep `SML_SET_PRODUCT_EXPANSION_ENABLED=false` and
+   `SHOPEE_SET_STOCK_ENABLED=false` during migration/catalog rollout.
+2. Synchronize the full SML catalog and verify the parent set, component count,
+   units, definition hash, document validity, and stock validity.
+3. Compare one controlled invoice against SML Desktop before enabling document
+   expansion for the tenant.
+4. Run stock Dry-run for one controlled Shopee model and verify the bottleneck
+   calculation before enabling set stock.
+5. Turning either flag off is the immediate rollback; no migration rollback or
+   SML data change is required.

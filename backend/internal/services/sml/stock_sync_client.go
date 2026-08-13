@@ -79,12 +79,46 @@ type StockCatalogBarcode struct {
 }
 
 type StockCatalogItem struct {
-	ItemCode     string                `json:"item_code"`
-	ItemName     string                `json:"item_name"`
-	StandardUnit string                `json:"standard_unit"`
-	UpdatedAt    time.Time             `json:"updated_at"`
-	Units        []StockCatalogUnit    `json:"units"`
-	Barcodes     []StockCatalogBarcode `json:"barcodes"`
+	ItemCode      string                `json:"item_code"`
+	ItemName      string                `json:"item_name"`
+	ItemType      int                   `json:"item_type"`
+	StandardUnit  string                `json:"standard_unit"`
+	UpdatedAt     time.Time             `json:"updated_at"`
+	Units         []StockCatalogUnit    `json:"units"`
+	Barcodes      []StockCatalogBarcode `json:"barcodes"`
+	SetDefinition *StockSetDefinition   `json:"set_definition,omitempty"`
+	SetComponents []StockSetComponent   `json:"set_components,omitempty"`
+}
+
+type StockSetComponent struct {
+	LineNumber int     `json:"line_number"`
+	RowOrder   int     `json:"row_order"`
+	ItemCode   string  `json:"item_code"`
+	ItemName   string  `json:"item_name"`
+	ItemType   int     `json:"item_type"`
+	UnitCode   string  `json:"unit_code"`
+	Qty        float64 `json:"qty"`
+	Price      float64 `json:"price"`
+	SumAmount  float64 `json:"sum_amount"`
+	PriceRatio float64 `json:"price_ratio"`
+	UnitFactor float64 `json:"unit_factor"`
+	Active     bool    `json:"active"`
+	UnitValid  bool    `json:"unit_valid"`
+}
+
+type StockSetDefinition struct {
+	ItemCode       string              `json:"item_code"`
+	ComponentCount int                 `json:"component_count"`
+	DocumentValid  bool                `json:"document_valid"`
+	StockValid     bool                `json:"stock_valid"`
+	WarningCodes   []string            `json:"warning_codes"`
+	Hash           string              `json:"hash"`
+	Components     []StockSetComponent `json:"components"`
+}
+
+type StockProductSetsBatchResponse struct {
+	Definitions []StockSetDefinition `json:"definitions"`
+	Capability  string               `json:"capability"`
 }
 
 type StockCatalogPage struct {
@@ -166,7 +200,7 @@ func (c *StockSyncClient) CatalogRange(ctx context.Context, page, size int, upda
 		size = 500
 	}
 	var envelope stockAPIEnvelope[[]StockCatalogItem]
-	path := "/api/v1/ic/stock-catalog?page=" + strconv.Itoa(page) + "&size=" + strconv.Itoa(size)
+	path := "/api/v1/ic/stock-catalog?include_sets=true&page=" + strconv.Itoa(page) + "&size=" + strconv.Itoa(size)
 	if updatedFrom != nil {
 		path += "&updated_from=" + url.QueryEscape(updatedFrom.UTC().Format(time.RFC3339))
 	}
@@ -180,6 +214,17 @@ func (c *StockSyncClient) CatalogRange(ctx context.Context, page, size int, upda
 		envelope.Data = []StockCatalogItem{}
 	}
 	return &StockCatalogPage{Items: envelope.Data, Total: envelope.Meta.Total, Page: envelope.Meta.Page, Size: envelope.Meta.Size}, nil
+}
+
+func (c *StockSyncClient) ProductSetsBatch(ctx context.Context, itemCodes []string) (*StockProductSetsBatchResponse, error) {
+	if len(itemCodes) == 0 || len(itemCodes) > 500 {
+		return nil, fmt.Errorf("SML set product batch requires 1-500 item codes")
+	}
+	var envelope stockAPIEnvelope[StockProductSetsBatchResponse]
+	if err := c.do(ctx, http.MethodPost, "/api/v1/ic/product-sets/batch", map[string]any{"item_codes": itemCodes}, &envelope); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
 }
 
 func (c *StockSyncClient) BalancesBatch(ctx context.Context, request StockBalanceBatchRequest) (*StockBalanceBatchResponse, error) {
@@ -244,6 +289,10 @@ func (c *StockSyncClient) do(ctx context.Context, method, path string, payload a
 			return stockEnvelopeError(envelope.Error)
 		}
 	case *stockAPIEnvelope[StockBalanceBatchResponse]:
+		if !envelope.Success {
+			return stockEnvelopeError(envelope.Error)
+		}
+	case *stockAPIEnvelope[StockProductSetsBatchResponse]:
 		if !envelope.Success {
 			return stockEnvelopeError(envelope.Error)
 		}

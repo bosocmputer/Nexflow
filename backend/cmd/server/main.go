@@ -247,7 +247,13 @@ func main() {
 	if mappingMode != "shadow" {
 		mappingMode = "active"
 	}
-	logger.Info("runtime capabilities", zap.Bool("ai_enabled", false), zap.Bool("purchase_flow_enabled", cfg.PurchaseFlowEnabled), zap.String("product_mapping_master_mode", mappingMode))
+	logger.Info("runtime capabilities",
+		zap.Bool("ai_enabled", false),
+		zap.Bool("purchase_flow_enabled", cfg.PurchaseFlowEnabled),
+		zap.Bool("sml_set_product_expansion_enabled", cfg.SMLSetProductExpansionEnabled),
+		zap.Bool("shopee_set_stock_enabled", cfg.ShopeeSetStockEnabled),
+		zap.String("product_mapping_master_mode", mappingMode),
+	)
 
 	// CORS
 	r.Use(func(c *gin.Context) {
@@ -351,10 +357,11 @@ func main() {
 		})
 	}
 	stockService := shopeestock.NewService(shopeestock.NewStore(db), stockSMLClient, stockShopeeClient, shopeestock.Config{
-		Enabled:     cfg.ShopeeOpenAPIEnabled,
-		GatewayMode: strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
-		Environment: cfg.ShopeeOpenAPIEnv,
-		InstanceID:  cfg.ShopeeGatewayTenant,
+		Enabled:         cfg.ShopeeOpenAPIEnabled,
+		GatewayMode:     strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
+		SetStockEnabled: cfg.ShopeeSetStockEnabled,
+		Environment:     cfg.ShopeeOpenAPIEnv,
+		InstanceID:      cfg.ShopeeGatewayTenant,
 	}, logger)
 	shopeestock.NewWorker(stockService, logger).Start(appCtx)
 	shopeeStockH := handlers.NewShopeeStockHandler(stockService, auditLogRepo, logger)

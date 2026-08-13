@@ -112,6 +112,45 @@ func (h *BillHandler) blockPurchaseFlow(c *gin.Context, billType string) bool {
 	return false
 }
 
+func (h *BillHandler) validateSetProductsForSend(bill *models.Bill) error {
+	if h == nil || h.catalogRepo == nil || bill == nil {
+		return nil
+	}
+	codes := make([]string, 0, len(bill.Items))
+	seen := make(map[string]struct{}, len(bill.Items))
+	for _, item := range bill.Items {
+		if item.ItemCode == nil {
+			continue
+		}
+		code := strings.TrimSpace(*item.ItemCode)
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	items, err := h.catalogRepo.GetActiveMany(codes)
+	if err != nil {
+		return fmt.Errorf("ตรวจสอบสินค้าชุดใน Catalog ไม่สำเร็จ: %w", err)
+	}
+	for _, code := range codes {
+		item := items[code]
+		if item == nil || item.ItemType != 3 {
+			continue
+		}
+		if !item.SetDocumentValid {
+			return fmt.Errorf("สินค้าชุด %s ยังไม่พร้อมสร้างเอกสาร กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการสินค้า", code)
+		}
+		if h.cfg == nil || !h.cfg.SMLSetProductExpansionEnabled {
+			return fmt.Errorf("พบสินค้าชุด %s แต่ระบบขยายส่วนประกอบยังปิดอยู่ กรุณาติดต่อผู้ดูแลระบบ", code)
+		}
+	}
+	return nil
+}
+
 // ─── Stock recalculation ──────────────────────────────────────────────────────
 
 // stockRecalcSem limits concurrent processstockrequest goroutines to 3
@@ -1667,6 +1706,10 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	if h.saleOrderClient == nil {
 		return retrySendResult{HTTPStatus: http.StatusServiceUnavailable, Error: "saleorder client not configured", Route: route}
 	}
+	if err := h.validateSetProductsForSend(bill); err != nil {
+		_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr(err.Error()))
+		return retrySendResult{HTTPStatus: http.StatusAccepted, Error: err.Error(), Message: err.Error(), Route: route, Skipped: true}
+	}
 
 	sentItemCodes := make([]string, 0, len(bill.Items))
 	items := make([]sml.SOItem, 0, len(bill.Items))
@@ -1719,7 +1762,8 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	}
 	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, req.Remark, sml.SaleOrderHeaderOptions{
-		Remark2: req.Remark2,
+		Remark2:        req.Remark2,
+		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
 	reqJSON, _ := json.Marshal(payload)
 
@@ -1728,6 +1772,9 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	if err != nil || resp == nil || !resp.IsSuccess() {
 		errMsg := smlSendErrorMessage(statusCode, resp, err)
 		storedErr := h.recordFailureForSend(id, bill.Source, reqJSON, fmt.Errorf("%s", errMsg), start, route, reqDocNo, opts)
+		if isSetProductFailure(errMsg) {
+			return retrySendResult{HTTPStatus: http.StatusAccepted, Message: storedErr, DocNoAttempted: reqDocNo, Route: route, Skipped: true}
+		}
 		return retrySendResult{
 			HTTPStatus:     http.StatusBadGateway,
 			Error:          "SML send failed: " + storedErr,
@@ -1761,6 +1808,10 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	route := "SaleInvoice"
 	if h.invoiceClient == nil {
 		return retrySendResult{HTTPStatus: http.StatusServiceUnavailable, Error: "saleinvoice client not configured", Route: route}
+	}
+	if err := h.validateSetProductsForSend(bill); err != nil {
+		_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr(err.Error()))
+		return retrySendResult{HTTPStatus: http.StatusAccepted, Error: err.Error(), Message: err.Error(), Route: route, Skipped: true}
 	}
 
 	sentItemCodesInv := make([]string, 0, len(bill.Items))
@@ -1819,7 +1870,8 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	}
 	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	payload := sml.BuildInvoicePayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, productCache, req.Remark, sml.InvoiceHeaderOptions{
-		Remark2: req.Remark2,
+		Remark2:        req.Remark2,
+		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
 	reqJSON, _ := json.Marshal(payload)
 
@@ -1828,6 +1880,9 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	if err != nil || resp == nil || !resp.IsSuccess() {
 		errMsg := smlSendErrorMessage(statusCode, resp, err)
 		storedErr := h.recordFailureForSend(id, bill.Source, reqJSON, fmt.Errorf("%s", errMsg), start, route, reqDocNo, opts)
+		if isSetProductFailure(errMsg) {
+			return retrySendResult{HTTPStatus: http.StatusAccepted, Message: storedErr, DocNoAttempted: reqDocNo, Route: route, Skipped: true}
+		}
 		return retrySendResult{
 			HTTPStatus:     http.StatusBadGateway,
 			Error:          "SML send failed: " + storedErr,
@@ -2033,17 +2088,29 @@ type smlMessageResponse interface {
 	GetMessage() string
 }
 
+type smlCodedMessageResponse interface {
+	smlMessageResponse
+	GetCode() string
+}
+
 func smlSendErrorMessage(statusCode int, resp smlMessageResponse, err error) string {
 	switch {
 	case err != nil:
 		return err.Error()
 	case resp != nil:
 		msg := strings.TrimSpace(resp.GetMessage())
+		code := ""
+		if coded, ok := resp.(smlCodedMessageResponse); ok {
+			code = strings.TrimSpace(coded.GetCode())
+		}
 		if msg == "" {
 			if statusCode == http.StatusNotFound {
 				return "HTTP 404 — ไม่พบ endpoint SML ที่ตั้งไว้ กรุณาตรวจปลายทางใน /settings/channels หรือติดต่อผู้ดูแลระบบ"
 			}
 			return fmt.Sprintf("HTTP %d", statusCode)
+		}
+		if code != "" {
+			return fmt.Sprintf("HTTP %d [%s] — %s", statusCode, code, msg)
 		}
 		return fmt.Sprintf("HTTP %d — %s", statusCode, msg)
 	default:
@@ -2588,6 +2655,11 @@ func (h *BillHandler) retrySaleOrder(c *gin.Context, bill *models.Bill, req Retr
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "saleorder client not configured"})
 		return
 	}
+	if err := h.validateSetProductsForSend(bill); err != nil {
+		_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr(err.Error()))
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "set_product_not_ready"})
+		return
+	}
 
 	items := make([]sml.SOItem, 0, len(bill.Items))
 	for _, it := range bill.Items {
@@ -2644,7 +2716,8 @@ func (h *BillHandler) retrySaleOrder(c *gin.Context, bill *models.Bill, req Retr
 	// number (no counter inflation, no duplicate docs in SML on transient fail).
 	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, req.Remark, sml.SaleOrderHeaderOptions{
-		Remark2: req.Remark2,
+		Remark2:        req.Remark2,
+		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
 	reqJSON, _ := json.Marshal(payload)
 
@@ -2677,6 +2750,11 @@ func (h *BillHandler) retrySaleInvoice(c *gin.Context, bill *models.Bill, req Re
 	id := bill.ID
 	if h.invoiceClient == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "saleinvoice client not configured"})
+		return
+	}
+	if err := h.validateSetProductsForSend(bill); err != nil {
+		_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr(err.Error()))
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "set_product_not_ready"})
 		return
 	}
 
@@ -2738,7 +2816,8 @@ func (h *BillHandler) retrySaleInvoice(c *gin.Context, bill *models.Bill, req Re
 	}
 	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	payload := sml.BuildInvoicePayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, productCache, req.Remark, sml.InvoiceHeaderOptions{
-		Remark2: req.Remark2,
+		Remark2:        req.Remark2,
+		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
 	reqJSON, _ := json.Marshal(payload)
 
@@ -3233,6 +3312,10 @@ func (h *BillHandler) recordFailure(c *gin.Context, id, source string, reqJSON [
 		TraceID: c.GetString("trace_id"),
 		Via:     "retry",
 	})
+	if isSetProductFailure(errMsg) {
+		c.JSON(http.StatusConflict, gin.H{"error": errMsg, "code": "set_product_not_ready"})
+		return
+	}
 	c.JSON(http.StatusBadGateway, gin.H{"error": "SML send failed: " + errMsg})
 }
 
@@ -3251,7 +3334,11 @@ func (h *BillHandler) recordFailureForSend(id, source string, reqJSON []byte, er
 	if docNoAttempted != "" {
 		docNo = &docNoAttempted
 	}
-	_ = h.billRepo.UpdateStatus(id, "failed", docNo, respJSON, &errMsg)
+	status := "failed"
+	if isSetProductFailure(rawErr) {
+		status = "needs_review"
+	}
+	_ = h.billRepo.UpdateStatus(id, status, docNo, respJSON, &errMsg)
 	if len(reqJSON) > 0 {
 		_ = h.billRepo.UpdateSMLPayload(id, reqJSON)
 	}
@@ -3407,6 +3494,25 @@ func inferSMLFailureCode(msg string) string {
 	default:
 		return "sml_failed"
 	}
+}
+
+func isSetProductFailure(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, code := range []string{
+		"set_product_expansion_disabled",
+		"set_product_schema_unsupported",
+		"set_definition_invalid",
+		"set_allocation_invalid",
+		"set_component_qty_invalid",
+		"set_expansion_route_unsupported",
+		"document_total_mismatch",
+		"doc_no_payload_mismatch",
+	} {
+		if strings.Contains(lower, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── Item edit ───────────────────────────────────────────────────────────────

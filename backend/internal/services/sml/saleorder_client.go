@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -107,6 +108,7 @@ type SaleOrderPayload struct {
 	Items          []SaleOrderItem `json:"items"`
 	Remark         string          `json:"remark,omitempty"`
 	Remark2        string          `json:"remark_2,omitempty"`
+	ExpandSetItems bool            `json:"expand_set_items"`
 }
 
 // ─── Response ─────────────────────────────────────────────────────────────────
@@ -144,6 +146,8 @@ func (r *SaleOrderResponse) GetMessage() string {
 	}
 	return apiErrorMessage(r.Error)
 }
+
+func (r *SaleOrderResponse) GetCode() string { return strings.TrimSpace(r.Code) }
 
 // ─── Create ───────────────────────────────────────────────────────────────────
 
@@ -252,7 +256,8 @@ type SOItem struct {
 }
 
 type SaleOrderHeaderOptions struct {
-	Remark2 string
+	Remark2        string
+	ExpandSetItems bool
 }
 
 // BuildSaleOrderPayload mirrors BuildPurchaseOrderPayload (same VAT math via
@@ -357,5 +362,6 @@ func BuildSaleOrderPayload(
 		Items:          lineItems,
 		Remark:         remark,
 		Remark2:        header.Remark2,
+		ExpandSetItems: header.ExpandSetItems,
 	}
 }
