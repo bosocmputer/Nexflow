@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -544,7 +545,8 @@ func (h *ShopeeImportHandler) PreviewFromAPI(c *gin.Context) {
 		return
 	}
 	details := filterShopeeOrderDetailsByStatus(detail.Response.OrderList, statusPlan.LocalStatuses)
-	orders, warnings := h.shopeeAPIOrdersToPreview(details)
+	incomes, incomeErrors := h.fetchShopeeOrderIncomes(c.Request.Context(), conn, details)
+	orders, warnings := h.shopeeAPIOrdersToPreviewWithIncome(details, incomes, incomeErrors)
 	if more {
 		warnings = append([]string{"Shopee ยังมี order หน้าเพิ่มเติมในช่วงวันที่นี้ กรุณาลดช่วงวันที่หรือเลือกสถานะแยกก่อนยืนยันนำเข้า"}, warnings...)
 	}
@@ -563,8 +565,26 @@ func (h *ShopeeImportHandler) PreviewFromAPI(c *gin.Context) {
 	if err := h.markRealtimeManagedOrders(c.Request.Context(), orders, shopID); err != nil {
 		h.logger.Warn("shopee_api: mark realtime managed orders failed", zap.Error(err))
 	}
+	var channelDefault *models.ChannelDefault
+	if h.channelDefaults != nil {
+		channelDefault, _ = h.channelDefaults.Get("shopee", "sale")
+	}
+	applyShopeeShippingPreflight(orders, channelDefault)
 	preflight := buildShopeePreflight(orders, 0, dupCount)
 	importRunID := h.createShopeeImportRun(c, "Shopee API "+time.Now().Format("20060102-150405"), "", orders, warnings, preflight)
+	if importRunID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้างรอบนำเข้าไม่สำเร็จ กรุณาลองใหม่"})
+		return
+	}
+	previewToken, err := randomMarketplacePreviewToken()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้าง preview token ไม่สำเร็จ"})
+		return
+	}
+	h.pendingUploads.Store(previewToken, &pendingUpload{
+		importRunID: importRunID, userID: c.GetString("user_id"), sourceFlow: "shopee_api",
+		connectionID: conn.ID, orders: append([]ShopeeOrder(nil), orders...), uploadedAt: time.Now(),
+	})
 	h.markShopeeAPISync(c.Request.Context(), &conn.ShopID, "ok", "")
 	h.auditShopeeAPIPreview(c, conn, req, timeFrom, timeTo, timeField, statusPlan, "ok", "", time.Since(startedAt), map[string]interface{}{
 		"fetched_order_sns": len(orderSNs),
@@ -587,7 +607,7 @@ func (h *ShopeeImportHandler) PreviewFromAPI(c *gin.Context) {
 		"skipped_count":   0,
 		"import_run_id":   importRunID,
 		"preflight":       preflight,
-		"file_token":      "",
+		"preview_token":   previewToken,
 		"more":            more,
 		"next_cursor":     nextCursor,
 	})
@@ -1493,7 +1513,95 @@ func orderSNsFromShopeeList(list *shopeeapi.OrderListResponse) []string {
 	return out
 }
 
+func (h *ShopeeImportHandler) fetchShopeeOrderIncomes(ctx context.Context, conn *ShopeeAPIConnection, details []shopeeapi.OrderDetail) (map[string]shopeeapi.EscrowOrderIncome, map[string]string) {
+	incomes := make(map[string]shopeeapi.EscrowOrderIncome, len(details))
+	errorsByOrder := make(map[string]string)
+	if conn == nil {
+		return incomes, errorsByOrder
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 3)
+	for _, detail := range details {
+		orderSN := strings.TrimSpace(detail.OrderSN)
+		if orderSN == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if cached, ok := h.cachedShopeeOrderIncome(ctx, conn.ShopID, orderSN); ok {
+				mu.Lock()
+				incomes[orderSN] = cached
+				mu.Unlock()
+				return
+			}
+			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			response, err := h.shopeeAPIClient().GetEscrowDetail(callCtx, conn.AccessToken, conn.ShopID, orderSN)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errorsByOrder[orderSN] = shopeeAPIErrorMessage(err, "ดึงยอดชำระ Shopee ไม่สำเร็จ").Message
+				return
+			}
+			incomes[orderSN] = response.Response.OrderIncome
+		}()
+	}
+	wg.Wait()
+	return incomes, errorsByOrder
+}
+
+func (h *ShopeeImportHandler) cachedShopeeOrderIncome(ctx context.Context, shopID int64, orderSN string) (shopeeapi.EscrowOrderIncome, bool) {
+	var out shopeeapi.EscrowOrderIncome
+	if h == nil || h.db == nil || shopID <= 0 || strings.TrimSpace(orderSN) == "" {
+		return out, false
+	}
+	err := h.db.QueryRowContext(ctx, `
+		SELECT buyer_total_amount::float8, escrow_amount::float8, original_price::float8,
+		       seller_discount::float8, shopee_discount::float8,
+		       voucher_from_seller::float8, voucher_from_shopee::float8, coin::float8,
+		       buyer_paid_shipping_fee::float8
+		  FROM shopee_order_payment_snapshots
+		 WHERE shop_id=$1 AND order_sn=$2 AND status='ready'
+		 LIMIT 1`, shopID, strings.TrimSpace(orderSN)).Scan(
+		&out.BuyerTotalAmount, &out.EscrowAmount, &out.OriginalPrice,
+		&out.SellerDiscount, &out.ShopeeDiscount,
+		&out.VoucherFromSeller, &out.VoucherFromShopee, &out.Coin,
+		&out.BuyerPaidShippingFee,
+	)
+	return out, err == nil
+}
+
+func allocateMarketplaceDiscount(items []ShopeeExcelItem, discountCents int64) {
+	if len(items) == 0 || discountCents <= 0 {
+		return
+	}
+	totalGross := int64(0)
+	for _, item := range items {
+		totalGross += centsFromMoney(item.GrossAmount)
+	}
+	if totalGross <= 0 {
+		return
+	}
+	remaining := discountCents
+	for i := range items {
+		allocated := remaining
+		if i < len(items)-1 {
+			allocated = discountCents * centsFromMoney(items[i].GrossAmount) / totalGross
+			remaining -= allocated
+		}
+		items[i].DiscountAmount = moneyFromCents(allocated)
+	}
+}
+
 func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.OrderDetail) ([]ShopeeOrder, []string) {
+	return h.shopeeAPIOrdersToPreviewWithIncome(details, nil, nil)
+}
+
+func (h *ShopeeImportHandler) shopeeAPIOrdersToPreviewWithIncome(details []shopeeapi.OrderDetail, incomes map[string]shopeeapi.EscrowOrderIncome, incomeErrors map[string]string) ([]ShopeeOrder, []string) {
 	orders := make([]ShopeeOrder, 0, len(details))
 	warnings := []string{}
 	for _, d := range details {
@@ -1517,9 +1625,9 @@ func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.Order
 			if qty <= 0 {
 				qty = 1
 			}
-			price := item.ModelDiscountedPrice
+			price := item.ModelOriginalPrice
 			if price <= 0 {
-				price = item.ModelOriginalPrice
+				price = item.ModelDiscountedPrice
 			}
 			sku := strings.TrimSpace(item.ModelSKU)
 			if sku == "" {
@@ -1530,6 +1638,7 @@ func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.Order
 			if noSKU {
 				noSKUCount++
 			}
+			itemGross := roundFloat(price*qty, 2)
 			items = append(items, ShopeeExcelItem{
 				SKU:             sku,
 				OrderItemID:     strconv.FormatInt(item.ItemID, 10),
@@ -1539,11 +1648,12 @@ func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.Order
 				OptionName:      strings.TrimSpace(item.ModelName),
 				RawName:         rawName,
 				Price:           price,
+				GrossAmount:     itemGross,
 				Qty:             qty,
 				NoSKU:           noSKU,
 			})
 			totalQty += qty
-			gross += price * qty
+			gross += itemGross
 		}
 		if len(items) == 0 {
 			warnings = append(warnings, fmt.Sprintf("Order %s: ไม่มีสินค้าใน response — ข้ามไป", orderSN))
@@ -1553,17 +1663,25 @@ func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.Order
 		if !payTime.IsZero() {
 			paymentTime = payTime.Format(time.RFC3339)
 		}
-		paid := d.TotalAmount
-		shippingAmount := d.ActualShippingFee
-		if shippingAmount <= 0 {
-			shippingAmount = d.EstimatedShippingFee
+		paid := roundFloat(d.TotalAmount, 2)
+		income, incomeReady := incomes[orderSN]
+		shippingAmount := 0.0
+		blockedReason := ""
+		if incomeReady {
+			shippingAmount = roundFloat(income.BuyerPaidShippingFee, 2)
+		} else {
+			blockedReason = "ยังอ่านค่าส่งที่ลูกค้าจ่ายจาก Shopee escrow ไม่ได้ กรุณาลองดึงออเดอร์ใหม่"
+			if detail := strings.TrimSpace(incomeErrors[orderSN]); detail != "" {
+				warnings = append(warnings, fmt.Sprintf("Order %s: %s", orderSN, detail))
+			}
 		}
-		shippingAmount = roundFloat(shippingAmount, 2)
-		discountAmount := 0.0
-		if paid > 0 {
-			discountAmount = roundFloat(gross+shippingAmount-paid, 2)
+		netProductAmount := roundFloat(paid-shippingAmount, 2)
+		discountAmount := roundFloat(gross-netProductAmount, 2)
+		if incomeReady && (shippingAmount < 0 || netProductAmount < 0 || discountAmount < 0) {
+			blockedReason = "ยอดเต็มสินค้า ค่าส่ง และยอดชำระจาก Shopee ไม่สัมพันธ์กัน กรุณาตรวจสอบ order"
 		}
-		expectedPaid := roundFloat(gross+shippingAmount-discountAmount, 2)
+		allocateMarketplaceDiscount(items, centsFromMoney(discountAmount))
+		expectedPaid := roundFloat(gross-discountAmount+shippingAmount, 2)
 		trackingNo := strings.TrimSpace(d.TrackingNumber)
 		packageNumber := firstShopeePackageNumber(d.PackageList)
 		if trackingNo == "" {
@@ -1577,30 +1695,41 @@ func (h *ShopeeImportHandler) shopeeAPIOrdersToPreview(details []shopeeapi.Order
 			shippingCarrier = strings.TrimSpace(d.CheckoutShippingCarrier)
 		}
 		orders = append(orders, ShopeeOrder{
-			OrderID:          orderSN,
-			DocDate:          docDate,
-			OrderDateTime:    orderDateTime,
-			PaymentTime:      paymentTime,
-			PaymentChannel:   d.PaymentMethod,
-			BuyerUsername:    d.BuyerUsername,
-			TrackingNo:       trackingNo,
-			PackageNumber:    packageNumber,
-			ShippingCarrier:  shippingCarrier,
-			COD:              d.COD,
-			Status:           d.OrderStatus,
-			Items:            items,
-			ItemCount:        len(items),
-			TotalQty:         totalQty,
-			PaidAmount:       paid,
-			OrderTotalAmount: paid,
-			ItemGrossAmount:  gross,
-			LinePaidAmount:   paid,
-			ShippingAmount:   shippingAmount,
-			DiscountAmount:   discountAmount,
-			NoSKUItemCount:   noSKUCount,
-			HasNoSKU:         noSKUCount > 0,
-			MultiLine:        len(items) > 1,
-			AmountMismatch:   paid > 0 && math.Abs(expectedPaid-paid) > 0.01,
+			OrderID:                orderSN,
+			DocDate:                docDate,
+			OrderDateTime:          orderDateTime,
+			PaymentTime:            paymentTime,
+			PaymentChannel:         d.PaymentMethod,
+			BuyerUsername:          d.BuyerUsername,
+			TrackingNo:             trackingNo,
+			PackageNumber:          packageNumber,
+			ShippingCarrier:        shippingCarrier,
+			COD:                    d.COD,
+			Status:                 d.OrderStatus,
+			Items:                  items,
+			ItemCount:              len(items),
+			TotalQty:               totalQty,
+			PaidAmount:             paid,
+			OrderTotalAmount:       paid,
+			ItemGrossAmount:        gross,
+			LinePaidAmount:         netProductAmount,
+			ShippingAmount:         shippingAmount,
+			DiscountAmount:         discountAmount,
+			PlatformDiscountAmount: roundFloat(income.ShopeeDiscount+income.VoucherFromShopee+income.Coin, 2),
+			SellerDiscountAmount:   roundFloat(income.SellerDiscount+income.VoucherFromSeller, 2),
+			NetProductAmount:       netProductAmount,
+			AmountDifference:       roundFloat(paid-expectedPaid, 2),
+			AmountReviewReason: func() string {
+				if math.Abs(expectedPaid-paid) <= 0.01 {
+					return ""
+				}
+				return fmt.Sprintf("ยอดเต็ม %.2f - ส่วนลด %.2f + ค่าส่งลูกค้าจ่าย %.2f = %.2f แต่ยอดรวม %.2f", gross, discountAmount, shippingAmount, expectedPaid, paid)
+			}(),
+			NoSKUItemCount: noSKUCount,
+			HasNoSKU:       noSKUCount > 0,
+			MultiLine:      len(items) > 1,
+			AmountMismatch: paid > 0 && math.Abs(expectedPaid-paid) > 0.01,
+			BlockedReason:  blockedReason,
 		})
 	}
 	if len(orders) == 0 {

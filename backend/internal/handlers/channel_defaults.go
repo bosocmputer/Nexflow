@@ -77,7 +77,7 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 	in.BankBranch = strings.TrimSpace(in.BankBranch)
 	in.ExpenseCode = strings.TrimSpace(in.ExpenseCode)
 	in.ExpenseName = strings.TrimSpace(in.ExpenseName)
-	if in.Channel != "shopee_shipped" || in.BillType != "purchase" {
+	if !supportsConfiguredShippingItem(in.Channel, in.BillType) {
 		in.ShippingItemEnabled = false
 		in.ShippingItemCode = ""
 		in.ShippingItemUnitCode = ""
@@ -125,7 +125,13 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 	}
 	if in.ShippingItemEnabled && in.ShippingItemCode == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "กรุณาเลือกสินค้า SML สำหรับค่าขนส่ง Shopee ก่อนเปิดใช้งาน",
+			"error": "กรุณาเลือกสินค้า SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน",
+		})
+		return
+	}
+	if in.ShippingItemEnabled && in.ShippingItemUnitCode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "กรุณาเลือกหน่วย SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน",
 		})
 		return
 	}
@@ -181,6 +187,17 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		"expense_code":          in.ExpenseCode,
 	})
 	c.JSON(http.StatusOK, d)
+}
+
+// supportsConfiguredShippingItem is intentionally narrow. Marketplace sale
+// flows use this item only for the positive shipping amount paid by the buyer.
+// Shopee uses buyer_paid_shipping_fee from escrow, not actual/estimated carrier
+// cost. shopee_shipped remains the legacy purchase-email flow.
+func supportsConfiguredShippingItem(channel, billType string) bool {
+	if billType == "sale" && (channel == "shopee" || channel == "shopee_realtime" || channel == "lazada" || channel == "tiktok") {
+		return true
+	}
+	return channel == "shopee_shipped" && billType == "purchase"
 }
 
 // validChannelBillTypeCombo enforces UI-level rules so admins can't save

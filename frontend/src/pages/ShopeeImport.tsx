@@ -68,6 +68,10 @@ interface ShopeeOrderItem {
   option_name?: string
   raw_name: string
   price: number
+  gross_amount?: number
+  discount_amount?: number
+  platform_discount_amount?: number
+  seller_discount_amount?: number
   qty: number
   no_sku?: boolean
 }
@@ -92,6 +96,11 @@ interface ShopeeOrder {
   line_paid_amount?: number
   shipping_amount?: number
   discount_amount?: number
+  platform_discount_amount?: number
+  seller_discount_amount?: number
+  net_product_amount?: number
+  amount_difference?: number
+  amount_review_reason?: string
   no_sku_item_count?: number
   has_no_sku?: boolean
   multi_line?: boolean
@@ -125,7 +134,7 @@ interface PreviewResponse {
   skipped_count: number
   import_run_id?: string
   preflight: ImportPreflight
-  file_token?: string
+  preview_token?: string
   more?: boolean
   next_cursor?: string
 }
@@ -399,25 +408,6 @@ export default function ShopeeImport() {
   const smlCustomerReady = configReady && Boolean(config?.cust_code?.trim())
   const destination = shopeeDestination(config)
 
-  const fallbackConfig: ShopeeConfig = {
-    server_url: '',
-    guid: '',
-    provider: '',
-    config_file_name: '',
-    database_name: '',
-    doc_format_code: 'SR',
-    endpoint: '',
-    cust_code: '',
-    sale_code: '',
-    branch_code: '',
-    wh_code: '',
-    shelf_code: '',
-    unit_code: '',
-    vat_type: -1,
-    vat_rate: -1,
-    doc_time: '',
-  }
-
   const invalidateAPIPreviewRequest = () => {
     apiPreviewRequestSeq.current += 1
     setAPIBusy(false)
@@ -590,13 +580,9 @@ export default function ShopeeImport() {
     setError('')
     try {
       const res = await client.post('/api/import/shopee/confirm', {
-        config: config ?? fallbackConfig,
+        preview_token: preview.preview_token,
         order_ids: Array.from(selectedIDs),
-        orders: preview.orders,
-        file_token: preview.file_token,
         import_run_id: preview.import_run_id,
-        source_flow: previewSource === 'api' ? 'shopee_api' : 'shopee_excel',
-        connection_id: selectedConnectionID,
       }, { timeout: 120000 })
       setResults(res.data)
       setStep('done')
@@ -1216,7 +1202,7 @@ export default function ShopeeImport() {
                       <TableHead>สถานะ</TableHead>
                       <TableHead>สินค้า</TableHead>
                       <TableHead className="text-right">Qty รวม</TableHead>
-                      <TableHead className="text-right">ยอดชำระ</TableHead>
+                      <TableHead className="text-right">ยอดรวม</TableHead>
                       <TableHead>ตรวจเบื้องต้น</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1279,13 +1265,11 @@ export default function ShopeeImport() {
                         <TableCell className="text-right tabular-nums">
                           {order.total_qty}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          <div>{order.paid_amount != null ? `฿${fmt(order.paid_amount)}` : '—'}</div>
-                          {!!order.shipping_amount && (
-                            <div className="text-[11px] text-muted-foreground">
-                              ส่ง ฿{fmt(order.shipping_amount)}
-                            </div>
-                          )}
+                        <TableCell className="min-w-[180px] text-right tabular-nums">
+                          <div className="font-medium">{order.paid_amount != null ? `฿${fmt(order.paid_amount)}` : '—'}</div>
+                          <div className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                            เต็ม {fmt(order.item_gross_amount ?? 0)} · ลด {fmt(order.discount_amount ?? 0)} · ส่ง {fmt(order.shipping_amount ?? 0)}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -1312,9 +1296,12 @@ export default function ShopeeImport() {
                             <Badge variant="outline">หลายรายการ</Badge>
                           )}
                           {order.amount_mismatch && (
-                            <Badge variant="outline">
-                              มีส่วนต่างยอด
+                            <Badge variant="outline" className="border-warning/40 text-warning" title={order.amount_review_reason}>
+                              ต้องยืนยันยอด
                             </Badge>
+                          )}
+                          {order.blocked_reason && order.blocked_reason !== 'realtime_managed' && (
+                            <Badge variant="destructive" title={order.blocked_reason}>นำเข้าไม่ได้</Badge>
                           )}
                           </div>
                         </TableCell>
@@ -1347,7 +1334,9 @@ export default function ShopeeImport() {
                                     <TableHead className="text-[10px] uppercase">SKU</TableHead>
                                     <TableHead className="text-[10px] uppercase">ชื่อสินค้า</TableHead>
                                     <TableHead className="text-[10px] uppercase">ตัวเลือก</TableHead>
-                                    <TableHead className="text-right text-[10px] uppercase">ราคา</TableHead>
+                                    <TableHead className="text-right text-[10px] uppercase">ยอดเต็ม</TableHead>
+                                    <TableHead className="text-right text-[10px] uppercase">ส่วนลด</TableHead>
+                                    <TableHead className="text-right text-[10px] uppercase">ยอดสุทธิ</TableHead>
                                     <TableHead className="text-right text-[10px] uppercase">จำนวน</TableHead>
                                   </TableRow>
                                 </TableHeader>
@@ -1372,9 +1361,9 @@ export default function ShopeeImport() {
                                       <TableCell className="text-xs text-muted-foreground">
                                         {item.option_name || '—'}
                                       </TableCell>
-                                      <TableCell className="text-right tabular-nums">
-                                        {fmt(item.price)}
-                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums">{fmt(item.gross_amount ?? item.price * item.qty)}</TableCell>
+                                      <TableCell className="text-right tabular-nums text-success">{item.discount_amount ? `-${fmt(item.discount_amount)}` : '0.00'}</TableCell>
+                                      <TableCell className="text-right tabular-nums font-medium">{fmt((item.gross_amount ?? item.price * item.qty) - (item.discount_amount ?? 0))}</TableCell>
                                       <TableCell className="text-right tabular-nums">
                                         {item.qty}
                                       </TableCell>

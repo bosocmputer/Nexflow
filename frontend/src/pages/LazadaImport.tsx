@@ -58,6 +58,10 @@ interface LazadaOrderItem {
   option_name?: string
   raw_name: string
   price: number
+  gross_amount?: number
+  discount_amount?: number
+  platform_discount_amount?: number
+  seller_discount_amount?: number
   qty: number
   no_sku?: boolean
 }
@@ -79,6 +83,12 @@ interface LazadaOrder {
   line_paid_amount?: number
   shipping_amount?: number
   discount_amount?: number
+  platform_discount_amount?: number
+  seller_discount_amount?: number
+  net_product_amount?: number
+  amount_difference?: number
+  amount_review_reason?: string
+  blocked_reason?: string
   no_sku_item_count?: number
   has_no_sku?: boolean
   multi_line?: boolean
@@ -104,7 +114,7 @@ interface PreviewResponse {
   skipped_count: number
   import_run_id?: string
   preflight: ImportPreflight
-  file_token?: string
+  preview_token?: string
 }
 interface ConfirmResult {
   order_id: string
@@ -220,25 +230,6 @@ export default function LazadaImport() {
   const configReady = !configLoading
   const destination = lazadaDestination(config)
 
-  const fallbackConfig: LazadaConfig = {
-    server_url: '',
-    guid: '',
-    provider: '',
-    config_file_name: '',
-    database_name: '',
-    doc_format_code: 'SR',
-    endpoint: '',
-    cust_code: '',
-    sale_code: '',
-    branch_code: '',
-    wh_code: '',
-    shelf_code: '',
-    unit_code: '',
-    vat_type: -1,
-    vat_rate: -1,
-    doc_time: '',
-  }
-
   useEffect(() => {
     let alive = true
     client
@@ -301,7 +292,7 @@ export default function LazadaImport() {
       )
       setPreview(res.data)
       setSelectedIDs(
-        new Set(res.data.orders.filter((o) => !o.duplicate).map((o) => o.order_id)),
+        new Set(res.data.orders.filter((o) => !o.duplicate && !o.blocked_reason).map((o) => o.order_id)),
       )
       setStep('preview')
     } catch (err: unknown) {
@@ -319,10 +310,8 @@ export default function LazadaImport() {
     setError('')
     try {
       const res = await client.post('/api/import/lazada/confirm', {
-        config: config ?? fallbackConfig,
+        preview_token: preview.preview_token,
         order_ids: Array.from(selectedIDs),
-        orders: preview.orders,
-        file_token: preview.file_token,
         import_run_id: preview.import_run_id,
       }, { timeout: 120000 })
       setResults(res.data)
@@ -346,7 +335,7 @@ export default function LazadaImport() {
     })
   const toggleAll = () => {
     if (!preview) return
-    const nonDup = preview.orders.filter((o) => !o.duplicate).map((o) => o.order_id)
+    const nonDup = preview.orders.filter((o) => !o.duplicate && !o.blocked_reason).map((o) => o.order_id)
     setSelectedIDs(selectedIDs.size === nonDup.length ? new Set() : new Set(nonDup))
   }
   const toggleExpand = (id: string) =>
@@ -525,7 +514,7 @@ export default function LazadaImport() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={toggleAll}>
-              {selectedIDs.size === preview.orders.filter((o) => !o.duplicate).length
+              {selectedIDs.size === preview.orders.filter((o) => !o.duplicate && !o.blocked_reason).length
                 ? 'ยกเลิกทั้งหมด'
                 : 'เลือกทั้งหมด'}
             </Button>
@@ -548,15 +537,15 @@ export default function LazadaImport() {
             </Button>
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
-            <Table>
+          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <Table className="min-w-[1080px]">
               <TableHeader>
                 <TableRow className="bg-muted/40">
                   <TableHead className="w-10">
                     <Checkbox
                       checked={
                         selectedIDs.size ===
-                        preview.orders.filter((o) => !o.duplicate).length
+                        preview.orders.filter((o) => !o.duplicate && !o.blocked_reason).length
                       }
                       onCheckedChange={toggleAll}
                       aria-label="เลือกทั้งหมด"
@@ -568,7 +557,7 @@ export default function LazadaImport() {
                   <TableHead>สถานะ</TableHead>
                   <TableHead>สินค้า</TableHead>
                   <TableHead className="text-right">Qty รวม</TableHead>
-                  <TableHead className="text-right">ยอดชำระ</TableHead>
+                  <TableHead className="text-right">ยอดรวม</TableHead>
                   <TableHead>Preflight</TableHead>
                 </TableRow>
               </TableHeader>
@@ -579,13 +568,13 @@ export default function LazadaImport() {
                     <Fragment key={order.order_id}>
                       <TableRow
                         className={cn(
-                          order.duplicate && 'bg-muted/30 text-muted-foreground',
+                          (order.duplicate || order.blocked_reason) && 'bg-muted/30 text-muted-foreground',
                         )}
                       >
                         <TableCell>
                           <Checkbox
                             checked={selectedIDs.has(order.order_id)}
-                            disabled={order.duplicate}
+                            disabled={order.duplicate || Boolean(order.blocked_reason)}
                             onCheckedChange={() => toggleOrder(order.order_id)}
                             aria-label={`เลือก order ${order.order_id}`}
                           />
@@ -621,8 +610,11 @@ export default function LazadaImport() {
                         <TableCell className="text-right tabular-nums">
                           {order.total_qty}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {order.paid_amount != null ? `฿${fmt(order.paid_amount)}` : '—'}
+                        <TableCell className="min-w-[180px] text-right tabular-nums">
+                          <div className="font-medium">{order.paid_amount != null ? `฿${fmt(order.paid_amount)}` : '—'}</div>
+                          <div className="mt-0.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                            เต็ม {fmt(order.item_gross_amount ?? 0)} · ลด {fmt(order.discount_amount ?? 0)} · ส่ง {fmt(order.shipping_amount ?? 0)}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -640,9 +632,12 @@ export default function LazadaImport() {
                             <Badge variant="outline">หลายรายการ</Badge>
                           )}
                           {order.amount_mismatch && (
-                            <Badge variant="outline">
-                              มีส่วนต่างยอด
+                            <Badge variant="outline" className="border-warning/40 text-warning" title={order.amount_review_reason}>
+                              ต้องยืนยันยอด
                             </Badge>
+                          )}
+                          {order.blocked_reason && (
+                            <Badge variant="destructive" title={order.blocked_reason}>นำเข้าไม่ได้</Badge>
                           )}
                           </div>
                         </TableCell>
@@ -657,7 +652,9 @@ export default function LazadaImport() {
                                     <TableHead className="text-[11px]">SKU</TableHead>
                                     <TableHead className="text-[11px]">ชื่อสินค้า</TableHead>
                                     <TableHead className="text-[11px]">ตัวเลือก</TableHead>
-                                    <TableHead className="text-right text-[11px]">ราคา</TableHead>
+                                    <TableHead className="text-right text-[11px]">ยอดเต็ม</TableHead>
+                                    <TableHead className="text-right text-[11px]">ส่วนลด</TableHead>
+                                    <TableHead className="text-right text-[11px]">ยอดสุทธิ</TableHead>
                                     <TableHead className="text-right text-[11px]">จำนวน</TableHead>
                                   </TableRow>
                                 </TableHeader>
@@ -682,9 +679,9 @@ export default function LazadaImport() {
                                       <TableCell className="text-xs text-muted-foreground">
                                         {item.option_name || '—'}
                                       </TableCell>
-                                      <TableCell className="text-right tabular-nums">
-                                        {fmt(item.price)}
-                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums">{fmt(item.gross_amount ?? item.price * item.qty)}</TableCell>
+                                      <TableCell className="text-right tabular-nums text-success">{item.discount_amount ? `-${fmt(item.discount_amount)}` : '0.00'}</TableCell>
+                                      <TableCell className="text-right tabular-nums font-medium">{fmt((item.gross_amount ?? item.price * item.qty) - (item.discount_amount ?? 0))}</TableCell>
                                       <TableCell className="text-right tabular-nums">
                                         {item.qty}
                                       </TableCell>

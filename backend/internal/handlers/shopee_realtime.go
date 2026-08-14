@@ -1213,17 +1213,18 @@ func (h *ShopeeRealtimeHandler) createBillFromRealtimeSnapshot(ctx context.Conte
 	if strings.TrimSpace(detail.OrderSN) == "" {
 		detail.OrderSN = snap.OrderSN
 	}
-	orders, warnings := h.importH.shopeeAPIOrdersToPreview([]shopeeapi.OrderDetail{detail})
+	conn, err := h.connectionForShop(ctx, snap.ShopID)
+	if err != nil {
+		return ConfirmResult{OrderID: snap.OrderSN, Message: "โหลดร้าน Shopee ไม่สำเร็จ: " + err.Error()}, err
+	}
+	incomes, incomeErrors := h.importH.fetchShopeeOrderIncomes(ctx, conn, []shopeeapi.OrderDetail{detail})
+	orders, warnings := h.importH.shopeeAPIOrdersToPreviewWithIncome([]shopeeapi.OrderDetail{detail}, incomes, incomeErrors)
 	if len(orders) == 0 {
 		msg := "รายละเอียด Shopee order ยังสร้าง bill ไม่ได้"
 		if len(warnings) > 0 {
 			msg = strings.Join(warnings, "; ")
 		}
 		return ConfirmResult{OrderID: snap.OrderSN, Message: msg}, fmt.Errorf("no importable shopee order detail")
-	}
-	conn, err := h.connectionForShop(ctx, snap.ShopID)
-	if err != nil {
-		return ConfirmResult{OrderID: snap.OrderSN, Message: "โหลดร้าน Shopee ไม่สำเร็จ: " + err.Error()}, err
 	}
 	order := orders[0]
 	order.ShopeeShopID = strconv.FormatInt(conn.ShopID, 10)

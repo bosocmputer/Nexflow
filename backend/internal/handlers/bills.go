@@ -1258,7 +1258,7 @@ func (h *BillHandler) Retry(c *gin.Context) {
 	c.JSON(result.HTTPStatus, gin.H{"error": result.Error})
 }
 
-// ConfirmAmountReview records that an operator accepted the TikTok amount
+// ConfirmAmountReview records that an operator accepted a marketplace amount
 // difference shown on the bill. The fingerprint makes the confirmation stale
 // as soon as qty, price, gross amount, or discount changes.
 func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
@@ -1267,7 +1267,7 @@ func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
 		return
 	}
-	if bill.Source != "tiktok" || bill.Status == "sent" || bill.ArchivedAt != nil {
+	if bill.BillType != "sale" || !isMarketplaceSource(bill.Source) || bill.Status == "sent" || bill.ArchivedAt != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "บิลนี้ไม่สามารถยืนยันยอดได้"})
 		return
 	}
@@ -1282,7 +1282,7 @@ func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
 	fingerprint := tikTokAmountFingerprint(bill.Items)
 	userID := c.GetString("user_id")
 	if err := h.billRepo.ConfirmAmountReview(bill.ID, userID, fingerprint); err != nil {
-		h.log.Error("confirm TikTok amount review", zap.String("bill_id", bill.ID), zap.Error(err))
+		h.log.Error("confirm marketplace amount review", zap.String("bill_id", bill.ID), zap.String("source", bill.Source), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกการยืนยันยอดไม่สำเร็จ"})
 		return
 	}
@@ -1301,8 +1301,8 @@ func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
 		if userID != "" {
 			uid = &userID
 		}
-		_ = h.auditRepo.Log(models.AuditEntry{Action: "tiktok_amount_review_confirmed", TargetID: &bill.ID,
-			UserID: uid, Source: "tiktok", Level: "info", TraceID: c.GetString("trace_id"),
+		_ = h.auditRepo.Log(models.AuditEntry{Action: "marketplace_amount_review_confirmed", TargetID: &bill.ID,
+			UserID: uid, Source: bill.Source, Level: "info", TraceID: c.GetString("trace_id"),
 			Detail: map[string]interface{}{"fingerprint": fingerprint}})
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "ยืนยันยอดต่างแล้ว", "amount_review_fingerprint": fingerprint})
@@ -1499,7 +1499,7 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	if err := validateRemark2(req.Remark2); err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error()}
 	}
-	if bill.Source == "tiktok" {
+	if bill.BillType == "sale" && isMarketplaceSource(bill.Source) {
 		var source struct {
 			Required bool `json:"amount_review_required"`
 		}
@@ -1508,7 +1508,7 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 			fingerprint := tikTokAmountFingerprint(bill.Items)
 			if bill.AmountReviewedAt == nil || bill.AmountReviewFingerprint != fingerprint {
 				return retrySendResult{HTTPStatus: http.StatusConflict,
-					Error: "ยอดจาก TikTok มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อนส่ง SML", Skipped: true}
+					Error: "ยอดจาก Marketplace มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อนส่ง SML", Skipped: true}
 			}
 		}
 	}

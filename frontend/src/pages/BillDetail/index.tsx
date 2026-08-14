@@ -46,6 +46,16 @@ type RecreateRouteResponse = {
   message?: string
 }
 
+const isMarketplaceSale = (bill: { source?: string; bill_type?: string } | null | undefined) =>
+  bill?.bill_type === 'sale' && ['shopee', 'lazada', 'tiktok'].includes(bill.source ?? '')
+
+const marketplaceLabel = (source?: string) => {
+  if (source === 'shopee') return 'Shopee'
+  if (source === 'lazada') return 'Lazada'
+  if (source === 'tiktok') return 'TikTok'
+  return 'Marketplace'
+}
+
 export default function BillDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -156,9 +166,9 @@ export default function BillDetail() {
       })
       return
     }
-    if (bill?.source === 'tiktok' && bill.raw_data?.amount_review_required === true && !bill.amount_reviewed_at) {
+    if (isMarketplaceSale(bill) && bill?.raw_data?.amount_review_required === true && !bill.amount_reviewed_at) {
       toast.error('ยังส่ง SML ไม่ได้', {
-        description: 'ยอดจาก TikTok มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อน',
+        description: `ยอดจาก ${marketplaceLabel(bill?.source)} มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อน`,
       })
       return
     }
@@ -322,10 +332,10 @@ export default function BillDetail() {
         smlReadinessLoading={smlReadinessLoading}
       />
 
-      {bill.source === 'tiktok' && bill.raw_data?.amount_review_required === true && (
+      {isMarketplaceSale(bill) && bill.raw_data?.amount_review_required === true && (
         <Alert className="border-warning/35 bg-warning/10">
           <AlertTriangle className="h-4 w-4 text-warning" />
-          <AlertTitle>ยอดจาก TikTok มีส่วนต่างที่ต้องตรวจ</AlertTitle>
+          <AlertTitle>ยอดจาก {marketplaceLabel(bill.source)} มีส่วนต่างที่ต้องตรวจ</AlertTitle>
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span>
               {String(bill.raw_data?.amount_review_reason || 'Order Amount ไม่ตรงกับยอดสินค้าและค่าใช้จ่าย')}

@@ -55,18 +55,19 @@ export function BillItemsTable({
   highlightItemId,
 }: Props) {
   const items = bill.items ?? []
-  const rawNameLabel = bill.source === 'tiktok'
-    ? 'ชื่อสินค้าจาก TikTok'
+  const isMarketplaceSale = bill.bill_type === 'sale' && ['shopee', 'lazada', 'tiktok'].includes(bill.source)
+  const marketplaceName = bill.source === 'shopee' ? 'Shopee' : bill.source === 'lazada' ? 'Lazada' : 'TikTok'
+  const rawNameLabel = isMarketplaceSale
+    ? `ชื่อสินค้าจาก ${marketplaceName}`
     : isShopeeSalesBill(bill) ? 'ชื่อสินค้าจาก Excel' : 'ชื่อสินค้าจากอีเมล'
   const isShopeePurchase = isShopeePurchaseBill(bill)
-  const isTikTokSale = bill.source === 'tiktok' && bill.bill_type === 'sale'
-  const showDiscountColumn = isShopeePurchase || isTikTokSale
+  const showDiscountColumn = isShopeePurchase || isMarketplaceSale
   const discountSummary = isShopeePurchase ? discountSummaryFromBill(bill) : null
   const totalDiscount = discountSummary?.total_discount_amount ?? 0
   const coinAmt = shopeeCoinAmount(bill) ?? 0
   const effectiveDiscount = Math.round((totalDiscount + coinAmt) * 100) / 100
   const grossTotal = items
-    .filter((item) => item.source_sku !== '__shopee_shipping__')
+    .filter((item) => !['__shopee_shipping__', '__lazada_shipping__', '__tiktok_shipping__'].includes(item.source_sku ?? ''))
     .reduce((sum, item) => sum + (item.gross_amount ?? (item.qty ?? 0) * (item.price ?? 0)), 0)
   const rowDiscountInfo: DiscountInfo | undefined =
     showDiscountColumn && effectiveDiscount > 0 && grossTotal > 0
@@ -145,9 +146,9 @@ export function BillItemsTable({
               )}
             </div>
           )}
-          {isTikTokSale && (
+          {isMarketplaceSale && (
             <div className="mt-2 max-w-3xl rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
-              รายการสินค้าเก็บยอดเต็มจาก TikTok โดยตรง ส่วนลดแพลตฟอร์มและส่วนลดร้านจะรวมเป็นส่วนลดหัวเอกสาร SML
+              รายการสินค้าเก็บยอดเต็มจาก {marketplaceName} โดยตรง ส่วนลดแพลตฟอร์มและส่วนลดร้านจะรวมเป็นส่วนลดหัวเอกสาร SML
               ยอดสุทธิของแต่ละรายการ = ยอดเต็ม - ส่วนลด
             </div>
           )}

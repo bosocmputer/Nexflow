@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 	"go.uber.org/zap"
 
 	"nexflow/internal/config"
@@ -91,7 +93,7 @@ func TestShopeeAPIOrderStatusPlanReadyGroupFiltersLocally(t *testing.T) {
 
 func TestShopeeAPIOrdersToPreviewMapsShippingPackageAndNoFalseMismatch(t *testing.T) {
 	h := &ShopeeImportHandler{}
-	orders, warnings := h.shopeeAPIOrdersToPreview([]shopeeapi.OrderDetail{
+	details := []shopeeapi.OrderDetail{
 		{
 			OrderSN:              "260520UDVHA1W7",
 			OrderStatus:          "SHIPPED",
@@ -115,7 +117,10 @@ func TestShopeeAPIOrdersToPreviewMapsShippingPackageAndNoFalseMismatch(t *testin
 				},
 			},
 		},
-	})
+	}
+	orders, warnings := h.shopeeAPIOrdersToPreviewWithIncome(details, map[string]shopeeapi.EscrowOrderIncome{
+		"260520UDVHA1W7": {BuyerPaidShippingFee: 18},
+	}, nil)
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %v", warnings)
 	}
@@ -123,7 +128,7 @@ func TestShopeeAPIOrdersToPreviewMapsShippingPackageAndNoFalseMismatch(t *testin
 		t.Fatalf("orders = %d", len(orders))
 	}
 	got := orders[0]
-	if got.ShippingAmount != 38 || got.DiscountAmount != 20 || got.AmountMismatch {
+	if got.ShippingAmount != 18 || got.DiscountAmount != 11 || got.AmountMismatch {
 		t.Fatalf("amounts shipping=%v discount=%v mismatch=%v", got.ShippingAmount, got.DiscountAmount, got.AmountMismatch)
 	}
 	if got.TrackingNo != "OFG232942632252692" || got.PackageNumber != "OFG232942632252692" || got.ShippingCarrier != "EMS - Thailand Post" || !got.COD {
@@ -131,6 +136,47 @@ func TestShopeeAPIOrdersToPreviewMapsShippingPackageAndNoFalseMismatch(t *testin
 	}
 	if !got.HasNoSKU || got.NoSKUItemCount != 1 || got.Items[0].SKU != "" || !strings.Contains(got.Items[0].RawName, " / C.น้ำตาลดำ") {
 		t.Fatalf("no sku mapping = %+v item=%+v", got, got.Items[0])
+	}
+}
+
+func TestShopeeExcelAndAPIUseSameAmountContract(t *testing.T) {
+	f := excelize.NewFile()
+	sheet := f.GetSheetName(0)
+	headers := []string{"หมายเลขคำสั่งซื้อ", "สถานะการสั่งซื้อ", "วันที่สั่งซื้อ", "ชื่อสินค้า", "ราคาตั้งต้น", "จำนวน", "ราคาสินค้าที่ชำระโดยผู้ซื้อ", "ค่าจัดส่งที่ชำระโดยผู้ซื้อ", "จำนวนเงินทั้งหมด"}
+	for i, header := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		_ = f.SetCellValue(sheet, cell, header)
+	}
+	values := []any{"SAME-1", "ที่ต้องจัดส่ง", "2026-08-14 09:00", "สินค้า", 300, 1, 212, 18, 230}
+	for i, value := range values {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 2)
+		_ = f.SetCellValue(sheet, cell, value)
+	}
+	var workbook bytes.Buffer
+	if err := f.Write(&workbook); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	excelOrders, _, _, err := parseShopeeExcel(bytes.NewReader(workbook.Bytes()))
+	if err != nil || len(excelOrders) != 1 {
+		t.Fatalf("parse excel: orders=%d err=%v", len(excelOrders), err)
+	}
+
+	h := &ShopeeImportHandler{}
+	apiOrders, _ := h.shopeeAPIOrdersToPreviewWithIncome([]shopeeapi.OrderDetail{{
+		OrderSN: "SAME-1", OrderStatus: "READY_TO_SHIP", TotalAmount: 230,
+		ItemList: []shopeeapi.OrderItem{{ItemID: 1, ItemName: "สินค้า", ModelQuantityPurchased: 1, ModelOriginalPrice: 300, ModelDiscountedPrice: 266}},
+	}}, map[string]shopeeapi.EscrowOrderIncome{"SAME-1": {BuyerPaidShippingFee: 18}}, nil)
+	if len(apiOrders) != 1 {
+		t.Fatalf("api orders=%d", len(apiOrders))
+	}
+	want, got := excelOrders[0], apiOrders[0]
+	if centsFromMoney(got.ItemGrossAmount) != centsFromMoney(want.ItemGrossAmount) ||
+		centsFromMoney(got.DiscountAmount) != centsFromMoney(want.DiscountAmount) ||
+		centsFromMoney(got.NetProductAmount) != centsFromMoney(want.NetProductAmount) ||
+		centsFromMoney(got.ShippingAmount) != centsFromMoney(want.ShippingAmount) ||
+		centsFromMoney(got.PaidAmount) != centsFromMoney(want.PaidAmount) {
+		t.Fatalf("excel=%+v api=%+v", want, got)
 	}
 }
 

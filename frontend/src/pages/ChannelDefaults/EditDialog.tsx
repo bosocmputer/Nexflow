@@ -203,6 +203,19 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const isPurchase = row.bill_type === 'purchase'
   const isSettlement = row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt'
   const isShopeePurchase = row.channel === 'shopee_shipped' && row.bill_type === 'purchase'
+  const isMarketplaceSaleShipping =
+    row.bill_type === 'sale' && (
+      row.channel === 'shopee' ||
+      row.channel === 'shopee_realtime' ||
+      row.channel === 'lazada' ||
+      row.channel === 'tiktok'
+    )
+  const supportsShippingItem = isShopeePurchase || isMarketplaceSaleShipping
+  const shippingChannelLabel = row.channel === 'lazada'
+    ? 'Lazada'
+    : row.channel === 'tiktok'
+      ? 'TikTok'
+      : 'Shopee'
   const showPartyPicker =
     (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') ||
     (row.channel === 'shopee' && row.bill_type === 'sale') ||
@@ -244,8 +257,11 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
       return 'เลือกรูปแบบเอกสารที่มีเลขรันให้ครบก่อน'
     }
     if (!isSettlement && docWarning) return docWarning
-    if (isShopeePurchase && shippingEnabled && !shippingItemCodeTrimmed) {
+    if (supportsShippingItem && shippingEnabled && !shippingItemCodeTrimmed) {
       return 'เลือกสินค้า SML สำหรับค่าขนส่งก่อนเปิดใช้งาน'
+    }
+    if (supportsShippingItem && shippingEnabled && !shippingItemUnitCodeTrimmed) {
+      return 'เลือกหน่วย SML สำหรับค่าขนส่งก่อนเปิดใช้งาน'
     }
     return ''
   })()
@@ -278,7 +294,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
       toast.error('แก้รูปแบบเลขเอกสารตามคำเตือนก่อนบันทึก')
       return
     }
-    if (isShopeePurchase && shippingEnabled && !shippingItemCodeTrimmed) {
+    if (supportsShippingItem && shippingEnabled && (!shippingItemCodeTrimmed || !shippingItemUnitCodeTrimmed)) {
       toast.error('กรุณาเลือกสินค้า SML สำหรับค่าขนส่งก่อนเปิดใช้งาน')
       return
     }
@@ -300,9 +316,9 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
         sale_code: isSettlement ? '' : saleCodeTrimmed,
         unit_code: '',
         doc_time: '',
-        shipping_item_enabled: isShopeePurchase ? shippingEnabled : false,
-        shipping_item_code: isShopeePurchase ? shippingItemCodeTrimmed : '',
-        shipping_item_unit_code: isShopeePurchase ? shippingItemUnitCodeTrimmed : '',
+        shipping_item_enabled: supportsShippingItem ? shippingEnabled : false,
+        shipping_item_code: supportsShippingItem ? shippingItemCodeTrimmed : '',
+        shipping_item_unit_code: supportsShippingItem ? shippingItemUnitCodeTrimmed : '',
         passbook_code: isSettlement ? passbookCodeTrimmed : '',
         passbook_name: isSettlement ? (selectedPassbook?.name_1 ?? row.passbook_name ?? '') : '',
         bank_code: isSettlement ? (selectedPassbook?.bank_code ?? row.bank_code ?? '') : '',
@@ -690,16 +706,17 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             </div>
             )}
 
-            {isShopeePurchase && (
+            {supportsShippingItem && (
               <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      ค่าขนส่งจาก Shopee
+                      ค่าจัดส่งจาก {shippingChannelLabel}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      ถ้าเปิดใช้ ระบบจะเพิ่มค่าส่งจากเมล Shopee เป็นรายการสินค้าในบิลซื้อใหม่.
-                      ถ้าปิดไว้ จะไม่เพิ่มรายการค่าส่งใด ๆ
+                      {isShopeePurchase
+                        ? 'ถ้าเปิดใช้ ระบบจะเพิ่มค่าส่งจากเมล Shopee เป็นรายการสินค้าในบิลซื้อใหม่'
+                        : `ถ้าไฟล์ ${shippingChannelLabel} มีค่าส่งสุทธิ ระบบจะสร้างเป็นรายการบริการ SML แยกจากสินค้า`}
                     </p>
                   </div>
                   <Switch
@@ -781,14 +798,14 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
         </DialogContent>
       </Dialog>
 
-      {isShopeePurchase && (
+      {supportsShippingItem && (
         <MapItemModal
           open={open && shippingPickerOpen}
-          rawName="ค่าขนส่งสินค้า"
+          rawName={`ค่าจัดส่ง ${shippingChannelLabel}`}
           currentCode={shippingItemCode}
           currentUnit={shippingItemUnitCode}
           currentPrice={0}
-          rawNameLabel="รายการค่าส่งจาก Shopee"
+          rawNameLabel={`รายการค่าจัดส่งจาก ${shippingChannelLabel}`}
           onPick={handleShippingPick}
           onClose={() => setShippingPickerOpen(false)}
         />

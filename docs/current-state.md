@@ -270,6 +270,17 @@ implementation notes; do not configure an inbox in the current release.
 - **Production marketplace route** — Shopee Realtime, Lazada, and TikTok current
   production sale data is primarily `saleinvoice`; legacy Shopee import may still
   create `saleorder` documents through its own `channel_defaults` route.
+- **Marketplace sale amounts** — Shopee Excel/API/Realtime, Lazada, and TikTok
+  persist the full product amount in `bill_items.gross_amount`, the marketplace
+  and seller discount in `bill_items.discount_amount`, and buyer-paid shipping as
+  a separate configured SML item. Shopee API/Realtime use only
+  `buyer_paid_shipping_fee` from escrow; actual or estimated carrier fees are not
+  sale revenue. Confirmation reparses the server-owned source artifact/token and
+  never trusts amounts or channel routing returned by the browser.
+- **Shipping item readiness** — configure a distinct active SML item and unit in
+  `channel_defaults` for Shopee import, Shopee Realtime, Lazada, and TikTok before
+  importing an order with positive buyer-paid shipping. Missing configuration
+  blocks only affected orders rather than omitting shipping silently.
 - **legacy dev/ngrok** — `192.168.2.109` and ngrok are retired for production; do not deploy or configure callbacks there.
 - **IMAP** — runtime and APIs are disabled in sales-only mode; retained tables are historical only.
 - **LINE chat** — disabled (`VITE_ENABLE_CHAT=false`). Backend code is present but UI is hidden.

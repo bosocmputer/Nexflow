@@ -222,7 +222,14 @@ export function BillItemRow({
 
   const matchInfo = useMatchInfo(item)
   const needsConfirm = Boolean(item.item_code && item.mapped !== true)
-  const isShopeeShippingLine = item.source_sku === '__shopee_shipping__'
+  const shippingPlatform = item.source_sku === '__shopee_shipping__'
+    ? 'Shopee'
+    : item.source_sku === '__lazada_shipping__'
+      ? 'Lazada'
+      : item.source_sku === '__tiktok_shipping__'
+        ? 'TikTok'
+        : ''
+  const isMarketplaceShippingLine = Boolean(shippingPlatform)
   const editMatchInfo =
     pickedMatch && pickedMatch.item_code === draft.item_code
       ? {
@@ -235,7 +242,7 @@ export function BillItemRow({
   const netAmount = Math.max(grossAmount - discountAmount, 0)
   const canExplainDiscount =
     Boolean(discountInfo) &&
-    !isShopeeShippingLine &&
+    !isMarketplaceShippingLine &&
     discountAmount > 0 &&
     grossAmount > 0 &&
     (discountInfo?.grossTotal ?? 0) > 0
@@ -267,13 +274,13 @@ export function BillItemRow({
             <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2 break-words text-sm leading-6 text-foreground">
               <span>{item.raw_name}</span>
-              {isShopeeShippingLine && (
+              {isMarketplaceShippingLine && (
                 <span className="inline-flex rounded-md border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info">
-                  ค่าส่งจาก Shopee
+                  ค่าส่งจาก {shippingPlatform}
                 </span>
               )}
             </div>
-            {item.source_sku && !isShopeeShippingLine && (
+            {item.source_sku && !isMarketplaceShippingLine && (
               <div className="mt-1 text-[11px] text-muted-foreground">
                 SKU ต้นทาง: <code className="font-mono">{item.source_sku}</code>
                 {!item.item_code && <span className="text-warning"> · ยังไม่พบในสินค้า SML</span>}

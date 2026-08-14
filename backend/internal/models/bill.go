@@ -129,6 +129,7 @@ type BillItem struct {
 }
 
 const ShopeeShippingSourceSKU = "__shopee_shipping__"
+const LazadaShippingSourceSKU = "__lazada_shipping__"
 const TikTokShippingSourceSKU = "__tiktok_shipping__"
 
 type BillListFilter struct {

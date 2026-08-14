@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	"github.com/xuri/excelize/v2"
 	"go.uber.org/zap"
 
@@ -24,6 +26,29 @@ import (
 	"nexflow/internal/services/artifact"
 	"nexflow/internal/services/catalog"
 )
+
+const (
+	lazadaMaxFileBytes = 20 * 1024 * 1024
+	lazadaMaxRows      = 50_000
+	lazadaMaxOrders    = 5_000
+	lazadaPreviewTTL   = 15 * time.Minute
+)
+
+type lazadaPendingPreview struct {
+	bytes       []byte
+	artifactID  string
+	filename    string
+	fileHash    string
+	importRunID string
+	userID      string
+	uploadedAt  time.Time
+}
+
+type lazadaConfirmRequest struct {
+	PreviewToken string   `json:"preview_token"`
+	ImportRunID  string   `json:"import_run_id"`
+	OrderIDs     []string `json:"order_ids"`
+}
 
 // LazadaImportHandler mirrors the Shopee Excel import flow: preview first,
 // then create local sale bills for manual review and SML retry.
@@ -78,7 +103,7 @@ func (h *LazadaImportHandler) gcPendingUploads() {
 	for range ticker.C {
 		now := time.Now()
 		h.pendingUploads.Range(func(key, val any) bool {
-			if pu, ok := val.(*pendingUpload); ok && now.Sub(pu.uploadedAt) > pendingUploadTTL {
+			if pu, ok := val.(*lazadaPendingPreview); ok && now.Sub(pu.uploadedAt) > lazadaPreviewTTL {
 				h.pendingUploads.Delete(key)
 			}
 			return true
@@ -87,6 +112,16 @@ func (h *LazadaImportHandler) gcPendingUploads() {
 }
 
 func (h *LazadaImportHandler) GetConfig(c *gin.Context) {
+	config := h.currentSaleConfig()
+	// Import confirmation reloads channel_defaults server-side. The browser
+	// receives only fields required to describe the SML destination.
+	c.JSON(http.StatusOK, gin.H{
+		"endpoint":        config.Endpoint,
+		"doc_format_code": config.DocFormat,
+	})
+}
+
+func (h *LazadaImportHandler) currentSaleConfig() ShopeeConfigRequest {
 	custCode := ""
 	whCode := h.cfg.ShopeeSMLWHCode
 	shelfCode := h.cfg.ShopeeSMLShelfCode
@@ -117,7 +152,7 @@ func (h *LazadaImportHandler) GetConfig(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusOK, ShopeeConfigRequest{
+	return ShopeeConfigRequest{
 		ServerURL:  h.cfg.ShopeeSMLURL,
 		GUID:       h.cfg.ShopeeSMLGUID,
 		Provider:   h.cfg.ShopeeSMLProvider,
@@ -134,7 +169,7 @@ func (h *LazadaImportHandler) GetConfig(c *gin.Context) {
 		VATType:    vatType,
 		VATRate:    vatRate,
 		DocTime:    h.cfg.ShopeeSMLDocTime,
-	})
+	}
 }
 
 func (h *LazadaImportHandler) ListRuns(c *gin.Context) {
@@ -193,15 +228,23 @@ func (h *LazadaImportHandler) Preview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "รองรับเฉพาะไฟล์ .xlsx เท่านั้น"})
 		return
 	}
+	if fileHeader.Size > lazadaMaxFileBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "ไฟล์เกิน 20 MB กรุณาแบ่งไฟล์แล้วนำเข้าใหม่"})
+		return
+	}
 	file, err := fileHeader.Open()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "เปิดไฟล์ไม่ได้"})
 		return
 	}
 	defer file.Close()
-	rawBytes, err := io.ReadAll(file)
+	rawBytes, err := io.ReadAll(io.LimitReader(file, lazadaMaxFileBytes+1))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่านไฟล์ไม่ได้"})
+		return
+	}
+	if len(rawBytes) > lazadaMaxFileBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "ไฟล์เกิน 20 MB กรุณาแบ่งไฟล์แล้วนำเข้าใหม่"})
 		return
 	}
 
@@ -210,26 +253,67 @@ func (h *LazadaImportHandler) Preview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	var fileToken string
-	if h.artifactSvc != nil {
-		sum := sha256.Sum256(rawBytes)
-		fileToken = hex.EncodeToString(sum[:])
-		h.pendingUploads.Store(fileToken, &pendingUpload{
-			bytes:      rawBytes,
-			filename:   fileHeader.Filename,
-			uploadedAt: time.Now(),
-		})
+	if len(orders) > lazadaMaxOrders {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "ไฟล์มีเกิน 5,000 orders กรุณาแบ่งไฟล์แล้วนำเข้าใหม่"})
+		return
+	}
+	var channelDefault *models.ChannelDefault
+	if h.channelDefaults != nil {
+		channelDefault, _ = h.channelDefaults.Get("lazada", "sale")
+	}
+	applyLazadaShippingPreflight(orders, channelDefault)
+	sum := sha256.Sum256(rawBytes)
+	fileHash := hex.EncodeToString(sum[:])
+	orderIDs := make([]string, 0, len(orders))
+	for i := range orders {
+		orderIDs = append(orderIDs, orders[i].OrderID)
+	}
+	existingBills, err := h.findLazadaOrderBills(orderIDs)
+	if err != nil {
+		h.logger.Error("lazada_import: duplicate preflight failed", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ตรวจสอบ Order ซ้ำไม่สำเร็จ กรุณาลองใหม่"})
+		return
 	}
 	dupCount := 0
 	for i := range orders {
-		if billID, exists, _ := h.findLazadaOrderBillID(orders[i].OrderID); exists {
+		if billID, exists := existingBills[orders[i].OrderID]; exists {
 			orders[i].Duplicate = true
 			orders[i].ExistingBillID = billID
 			dupCount++
 		}
 	}
 	preflight := buildShopeePreflight(orders, skippedCount, dupCount)
-	importRunID := h.createLazadaImportRun(c, fileHeader.Filename, fileToken, orders, warnings, preflight)
+	importRunID := h.createLazadaImportRun(c, fileHeader.Filename, fileHash, orders, warnings, preflight)
+	if importRunID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้างรอบนำเข้าไม่สำเร็จ กรุณาลองใหม่"})
+		return
+	}
+	previewToken, err := randomMarketplacePreviewToken()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้าง preview token ไม่สำเร็จ"})
+		return
+	}
+	artifactID := ""
+	if h.artifactSvc != nil {
+		saved, saveErr := h.artifactSvc.SaveForImportRun(importRunID, "xlsx", fileHeader.Filename,
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", rawBytes,
+			map[string]interface{}{"source": "lazada", "file_sha256": fileHash})
+		if saveErr != nil {
+			h.finishLazadaImportRun(importRunID, 0, 1, "failed")
+			h.logger.Error("lazada_import: persist source artifact", zap.String("import_run_id", importRunID), zap.Error(saveErr))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "เก็บไฟล์ต้นฉบับไม่สำเร็จ กรุณาลองใหม่"})
+			return
+		}
+		artifactID = saved.ID
+	}
+	pendingBytes := rawBytes
+	if artifactID != "" {
+		pendingBytes = nil
+	}
+	h.pendingUploads.Store(previewToken, &lazadaPendingPreview{
+		bytes: pendingBytes, artifactID: artifactID, filename: fileHeader.Filename, fileHash: fileHash,
+		importRunID: importRunID, userID: c.GetString("user_id"), uploadedAt: time.Now(),
+	})
 
 	if h.auditRepo != nil {
 		var userID *string
@@ -261,7 +345,7 @@ func (h *LazadaImportHandler) Preview(c *gin.Context) {
 		SkippedCount:   skippedCount,
 		ImportRunID:    importRunID,
 		Preflight:      preflight,
-		FileToken:      fileToken,
+		PreviewToken:   previewToken,
 	})
 }
 
@@ -269,19 +353,96 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 	if blockIfCatalogNotReady(c, h.catalogRepo) {
 		return
 	}
-	var req ConfirmRequest
+	var req lazadaConfirmRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "request ไม่ถูกต้อง: " + err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request ไม่ถูกต้อง", "code": "invalid_request"})
+		return
+	}
+	if strings.TrimSpace(req.PreviewToken) == "" || strings.TrimSpace(req.ImportRunID) == "" {
+		writeMarketplacePreviewExpired(c)
+		return
+	}
+	pending, ok := h.consumeLazadaPreview(req.PreviewToken, req.ImportRunID, c.GetString("user_id"), time.Now())
+	if !ok {
+		writeMarketplacePreviewExpired(c)
+		return
+	}
+	sourceBytes := pending.bytes
+	if pending.artifactID != "" {
+		if h.artifactSvc == nil {
+			writeMarketplacePreviewExpired(c)
+			return
+		}
+		var readErr error
+		sourceBytes, _, readErr = h.artifactSvc.ReadForImportRun(pending.importRunID, pending.artifactID)
+		if readErr != nil {
+			h.logger.Warn("lazada_import: read source artifact", zap.String("import_run_id", pending.importRunID), zap.Error(readErr))
+			writeMarketplacePreviewExpired(c)
+			return
+		}
+	}
+	sum := sha256.Sum256(sourceBytes)
+	if hex.EncodeToString(sum[:]) != pending.fileHash {
+		c.JSON(http.StatusConflict, gin.H{"error": "ไฟล์ preview ถูกเปลี่ยน กรุณาอัปโหลดใหม่", "code": "preview_tampered"})
+		return
+	}
+	orders, _, _, err := parseLazadaExcel(bytes.NewReader(sourceBytes))
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "อ่านไฟล์ต้นฉบับซ้ำไม่สำเร็จ กรุณาอัปโหลดใหม่", "code": "preview_expired"})
 		return
 	}
 	selectedSet := make(map[string]bool, len(req.OrderIDs))
-	for _, id := range req.OrderIDs {
-		selectedSet[id] = true
+	for _, rawID := range req.OrderIDs {
+		id := strings.TrimSpace(rawID)
+		if id != "" {
+			selectedSet[id] = true
+		}
 	}
-	documentRoute := shopeeImportRoute(req.Config)
-	destinationName := shopeeImportDocumentName(req.Config)
-	reviewPath := shopeeImportReviewPath(req.Config)
-	defaultUnit := req.Config.UnitCode
+	if len(selectedSet) == 0 || len(selectedSet) > lazadaMaxOrders {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาเลือก order 1–5,000 รายการ", "code": "invalid_order_selection"})
+		return
+	}
+	orderByID := make(map[string]ShopeeOrder, len(orders))
+	for _, order := range orders {
+		orderByID[order.OrderID] = order
+	}
+	selectedOrders := make([]ShopeeOrder, 0, len(selectedSet))
+	for id := range selectedSet {
+		order, exists := orderByID[id]
+		if !exists {
+			c.JSON(http.StatusConflict, gin.H{"error": "รายการที่เลือกไม่อยู่ในไฟล์ต้นฉบับ กรุณาอัปโหลดใหม่", "code": "preview_tampered"})
+			return
+		}
+		if order.BlockedReason != "" {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": order.BlockedReason, "code": "order_blocked", "order_id": id})
+			return
+		}
+		selectedOrders = append(selectedOrders, order)
+	}
+	sort.Slice(selectedOrders, func(i, j int) bool { return selectedOrders[i].OrderID < selectedOrders[j].OrderID })
+	selectedIDs := make([]string, 0, len(selectedOrders))
+	for i := range selectedOrders {
+		selectedIDs = append(selectedIDs, selectedOrders[i].OrderID)
+	}
+	existingBills, err := h.findLazadaOrderBills(selectedIDs)
+	if err != nil {
+		h.logger.Error("lazada_import: confirm duplicate check failed", zap.Error(err))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ตรวจสอบ Order ซ้ำไม่สำเร็จ กรุณาอัปโหลดใหม่", "code": "duplicate_check_failed"})
+		return
+	}
+	config := h.currentSaleConfig()
+	var def *models.ChannelDefault
+	if h.channelDefaults != nil {
+		def, _ = h.channelDefaults.Get("lazada", "sale")
+	}
+	if err := validateLazadaShippingConfig(selectedOrders, def); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error(), "code": "shipping_item_not_configured"})
+		return
+	}
+	documentRoute := shopeeImportRoute(config)
+	destinationName := shopeeImportDocumentName(config)
+	reviewPath := shopeeImportReviewPath(config)
+	defaultUnit := config.UnitCode
 
 	var userID *string
 	if uid := c.GetString("user_id"); uid != "" {
@@ -291,7 +452,7 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 	confirmStart := time.Now()
 
 	resolutionBatch, err := prepareMarketplaceResolution(
-		c.Request.Context(), "lazada", req.Orders, selectedSet,
+		c.Request.Context(), "lazada", selectedOrders, selectedSet,
 		h.catalogRepo, h.catalogSvc, h.aliasRepo, h.mappingRepo, h.logger,
 	)
 	if err != nil {
@@ -301,23 +462,9 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 	}
 	defer flushMarketplaceResolutionUsage(resolutionBatch, h.aliasRepo, h.logger)
 
-	var uploadBytes []byte
-	var uploadFilename string
-	if h.artifactSvc != nil && req.FileToken != "" {
-		if v, ok := h.pendingUploads.LoadAndDelete(req.FileToken); ok {
-			if pu, ok := v.(*pendingUpload); ok {
-				uploadBytes = pu.bytes
-				uploadFilename = pu.filename
-			}
-		}
-	}
-
 	results := []ConfirmResult{}
-	for _, order := range req.Orders {
-		if !selectedSet[order.OrderID] {
-			continue
-		}
-		if billID, exists, _ := h.findLazadaOrderBillID(order.OrderID); exists {
+	for _, order := range selectedOrders {
+		if billID, exists := existingBills[order.OrderID]; exists {
 			results = append(results, ConfirmResult{
 				OrderID: order.OrderID,
 				Success: false,
@@ -327,9 +474,8 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 			continue
 		}
 
-		type itemEnriched struct{ item models.BillItem }
-		var enriched []itemEnriched
-		allHigh := true
+		items := make([]models.BillItem, 0, len(order.Items)+1)
+		allMapped := true
 		orderItemIDs := []string{}
 
 		for _, it := range order.Items {
@@ -344,48 +490,68 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 			}
 			bi, mapped, resolveErr := marketplaceBillItemFromResolution("lazada", "default", it, defaultUnit, resolved, resolutionBatch, h.aliasRepo, confirmedBy)
 			if resolveErr != nil {
-				h.logger.Warn("lazada_import: save product master failed", zap.Error(resolveErr))
-				allHigh = false
+				h.logger.Warn("lazada_import: save product master failed", zap.String("order_id", order.OrderID), zap.Error(resolveErr))
+				mapped = false
 			}
 			exactSKU := normalizeMarketplaceSKU(it.SKU) != "" && resolutionBatch.catalogLookup(it.SKU) != nil
 			if mapped {
 				recordMarketplaceResolutionUsage(resolutionBatch, resolved, exactSKU)
 			}
 			if !mapped {
-				allHigh = false
+				allMapped = false
 			}
-			enriched = append(enriched, itemEnriched{item: bi})
+			items = append(items, bi)
+		}
+		if order.ShippingAmount > 0 && def != nil {
+			shippingGross := order.ShippingAmount
+			shippingPrice := order.ShippingAmount
+			shippingCode := strings.TrimSpace(def.ShippingItemCode)
+			shippingUnit := strings.TrimSpace(def.ShippingItemUnitCode)
+			items = append(items, models.BillItem{
+				RawName: "ค่าจัดส่ง Lazada", SourceSKU: models.LazadaShippingSourceSKU,
+				ItemCode: &shippingCode, UnitCode: &shippingUnit, Qty: 1, Price: &shippingPrice,
+				GrossAmount: &shippingGross, Mapped: true,
+			})
 		}
 
 		status := "pending"
-		if !allHigh {
+		if !allMapped || order.AmountMismatch {
 			status = "needs_review"
 		}
+		fingerprint := tikTokAmountFingerprint(items)
 		rawData, _ := json.Marshal(map[string]interface{}{
-			"flow":               "lazada_excel",
-			"lazada_order_id":    order.OrderID,
-			"order_id":           order.OrderID,
-			"doc_date":           order.DocDate,
-			"order_datetime":     order.OrderDateTime,
-			"payment_channel":    order.PaymentChannel,
-			"customer_name":      order.BuyerUsername,
-			"tracking_no":        order.TrackingNo,
-			"status":             order.Status,
-			"item_count":         order.ItemCount,
-			"total_qty":          order.TotalQty,
-			"paid_total_amount":  order.PaidAmount,
-			"order_total_amount": order.OrderTotalAmount,
-			"item_gross_amount":  order.ItemGrossAmount,
-			"line_paid_amount":   order.LinePaidAmount,
-			"shipping_amount":    order.ShippingAmount,
-			"discount_amount":    order.DiscountAmount,
-			"has_no_sku":         order.HasNoSKU,
-			"no_sku_item_count":  order.NoSKUItemCount,
-			"multi_line":         order.MultiLine,
-			"order_item_ids":     orderItemIDs,
-			"import_run_id":      req.ImportRunID,
-			"document_route":     documentRoute,
-			"sml_destination":    destinationName,
+			"flow":                      "lazada_excel",
+			"lazada_order_id":           order.OrderID,
+			"order_id":                  order.OrderID,
+			"doc_date":                  order.DocDate,
+			"order_datetime":            order.OrderDateTime,
+			"payment_channel":           order.PaymentChannel,
+			"customer_name":             order.BuyerUsername,
+			"tracking_no":               order.TrackingNo,
+			"status":                    order.Status,
+			"item_count":                order.ItemCount,
+			"total_qty":                 order.TotalQty,
+			"paid_total_amount":         order.PaidAmount,
+			"order_total_amount":        order.OrderTotalAmount,
+			"item_gross_amount":         order.ItemGrossAmount,
+			"platform_discount_amount":  order.PlatformDiscountAmount,
+			"seller_discount_amount":    order.SellerDiscountAmount,
+			"line_paid_amount":          order.LinePaidAmount,
+			"shipping_amount":           order.ShippingAmount,
+			"discount_amount":           order.DiscountAmount,
+			"net_product_amount":        order.NetProductAmount,
+			"payment_discount_amount":   order.PaymentDiscountAmount,
+			"amount_difference":         order.AmountDifference,
+			"amount_review_required":    order.AmountMismatch,
+			"amount_review_reason":      order.AmountReviewReason,
+			"amount_source_fingerprint": fingerprint,
+			"has_no_sku":                order.HasNoSKU,
+			"no_sku_item_count":         order.NoSKUItemCount,
+			"multi_line":                order.MultiLine,
+			"order_item_ids":            orderItemIDs,
+			"import_run_id":             req.ImportRunID,
+			"document_route":            documentRoute,
+			"sml_destination":           destinationName,
 		})
 		bill := &models.Bill{
 			BillType:         "sale",
@@ -400,7 +566,16 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 		if userID != nil {
 			bill.CreatedBy = userID
 		}
-		if err := h.billRepo.Create(bill); err != nil {
+		durMs := int(time.Since(confirmStart).Milliseconds())
+		audit := models.AuditEntry{
+			Action: "bill_created", UserID: userID, Source: "lazada", Level: "info",
+			TraceID: traceID, DurationMs: &durMs,
+			Detail: map[string]interface{}{
+				"order_id": order.OrderID, "items_count": len(items), "status": status,
+				"amount_mismatch": order.AmountMismatch, "flow": "lazada_excel",
+			},
+		}
+		if err := h.billRepo.CreateWithItemsAndAudit(bill, items, audit); err != nil {
 			if isDuplicateMarketplaceBillError(err) {
 				billID, _, _ := h.findLazadaOrderBillID(order.OrderID)
 				results = append(results, ConfirmResult{
@@ -411,53 +586,9 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 				})
 				continue
 			}
-			h.logger.Error("lazada_excel: create bill", zap.String("order_id", order.OrderID), zap.Error(err))
-			results = append(results, ConfirmResult{OrderID: order.OrderID, Success: false, Message: "บันทึก bill ล้มเหลว: " + err.Error()})
+			h.logger.Error("lazada_excel: atomic bill creation failed", zap.String("order_id", order.OrderID), zap.Error(err))
+			results = append(results, ConfirmResult{OrderID: order.OrderID, Success: false, Message: "บันทึก bill และรายการสินค้าไม่สำเร็จ"})
 			continue
-		}
-		for i := range enriched {
-			enriched[i].item.BillID = bill.ID
-			_ = h.billRepo.InsertItemWithCandidates(&enriched[i].item, []byte("[]"))
-		}
-		if h.artifactSvc != nil && uploadBytes != nil {
-			meta := map[string]interface{}{"order_id": order.OrderID, "uploaded_by": "", "trace_id": traceID}
-			if userID != nil {
-				meta["uploaded_by"] = *userID
-			}
-			filename := uploadFilename
-			if filename == "" {
-				filename = "lazada-import.xlsx"
-			}
-			if _, err := h.artifactSvc.Save(
-				bill.ID,
-				"xlsx",
-				filename,
-				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-				uploadBytes,
-				meta,
-			); err != nil {
-				h.logger.Warn("lazada_excel: save artifact failed", zap.String("bill_id", bill.ID), zap.Error(err))
-			}
-		}
-		if h.auditRepo != nil {
-			billIDStr := bill.ID
-			durMs := int(time.Since(confirmStart).Milliseconds())
-			_ = h.auditRepo.Log(models.AuditEntry{
-				Action:     "bill_created",
-				TargetID:   &billIDStr,
-				UserID:     userID,
-				Source:     "lazada",
-				Level:      "info",
-				TraceID:    traceID,
-				DurationMs: &durMs,
-				Detail: map[string]interface{}{
-					"order_id":      order.OrderID,
-					"items_count":   len(enriched),
-					"all_high_conf": allHigh,
-					"status":        status,
-					"flow":          "lazada_excel",
-				},
-			})
 		}
 		results = append(results, ConfirmResult{
 			OrderID: order.OrderID,
@@ -499,23 +630,85 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 	})
 }
 
+func (h *LazadaImportHandler) consumeLazadaPreview(token, importRunID, userID string, now time.Time) (*lazadaPendingPreview, bool) {
+	loaded, ok := h.pendingUploads.LoadAndDelete(strings.TrimSpace(token))
+	if !ok {
+		return nil, false
+	}
+	pending, ok := loaded.(*lazadaPendingPreview)
+	if !ok || pending.importRunID != strings.TrimSpace(importRunID) || pending.userID != userID ||
+		now.Sub(pending.uploadedAt) > lazadaPreviewTTL || now.Before(pending.uploadedAt) {
+		return nil, false
+	}
+	return pending, true
+}
+
+func randomMarketplacePreviewToken() (string, error) { return randomTikTokPreviewToken() }
+
+func writeMarketplacePreviewExpired(c *gin.Context) { writeTikTokPreviewExpired(c) }
+
+func validateLazadaShippingConfig(orders []ShopeeOrder, def *models.ChannelDefault) error {
+	requiresShippingItem := false
+	for _, order := range orders {
+		if order.ShippingAmount > 0 {
+			requiresShippingItem = true
+			break
+		}
+	}
+	if !requiresShippingItem {
+		return nil
+	}
+	if def == nil || !def.ShippingItemEnabled || strings.TrimSpace(def.ShippingItemCode) == "" || strings.TrimSpace(def.ShippingItemUnitCode) == "" {
+		return fmt.Errorf("ไฟล์มีค่าส่งที่ลูกค้าจ่าย กรุณาตั้งสินค้า SML สำหรับค่าจัดส่ง Lazada ที่เมนูเส้นทางเอกสารก่อน")
+	}
+	return nil
+}
+
+func applyLazadaShippingPreflight(orders []ShopeeOrder, def *models.ChannelDefault) {
+	if validateLazadaShippingConfig(orders, def) == nil {
+		return
+	}
+	for i := range orders {
+		if orders[i].ShippingAmount > 0 && orders[i].BlockedReason == "" {
+			orders[i].BlockedReason = "ยังไม่ได้ตั้งสินค้า SML สำหรับค่าจัดส่ง Lazada"
+		}
+	}
+}
+
+func marketplaceMoneyCents(row []string, colIdx map[string]int, key string) (int64, error) {
+	raw := strings.ReplaceAll(optionalCell(row, colIdx, key), ",", "")
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := parseDecimalCents(raw)
+	if err != nil {
+		return 0, fmt.Errorf("ยอด %s ไม่ใช่ตัวเลข", key)
+	}
+	return value, nil
+}
+
 var lazadaColCandidates = map[string][]string{
-	"order_id":        {"orderNumber"},
-	"order_item_id":   {"orderItemId"},
-	"status":          {"status"},
-	"seller_sku":      {"sellerSku"},
-	"lazada_sku":      {"lazadaSku"},
-	"order_date":      {"createTime"},
-	"update_time":     {"updateTime"},
-	"delivered_date":  {"deliveredDate"},
-	"customer_name":   {"customerName", "shippingName"},
-	"payment_channel": {"payMethod"},
-	"tracking_no":     {"trackingCode"},
-	"product_name":    {"itemName"},
-	"option_name":     {"variation"},
-	"paid_price":      {"paidPrice"},
-	"unit_price":      {"unitPrice"},
-	"shipping_amount": {"shippingFee"},
+	"order_id":          {"orderNumber"},
+	"order_item_id":     {"orderItemId"},
+	"lazada_id":         {"lazadaId"},
+	"status":            {"status"},
+	"seller_sku":        {"sellerSku"},
+	"lazada_sku":        {"lazadaSku"},
+	"order_date":        {"createTime"},
+	"update_time":       {"updateTime"},
+	"delivered_date":    {"deliveredDate"},
+	"customer_name":     {"customerName", "shippingName"},
+	"payment_channel":   {"payMethod"},
+	"tracking_no":       {"trackingCode"},
+	"product_name":      {"itemName"},
+	"option_name":       {"variation"},
+	"paid_price":        {"paidPrice"},
+	"unit_price":        {"unitPrice"},
+	"seller_discount":   {"sellerDiscountTotal"},
+	"platform_discount": {"platformDiscountTotal"},
+	"shipping_amount":   {"shippingFee"},
+	"wallet_credit":     {"walletCredit"},
+	"bundle_discount":   {"bundleDiscount"},
 }
 
 var lazadaAllowedStatuses = map[string]bool{
@@ -564,7 +757,11 @@ foundHeader:
 			}
 		}
 	}
-	required := []string{"order_id", "order_item_id", "status", "order_date", "product_name", "paid_price"}
+	required := []string{
+		"order_id", "order_item_id", "status", "order_date", "product_name",
+		"paid_price", "unit_price", "shipping_amount", "seller_discount",
+		"platform_discount", "wallet_credit", "bundle_discount",
+	}
 	for _, f := range required {
 		if _, ok := colIdx[f]; !ok {
 			return nil, nil, 0, fmt.Errorf("ไม่พบ column '%s' ในไฟล์ Lazada — columns ที่พบ: %s",
@@ -572,6 +769,9 @@ foundHeader:
 		}
 	}
 
+	if len(rows)-headerRowIdx-1 > lazadaMaxRows {
+		return nil, nil, 0, fmt.Errorf("ไฟล์มีเกิน %d แถว กรุณาแบ่งไฟล์แล้วนำเข้าใหม่", lazadaMaxRows)
+	}
 	warnings := []string{}
 	orderMap := map[string]*ShopeeOrder{}
 	itemMap := map[string]map[string]int{}
@@ -581,7 +781,7 @@ foundHeader:
 	skippedCount := 0
 	skippedStatuses := map[string]int{}
 
-	for _, row := range rows[headerRowIdx+1:] {
+	for rowOffset, row := range rows[headerRowIdx+1:] {
 		if len(row) == 0 {
 			continue
 		}
@@ -613,6 +813,10 @@ foundHeader:
 			}
 			itemMap[orderID] = map[string]int{}
 			orderKeys = append(orderKeys, orderID)
+		} else if existing := orderMap[orderID]; existing.Status != status ||
+			existing.OrderDateTime != orderDateTime ||
+			existing.PaymentChannel != optionalCell(row, colIdx, "payment_channel") {
+			existing.BlockedReason = "ข้อมูลระดับ Order ซ้ำหลายแถวแต่ไม่ตรงกัน กรุณาส่งออกไฟล์ใหม่จาก Lazada"
 		}
 		productName := optionalCell(row, colIdx, "product_name")
 		optionName := optionalCell(row, colIdx, "option_name")
@@ -625,31 +829,80 @@ foundHeader:
 			orderMap[orderID].HasNoSKU = true
 			orderMap[orderID].NoSKUItemCount++
 		}
-		price := optionalCellFloat(row, colIdx, "paid_price")
-		if price <= 0 {
-			price = optionalCellFloat(row, colIdx, "unit_price")
+		grossCents, grossErr := marketplaceMoneyCents(row, colIdx, "unit_price")
+		paidCents, paidErr := marketplaceMoneyCents(row, colIdx, "paid_price")
+		shippingCents, shippingErr := marketplaceMoneyCents(row, colIdx, "shipping_amount")
+		adjustmentKeys := []string{"seller_discount", "platform_discount", "wallet_credit", "bundle_discount"}
+		discountCents := int64(0)
+		platformDiscountCents := int64(0)
+		sellerDiscountCents := int64(0)
+		adjustmentInvalid := false
+		for _, key := range adjustmentKeys {
+			value, moneyErr := marketplaceMoneyCents(row, colIdx, key)
+			if moneyErr != nil {
+				adjustmentInvalid = true
+				continue
+			}
+			// Lazada exports discounts/credits as negative adjustments. A
+			// positive value has different accounting semantics and must not be
+			// silently converted into a discount.
+			if value > 0 {
+				adjustmentInvalid = true
+				continue
+			}
+			value = -value
+			discountCents += value
+			switch key {
+			case "seller_discount":
+				sellerDiscountCents += value
+			default:
+				platformDiscountCents += value
+			}
 		}
-		key := strings.Join([]string{sku, productName, optionName, fmt.Sprintf("%.4f", price)}, "\x1f")
-		if idx, ok := itemMap[orderID][key]; ok {
-			orderMap[orderID].Items[idx].Qty++
+		order := orderMap[orderID]
+		if grossErr != nil || paidErr != nil || shippingErr != nil || adjustmentInvalid || grossCents < 0 || shippingCents < 0 || discountCents > grossCents {
+			order.BlockedReason = fmt.Sprintf("ยอดเงินแถว %d ไม่ถูกต้อง กรุณาตรวจไฟล์ Lazada", headerRowIdx+rowOffset+2)
+		}
+		expectedPaid := grossCents - discountCents + shippingCents
+		if absInt64(expectedPaid-paidCents) > 1 {
+			order.AmountMismatch = true
+			order.AmountReviewReason = fmt.Sprintf("Order %s: ยอดเต็ม %.2f - ส่วนลด %.2f + ค่าส่ง %.2f = %.2f แต่ paidPrice %.2f",
+				orderID, moneyFromCents(grossCents), moneyFromCents(discountCents), moneyFromCents(shippingCents), moneyFromCents(expectedPaid), moneyFromCents(paidCents))
+		}
+		gross := moneyFromCents(grossCents)
+		discount := moneyFromCents(discountCents)
+		item := ShopeeExcelItem{
+			SKU: sku, LazadaSKU: optionalCell(row, colIdx, "lazada_sku"),
+			OrderItemID:     optionalCell(row, colIdx, "order_item_id"),
+			SourceItemID:    optionalCell(row, colIdx, "lazada_id"),
+			SourceVariantID: optionalCell(row, colIdx, "lazada_sku"),
+			ProductName:     productName, OptionName: optionName, RawName: rawName,
+			Price: gross, GrossAmount: gross, DiscountAmount: discount,
+			PlatformDiscountAmount: moneyFromCents(platformDiscountCents),
+			SellerDiscountAmount:   moneyFromCents(sellerDiscountCents),
+			Qty:                    1, NoSKU: noSKU,
+		}
+		itemKey := strings.Join([]string{item.SKU, item.SourceVariantID, item.ProductName, item.OptionName,
+			fmt.Sprintf("%d", grossCents), fmt.Sprintf("%d", discountCents)}, "\x1f")
+		if index, exists := itemMap[orderID][itemKey]; exists {
+			existing := &order.Items[index]
+			existing.Qty++
+			existing.GrossAmount = roundFloat(existing.GrossAmount+item.GrossAmount, 2)
+			existing.DiscountAmount = roundFloat(existing.DiscountAmount+item.DiscountAmount, 2)
+			existing.PlatformDiscountAmount = roundFloat(existing.PlatformDiscountAmount+item.PlatformDiscountAmount, 2)
+			existing.SellerDiscountAmount = roundFloat(existing.SellerDiscountAmount+item.SellerDiscountAmount, 2)
 		} else {
-			itemMap[orderID][key] = len(orderMap[orderID].Items)
-			orderMap[orderID].Items = append(orderMap[orderID].Items, ShopeeExcelItem{
-				SKU:         sku,
-				LazadaSKU:   optionalCell(row, colIdx, "lazada_sku"),
-				OrderItemID: optionalCell(row, colIdx, "order_item_id"),
-				ProductName: productName,
-				OptionName:  optionName,
-				RawName:     rawName,
-				Price:       price,
-				Qty:         1,
-				NoSKU:       noSKU,
-			})
+			itemMap[orderID][itemKey] = len(order.Items)
+			order.Items = append(order.Items, item)
 		}
-		orderMap[orderID].LinePaidAmount += price
-		if v := optionalCellFloat(row, colIdx, "shipping_amount"); v > 0 {
-			orderMap[orderID].ShippingAmount += v
-		}
+		order.ItemGrossAmount += gross
+		order.DiscountAmount += discount
+		order.PlatformDiscountAmount += moneyFromCents(platformDiscountCents)
+		order.SellerDiscountAmount += moneyFromCents(sellerDiscountCents)
+		order.NetProductAmount += moneyFromCents(grossCents - discountCents)
+		order.ShippingAmount += moneyFromCents(shippingCents)
+		order.LinePaidAmount += moneyFromCents(grossCents - discountCents)
+		order.PaidAmount += moneyFromCents(paidCents)
 	}
 
 	orders := []ShopeeOrder{}
@@ -662,11 +915,19 @@ foundHeader:
 		o.ItemCount = len(o.Items)
 		for _, it := range o.Items {
 			o.TotalQty += it.Qty
-			o.ItemGrossAmount += it.Price * it.Qty
 		}
 		o.MultiLine = len(o.Items) > 1
-		o.PaidAmount = roundFloat(o.LinePaidAmount, 2)
+		o.LinePaidAmount = roundFloat(o.LinePaidAmount, 2)
+		o.PaidAmount = roundFloat(o.PaidAmount, 2)
 		o.OrderTotalAmount = o.PaidAmount
+		expected := roundFloat(o.ItemGrossAmount-o.DiscountAmount+o.ShippingAmount, 2)
+		o.AmountDifference = roundFloat(o.OrderTotalAmount-expected, 2)
+		if math.Abs(o.AmountDifference) > 0.01 {
+			o.AmountMismatch = true
+			if o.AmountReviewReason == "" {
+				o.AmountReviewReason = fmt.Sprintf("Order %s: ยอดสินค้าและค่าส่งต่างจากยอดชำระ %.2f", id, o.AmountDifference)
+			}
+		}
 		orders = append(orders, *o)
 	}
 	if noSKUItemCount > 0 {
@@ -724,6 +985,35 @@ func (h *LazadaImportHandler) findLazadaOrderBillID(orderID string) (string, boo
 		return "", false, err
 	}
 	return id, true, nil
+}
+
+func (h *LazadaImportHandler) findLazadaOrderBills(orderIDs []string) (map[string]string, error) {
+	result := make(map[string]string)
+	if len(orderIDs) == 0 {
+		return result, nil
+	}
+	rows, err := h.billRepo.DB().Query(`SELECT DISTINCT ON (order_id) order_id, id::text
+		FROM (
+			SELECT id, created_at,
+			       COALESCE(NULLIF(raw_data->>'order_id',''), NULLIF(raw_data->>'lazada_order_id',''), sml_order_id) AS order_id
+			FROM bills
+			WHERE source='lazada'
+			  AND (raw_data->>'order_id'=ANY($1) OR raw_data->>'lazada_order_id'=ANY($1) OR sml_order_id=ANY($1))
+		) matched
+		WHERE order_id IS NOT NULL
+		ORDER BY order_id, created_at DESC`, pq.Array(orderIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var orderID, billID string
+		if err := rows.Scan(&orderID, &billID); err != nil {
+			return nil, err
+		}
+		result[orderID] = billID
+	}
+	return result, rows.Err()
 }
 
 func (h *LazadaImportHandler) createLazadaImportRun(c *gin.Context, filename, fileToken string, orders []ShopeeOrder, warnings []string, preflight ShopeeImportPreflight) string {
