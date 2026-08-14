@@ -34,30 +34,21 @@ import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 
 interface TikTokConfig {
-  server_url: string
-  guid: string
-  provider: string
-  config_file_name: string
-  database_name: string
   doc_format_code: string
   endpoint?: string
-  cust_code: string
-  sale_code: string
-  branch_code: string
-  wh_code: string
-  shelf_code: string
-  unit_code: string
-  vat_type: number
-  vat_rate: number
-  doc_time: string
 }
 
 interface TikTokOrderItem {
   sku: string
+  source_variant_id?: string
   product_name: string
   option_name?: string
   raw_name: string
   price: number
+  gross_amount?: number
+  discount_amount?: number
+  platform_discount_amount?: number
+  seller_discount_amount?: number
   qty: number
   no_sku?: boolean
 }
@@ -79,6 +70,14 @@ interface TikTokOrder {
   line_paid_amount?: number
   shipping_amount?: number
   discount_amount?: number
+  platform_discount_amount?: number
+  seller_discount_amount?: number
+  net_product_amount?: number
+  taxes_amount?: number
+  payment_discount_amount?: number
+  amount_difference?: number
+  amount_review_reason?: string
+  blocked_reason?: string
   no_sku_item_count?: number
   has_no_sku?: boolean
   multi_line?: boolean
@@ -102,9 +101,9 @@ interface PreviewResponse {
   new_count: number
   duplicate_count: number
   skipped_count: number
-  import_run_id?: string
+  import_run_id: string
   preflight: ImportPreflight
-  file_token?: string
+  preview_token: string
 }
 interface ConfirmResult {
   order_id: string
@@ -220,25 +219,6 @@ export default function TikTokImport() {
   const configReady = !configLoading
   const destination = tiktokDestination(config)
 
-  const fallbackConfig: TikTokConfig = {
-    server_url: '',
-    guid: '',
-    provider: '',
-    config_file_name: '',
-    database_name: '',
-    doc_format_code: 'SR',
-    endpoint: '',
-    cust_code: '',
-    sale_code: '',
-    branch_code: '',
-    wh_code: '',
-    shelf_code: '',
-    unit_code: '',
-    vat_type: -1,
-    vat_rate: -1,
-    doc_time: '',
-  }
-
   useEffect(() => {
     let alive = true
     client
@@ -301,7 +281,7 @@ export default function TikTokImport() {
       )
       setPreview(res.data)
       setSelectedIDs(
-        new Set(res.data.orders.filter((o) => !o.duplicate).map((o) => o.order_id)),
+        new Set(res.data.orders.filter((o) => !o.duplicate && !o.blocked_reason).map((o) => o.order_id)),
       )
       setStep('preview')
     } catch (err: unknown) {
@@ -319,10 +299,8 @@ export default function TikTokImport() {
     setError('')
     try {
       const res = await client.post('/api/import/tiktok/confirm', {
-        config: config ?? fallbackConfig,
+        preview_token: preview.preview_token,
         order_ids: Array.from(selectedIDs),
-        orders: preview.orders,
-        file_token: preview.file_token,
         import_run_id: preview.import_run_id,
       }, { timeout: 120000 })
       setResults(res.data)
@@ -346,7 +324,7 @@ export default function TikTokImport() {
     })
   const toggleAll = () => {
     if (!preview) return
-    const nonDup = preview.orders.filter((o) => !o.duplicate).map((o) => o.order_id)
+    const nonDup = preview.orders.filter((o) => !o.duplicate && !o.blocked_reason).map((o) => o.order_id)
     setSelectedIDs(selectedIDs.size === nonDup.length ? new Set() : new Set(nonDup))
   }
   const toggleExpand = (id: string) =>
@@ -448,7 +426,7 @@ export default function TikTokImport() {
                   คลิกเพื่อเลือกไฟล์ Excel/CSV จาก TikTok
                 </p>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  รองรับไฟล์ .xlsx หรือ .csv ที่ export จาก TikTok Seller Center ที่มี column: Order ID, Product Name, Variation, SKU Subtotal After Discount, Quantity
+                  รองรับไฟล์ .xlsx หรือ .csv จาก TikTok Seller Center ที่มีคอลัมน์ยอดก่อนส่วนลด ส่วนลดแพลตฟอร์ม/ร้าน และยอดหลังส่วนลด
                 </p>
                 <Button
                   className="mt-4"
@@ -504,7 +482,7 @@ export default function TikTokImport() {
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>ไฟล์นี้ไม่มี SKU บางรายการ</AlertTitle>
               <AlertDescription>
-                พบ {preview.preflight.no_sku_items} รายการสินค้าใน {preview.preflight.no_sku_orders} order ที่ไม่มี SKU ระบบจะใช้ชื่อสินค้า + ตัวเลือกสินค้าเป็นข้อมูลจับคู่แทน
+                พบ {preview.preflight.no_sku_items} รายการสินค้าใน {preview.preflight.no_sku_orders} order ที่ไม่มี Seller SKU ระบบจะใช้ TikTok SKU ID จับคู่เฉพาะรายการที่ผู้ใช้เคยยืนยันไว้
               </AlertDescription>
             </Alert>
           )}
@@ -525,7 +503,7 @@ export default function TikTokImport() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={toggleAll}>
-              {selectedIDs.size === preview.orders.filter((o) => !o.duplicate).length
+              {selectedIDs.size === preview.orders.filter((o) => !o.duplicate && !o.blocked_reason).length
                 ? 'ยกเลิกทั้งหมด'
                 : 'เลือกทั้งหมด'}
             </Button>
@@ -548,15 +526,15 @@ export default function TikTokImport() {
             </Button>
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
-            <Table>
+          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <Table className="min-w-[1120px]">
               <TableHeader>
                 <TableRow className="bg-muted/40">
                   <TableHead className="w-10">
                     <Checkbox
                       checked={
                         selectedIDs.size ===
-                        preview.orders.filter((o) => !o.duplicate).length
+                        preview.orders.filter((o) => !o.duplicate && !o.blocked_reason).length
                       }
                       onCheckedChange={toggleAll}
                       aria-label="เลือกทั้งหมด"
@@ -564,11 +542,13 @@ export default function TikTokImport() {
                   </TableHead>
                   <TableHead>Order ID</TableHead>
                   <TableHead>วันที่</TableHead>
-                  <TableHead>ผู้ซื้อ</TableHead>
                   <TableHead>สถานะ</TableHead>
                   <TableHead>สินค้า</TableHead>
-                  <TableHead className="text-right">Qty รวม</TableHead>
-                  <TableHead className="text-right">ยอดชำระ</TableHead>
+                  <TableHead className="text-right">ยอดเต็ม</TableHead>
+                  <TableHead className="text-right">ส่วนลด</TableHead>
+                  <TableHead className="text-right">ยอดสุทธิ</TableHead>
+                  <TableHead className="text-right">Order Amount</TableHead>
+                  <TableHead className="text-right">ส่วนต่าง</TableHead>
                   <TableHead>Preflight</TableHead>
                 </TableRow>
               </TableHeader>
@@ -579,13 +559,13 @@ export default function TikTokImport() {
                     <Fragment key={order.order_id}>
                       <TableRow
                         className={cn(
-                          order.duplicate && 'bg-muted/30 text-muted-foreground',
+                          (order.duplicate || order.blocked_reason) && 'bg-muted/30 text-muted-foreground',
                         )}
                       >
                         <TableCell>
                           <Checkbox
                             checked={selectedIDs.has(order.order_id)}
-                            disabled={order.duplicate}
+                            disabled={order.duplicate || Boolean(order.blocked_reason)}
                             onCheckedChange={() => toggleOrder(order.order_id)}
                             aria-label={`เลือก order ${order.order_id}`}
                           />
@@ -607,9 +587,6 @@ export default function TikTokImport() {
                         <TableCell className="text-xs tabular-nums text-muted-foreground">
                           {order.order_datetime || order.doc_date}
                         </TableCell>
-                        <TableCell className="max-w-[160px] truncate text-xs text-muted-foreground">
-                          {order.buyer_username || '—'}
-                        </TableCell>
                         <TableCell>
                           <Badge variant="secondary" className="text-xs font-normal">
                             {order.status}
@@ -619,45 +596,59 @@ export default function TikTokImport() {
                           {order.item_count} รายการ
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {order.total_qty}
+                          {order.item_gross_amount != null ? fmt(order.item_gross_amount) : '—'}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-success">
+                          {order.discount_amount ? `-${fmt(order.discount_amount)}` : '0.00'}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-medium">
+                          {order.net_product_amount != null ? fmt(order.net_product_amount) : '—'}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {order.paid_amount != null ? `฿${fmt(order.paid_amount)}` : '—'}
+                          {order.order_total_amount != null ? fmt(order.order_total_amount) : '—'}
+                        </TableCell>
+                        <TableCell className={cn('text-right tabular-nums', order.amount_mismatch && 'font-medium text-warning')}>
+                          {fmt(order.amount_difference ?? 0)}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
-                          {order.duplicate && (
-                            <Badge variant="secondary" className="bg-warning/15 text-warning hover:bg-warning/20">
-                              มีในระบบแล้ว
-                            </Badge>
-                          )}
-                          {order.has_no_sku && (
-                            <Badge variant="outline" className="border-warning/40 text-warning">
-                              ไม่มี SKU {order.no_sku_item_count}
-                            </Badge>
-                          )}
-                          {order.multi_line && (
-                            <Badge variant="outline">หลายรายการ</Badge>
-                          )}
-                          {order.amount_mismatch && (
-                            <Badge variant="outline">
-                              มีส่วนต่างยอด
-                            </Badge>
-                          )}
+                            {order.duplicate && (
+                              <Badge variant="secondary" className="bg-warning/15 text-warning hover:bg-warning/20">
+                                มีในระบบแล้ว
+                              </Badge>
+                            )}
+                            {order.has_no_sku && (
+                              <Badge variant="outline" className="border-warning/40 text-warning">
+                                ไม่มี SKU {order.no_sku_item_count}
+                              </Badge>
+                            )}
+                            {order.multi_line && (
+                              <Badge variant="outline">หลายรายการ</Badge>
+                            )}
+                            {order.amount_mismatch && (
+                              <Badge variant="outline" className="border-warning/40 text-warning" title={order.amount_review_reason}>
+                                ต้องยืนยันยอด
+                              </Badge>
+                            )}
+                            {order.blocked_reason && (
+                              <Badge variant="destructive" title={order.blocked_reason}>นำเข้าไม่ได้</Badge>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
                       {expanded && (
                         <TableRow>
-                          <TableCell colSpan={9} className="bg-muted/20 p-0">
-                            <div className="overflow-hidden border border-border bg-background">
-                              <Table>
+                          <TableCell colSpan={11} className="bg-muted/20 p-0">
+                            <div className="overflow-x-auto border border-border bg-background">
+                              <Table className="min-w-[760px]">
                                 <TableHeader>
                                   <TableRow className="bg-muted/30">
                                     <TableHead className="text-[11px]">SKU</TableHead>
                                     <TableHead className="text-[11px]">ชื่อสินค้า</TableHead>
                                     <TableHead className="text-[11px]">ตัวเลือก</TableHead>
-                                    <TableHead className="text-right text-[11px]">ราคา</TableHead>
+                                    <TableHead className="text-right text-[11px]">ยอดเต็ม</TableHead>
+                                    <TableHead className="text-right text-[11px]">ส่วนลด</TableHead>
+                                    <TableHead className="text-right text-[11px]">ยอดสุทธิ</TableHead>
                                     <TableHead className="text-right text-[11px]">จำนวน</TableHead>
                                   </TableRow>
                                 </TableHeader>
@@ -667,8 +658,11 @@ export default function TikTokImport() {
                                       <TableCell className="font-mono text-xs">
                                         {item.sku || (
                                           <Badge variant="outline" className="border-warning/40 text-warning">
-                                            ไม่มี SKU
+                                            ไม่มี Seller SKU
                                           </Badge>
+                                        )}
+                                        {item.source_variant_id && (
+                                          <div className="mt-1 text-[10px] text-muted-foreground">ID {item.source_variant_id}</div>
                                         )}
                                       </TableCell>
                                       <TableCell className="text-sm">
@@ -683,7 +677,13 @@ export default function TikTokImport() {
                                         {item.option_name || '—'}
                                       </TableCell>
                                       <TableCell className="text-right tabular-nums">
-                                        {fmt(item.price)}
+                                        {fmt(item.gross_amount ?? item.price * item.qty)}
+                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums text-success">
+                                        {item.discount_amount ? `-${fmt(item.discount_amount)}` : '0.00'}
+                                      </TableCell>
+                                      <TableCell className="text-right tabular-nums font-medium">
+                                        {fmt((item.gross_amount ?? item.price * item.qty) - (item.discount_amount ?? 0))}
                                       </TableCell>
                                       <TableCell className="text-right tabular-nums">
                                         {item.qty}

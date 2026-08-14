@@ -170,7 +170,7 @@ func Load() *Config {
 		SummaryRetentionDays:               getEnvInt("SUMMARY_RETENTION_DAYS", 730),
 		PurgeBatchSize:                     getEnvInt("PURGE_BATCH_SIZE", 1000),
 		ArtifactsDir:                       getEnv("ARTIFACTS_DIR", "/app/artifacts"),
-		ArtifactsMaxBytes:                  int64(getEnvInt("ARTIFACTS_MAX_BYTES", 10*1024*1024)), // 10 MB
+		ArtifactsMaxBytes:                  int64(getEnvInt("ARTIFACTS_MAX_BYTES", 20*1024*1024)), // 20 MB
 	}
 
 	if c.JWTSecret == "" {

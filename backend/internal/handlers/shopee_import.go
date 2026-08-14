@@ -180,50 +180,61 @@ type ShopeeConfigRequest struct {
 // ShopeeExcelItem is one parsed Shopee Excel line. SKU is optional in real
 // Seller Center exports; when it is missing RawName becomes the matching key.
 type ShopeeExcelItem struct {
-	SKU             string  `json:"sku"`
-	LazadaSKU       string  `json:"lazada_sku,omitempty"`
-	TikTokSKU       string  `json:"tiktok_sku,omitempty"`
-	OrderItemID     string  `json:"order_item_id,omitempty"`
-	SourceItemID    string  `json:"source_item_id,omitempty"`
-	SourceVariantID string  `json:"source_variant_id,omitempty"`
-	ProductName     string  `json:"product_name"`
-	OptionName      string  `json:"option_name,omitempty"`
-	RawName         string  `json:"raw_name"`
-	Price           float64 `json:"price"`
-	Qty             float64 `json:"qty"`
-	NoSKU           bool    `json:"no_sku,omitempty"`
+	SKU                    string  `json:"sku"`
+	LazadaSKU              string  `json:"lazada_sku,omitempty"`
+	TikTokSKU              string  `json:"tiktok_sku,omitempty"`
+	OrderItemID            string  `json:"order_item_id,omitempty"`
+	SourceItemID           string  `json:"source_item_id,omitempty"`
+	SourceVariantID        string  `json:"source_variant_id,omitempty"`
+	ProductName            string  `json:"product_name"`
+	OptionName             string  `json:"option_name,omitempty"`
+	RawName                string  `json:"raw_name"`
+	Price                  float64 `json:"price"`
+	GrossAmount            float64 `json:"gross_amount,omitempty"`
+	DiscountAmount         float64 `json:"discount_amount,omitempty"`
+	PlatformDiscountAmount float64 `json:"platform_discount_amount,omitempty"`
+	SellerDiscountAmount   float64 `json:"seller_discount_amount,omitempty"`
+	Qty                    float64 `json:"qty"`
+	NoSKU                  bool    `json:"no_sku,omitempty"`
 }
 
 // ShopeeOrder is one parsed Shopee order (returned in preview).
 type ShopeeOrder struct {
-	OrderID            string            `json:"order_id"`
-	DocDate            string            `json:"doc_date"`
-	OrderDateTime      string            `json:"order_datetime,omitempty"`
-	PaymentTime        string            `json:"payment_time,omitempty"`
-	PaymentChannel     string            `json:"payment_channel,omitempty"`
-	BuyerUsername      string            `json:"buyer_username,omitempty"`
-	TrackingNo         string            `json:"tracking_no,omitempty"`
-	PackageNumber      string            `json:"package_number,omitempty"`
-	ShippingCarrier    string            `json:"shipping_carrier,omitempty"`
-	COD                bool              `json:"cod,omitempty"`
-	Status             string            `json:"status"`
-	Items              []ShopeeExcelItem `json:"items"`
-	ItemCount          int               `json:"item_count"`
-	TotalQty           float64           `json:"total_qty"`
-	PaidAmount         float64           `json:"paid_amount,omitempty"`
-	OrderTotalAmount   float64           `json:"order_total_amount,omitempty"`
-	ItemGrossAmount    float64           `json:"item_gross_amount,omitempty"`
-	LinePaidAmount     float64           `json:"line_paid_amount,omitempty"`
-	ShippingAmount     float64           `json:"shipping_amount,omitempty"`
-	DiscountAmount     float64           `json:"discount_amount,omitempty"`
-	NoSKUItemCount     int               `json:"no_sku_item_count,omitempty"`
-	HasNoSKU           bool              `json:"has_no_sku,omitempty"`
-	MultiLine          bool              `json:"multi_line,omitempty"`
-	AmountMismatch     bool              `json:"amount_mismatch,omitempty"`
-	ExistingBillID     string            `json:"existing_bill_id,omitempty"`
-	ShopeeShopID       string            `json:"shopee_shop_id,omitempty"`
-	ShopeeConnectionID string            `json:"shopee_connection_id,omitempty"`
-	ShopeeShopLabel    string            `json:"shopee_shop_label,omitempty"`
+	OrderID                string            `json:"order_id"`
+	DocDate                string            `json:"doc_date"`
+	OrderDateTime          string            `json:"order_datetime,omitempty"`
+	PaymentTime            string            `json:"payment_time,omitempty"`
+	PaymentChannel         string            `json:"payment_channel,omitempty"`
+	BuyerUsername          string            `json:"buyer_username,omitempty"`
+	TrackingNo             string            `json:"tracking_no,omitempty"`
+	PackageNumber          string            `json:"package_number,omitempty"`
+	ShippingCarrier        string            `json:"shipping_carrier,omitempty"`
+	COD                    bool              `json:"cod,omitempty"`
+	Status                 string            `json:"status"`
+	Items                  []ShopeeExcelItem `json:"items"`
+	ItemCount              int               `json:"item_count"`
+	TotalQty               float64           `json:"total_qty"`
+	PaidAmount             float64           `json:"paid_amount,omitempty"`
+	OrderTotalAmount       float64           `json:"order_total_amount,omitempty"`
+	ItemGrossAmount        float64           `json:"item_gross_amount,omitempty"`
+	LinePaidAmount         float64           `json:"line_paid_amount,omitempty"`
+	ShippingAmount         float64           `json:"shipping_amount,omitempty"`
+	DiscountAmount         float64           `json:"discount_amount,omitempty"`
+	PlatformDiscountAmount float64           `json:"platform_discount_amount,omitempty"`
+	SellerDiscountAmount   float64           `json:"seller_discount_amount,omitempty"`
+	NetProductAmount       float64           `json:"net_product_amount,omitempty"`
+	TaxesAmount            float64           `json:"taxes_amount,omitempty"`
+	PaymentDiscountAmount  float64           `json:"payment_discount_amount,omitempty"`
+	AmountDifference       float64           `json:"amount_difference,omitempty"`
+	AmountReviewReason     string            `json:"amount_review_reason,omitempty"`
+	NoSKUItemCount         int               `json:"no_sku_item_count,omitempty"`
+	HasNoSKU               bool              `json:"has_no_sku,omitempty"`
+	MultiLine              bool              `json:"multi_line,omitempty"`
+	AmountMismatch         bool              `json:"amount_mismatch,omitempty"`
+	ExistingBillID         string            `json:"existing_bill_id,omitempty"`
+	ShopeeShopID           string            `json:"shopee_shop_id,omitempty"`
+	ShopeeConnectionID     string            `json:"shopee_connection_id,omitempty"`
+	ShopeeShopLabel        string            `json:"shopee_shop_label,omitempty"`
 	// preview-only
 	Duplicate      bool   `json:"duplicate"`
 	BlockedReason  string `json:"blocked_reason,omitempty"`
@@ -256,7 +267,8 @@ type PreviewResponse struct {
 	// FileToken — SHA-256 of the uploaded .xlsx, returned so Confirm
 	// can re-attach the same bytes as an artifact to every bill it
 	// creates. Empty when artifact storage is disabled.
-	FileToken string `json:"file_token,omitempty"`
+	FileToken    string `json:"file_token,omitempty"`
+	PreviewToken string `json:"preview_token,omitempty"`
 }
 
 // ConfirmRequest is sent by the frontend for POST /api/import/shopee/confirm

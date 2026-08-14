@@ -57,6 +57,10 @@ func (r *MarketplaceAliasRepo) FindScoped(identity models.MarketplaceAliasIdenti
 		return r.findByQuery(`a.source = $1 AND a.account_key = $2 AND a.external_item_id = $3 AND a.external_variant_id = $4`,
 			identity.Source, identity.AccountKey, identity.ExternalItemID, identity.ExternalVariantID)
 	}
+	if identity.Source == "tiktok" && identity.ExternalVariantID != "" {
+		return r.findByQuery(`a.source = $1 AND a.account_key = $2 AND a.external_item_id = '' AND a.external_variant_id = $3`,
+			identity.Source, identity.AccountKey, identity.ExternalVariantID)
+	}
 	source := identity.Source
 	sourceSKU := identity.SourceSKU
 	rawName := identity.RawName
@@ -112,7 +116,7 @@ func (r *MarketplaceAliasRepo) FindMany(source string, sourceSKUs, normalizedNam
 // Results are keyed by identityKey, scoped SKU and scoped normalized name.
 func (r *MarketplaceAliasRepo) FindManyScoped(source string, accountKeys, externalItemIDs, externalVariantIDs, sourceSKUs, normalizedNames []string) (map[string]*models.MarketplaceItemAlias, error) {
 	result := make(map[string]*models.MarketplaceItemAlias, len(sourceSKUs)+len(normalizedNames))
-	if len(accountKeys) == 0 || (len(externalItemIDs) == 0 && len(sourceSKUs) == 0 && len(normalizedNames) == 0) {
+	if len(accountKeys) == 0 || (len(externalItemIDs) == 0 && len(externalVariantIDs) == 0 && len(sourceSKUs) == 0 && len(normalizedNames) == 0) {
 		return result, nil
 	}
 	rows, err := r.db.Query(`
@@ -122,6 +126,7 @@ func (r *MarketplaceAliasRepo) FindManyScoped(source string, accountKeys, extern
 		WHERE a.is_active = TRUE AND a.scope_confirmed = TRUE AND a.source = $1
 		  AND a.account_key = ANY($2)
 		  AND ((a.external_item_id <> '' AND a.external_item_id = ANY($3) AND a.external_variant_id = ANY($4))
+		    OR (a.source = 'tiktok' AND a.external_item_id = '' AND a.external_variant_id <> '' AND a.external_variant_id = ANY($4))
 		    OR (a.source_sku <> '' AND a.source_sku = ANY($5))
 		    OR (a.source_sku = '' AND a.external_item_id = '' AND a.normalized_key = ANY($6)))
 	`, source, pq.Array(accountKeys), pq.Array(externalItemIDs), pq.Array(externalVariantIDs), pq.Array(sourceSKUs), pq.Array(normalizedNames))
@@ -136,6 +141,9 @@ func (r *MarketplaceAliasRepo) FindManyScoped(source string, accountKeys, extern
 		}
 		if alias.ExternalItemID != "" {
 			result[aliasIdentityKey(alias.AccountKey, alias.ExternalItemID, alias.ExternalVariantID)] = alias
+		}
+		if alias.Source == "tiktok" && alias.ExternalItemID == "" && alias.ExternalVariantID != "" {
+			result[aliasVariantKey(alias.AccountKey, alias.ExternalVariantID)] = alias
 		}
 		if alias.SourceSKU != "" {
 			result[aliasSKUKey(alias.AccountKey, alias.SourceSKU)] = alias
@@ -196,11 +204,29 @@ func (r *MarketplaceAliasRepo) UpsertScoped(identity models.MarketplaceAliasIden
 
 func upsertAliasTx(tx *sql.Tx, identity models.MarketplaceAliasIdentity, itemCode, unitCode, matchMethod string, scopeConfirmed bool, confirmedBy string) (*models.MarketplaceItemAlias, error) {
 	identity = normalizeAliasIdentity(identity)
-	if identity.ExternalItemID == "" && identity.SourceSKU == "" && identity.NormalizedKey == "" {
+	if identity.ExternalItemID == "" && identity.ExternalVariantID == "" && identity.SourceSKU == "" && identity.NormalizedKey == "" {
 		return nil, fmt.Errorf("stable identity, source_sku or normalized_key required")
 	}
 	if matchMethod == "" {
 		matchMethod = "manual_name"
+	}
+	// Historical AOY TikTok aliases stored TikTok SKU ID in source_sku because
+	// the old import did not distinguish Seller SKU from variant identity.
+	// Promote that exact legacy row in place the first time the variant is
+	// confirmed, preserving usage/audit history and avoiding a duplicate master.
+	if identity.Source == "tiktok" && identity.ExternalItemID == "" && identity.ExternalVariantID != "" && identity.SourceSKU == "" {
+		_, err := tx.Exec(`UPDATE marketplace_item_aliases legacy
+			SET external_variant_id=$3, source_sku='', match_method='manual_identity', updated_at=NOW()
+			WHERE legacy.id=(SELECT id FROM marketplace_item_aliases
+				WHERE source=$1 AND account_key=$2 AND external_item_id='' AND external_variant_id=''
+				  AND source_sku=$3 AND is_active=true ORDER BY updated_at DESC LIMIT 1)
+			  AND NOT EXISTS (SELECT 1 FROM marketplace_item_aliases current
+				WHERE current.source=$1 AND current.account_key=$2 AND current.external_item_id=''
+				  AND current.external_variant_id=$3 AND current.is_active=true)`,
+			identity.Source, identity.AccountKey, identity.ExternalVariantID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var confirmedByArg interface{}
 	if confirmedBy != "" {
@@ -241,6 +267,10 @@ func aliasIdentityWhere(identity models.MarketplaceAliasIdentity) (string, []int
 	if identity.ExternalItemID != "" {
 		return "a.source=$1 AND a.account_key=$2 AND a.external_item_id=$3 AND a.external_variant_id=$4",
 			[]interface{}{identity.Source, identity.AccountKey, identity.ExternalItemID, identity.ExternalVariantID}
+	}
+	if identity.Source == "tiktok" && identity.ExternalVariantID != "" {
+		return "a.source=$1 AND a.account_key=$2 AND a.external_item_id='' AND a.external_variant_id=$3",
+			[]interface{}{identity.Source, identity.AccountKey, identity.ExternalVariantID}
 	}
 	if identity.SourceSKU != "" {
 		return "a.source=$1 AND a.account_key=$2 AND a.source_sku=$3",
@@ -298,6 +328,8 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 		                AND exact_product.item_code = btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), ''))
 		           )
 		           AND ((a.external_item_id <> '' AND bi.source_item_id = a.external_item_id AND bi.source_variant_id = a.external_variant_id)
+		             OR (a.source = 'tiktok' AND a.external_item_id = '' AND a.external_variant_id <> ''
+		                 AND COALESCE(bi.source_item_id, '') = '' AND bi.source_variant_id = a.external_variant_id)
 		             OR (a.external_item_id = '' AND a.source_sku <> '' AND btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), '')) = a.source_sku)
 			             OR (a.external_item_id = '' AND a.source_sku = ''
 			                 AND btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), '')) = ''
@@ -486,6 +518,8 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 		groupKey := source + "|" + accountKey + "|name|" + normalizedKey
 		if externalItemID != "" {
 			groupKey = source + "|" + accountKey + "|identity|" + externalItemID + "|" + externalVariantID
+		} else if source == "tiktok" && externalVariantID != "" {
+			groupKey = source + "|" + accountKey + "|variant|" + externalVariantID
 		} else if sourceSKU != "" {
 			groupKey = source + "|" + accountKey + "|sku|" + sourceSKU
 		}
@@ -845,6 +879,10 @@ func billItemIdentityWhere(identity models.MarketplaceAliasIdentity, start int) 
 		args = append(args, identity.ExternalItemID, identity.ExternalVariantID)
 		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND bi.source_item_id=$%d AND bi.source_variant_id=$%d", sourceParam, accountParam, start+2, start+3), args
 	}
+	if identity.Source == "tiktok" && identity.ExternalVariantID != "" {
+		args = append(args, identity.ExternalVariantID)
+		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND bi.source_item_id='' AND bi.source_variant_id=$%d", sourceParam, accountParam, start+2), args
+	}
 	if identity.SourceSKU != "" {
 		args = append(args, identity.SourceSKU)
 		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND btrim(replace(COALESCE(bi.source_sku,''),chr(65279),''))=$%d", sourceParam, accountParam, start+2), args
@@ -962,6 +1000,10 @@ func normalizeAliasIdentity(identity models.MarketplaceAliasIdentity) models.Mar
 
 func aliasIdentityKey(accountKey, itemID, variantID string) string {
 	return "identity\x00" + accountKey + "\x00" + itemID + "\x00" + variantID
+}
+
+func aliasVariantKey(accountKey, variantID string) string {
+	return "variant\x00" + accountKey + "\x00" + variantID
 }
 
 func aliasSKUKey(accountKey, sku string) string   { return "sku\x00" + accountKey + "\x00" + sku }

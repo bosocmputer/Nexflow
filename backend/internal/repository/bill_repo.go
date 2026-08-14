@@ -182,7 +182,8 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		`SELECT id, bill_type, source, source_account_key, status, document_route, raw_data, sml_doc_no,
 		        sml_payload, sml_response, ai_confidence, anomalies,
 		        error_msg, created_by, created_at, sent_at, archived_at, archived_by,
-		        archive_reason, remark,
+		        archive_reason, remark, amount_reviewed_at, amount_reviewed_by,
+		        amount_review_fingerprint,
 		        EXISTS (
 		          SELECT 1
 		            FROM shopee_order_snapshots sos
@@ -194,6 +195,7 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		&b.SMLDocNo, &smlPayloadRaw, &smlResponseRaw, &b.AIConfidence,
 		&anomaliesRaw, &b.ErrorMsg, &b.CreatedBy, &b.CreatedAt, &b.SentAt,
 		&b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason, &b.Remark,
+		&b.AmountReviewedAt, &b.AmountReviewedBy, &b.AmountReviewFingerprint,
 		&b.ShopeeRealtimeLinked,
 	)
 	if err == sql.ErrNoRows {
@@ -278,7 +280,7 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 	query := `SELECT b.id, b.bill_type, b.source, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
 	                 b.anomalies, b.error_msg, b.created_at, b.sent_at,
 	                 b.archived_at, b.archived_by, b.archive_reason,
-	                 COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0) AS total_amount,
+	                 COALESCE(SUM(GREATEST(COALESCE(bi.gross_amount, bi.qty * COALESCE(bi.price, 0)) - COALESCE(bi.discount_amount, 0), 0)), 0) AS total_amount,
 	                 COUNT(bi.id) AS item_count,
 	                 EXISTS (
 	                   SELECT 1
@@ -655,7 +657,7 @@ func (r *BillRepo) findItems(billID string) ([]models.BillItem, error) {
 	rows, err := r.db.Query(
 		`SELECT id, bill_id, raw_name, COALESCE(source_sku, ''), COALESCE(source_item_id, ''), COALESCE(source_variant_id, ''),
 		        marketplace_alias_id, COALESCE(source_image_url, ''), item_code, qty, unit_code, price,
-		        COALESCE(discount_amount, 0), mapped, mapping_id,
+		        gross_amount, COALESCE(discount_amount, 0), mapped, mapping_id,
 		        COALESCE(candidates, '[]') as candidates
 		 FROM bill_items WHERE bill_id = $1 ORDER BY id`, billID,
 	)
@@ -671,7 +673,7 @@ func (r *BillRepo) findItems(billID string) ([]models.BillItem, error) {
 		if err := rows.Scan(
 			&item.ID, &item.BillID, &item.RawName, &item.SourceSKU, &item.SourceItemID, &item.SourceVariantID,
 			&item.MarketplaceAliasID, &item.SourceImageURL,
-			&item.ItemCode, &item.Qty, &item.UnitCode, &item.Price, &item.DiscountAmount, &item.Mapped, &item.MappingID,
+			&item.ItemCode, &item.Qty, &item.UnitCode, &item.Price, &item.GrossAmount, &item.DiscountAmount, &item.Mapped, &item.MappingID,
 			&candidatesRaw,
 		); err != nil {
 			return nil, err
@@ -708,11 +710,11 @@ func billItemDisplayGroup(item models.BillItem) int {
 
 func (r *BillRepo) InsertItem(item *models.BillItem) error {
 	return r.db.QueryRow(
-		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, discount_amount, mapped, mapping_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		 RETURNING id`,
 		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.MarketplaceAliasID,
-		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.DiscountAmount, item.Mapped, item.MappingID,
+		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID,
 	).Scan(&item.ID)
 }
 
@@ -737,7 +739,7 @@ func (r *BillRepo) UpdateBillItem(itemID, itemCode, unitCode, mappingID string, 
 
 // UpdateBillItemFields applies a partial update to a bill_item row.
 // Each pointer is applied only when non-nil; setting item_code also marks the row mapped.
-func (r *BillRepo) UpdateBillItemFields(itemID string, itemCode, unitCode *string, qty, price *float64) error {
+func (r *BillRepo) UpdateBillItemFields(itemID string, itemCode, unitCode *string, qty, price, discountAmount *float64) error {
 	sets := []string{}
 	args := []interface{}{}
 	idx := 1
@@ -765,12 +767,115 @@ func (r *BillRepo) UpdateBillItemFields(itemID string, itemCode, unitCode *strin
 		args = append(args, *price)
 		idx++
 	}
+	if discountAmount != nil {
+		sets = append(sets, fmt.Sprintf("discount_amount=$%d", idx))
+		args = append(args, *discountAmount)
+		idx++
+	}
 	if len(sets) == 0 {
 		return nil
 	}
 	args = append(args, itemID)
 	query := fmt.Sprintf(`UPDATE bill_items SET %s WHERE id=$%d`, strings.Join(sets, ", "), idx)
-	_, err := r.db.Exec(query, args...)
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(query, args...); err != nil {
+		return err
+	}
+	if qty != nil || price != nil {
+		if _, err := tx.Exec(`UPDATE bill_items
+			SET gross_amount=ROUND(qty * COALESCE(price,0), 2)
+			WHERE id=$1`, itemID); err != nil {
+			return err
+		}
+	}
+	if qty != nil || price != nil || discountAmount != nil {
+		if _, err := tx.Exec(`UPDATE bills SET amount_reviewed_at=NULL, amount_reviewed_by=NULL,
+			amount_review_fingerprint=''
+			WHERE id=(SELECT bill_id FROM bill_items WHERE id=$1)`, itemID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// CreateWithItemsAndAudit is the atomic write boundary used by marketplace
+// imports. A bill is never visible without all of its items and creation audit.
+func (r *BillRepo) CreateWithItemsAndAudit(b *models.Bill, items []models.BillItem, audit models.AuditEntry) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	raw, _ := json.Marshal(b.RawData)
+	anomalies, _ := json.Marshal([]models.Anomaly{})
+	var orderID *string
+	if b.SMLOrderID != "" {
+		orderID = &b.SMLOrderID
+	}
+	if err := tx.QueryRow(
+		`INSERT INTO bills (bill_type, source, source_account_key, status, document_route, raw_data, ai_confidence, anomalies, created_by, sml_order_id)
+		 VALUES ($1,$2,COALESCE(NULLIF($3,''),'default'),$4,$5,$6,$7,$8,$9,$10)
+		 RETURNING id, created_at`,
+		b.BillType, b.Source, b.SourceAccountKey, coalesceStatus(b.Status, "pending"), b.DocumentRoute,
+		raw, b.AIConfidence, anomalies, b.CreatedBy, orderID,
+	).Scan(&b.ID, &b.CreatedAt); err != nil {
+		return err
+	}
+
+	for i := range items {
+		items[i].BillID = b.ID
+		if err := tx.QueryRow(
+			`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id,
+			 source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'[]'::jsonb)
+			 RETURNING id`,
+			items[i].BillID, items[i].RawName, items[i].SourceSKU, items[i].SourceItemID, items[i].SourceVariantID,
+			items[i].MarketplaceAliasID, items[i].SourceImageURL, items[i].ItemCode, items[i].Qty, items[i].UnitCode,
+			items[i].Price, items[i].GrossAmount, items[i].DiscountAmount, items[i].Mapped, items[i].MappingID,
+		).Scan(&items[i].ID); err != nil {
+			return fmt.Errorf("insert bill item %d: %w", i, err)
+		}
+	}
+
+	audit.TargetID = &b.ID
+	level := audit.Level
+	if level == "" {
+		level = "info"
+	}
+	detail, err := json.Marshal(audit.Detail)
+	if err != nil {
+		return fmt.Errorf("marshal creation audit: %w", err)
+	}
+	var traceID *string
+	if audit.TraceID != "" {
+		traceID = &audit.TraceID
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO audit_logs (action, target_id, user_id, source, level, duration_ms, trace_id, detail)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		audit.Action, audit.TargetID, audit.UserID, audit.Source, level, audit.DurationMs, traceID, detail,
+	); err != nil {
+		return fmt.Errorf("insert creation audit: %w", err)
+	}
+	return tx.Commit()
+}
+
+func (r *BillRepo) ConfirmAmountReview(billID, userID, fingerprint string) error {
+	_, err := r.db.Exec(`UPDATE bills
+		SET amount_reviewed_at=NOW(), amount_reviewed_by=NULLIF($2,'')::uuid,
+		    amount_review_fingerprint=$3
+		WHERE id=$1 AND status IN ('pending','needs_review','failed')`, billID, userID, fingerprint)
+	return err
+}
+
+func (r *BillRepo) ClearAmountReview(billID string) error {
+	_, err := r.db.Exec(`UPDATE bills SET amount_reviewed_at=NULL, amount_reviewed_by=NULL,
+		amount_review_fingerprint='' WHERE id=$1`, billID)
 	return err
 }
 
@@ -899,7 +1004,7 @@ func (r *BillRepo) dashboardStats(window platformSalesWindow) (map[string]interf
 
 	// Total amount from bill_items
 	var totalAmount float64
-	_ = r.db.QueryRow(`SELECT COALESCE(SUM(GREATEST(qty * COALESCE(price, 0) - COALESCE(discount_amount, 0), 0)), 0) FROM bill_items WHERE price IS NOT NULL`).Scan(&totalAmount)
+	_ = r.db.QueryRow(`SELECT COALESCE(SUM(GREATEST(COALESCE(gross_amount, qty * COALESCE(price, 0)) - COALESCE(discount_amount, 0), 0)), 0) FROM bill_items WHERE price IS NOT NULL`).Scan(&totalAmount)
 	stats["total_amount"] = totalAmount
 
 	var pilotTotal, pilotNeedsReview, pilotPending, pilotSent, pilotFailed int
@@ -1082,7 +1187,7 @@ func (r *BillRepo) platformSalesSummaries(window platformSalesWindow) ([]platfor
 			  b.source AS platform,
 			  b.status,
 			  (b.created_at AT TIME ZONE $4)::date AS local_day,
-			  COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
+			  COALESCE(SUM(GREATEST(COALESCE(bi.gross_amount, bi.qty * COALESCE(bi.price, 0)) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
 			FROM bills b
 			LEFT JOIN bill_items bi ON bi.bill_id = b.id
 			WHERE b.bill_type = 'sale'
@@ -1189,7 +1294,7 @@ func (r *BillRepo) platformSalesTrendRows(window platformSalesWindow) ([]platfor
 			  b.id::text AS id,
 			  b.source AS platform,
 			  (b.created_at AT TIME ZONE $4)::date AS local_day,
-			  COALESCE(SUM(GREATEST(bi.qty * COALESCE(bi.price, 0) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
+			  COALESCE(SUM(GREATEST(COALESCE(bi.gross_amount, bi.qty * COALESCE(bi.price, 0)) - COALESCE(bi.discount_amount, 0), 0)), 0)::float8 AS amount
 			FROM bills b
 			LEFT JOIN bill_items bi ON bi.bill_id = b.id
 			WHERE b.bill_type = 'sale'
@@ -1630,11 +1735,11 @@ func (r *BillRepo) MarkProcessedEmailKey(source, messageID, orderID string) erro
 // InsertItemWithCandidates inserts a bill item including top-5 catalog candidates
 func (r *BillRepo) InsertItemWithCandidates(item *models.BillItem, candidatesJSON []byte) error {
 	return r.db.QueryRow(
-		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, discount_amount, mapped, mapping_id, candidates)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 RETURNING id`,
 		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.MarketplaceAliasID,
-		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.DiscountAmount, item.Mapped, item.MappingID, candidatesJSON,
+		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID, candidatesJSON,
 	).Scan(&item.ID)
 }
 

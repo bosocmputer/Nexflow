@@ -108,6 +108,7 @@ export function BillItemRow({
     unit_code: item.unit_code ?? '',
     qty: String(item.qty ?? 0),
     price: String(item.price ?? 0),
+    discount_amount: String(item.discount_amount ?? 0),
   })
 
   const reset = () => {
@@ -118,17 +119,23 @@ export function BillItemRow({
       unit_code: item.unit_code ?? '',
       qty: String(item.qty ?? 0),
       price: String(item.price ?? 0),
+      discount_amount: String(item.discount_amount ?? 0),
     })
   }
 
   const performSave = async () => {
     setSaving(true)
     try {
+      const nextQty = Number(draft.qty)
+      const nextPrice = Number(draft.price)
+      const nextDiscount = Number(draft.discount_amount)
+      const amountChanged = nextQty !== item.qty || nextPrice !== (item.price ?? 0)
       await api.put(`/api/bills/${billId}/items/${item.id}`, {
         item_code: draft.item_code,
         unit_code: draft.unit_code,
-        qty: Number(draft.qty),
-        price: Number(draft.price),
+        ...(nextQty !== item.qty ? { qty: nextQty } : {}),
+        ...(nextPrice !== (item.price ?? 0) ? { price: nextPrice } : {}),
+        ...(nextDiscount !== (item.discount_amount ?? 0) ? { discount_amount: nextDiscount } : {}),
         remember_mapping: canRememberMapping && rememberMapping,
       })
 
@@ -143,8 +150,10 @@ export function BillItemRow({
         ...item,
         item_code: draft.item_code,
         unit_code: draft.unit_code,
-        qty: Number(draft.qty),
-        price: Number(draft.price),
+        qty: nextQty,
+        price: nextPrice,
+        gross_amount: amountChanged ? null : item.gross_amount,
+        discount_amount: nextDiscount,
         mapped: draft.item_code !== '',
       })
       setEditing(false)
@@ -191,8 +200,6 @@ export function BillItemRow({
       await api.put(`/api/bills/${billId}/items/${item.id}`, {
         item_code: item.item_code,
         unit_code: item.unit_code ?? undefined,
-        qty: item.qty,
-        price: item.price ?? undefined,
       })
       await onRefresh()
       notifyWorkQueueChanged()
@@ -224,7 +231,7 @@ export function BillItemRow({
       : matchInfo
   const billPrice = item.price ?? 0
   const discountAmount = item.discount_amount ?? 0
-  const grossAmount = (item.qty ?? 0) * billPrice
+  const grossAmount = item.gross_amount ?? (item.qty ?? 0) * billPrice
   const netAmount = Math.max(grossAmount - discountAmount, 0)
   const canExplainDiscount =
     Boolean(discountInfo) &&
@@ -517,15 +524,25 @@ export function BillItemRow({
                 {showDiscountColumn && (
                   <div className="space-y-1.5">
                     <span className="text-xs font-medium text-muted-foreground">ส่วนลด</span>
-                    <div className="flex h-10 items-center justify-end rounded-md border border-border bg-muted/40 px-3 text-sm tabular-nums text-muted-foreground">
-                      {discountAmount > 0 ? `-฿${discountAmount.toLocaleString()}` : '—'}
-                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={draft.discount_amount}
+                      onChange={(e) => setDraft((d) => ({ ...d, discount_amount: e.target.value }))}
+                      className="h-10 text-right"
+                    />
                   </div>
                 )}
                 <div className={cn('flex items-center justify-between rounded-md bg-muted/50 px-3 py-2', showDiscountColumn ? 'col-span-4' : 'col-span-3')}>
                   <span className="text-xs font-medium text-muted-foreground">รวมรายการนี้</span>
                   <span className="tabular-nums text-sm font-semibold text-foreground">
-                    ฿{Math.max(Number(draft.qty || 0) * Number(draft.price || 0) - discountAmount, 0).toLocaleString()}
+                    ฿{Math.max(
+                      (Number(draft.qty) === item.qty && Number(draft.price) === (item.price ?? 0)
+                        ? item.gross_amount ?? Number(draft.qty || 0) * Number(draft.price || 0)
+                        : Number(draft.qty || 0) * Number(draft.price || 0)) - Number(draft.discount_amount || 0),
+                      0,
+                    ).toLocaleString()}
                   </span>
                 </div>
                 <div className={cn('flex justify-end gap-2', showDiscountColumn ? 'col-span-4' : 'col-span-3')}>

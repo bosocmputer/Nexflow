@@ -255,7 +255,7 @@ export function SendPurchaseDialog({
         (sum, item) =>
           sum +
           Math.max(
-            (item.qty ?? 0) * (item.price ?? 0) -
+            (item.gross_amount ?? (item.qty ?? 0) * (item.price ?? 0)) -
               (item.discount_amount ?? 0),
             0,
           ),
@@ -289,7 +289,7 @@ export function SendPurchaseDialog({
       const qty = Number.isFinite(item.qty) ? item.qty : 0;
       const price =
         item.price != null && Number.isFinite(item.price) ? item.price : 0;
-      const gross = round2(price * qty);
+      const gross = round2(item.gross_amount ?? price * qty);
       const discount = Math.min(Math.max(item.discount_amount ?? 0, 0), gross);
       const net = round2(gross - discount);
       const rate = vatRate / 100;

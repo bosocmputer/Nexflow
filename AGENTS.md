@@ -56,7 +56,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–078** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–079** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -229,4 +229,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-13 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-14 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442

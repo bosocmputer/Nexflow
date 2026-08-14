@@ -5,6 +5,7 @@ package artifact
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,18 +22,18 @@ import (
 )
 
 type Service struct {
-	rootDir   string
-	maxBytes  int64
-	repo      *repository.BillArtifactRepo
-	logger    *zap.Logger
+	rootDir  string
+	maxBytes int64
+	repo     *repository.BillArtifactRepo
+	logger   *zap.Logger
 }
 
 func New(rootDir string, maxBytes int64, repo *repository.BillArtifactRepo, logger *zap.Logger) *Service {
 	return &Service{
-		rootDir:   rootDir,
-		maxBytes:  maxBytes,
-		repo:      repo,
-		logger:    logger,
+		rootDir:  rootDir,
+		maxBytes: maxBytes,
+		repo:     repo,
+		logger:   logger,
 	}
 }
 
@@ -132,6 +133,61 @@ func (s *Service) Save(
 	return a, nil
 }
 
+// SaveForImportRun stores one immutable source file shared by every bill that
+// references the import run. It avoids writing the same TikTok export once per order.
+func (s *Service) SaveForImportRun(
+	importRunID, kind, filename, contentType string,
+	data []byte,
+	meta map[string]interface{},
+) (*models.BillArtifact, error) {
+	if s == nil {
+		return nil, fmt.Errorf("artifact service not configured")
+	}
+	if importRunID == "" {
+		return nil, fmt.Errorf("import_run_id required")
+	}
+	if int64(len(data)) > s.maxBytes {
+		return nil, fmt.Errorf("artifact too large (%d bytes > limit %d)", len(data), s.maxBytes)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("artifact empty")
+	}
+	hash := sha256.Sum256(data)
+	hexsum := hex.EncodeToString(hash[:])
+	now := time.Now()
+	relDir := filepath.Join(now.Format("2006"), now.Format("01"), "import-runs", importRunID)
+	absDir := filepath.Join(s.rootDir, relDir)
+	if err := os.MkdirAll(absDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir import artifact dir: %w", err)
+	}
+	relPath := filepath.Join(relDir, fmt.Sprintf("%d-%s", now.UnixNano(), sanitize(filename)))
+	absPath := filepath.Join(s.rootDir, relPath)
+	if err := os.WriteFile(absPath, data, 0o644); err != nil {
+		return nil, fmt.Errorf("write import artifact: %w", err)
+	}
+	var metaJSON json.RawMessage
+	if meta != nil {
+		metaJSON, _ = json.Marshal(meta)
+	}
+	a := &models.BillArtifact{ImportRunID: importRunID, Kind: kind, Filename: filename,
+		ContentType: contentType, SizeBytes: int64(len(data)), SHA256: hexsum,
+		StoragePath: relPath, SourceMeta: metaJSON}
+	if err := s.repo.InsertForImportRun(a); err != nil {
+		_ = os.Remove(absPath)
+		if err == sql.ErrNoRows {
+			existing, loadErr := s.repo.GetForImportRun(importRunID)
+			if loadErr != nil {
+				return nil, fmt.Errorf("load existing import artifact: %w", loadErr)
+			}
+			if existing != nil {
+				return existing, nil
+			}
+		}
+		return nil, fmt.Errorf("insert import artifact row: %w", err)
+	}
+	return a, nil
+}
+
 // Read returns (data, artifact, error). Verifies SHA256 if recorded.
 func (s *Service) Read(artifactID string) ([]byte, *models.BillArtifact, error) {
 	a, err := s.repo.GetOne(artifactID)
@@ -141,16 +197,34 @@ func (s *Service) Read(artifactID string) ([]byte, *models.BillArtifact, error) 
 	if a == nil {
 		return nil, nil, nil
 	}
+	return s.readArtifactFile(a)
+}
+
+func (s *Service) ReadForBill(billID, artifactID string) ([]byte, *models.BillArtifact, error) {
+	a, err := s.repo.GetOneForBill(artifactID, billID)
+	if err != nil || a == nil {
+		return nil, a, err
+	}
+	return s.readArtifactFile(a)
+}
+
+func (s *Service) ReadForImportRun(importRunID, artifactID string) ([]byte, *models.BillArtifact, error) {
+	a, err := s.repo.GetOneForImportRun(artifactID, importRunID)
+	if err != nil || a == nil {
+		return nil, a, err
+	}
+	return s.readArtifactFile(a)
+}
+
+func (s *Service) readArtifactFile(a *models.BillArtifact) ([]byte, *models.BillArtifact, error) {
 	abs := filepath.Join(s.rootDir, a.StoragePath)
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, a, fmt.Errorf("read artifact: %w", err)
 	}
-	// Optional integrity check
 	if a.SHA256 != "" {
 		hash := sha256.Sum256(data)
-		got := hex.EncodeToString(hash[:])
-		if got != a.SHA256 {
+		if hex.EncodeToString(hash[:]) != a.SHA256 {
 			return nil, a, fmt.Errorf("sha256 mismatch — file may have been tampered with")
 		}
 	}

@@ -71,6 +71,11 @@ func (b *marketplaceResolutionBatch) resolutionScoped(accountKey, externalItemID
 			return resolved
 		}
 	}
+	if externalItemID == "" && externalVariantID != "" {
+		if resolved, ok := b.resolutions["variant\x00"+accountKey+"\x00"+externalVariantID]; ok && resolved.alias != nil {
+			return resolved
+		}
+	}
 	if sku := normalizeMarketplaceSKU(sourceSKU); sku != "" {
 		if resolved, ok := b.resolutions["sku\x00"+accountKey+"\x00"+sku]; ok && resolved.alias != nil {
 			return resolved
@@ -133,6 +138,12 @@ func prepareMarketplaceResolution(
 					externalItemIDsSet[itemID] = struct{}{}
 					externalItemIDs = append(externalItemIDs, itemID)
 				}
+				if _, exists := externalVariantIDsSet[variantID]; !exists {
+					externalVariantIDsSet[variantID] = struct{}{}
+					externalVariantIDs = append(externalVariantIDs, variantID)
+				}
+			}
+			if variantID != "" {
 				if _, exists := externalVariantIDsSet[variantID]; !exists {
 					externalVariantIDsSet[variantID] = struct{}{}
 					externalVariantIDs = append(externalVariantIDs, variantID)
@@ -211,7 +222,14 @@ func prepareMarketplaceResolution(
 
 	aliasByKey := map[string]*models.MarketplaceItemAlias{}
 	if aliasRepo != nil {
-		aliasByKey, err = aliasRepo.FindManyScoped(source, accountKeys, externalItemIDs, externalVariantIDs, codes, normalizedKeys)
+		aliasSKUs := append([]string(nil), codes...)
+		// Compatibility for AOY's eight historical TikTok aliases: older imports
+		// stored TikTok SKU ID in source_sku. New imports keep it as variant ID,
+		// but may still resolve those verified rows until an admin resaves them.
+		if source == "tiktok" {
+			aliasSKUs = append(aliasSKUs, externalVariantIDs...)
+		}
+		aliasByKey, err = aliasRepo.FindManyScoped(source, accountKeys, externalItemIDs, externalVariantIDs, aliasSKUs, normalizedKeys)
 		if err != nil {
 			return nil, fmt.Errorf("preload aliases: %w", err)
 		}
@@ -257,6 +275,15 @@ func prepareMarketplaceResolution(
 				identityMatches++
 			}
 		}
+		if resolved.alias == nil && ref.itemID == "" && ref.variantID != "" {
+			resolved.alias = aliasByKey["variant\x00"+ref.accountKey+"\x00"+ref.variantID]
+			if resolved.alias == nil && source == "tiktok" {
+				resolved.alias = aliasByKey["sku\x00"+ref.accountKey+"\x00"+ref.variantID]
+			}
+			if resolved.alias != nil {
+				identityMatches++
+			}
+		}
 		if resolved.alias == nil && ref.sku != "" {
 			resolved.alias = aliasByKey["sku\x00"+ref.accountKey+"\x00"+ref.sku]
 			if resolved.alias != nil {
@@ -286,6 +313,9 @@ func prepareMarketplaceResolution(
 		}
 		if ref.itemID != "" {
 			resolutions["identity\x00"+ref.accountKey+"\x00"+ref.itemID+"\x00"+ref.variantID] = resolved
+		}
+		if ref.itemID == "" && ref.variantID != "" {
+			resolutions["variant\x00"+ref.accountKey+"\x00"+ref.variantID] = resolved
 		}
 		if ref.sku != "" {
 			resolutions["sku\x00"+ref.accountKey+"\x00"+ref.sku] = resolved
@@ -417,6 +447,11 @@ func marketplaceBillItemFromResolution(
 	price := item.Price
 	exactSKU := normalizeMarketplaceSKU(item.SKU) != "" && batch.catalogLookup(item.SKU) != nil
 	bi, mapped := marketplaceBillItemFromMatch(rawName, item.SKU, item.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, batch.catalogLookup, 1)
+	if item.GrossAmount > 0 {
+		gross := item.GrossAmount
+		bi.GrossAmount = &gross
+	}
+	bi.DiscountAmount = item.DiscountAmount
 	if batch.mode == "shadow" && !mapped && normalizeMarketplaceSKU(item.SKU) == "" && resolved.learned != nil {
 		bi.ItemCode = &resolved.learned.ItemCode
 		bi.UnitCode = &resolved.learned.UnitCode

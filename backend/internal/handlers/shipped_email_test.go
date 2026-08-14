@@ -264,7 +264,7 @@ func TestEnsureShopeeShippingLineForSendAddsMissingConfiguredLine(t *testing.T) 
 	mock.ExpectQuery("INSERT INTO bill_items").
 		WithArgs(
 			bill.ID, "ค่าจัดส่งสินค้า", models.ShopeeShippingSourceSKU, "", "", nil, "",
-			sqlmock.AnyArg(), float64(1), sqlmock.AnyArg(), sqlmock.AnyArg(), float64(0), true, nil,
+			sqlmock.AnyArg(), float64(1), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, float64(0), true, nil,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ship-item"))
 
@@ -331,7 +331,7 @@ func TestEnsureShopeeShippingLineForSendAddsZeroAmountLine(t *testing.T) {
 	mock.ExpectQuery("INSERT INTO bill_items").
 		WithArgs(
 			bill.ID, "ค่าจัดส่งสินค้า", models.ShopeeShippingSourceSKU, "", "", nil, "",
-			sqlmock.AnyArg(), float64(1), sqlmock.AnyArg(), sqlmock.AnyArg(), float64(0), true, nil,
+			sqlmock.AnyArg(), float64(1), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, float64(0), true, nil,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ship-item"))
 

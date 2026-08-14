@@ -145,6 +145,7 @@ export interface BillItem {
   qty: number
   unit_code?: string | null
   price?: number | null
+  gross_amount?: number | null
   discount_amount?: number
   mapped: boolean
   mapping_id?: string | null
@@ -256,6 +257,9 @@ export interface Bill {
   // Used to hide destructive delete and guide users to route-change flow.
   shopee_realtime_linked?: boolean
   remark?: string
+  amount_reviewed_at?: string | null
+  amount_reviewed_by?: string | null
+  amount_review_fingerprint?: string
   shopee_status?: ShopeeOrderEvent | null
   shopee_events?: ShopeeOrderEvent[]
   email_group?: BillEmailGroup | null

@@ -6,32 +6,35 @@ import (
 )
 
 type Bill struct {
-	ID               string             `json:"id"`
-	BillType         string             `json:"bill_type"`
-	Source           string             `json:"source"`
-	SourceAccountKey string             `json:"source_account_key"`
-	Status           string             `json:"status"`
-	DocumentRoute    string             `json:"document_route"`
-	RawData          json.RawMessage    `json:"raw_data,omitempty"`
-	SMLDocNo         *string            `json:"sml_doc_no,omitempty"`
-	SMLOrderID       string             `json:"sml_order_id,omitempty"`
-	SMLPayload       json.RawMessage    `json:"sml_payload,omitempty"`
-	SMLResponse      json.RawMessage    `json:"sml_response,omitempty"`
-	AIConfidence     *float64           `json:"-"` // retained in storage for historical audit only
-	Anomalies        json.RawMessage    `json:"anomalies"`
-	ErrorMsg         *string            `json:"error_msg,omitempty"`
-	CreatedBy        *string            `json:"created_by,omitempty"`
-	CreatedAt        time.Time          `json:"created_at"`
-	SentAt           *time.Time         `json:"sent_at,omitempty"`
-	ArchivedAt       *time.Time         `json:"archived_at,omitempty"`
-	ArchivedBy       *string            `json:"archived_by,omitempty"`
-	ArchiveReason    string             `json:"archive_reason,omitempty"`
-	TotalAmount      *float64           `json:"total_amount,omitempty"`
-	Remark           string             `json:"remark"`
-	Items            []BillItem         `json:"items,omitempty"`
-	EmailGroup       *BillEmailGroup    `json:"email_group,omitempty"`
-	ShopeeStatus     *ShopeeOrderEvent  `json:"shopee_status,omitempty"`
-	ShopeeEvents     []ShopeeOrderEvent `json:"shopee_events,omitempty"`
+	ID                      string             `json:"id"`
+	BillType                string             `json:"bill_type"`
+	Source                  string             `json:"source"`
+	SourceAccountKey        string             `json:"source_account_key"`
+	Status                  string             `json:"status"`
+	DocumentRoute           string             `json:"document_route"`
+	RawData                 json.RawMessage    `json:"raw_data,omitempty"`
+	SMLDocNo                *string            `json:"sml_doc_no,omitempty"`
+	SMLOrderID              string             `json:"sml_order_id,omitempty"`
+	SMLPayload              json.RawMessage    `json:"sml_payload,omitempty"`
+	SMLResponse             json.RawMessage    `json:"sml_response,omitempty"`
+	AIConfidence            *float64           `json:"-"` // retained in storage for historical audit only
+	Anomalies               json.RawMessage    `json:"anomalies"`
+	ErrorMsg                *string            `json:"error_msg,omitempty"`
+	CreatedBy               *string            `json:"created_by,omitempty"`
+	CreatedAt               time.Time          `json:"created_at"`
+	SentAt                  *time.Time         `json:"sent_at,omitempty"`
+	ArchivedAt              *time.Time         `json:"archived_at,omitempty"`
+	ArchivedBy              *string            `json:"archived_by,omitempty"`
+	ArchiveReason           string             `json:"archive_reason,omitempty"`
+	TotalAmount             *float64           `json:"total_amount,omitempty"`
+	Remark                  string             `json:"remark"`
+	AmountReviewedAt        *time.Time         `json:"amount_reviewed_at,omitempty"`
+	AmountReviewedBy        *string            `json:"amount_reviewed_by,omitempty"`
+	AmountReviewFingerprint string             `json:"amount_review_fingerprint,omitempty"`
+	Items                   []BillItem         `json:"items,omitempty"`
+	EmailGroup              *BillEmailGroup    `json:"email_group,omitempty"`
+	ShopeeStatus            *ShopeeOrderEvent  `json:"shopee_status,omitempty"`
+	ShopeeEvents            []ShopeeOrderEvent `json:"shopee_events,omitempty"`
 	// True when a Shopee Realtime snapshot currently points at this bill.
 	// The UI uses this to hide destructive delete actions and direct users to
 	// the route-change flow instead.
@@ -118,6 +121,7 @@ type BillItem struct {
 	Qty                float64         `json:"qty"`
 	UnitCode           *string         `json:"unit_code,omitempty"`
 	Price              *float64        `json:"price,omitempty"`
+	GrossAmount        *float64        `json:"gross_amount,omitempty"`
 	DiscountAmount     float64         `json:"discount_amount"`
 	Mapped             bool            `json:"mapped"`
 	MappingID          *string         `json:"mapping_id,omitempty"`
@@ -125,6 +129,7 @@ type BillItem struct {
 }
 
 const ShopeeShippingSourceSKU = "__shopee_shipping__"
+const TikTokShippingSourceSKU = "__tiktok_shipping__"
 
 type BillListFilter struct {
 	Status         string `form:"status"`

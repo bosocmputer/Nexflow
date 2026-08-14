@@ -1258,6 +1258,56 @@ func (h *BillHandler) Retry(c *gin.Context) {
 	c.JSON(result.HTTPStatus, gin.H{"error": result.Error})
 }
 
+// ConfirmAmountReview records that an operator accepted the TikTok amount
+// difference shown on the bill. The fingerprint makes the confirmation stale
+// as soon as qty, price, gross amount, or discount changes.
+func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
+	bill, err := h.billRepo.FindByID(c.Param("id"))
+	if err != nil || bill == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
+		return
+	}
+	if bill.Source != "tiktok" || bill.Status == "sent" || bill.ArchivedAt != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "บิลนี้ไม่สามารถยืนยันยอดได้"})
+		return
+	}
+	var source struct {
+		Required bool `json:"amount_review_required"`
+	}
+	_ = json.Unmarshal(bill.RawData, &source)
+	if !source.Required {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "บิลนี้ไม่มียอดต่างที่ต้องยืนยัน"})
+		return
+	}
+	fingerprint := tikTokAmountFingerprint(bill.Items)
+	userID := c.GetString("user_id")
+	if err := h.billRepo.ConfirmAmountReview(bill.ID, userID, fingerprint); err != nil {
+		h.log.Error("confirm TikTok amount review", zap.String("bill_id", bill.ID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกการยืนยันยอดไม่สำเร็จ"})
+		return
+	}
+	allMapped := true
+	for _, item := range bill.Items {
+		if !item.Mapped || item.ItemCode == nil || strings.TrimSpace(*item.ItemCode) == "" {
+			allMapped = false
+			break
+		}
+	}
+	if allMapped && bill.Status == "needs_review" {
+		_ = h.billRepo.UpdateStatus(bill.ID, "pending", bill.SMLDocNo, nil, nil)
+	}
+	if h.auditRepo != nil {
+		var uid *string
+		if userID != "" {
+			uid = &userID
+		}
+		_ = h.auditRepo.Log(models.AuditEntry{Action: "tiktok_amount_review_confirmed", TargetID: &bill.ID,
+			UserID: uid, Source: "tiktok", Level: "info", TraceID: c.GetString("trace_id"),
+			Detail: map[string]interface{}{"fingerprint": fingerprint}})
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ยืนยันยอดต่างแล้ว", "amount_review_fingerprint": fingerprint})
+}
+
 func (h *BillHandler) RegenerateDocNo(c *gin.Context) {
 	id := c.Param("id")
 	bill, err := h.billRepo.FindByID(id)
@@ -1448,6 +1498,33 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	}
 	if err := validateRemark2(req.Remark2); err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error()}
+	}
+	if bill.Source == "tiktok" {
+		var source struct {
+			Required bool `json:"amount_review_required"`
+		}
+		_ = json.Unmarshal(bill.RawData, &source)
+		if source.Required {
+			fingerprint := tikTokAmountFingerprint(bill.Items)
+			if bill.AmountReviewedAt == nil || bill.AmountReviewFingerprint != fingerprint {
+				return retrySendResult{HTTPStatus: http.StatusConflict,
+					Error: "ยอดจาก TikTok มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อนส่ง SML", Skipped: true}
+			}
+		}
+	}
+	for _, item := range bill.Items {
+		price := 0.0
+		if item.Price != nil {
+			price = *item.Price
+		}
+		gross := item.Qty * price
+		if item.GrossAmount != nil {
+			gross = *item.GrossAmount
+		}
+		if gross < 0 || item.DiscountAmount < 0 || item.DiscountAmount > gross+0.001 {
+			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity,
+				Error: "ยอดเต็มหรือส่วนลดของรายการสินค้าไม่ถูกต้อง กรุณาแก้ไขก่อนส่ง SML", Skipped: true}
+		}
 	}
 	readiness := h.checkSMLReadiness(context.Background(), false)
 	if !readiness.Ready {
@@ -1727,11 +1804,13 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 			unit = *it.UnitCode
 		}
 		items = append(items, sml.SOItem{
-			ItemCode: *it.ItemCode,
-			ItemName: h.resolveItemName(*it.ItemCode, it.RawName),
-			Qty:      it.Qty,
-			Price:    price,
-			UnitCode: unit,
+			ItemCode:       *it.ItemCode,
+			ItemName:       h.resolveItemName(*it.ItemCode, it.RawName),
+			Qty:            it.Qty,
+			Price:          price,
+			GrossAmount:    it.GrossAmount,
+			DiscountAmount: it.DiscountAmount,
+			UnitCode:       unit,
 		})
 	}
 
@@ -1826,10 +1905,12 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 			price = *it.Price
 		}
 		items = append(items, sml.ShopeeOrderItem{
-			SKU:         *it.ItemCode,
-			ProductName: h.resolveItemName(*it.ItemCode, it.RawName),
-			Price:       price,
-			Qty:         it.Qty,
+			SKU:            *it.ItemCode,
+			ProductName:    h.resolveItemName(*it.ItemCode, it.RawName),
+			Price:          price,
+			Qty:            it.Qty,
+			GrossAmount:    it.GrossAmount,
+			DiscountAmount: it.DiscountAmount,
 		})
 	}
 
@@ -2675,11 +2756,13 @@ func (h *BillHandler) retrySaleOrder(c *gin.Context, bill *models.Bill, req Retr
 			unit = *it.UnitCode
 		}
 		items = append(items, sml.SOItem{
-			ItemCode: *it.ItemCode,
-			ItemName: h.resolveItemName(*it.ItemCode, it.RawName),
-			Qty:      it.Qty,
-			Price:    price,
-			UnitCode: unit,
+			ItemCode:       *it.ItemCode,
+			ItemName:       h.resolveItemName(*it.ItemCode, it.RawName),
+			Qty:            it.Qty,
+			Price:          price,
+			GrossAmount:    it.GrossAmount,
+			DiscountAmount: it.DiscountAmount,
+			UnitCode:       unit,
 		})
 	}
 
@@ -2768,10 +2851,12 @@ func (h *BillHandler) retrySaleInvoice(c *gin.Context, bill *models.Bill, req Re
 			price = *it.Price
 		}
 		items = append(items, sml.ShopeeOrderItem{
-			SKU:         *it.ItemCode,
-			ProductName: h.resolveItemName(*it.ItemCode, it.RawName),
-			Price:       price,
-			Qty:         it.Qty,
+			SKU:            *it.ItemCode,
+			ProductName:    h.resolveItemName(*it.ItemCode, it.RawName),
+			Price:          price,
+			Qty:            it.Qty,
+			GrossAmount:    it.GrossAmount,
+			DiscountAmount: it.DiscountAmount,
 		})
 	}
 
@@ -3643,6 +3728,7 @@ type updateItemRequest struct {
 	UnitCode        *string  `json:"unit_code"`
 	Qty             *float64 `json:"qty"`
 	Price           *float64 `json:"price"`
+	DiscountAmount  *float64 `json:"discount_amount"`
 	RememberMapping bool     `json:"remember_mapping"`
 }
 
@@ -3687,6 +3773,43 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 			if _, ok := h.validateWritableItemCode(c, bill, itemID, *req.ItemCode, "bill_item_update"); !ok {
 				return
 			}
+		}
+	}
+	if req.Qty != nil && *req.Qty <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "จำนวนสินค้าต้องมากกว่า 0"})
+		return
+	}
+	if req.Price != nil && *req.Price < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ราคาต้องไม่ติดลบ"})
+		return
+	}
+	if req.Qty != nil || req.Price != nil || req.DiscountAmount != nil {
+		discount := existingItem.DiscountAmount
+		if req.DiscountAmount != nil {
+			discount = *req.DiscountAmount
+		}
+		if discount < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ส่วนลดต้องไม่ติดลบ"})
+			return
+		}
+		qty := existingItem.Qty
+		if req.Qty != nil {
+			qty = *req.Qty
+		}
+		price := 0.0
+		if existingItem.Price != nil {
+			price = *existingItem.Price
+		}
+		if req.Price != nil {
+			price = *req.Price
+		}
+		gross := qty * price
+		if req.Qty == nil && req.Price == nil && existingItem.GrossAmount != nil {
+			gross = *existingItem.GrossAmount
+		}
+		if discount > gross+0.001 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ส่วนลดต้องไม่เกินยอดเต็มของรายการ"})
+			return
 		}
 	}
 
@@ -3739,7 +3862,7 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		}
 	}
 
-	if err := h.billRepo.UpdateBillItemFields(itemID, req.ItemCode, req.UnitCode, req.Qty, req.Price); err != nil {
+	if err := h.billRepo.UpdateBillItemFields(itemID, req.ItemCode, req.UnitCode, req.Qty, req.Price, req.DiscountAmount); err != nil {
 		h.log.Error("UpdateItem", zap.String("bill", billID), zap.String("item", itemID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
@@ -3825,18 +3948,13 @@ func (h *BillHandler) serveArtifact(c *gin.Context, inline bool) {
 	billID := c.Param("id")
 	artID := c.Param("artifact_id")
 
-	data, art, err := h.artifactSvc.Read(artID)
+	data, art, err := h.artifactSvc.ReadForBill(billID, artID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if art == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artifact not found"})
-		return
-	}
-	// Scope check: artifact must belong to the requested bill
-	if art.BillID != billID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "artifact not found for this bill"})
 		return
 	}
 

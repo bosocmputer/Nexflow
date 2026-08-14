@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import client from '@/api/client'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DetailPageSkeleton } from '@/components/common/LoadingSkeleton'
 import type { BillItem } from '@/types'
@@ -83,6 +84,7 @@ export default function BillDetail() {
   const [directSendConfirmOpen, setDirectSendConfirmOpen] = useState(false)
   const [recreateRouteConfirmOpen, setRecreateRouteConfirmOpen] = useState(false)
   const [recreatingRoute, setRecreatingRoute] = useState(false)
+  const [confirmingAmount, setConfirmingAmount] = useState(false)
   const [sendProgress, setSendProgress] = useState<SendProgressState>({
     open: false,
     status: 'sending',
@@ -154,6 +156,12 @@ export default function BillDetail() {
       })
       return
     }
+    if (bill?.source === 'tiktok' && bill.raw_data?.amount_review_required === true && !bill.amount_reviewed_at) {
+      toast.error('ยังส่ง SML ไม่ได้', {
+        description: 'ยอดจาก TikTok มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อน',
+      })
+      return
+    }
     if (bill?.bill_type === 'purchase' || (bill?.bill_type === 'sale' && (bill?.source === 'shopee' || bill?.source === 'lazada' || bill?.source === 'tiktok'))) {
       setSendDialogOpen(true)
     } else {
@@ -164,6 +172,24 @@ export default function BillDetail() {
   const handlePurchaseConfirm = async (body: RetryBillPayload) => {
     setSendDialogOpen(false)
     await runSingleSMLSend(() => handleRetryWithOverride(body))
+  }
+
+  const handleConfirmAmountReview = async () => {
+    if (!bill || confirmingAmount) return
+    setConfirmingAmount(true)
+    try {
+      await client.post(`/api/bills/${bill.id}/amount-review`)
+      await reloadBill()
+      notifyWorkQueueChanged()
+      toast.success('ยืนยันยอดต่างแล้ว')
+    } catch (err) {
+      const message = axios.isAxiosError(err)
+        ? err.response?.data?.error || err.message
+        : 'บันทึกการยืนยันยอดไม่สำเร็จ'
+      toast.error('ยืนยันยอดไม่สำเร็จ', { description: message })
+    } finally {
+      setConfirmingAmount(false)
+    }
   }
 
   if (loading) {
@@ -191,7 +217,7 @@ export default function BillDetail() {
   }
 
   const total = (bill.items ?? []).reduce(
-    (s, i) => s + Math.max((i.qty ?? 0) * (i.price ?? 0) - (i.discount_amount ?? 0), 0),
+    (s, i) => s + Math.max((i.gross_amount ?? (i.qty ?? 0) * (i.price ?? 0)) - (i.discount_amount ?? 0), 0),
     0,
   )
   const canSend =
@@ -295,6 +321,25 @@ export default function BillDetail() {
         smlReadiness={smlReadiness}
         smlReadinessLoading={smlReadinessLoading}
       />
+
+      {bill.source === 'tiktok' && bill.raw_data?.amount_review_required === true && (
+        <Alert className="border-warning/35 bg-warning/10">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertTitle>ยอดจาก TikTok มีส่วนต่างที่ต้องตรวจ</AlertTitle>
+          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {String(bill.raw_data?.amount_review_reason || 'Order Amount ไม่ตรงกับยอดสินค้าและค่าใช้จ่าย')}
+              {' · '}ส่วนต่าง {Number(bill.raw_data?.amount_difference || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+              {bill.amount_reviewed_at ? ' · ยืนยันแล้ว' : ' · ต้องยืนยันก่อนส่ง SML'}
+            </span>
+            {!bill.amount_reviewed_at && canEdit && (
+              <Button type="button" size="sm" variant="outline" onClick={handleConfirmAmountReview} disabled={confirmingAmount}>
+                {confirmingAmount ? 'กำลังบันทึก...' : 'ยืนยันยอดนี้'}
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {canRecreateDocumentRoute && (
         <div className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">

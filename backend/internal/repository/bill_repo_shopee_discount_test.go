@@ -23,10 +23,10 @@ func TestApplyShopeePurchaseDiscountsToBillUsesCoinEffectiveDiscount(t *testing.
 		WithArgs(billID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "bill_id", "raw_name", "source_sku", "source_item_id", "source_variant_id", "marketplace_alias_id", "source_image_url", "item_code", "qty", "unit_code", "price",
-			"discount_amount", "mapped", "mapping_id", "candidates",
+			"gross_amount", "discount_amount", "mapped", "mapping_id", "candidates",
 		}).
-			AddRow("item-1", billID, "สินค้า A", "", "", "", nil, "", "SKU-A", 1.0, "ชิ้น", 100.0, 0.0, true, nil, []byte("[]")).
-			AddRow("item-2", billID, "สินค้า B", "", "", "", nil, "", "SKU-B", 1.0, "ชิ้น", 200.0, 0.0, true, nil, []byte("[]")))
+			AddRow("item-1", billID, "สินค้า A", "", "", "", nil, "", "SKU-A", 1.0, "ชิ้น", 100.0, nil, 0.0, true, nil, []byte("[]")).
+			AddRow("item-2", billID, "สินค้า B", "", "", "", nil, "", "SKU-B", 1.0, "ชิ้น", 200.0, nil, 0.0, true, nil, []byte("[]")))
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE bills").
 		WithArgs(sqlmock.AnyArg(), billID).

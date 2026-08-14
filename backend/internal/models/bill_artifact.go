@@ -11,6 +11,7 @@ import (
 type BillArtifact struct {
 	ID          string          `json:"id"`
 	BillID      string          `json:"bill_id"`
+	ImportRunID string          `json:"import_run_id,omitempty"`
 	Kind        string          `json:"kind"`
 	Filename    string          `json:"filename"`
 	ContentType string          `json:"content_type,omitempty"`

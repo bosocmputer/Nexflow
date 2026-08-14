@@ -246,13 +246,15 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 
 // SOItem is one parsed line item from an upstream source (Shopee Excel, etc.)
 type SOItem struct {
-	ItemCode  string // resolved SML code (post-mapping)
-	ItemName  string // human-readable name (for SML display)
-	Qty       float64
-	Price     float64 // per-unit price
-	UnitCode  string  // resolved unit; falls back to cfg.UnitCode if empty
-	WHCode    string  // resolved warehouse; falls back to cfg.WHCode
-	ShelfCode string  // resolved shelf; falls back to cfg.ShelfCode
+	ItemCode       string // resolved SML code (post-mapping)
+	ItemName       string // human-readable name (for SML display)
+	Qty            float64
+	Price          float64  // full per-unit price before document discount
+	GrossAmount    *float64 // exact full line amount; nil falls back to qty * price
+	DiscountAmount float64  // document-level discount contributed by this line
+	UnitCode       string   // resolved unit; falls back to cfg.UnitCode if empty
+	WHCode         string   // resolved warehouse; falls back to cfg.WHCode
+	ShelfCode      string   // resolved shelf; falls back to cfg.ShelfCode
 }
 
 type SaleOrderHeaderOptions struct {
@@ -273,7 +275,7 @@ func BuildSaleOrderPayload(
 	opts ...SaleOrderHeaderOptions,
 ) SaleOrderPayload {
 	var lineItems []SaleOrderItem
-	var totalValue, totalVAT, totalExc float64
+	var totalValueCents, totalDiscountCents int64
 	var header SaleOrderHeaderOptions
 	if len(opts) > 0 {
 		header = opts[0]
@@ -293,10 +295,17 @@ func BuildSaleOrderPayload(
 			shelf = cfg.ShelfCode
 		}
 
-		v := CalcItemVAT(item.Price, item.Qty, cfg.VATType, cfg.VATRate)
-		totalValue += v.SumAmount
-		totalVAT += v.VATAmount
-		totalExc += v.SumAmountExclVAT
+		gross := round2(item.Price * item.Qty)
+		if item.GrossAmount != nil {
+			gross = round2(*item.GrossAmount)
+		}
+		price := item.Price
+		if item.Qty > 0 && item.GrossAmount != nil {
+			price = roundN(gross/item.Qty, 6)
+		}
+		v := CalcGrossVAT(gross, item.Qty, cfg.VATType, cfg.VATRate)
+		totalValueCents += moneyCents(v.SumAmount)
+		totalDiscountCents += moneyCents(item.DiscountAmount)
 
 		lineItems = append(lineItems, SaleOrderItem{
 			ItemCode:         item.ItemCode,
@@ -308,7 +317,7 @@ func BuildSaleOrderPayload(
 			WHCode:           wh,
 			ShelfCode:        shelf,
 			Qty:              item.Qty,
-			Price:            round2(item.Price),
+			Price:            price,
 			PriceExcludeVAT:  roundN(v.PriceExcludeVAT, 4),
 			DiscountAmount:   0,
 			SumAmount:        round2(v.SumAmount),
@@ -319,25 +328,9 @@ func BuildSaleOrderPayload(
 		})
 	}
 
-	totalValue = round2(totalValue)
-	totalVAT = round2(totalVAT)
-	totalExc = round2(totalExc)
-
-	var totalBeforeVAT, totalAfterVAT, totalAmount float64
-	switch cfg.VATType {
-	case 1:
-		totalBeforeVAT = totalExc
-		totalAfterVAT = totalValue
-		totalAmount = totalValue
-	case 2:
-		totalBeforeVAT = totalValue
-		totalAfterVAT = totalValue
-		totalAmount = totalValue
-	default:
-		totalBeforeVAT = totalValue
-		totalAfterVAT = round2(totalValue + totalVAT)
-		totalAmount = totalAfterVAT
-	}
+	totalValue := centsMoney(totalValueCents)
+	totalDiscount := centsMoney(totalDiscountCents)
+	totalBeforeVAT, totalVAT, totalAfterVAT, totalAmount := CalcDocumentTotals(totalValue-totalDiscount, cfg.VATType, cfg.VATRate)
 
 	return SaleOrderPayload{
 		DocNo:          docNo,
@@ -353,7 +346,7 @@ func BuildSaleOrderPayload(
 		VATType:        cfg.VATType,
 		VATRate:        cfg.VATRate,
 		TotalValue:     totalValue,
-		TotalDiscount:  0,
+		TotalDiscount:  totalDiscount,
 		TotalBeforeVAT: totalBeforeVAT,
 		TotalVATValue:  totalVAT,
 		TotalExceptVAT: 0,

@@ -354,6 +354,57 @@ func CalcItemVAT(price, qty float64, vatType int, vatRate float64) CalcVATResult
 	}
 }
 
+// CalcGrossVAT keeps the exact full line amount as source of truth. This is
+// required when gross/qty cannot be represented as a two-decimal unit price.
+func CalcGrossVAT(gross, qty float64, vatType int, vatRate float64) CalcVATResult {
+	gross = round2(gross)
+	price := 0.0
+	if qty > 0 {
+		price = roundN(gross/qty, 6)
+	}
+	rate := vatRate / 100
+	result := CalcVATResult{SumAmount: gross}
+	switch vatType {
+	case 1:
+		result.PriceExcludeVAT = roundN(price/(1+rate), 6)
+		result.SumAmountExclVAT = round2(gross / (1 + rate))
+		result.VATAmount = round2(gross - result.SumAmountExclVAT)
+	case 2:
+		result.PriceExcludeVAT = price
+		result.SumAmountExclVAT = gross
+	default:
+		result.PriceExcludeVAT = price
+		result.SumAmountExclVAT = gross
+		result.VATAmount = round2(gross * rate)
+	}
+	return result
+}
+
+// CalcDocumentTotals applies the header discount before calculating VAT.
+func CalcDocumentTotals(net float64, vatType int, vatRate float64) (beforeVAT, vat, afterVAT, total float64) {
+	net = round2(net)
+	if net < 0 {
+		net = 0
+	}
+	switch vatType {
+	case 1:
+		beforeVAT = round2(net / (1 + vatRate/100))
+		vat = round2(net - beforeVAT)
+		afterVAT = net
+		total = net
+	case 2:
+		beforeVAT = net
+		afterVAT = net
+		total = net
+	default:
+		beforeVAT = net
+		vat = round2(net * vatRate / 100)
+		afterVAT = round2(net + vat)
+		total = afterVAT
+	}
+	return
+}
+
 // resolveSMLURL combines a base URL with the per-call override.
 //   - override = ""  → baseURL + defaultPath
 //   - override starts with "http://" or "https://" → use as-is (absolute)
@@ -382,14 +433,19 @@ func roundN(v float64, n int) float64 {
 	return math.Round(v*p) / p
 }
 
+func moneyCents(v float64) int64 { return int64(math.Round(v * 100)) }
+func centsMoney(v int64) float64 { return float64(v) / 100 }
+
 // ─── Payload Builder ──────────────────────────────────────────────────────────
 
 // ShopeeOrderItem is one row from the parsed Shopee Excel.
 type ShopeeOrderItem struct {
-	SKU         string  `json:"sku"`
-	ProductName string  `json:"product_name"`
-	Price       float64 `json:"price"`
-	Qty         float64 `json:"qty"`
+	SKU            string   `json:"sku"`
+	ProductName    string   `json:"product_name"`
+	Price          float64  `json:"price"`
+	Qty            float64  `json:"qty"`
+	GrossAmount    *float64 `json:"gross_amount,omitempty"`
+	DiscountAmount float64  `json:"discount_amount,omitempty"`
 }
 
 type InvoiceHeaderOptions struct {
@@ -411,7 +467,7 @@ func BuildInvoicePayload(
 	opts ...InvoiceHeaderOptions,
 ) InvoicePayload {
 	var details []InvoiceDetail
-	var totalValue, totalVAT, totalExc float64
+	var totalValueCents, totalDiscountCents int64
 	var header InvoiceHeaderOptions
 	if len(opts) > 0 {
 		header = opts[0]
@@ -437,10 +493,17 @@ func BuildInvoicePayload(
 			}
 		}
 
-		v := CalcItemVAT(item.Price, item.Qty, cfg.VATType, cfg.VATRate)
-		totalValue += v.SumAmount
-		totalVAT += v.VATAmount
-		totalExc += v.SumAmountExclVAT
+		gross := round2(item.Price * item.Qty)
+		if item.GrossAmount != nil {
+			gross = round2(*item.GrossAmount)
+		}
+		price := item.Price
+		if item.Qty > 0 && item.GrossAmount != nil {
+			price = roundN(gross/item.Qty, 6)
+		}
+		v := CalcGrossVAT(gross, item.Qty, cfg.VATType, cfg.VATRate)
+		totalValueCents += moneyCents(v.SumAmount)
+		totalDiscountCents += moneyCents(item.DiscountAmount)
 
 		details = append(details, InvoiceDetail{
 			ItemCode:         item.SKU,
@@ -452,7 +515,7 @@ func BuildInvoicePayload(
 			WHCode:           whCode,
 			ShelfCode:        shelfCode,
 			Qty:              item.Qty,
-			Price:            round2(item.Price),
+			Price:            price,
 			PriceExcludeVAT:  roundN(v.PriceExcludeVAT, 4),
 			DiscountAmount:   0,
 			SumAmount:        round2(v.SumAmount),
@@ -463,25 +526,9 @@ func BuildInvoicePayload(
 		})
 	}
 
-	totalValue = round2(totalValue)
-	totalVAT = round2(totalVAT)
-	totalExc = round2(totalExc)
-
-	var totalBeforeVAT, totalAfterVAT, totalAmount float64
-	switch cfg.VATType {
-	case 1: // รวมใน
-		totalBeforeVAT = totalExc
-		totalAfterVAT = totalValue
-		totalAmount = totalValue
-	case 2: // ศูนย์%
-		totalBeforeVAT = totalValue
-		totalAfterVAT = totalValue
-		totalAmount = totalValue
-	default: // 0 แยกนอก
-		totalBeforeVAT = totalValue
-		totalAfterVAT = round2(totalValue + totalVAT)
-		totalAmount = totalAfterVAT
-	}
+	totalValue := centsMoney(totalValueCents)
+	totalDiscount := centsMoney(totalDiscountCents)
+	totalBeforeVAT, totalVAT, totalAfterVAT, totalAmount := CalcDocumentTotals(totalValue-totalDiscount, cfg.VATType, cfg.VATRate)
 
 	return InvoicePayload{
 		DocNo:          docNo,
@@ -497,7 +544,7 @@ func BuildInvoicePayload(
 		VATType:        cfg.VATType,
 		VATRate:        cfg.VATRate,
 		TotalValue:     totalValue,
-		TotalDiscount:  0,
+		TotalDiscount:  totalDiscount,
 		TotalBeforeVAT: totalBeforeVAT,
 		TotalVATValue:  totalVAT,
 		TotalExceptVAT: 0,

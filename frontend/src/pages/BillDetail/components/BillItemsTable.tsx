@@ -55,15 +55,19 @@ export function BillItemsTable({
   highlightItemId,
 }: Props) {
   const items = bill.items ?? []
-  const rawNameLabel = isShopeeSalesBill(bill) ? 'ชื่อสินค้าจาก Excel' : 'ชื่อสินค้าจากอีเมล'
-  const showDiscountColumn = isShopeePurchaseBill(bill)
-  const discountSummary = showDiscountColumn ? discountSummaryFromBill(bill) : null
+  const rawNameLabel = bill.source === 'tiktok'
+    ? 'ชื่อสินค้าจาก TikTok'
+    : isShopeeSalesBill(bill) ? 'ชื่อสินค้าจาก Excel' : 'ชื่อสินค้าจากอีเมล'
+  const isShopeePurchase = isShopeePurchaseBill(bill)
+  const isTikTokSale = bill.source === 'tiktok' && bill.bill_type === 'sale'
+  const showDiscountColumn = isShopeePurchase || isTikTokSale
+  const discountSummary = isShopeePurchase ? discountSummaryFromBill(bill) : null
   const totalDiscount = discountSummary?.total_discount_amount ?? 0
   const coinAmt = shopeeCoinAmount(bill) ?? 0
   const effectiveDiscount = Math.round((totalDiscount + coinAmt) * 100) / 100
   const grossTotal = items
     .filter((item) => item.source_sku !== '__shopee_shipping__')
-    .reduce((sum, item) => sum + (item.qty ?? 0) * (item.price ?? 0), 0)
+    .reduce((sum, item) => sum + (item.gross_amount ?? (item.qty ?? 0) * (item.price ?? 0)), 0)
   const rowDiscountInfo: DiscountInfo | undefined =
     showDiscountColumn && effectiveDiscount > 0 && grossTotal > 0
       ? {
@@ -103,7 +107,7 @@ export function BillItemsTable({
           <p className="mt-1 text-xs text-muted-foreground">
             ตรวจรหัสสินค้า หน่วย จำนวน และราคาให้ครบก่อนส่งเข้า SML
           </p>
-          {showDiscountColumn && (
+          {isShopeePurchase && (
             <div className="mt-2 max-w-3xl rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
               <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                 ส่วนลด
@@ -141,6 +145,12 @@ export function BillItemsTable({
               )}
             </div>
           )}
+          {isTikTokSale && (
+            <div className="mt-2 max-w-3xl rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              รายการสินค้าเก็บยอดเต็มจาก TikTok โดยตรง ส่วนลดแพลตฟอร์มและส่วนลดร้านจะรวมเป็นส่วนลดหัวเอกสาร SML
+              ยอดสุทธิของแต่ละรายการ = ยอดเต็ม - ส่วนลด
+            </div>
+          )}
         </div>
         {issueCount > 0 ? (
           <span className="rounded-md bg-warning/10 px-2 py-1 text-xs font-medium text-warning">
@@ -162,7 +172,7 @@ export function BillItemsTable({
                 <TableHead className="w-[300px]">ชื่อสินค้าใน SML</TableHead>
                 <TableHead className="w-[110px] text-right">จำนวน</TableHead>
                 <TableHead className="w-[120px]">หน่วย</TableHead>
-                <TableHead className="w-[140px] text-right">ราคา</TableHead>
+                <TableHead className="w-[140px] text-right">ราคาเต็ม</TableHead>
                 {showDiscountColumn && (
                   <TableHead className="w-[130px] text-right">ส่วนลด</TableHead>
                 )}
