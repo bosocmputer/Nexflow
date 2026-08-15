@@ -178,8 +178,9 @@ sml.stock_request_url=http://nextstep.iszai.com:8093
 ```
 
 `nextstep.iszai.com` resolves to the server public IP. The production host does
-not support hairpin access back to port 8093, so the AOY backend receives a
-tenant-scoped Docker `extra_hosts` entry from `deploy/nextstep-instances.json`:
+not support hairpin access back to port 8093, so the Demo and AOY backends
+receive tenant-scoped Docker `extra_hosts` entries from
+`deploy/nextstep-instances.json`:
 
 ```text
 nextstep.iszai.com -> 10.121.20.83

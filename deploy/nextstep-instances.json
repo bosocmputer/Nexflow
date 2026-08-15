@@ -12,7 +12,10 @@
       "backend_port": 8110,
       "postgres_port": 5440,
       "public_url": "https://nexflow.nextstep-soft.com",
-      "sml_tenant": "demo"
+      "sml_tenant": "demo",
+      "backend_extra_hosts": [
+        "nextstep.iszai.com:10.121.20.83"
+      ]
     },
     {
       "name": "aoy",
