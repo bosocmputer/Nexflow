@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -75,6 +77,7 @@ class Target:
     public_url: str
     folder: str
     sml_tenant: str
+    backend_extra_hosts: tuple[str, ...]
 
 
 def fail(message: str) -> None:
@@ -110,6 +113,11 @@ def load_targets(registry_path: Path = REGISTRY_PATH) -> dict[str, Target]:
             frontend_container=str(item["frontend_container"]).strip(),
             public_url=str(item.get("public_url") or f"https://{item['hostname']}").strip(),
             sml_tenant=str(item["sml_tenant"]).strip(),
+            backend_extra_hosts=tuple(
+                str(value).strip()
+                for value in item.get("backend_extra_hosts", [])
+                if str(value).strip()
+            ),
         )
         values = {
             "name": target.name,
@@ -123,6 +131,24 @@ def load_targets(registry_path: Path = REGISTRY_PATH) -> dict[str, Target]:
             if value in seen_values[key]:
                 fail(f"duplicate {key} in {registry_path}: {value}")
             seen_values[key].add(value)
+        seen_host_aliases: set[str] = set()
+        for value in target.backend_extra_hosts:
+            hostname, separator, address = value.rpartition(":")
+            if (
+                not separator
+                or not re.fullmatch(r"[A-Za-z0-9.-]+", hostname)
+                or hostname.startswith(".")
+                or hostname.endswith(".")
+            ):
+                fail(f"invalid backend_extra_hosts hostname for {name}: {value}")
+            try:
+                ipaddress.ip_address(address)
+            except ValueError:
+                fail(f"invalid backend_extra_hosts IP for {name}: {value}")
+            normalized_hostname = hostname.lower()
+            if normalized_hostname in seen_host_aliases:
+                fail(f"duplicate backend_extra_hosts hostname for {name}: {hostname}")
+            seen_host_aliases.add(normalized_hostname)
         targets[target.name] = target
     if not targets:
         fail(f"no instances found in {registry_path}")
@@ -248,7 +274,22 @@ chown -R {shlex.quote(remote_user)}:{shlex.quote(remote_user)} {shlex.quote(RELE
     return sudo(script, label=f"prepare release clone ({resolved_ref})", timeout=300).splitlines()[-1].strip()
 
 
+def render_instance_override(target: Target) -> str:
+    if target.backend_extra_hosts:
+        host_lines = "\n".join(f'      - "{value}"' for value in target.backend_extra_hosts)
+        return (
+            "# Managed by scripts/deploy_nextstep_instances.py.\n"
+            "# Keeps tenant-specific upstream host routing stable across container rebuilds.\n"
+            "services:\n"
+            "  backend:\n"
+            "    extra_hosts:\n"
+            f"{host_lines}\n"
+        )
+    return ""
+
+
 def ensure_instance_compose(target: Target) -> None:
+    managed_override = render_instance_override(target)
     script = f"""
 set -euo pipefail
 python3 - <<'PY'
@@ -272,6 +313,30 @@ if new != text:
     print(f"updated {{path}}; backup={{backup}}")
 else:
     print(f"compose build contexts already point to {RELEASE_DIR}")
+
+override_path = path.with_name("docker-compose.override.yml")
+managed_header = "# Managed by scripts/deploy_nextstep_instances.py."
+rendered_override = {managed_override!r}
+if rendered_override:
+    if override_path.exists():
+        current_override = override_path.read_text()
+        if current_override and not current_override.startswith(managed_header):
+            raise SystemExit(f"refusing to replace unmanaged {{override_path}}")
+        if current_override == rendered_override:
+            print(f"backend host aliases already current in {{override_path}}")
+        else:
+            backup = override_path.with_name(override_path.name + ".bak-gitdeploy-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+            shutil.copy2(override_path, backup)
+            override_path.write_text(rendered_override)
+            print(f"updated {{override_path}}; backup={{backup}}")
+    else:
+        override_path.write_text(rendered_override)
+        print(f"created {{override_path}}")
+elif override_path.exists() and override_path.read_text().startswith(managed_header):
+    backup = override_path.with_name(override_path.name + ".bak-gitdeploy-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    shutil.copy2(override_path, backup)
+    override_path.unlink()
+    print(f"removed managed {{override_path}}; backup={{backup}}")
 PY
 """
     sudo(script, label=f"ensure instance compose {target.name}", timeout=60)

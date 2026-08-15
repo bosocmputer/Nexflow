@@ -26,7 +26,10 @@
       "backend_port": 8111,
       "postgres_port": 5441,
       "public_url": "https://nexflow-aoy.nextstep-soft.com",
-      "sml_tenant": "aoy"
+      "sml_tenant": "aoy",
+      "backend_extra_hosts": [
+        "nextstep.iszai.com:10.121.20.83"
+      ]
     },
     {
       "name": "lanboon",

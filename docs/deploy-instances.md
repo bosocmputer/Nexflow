@@ -177,6 +177,18 @@ sml.rest_base_url=http://172.24.0.1:8200
 sml.stock_request_url=http://nextstep.iszai.com:8093
 ```
 
+`nextstep.iszai.com` resolves to the server public IP. The production host does
+not support hairpin access back to port 8093, so the AOY backend receives a
+tenant-scoped Docker `extra_hosts` entry from `deploy/nextstep-instances.json`:
+
+```text
+nextstep.iszai.com -> 10.121.20.83
+```
+
+Keep the application setting as the public service URL. The internal DNS
+override preserves the expected HTTP Host and final request URL while routing
+traffic directly to the SML Java service inside the customer network.
+
 Readiness checks:
 
 ```bash
