@@ -42,12 +42,23 @@ func TestCalculateTarget(t *testing.T) {
 }
 
 func TestPreviewExcludedLocationsPreservesSMLWarehouseDetails(t *testing.T) {
-	got := previewExcludedLocations([]sml.StockBalanceLocation{{
+	got := previewExcludedLocations("AH-0001", []sml.StockBalanceLocation{{
 		WarehouseCode: "W2", WarehouseName: "คลังสำรอง",
 		LocationCode: "S2", LocationName: "ชั้นสอง", UnitCode: "ชิ้น", BalanceQty: -3,
 	}})
-	if len(got) != 1 || got[0].WarehouseCode != "W2" || got[0].WarehouseName != "คลังสำรอง" || got[0].LocationCode != "S2" || got[0].LocationName != "ชั้นสอง" || got[0].UnitCode != "ชิ้น" || got[0].BalanceQty != -3 {
+	if len(got) != 1 || got[0].ItemCode != "AH-0001" || got[0].WarehouseCode != "W2" || got[0].WarehouseName != "คลังสำรอง" || got[0].LocationCode != "S2" || got[0].LocationName != "ชั้นสอง" || got[0].UnitCode != "ชิ้น" || got[0].BalanceQty != -3 {
 		t.Fatalf("excluded locations = %#v", got)
+	}
+}
+
+func TestMergePreviewExcludedLocationsKeepsItemsAndUnitsSeparate(t *testing.T) {
+	got := mergePreviewExcludedLocations(
+		[]ExcludedStockLocation{{ItemCode: "A", WarehouseCode: "W2", LocationCode: "S2", UnitCode: "ชิ้น", BalanceQty: 2}},
+		[]ExcludedStockLocation{{ItemCode: "A", WarehouseCode: "W2", LocationCode: "S2", UnitCode: "ชิ้น", BalanceQty: 3}},
+		[]ExcludedStockLocation{{ItemCode: "B", WarehouseCode: "W2", LocationCode: "S2", UnitCode: "กล่อง", BalanceQty: 4}},
+	)
+	if len(got) != 2 || got[0].ItemCode != "A" || got[0].BalanceQty != 5 || got[1].ItemCode != "B" || got[1].UnitCode != "กล่อง" {
+		t.Fatalf("merged excluded locations = %#v", got)
 	}
 }
 

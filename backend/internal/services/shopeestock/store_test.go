@@ -93,3 +93,38 @@ func TestPendingShopeeReservationsAggregatesByItemAndModel(t *testing.T) {
 		t.Fatalf("unmet SQL expectation: %v", err)
 	}
 }
+
+func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE shopee_stock_mappings SET.*last_preview_excluded_locations=\$14::jsonb`).
+		WithArgs(
+			int64(42), int64(1001), int64(2001),
+			7.0, -2.0, 0.0, 0.0, int64(5),
+			0, false, "", 0.0, int64(0), sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE shopee_stock_settings SET dry_run_required=false`).
+		WithArgs(int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result := &PreviewResult{Lines: []PreviewLine{{
+		ItemID: 1001, ModelID: 2001, ScopeBalance: 7, ExcludedBalance: -2, TargetStock: 5,
+		ExcludedLocations: []ExcludedStockLocation{{
+			ItemCode: "AH-0006", WarehouseCode: "AB-2", WarehouseName: "คลังสำรอง",
+			LocationCode: "002", LocationName: "หลังร้าน", UnitCode: "กล่อง", BalanceQty: -2,
+		}},
+	}}}
+	if err := NewStore(db).SavePreview(context.Background(), 42, result); err != nil {
+		t.Fatalf("SavePreview: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}

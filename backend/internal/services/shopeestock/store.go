@@ -828,6 +828,7 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
 		       COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
+		       COALESCE(m.last_preview_excluded_locations,'[]'::jsonb),
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
 		       m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,m.last_success_target,m.updated_at,
 		       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
@@ -856,17 +857,18 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 	products := []ProductRow{}
 	for rows.Next() {
 		var item ProductRow
-		var warnings, unitsJSON, componentsJSON []byte
+		var warnings, unitsJSON, componentsJSON, excludedLocationsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
 			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
 			&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
-			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
+			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &excludedLocationsJSON, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
 			&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
 			&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
 			&item.SetDocumentValid, &item.SetStockValid, &componentsJSON); err != nil {
 			return nil, 0, ProductCounts{}, err
 		}
 		_ = json.Unmarshal(warnings, &item.WarningCodes)
+		_ = json.Unmarshal(excludedLocationsJSON, &item.LastPreviewExcludedLocations)
 		var units []sml.StockCatalogUnit
 		if err := json.Unmarshal(unitsJSON, &units); err != nil {
 			return nil, 0, ProductCounts{}, fmt.Errorf("decode SML units for %s: %w", item.SMLItemCode, err)
@@ -1220,15 +1222,20 @@ func (s *Store) SavePreview(ctx context.Context, shopID int64, result *PreviewRe
 	}
 	defer tx.Rollback()
 	for _, line := range result.Lines {
+		excludedLocationsJSON, err := json.Marshal(line.ExcludedLocations)
+		if err != nil {
+			return fmt.Errorf("encode excluded stock locations for %d/%d: %w", line.ItemID, line.ModelID, err)
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings SET
 			last_preview_balance=$4,last_preview_excluded_balance=$5,last_preview_min_qty=$6,
 			last_preview_max_qty=$7,last_preview_target=$8,last_preview_pending_qty=$12,
 			last_preview_pool_base_target=NULLIF($13,0),
+			last_preview_excluded_locations=$14::jsonb,
 			set_definition_hash=CASE WHEN $9=3 AND $10=false THEN $11 ELSE set_definition_hash END,
 			updated_at=updated_at
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3`, shopID, line.ItemID, line.ModelID,
 			line.ScopeBalance, line.ExcludedBalance, line.MinQty, line.MaxQty, line.TargetStock,
-			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingNexflowQty, line.PoolBaseTarget); err != nil {
+			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingNexflowQty, line.PoolBaseTarget, excludedLocationsJSON); err != nil {
 			return err
 		}
 		if !line.Changed && !line.Blocked {

@@ -11,6 +11,7 @@ import {
   GitMerge,
   Info,
   Loader2,
+  MoreHorizontal,
   PackageCheck,
   Play,
   RefreshCw,
@@ -30,6 +31,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -116,6 +118,7 @@ type ProductRow = {
   warning_codes: string[]
   last_preview_balance?: number
   last_preview_excluded_balance?: number
+  last_preview_excluded_locations?: ExcludedLocation[]
   last_preview_min_qty?: number
   last_preview_max_qty?: number
   last_preview_target?: number
@@ -190,6 +193,7 @@ type Preview = {
   blocked_count: number
   excluded_balance: number
   excluded_locations?: Array<{
+    item_code?: string
     warehouse_code: string
     warehouse_name: string
     location_code: string
@@ -204,6 +208,7 @@ type Preview = {
     sml_item_code: string
     scope_balance: number
     excluded_balance: number
+    excluded_locations?: ExcludedLocation[]
     min_qty: number
     max_qty: number
     unit_factor: number
@@ -788,7 +793,7 @@ export default function ShopeeStock() {
 
         {tab === 'history' ? <HistoryList runs={data?.runs ?? []} /> : (
           <>
-            <div className="hidden grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_132px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
+            <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
               <span>สินค้า Shopee</span>
               <span>สินค้าที่จับคู่ใน SML</span>
               <div className="grid grid-cols-3 gap-3 text-right">
@@ -832,6 +837,53 @@ export default function ShopeeStock() {
   )
 }
 
+function ProductExcludedLocations({
+  locations,
+  fallbackBalance,
+  fallbackUnit,
+}: {
+  locations: ExcludedLocation[]
+  fallbackBalance?: number
+  fallbackUnit?: string
+}) {
+  const primary = locations[0]
+  const remaining = locations.slice(1)
+  const locationDetail = (location: ExcludedLocation) => {
+    const warehouse = stockLocationLabel(location.warehouse_code, location.warehouse_name, 'ไม่ระบุคลัง')
+    const shelf = stockLocationLabel(location.location_code, location.location_name, 'ไม่ระบุพื้นที่เก็บ')
+    return { warehouse, shelf, text: `${formatNumber(location.balance_qty)}${location.unit_code ? ` ${location.unit_code}` : ''} · คลัง: ${warehouse} · พื้นที่เก็บ: ${shelf}` }
+  }
+  const primaryDetail = primary ? locationDetail(primary) : null
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-warning/25 pt-1.5 text-[11px] text-amber-900 dark:text-amber-200 lg:col-span-4">
+      <Warehouse className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="font-medium">ยอดคงเหลืออยู่ในคลัง/พื้นที่เก็บอื่น</span>
+      {primary && primaryDetail ? (
+        <span className="min-w-0 truncate" title={primaryDetail.text}><span className={cn('font-mono font-semibold tabular-nums', primary.balance_qty < 0 && 'text-destructive')}>{formatNumber(primary.balance_qty)}{primary.unit_code ? ` ${primary.unit_code}` : ''}</span><span> · คลัง: {primaryDetail.warehouse} · พื้นที่เก็บ: {primaryDetail.shelf}</span></span>
+      ) : (
+        <span>
+          <span className={cn('font-mono font-semibold tabular-nums', (fallbackBalance ?? 0) < 0 && 'text-destructive')}>{formatNumber(fallbackBalance)}{fallbackUnit ? ` ${fallbackUnit}` : ''}</span>
+          <span> · กด “บันทึกและตรวจสต๊อก” เพื่อดูชื่อคลังและพื้นที่เก็บ</span>
+        </span>
+      )}
+      {remaining.length > 0 && (
+        <Popover>
+          <PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 px-1.5 text-[11px] text-amber-900 dark:text-amber-200">ดูอีก {formatNumber(remaining.length)} ตำแหน่ง</Button></PopoverTrigger>
+          <PopoverContent align="start" className="w-[min(26rem,calc(100vw-2rem))] p-0">
+            <div className="border-b px-3 py-2"><p className="text-sm font-medium">คลังและพื้นที่เก็บอื่นของสินค้านี้</p><p className="text-xs text-muted-foreground">ยอดเหล่านี้ไม่นำไปคำนวณหรือส่ง Shopee</p></div>
+            <div className="max-h-64 divide-y overflow-y-auto">
+              {remaining.map((location) => {
+                const detail = locationDetail(location)
+                return <div key={`${location.item_code ?? ''}:${location.warehouse_code}:${location.location_code}:${location.unit_code}`} className="px-3 py-2 text-xs"><p className={cn('font-mono font-semibold tabular-nums', location.balance_qty < 0 && 'text-destructive')}>{formatNumber(location.balance_qty)}{location.unit_code ? ` ${location.unit_code}` : ''}</p><p className="mt-0.5 text-foreground">คลัง: {detail.warehouse}</p><p className="text-muted-foreground">พื้นที่เก็บ: {detail.shelf}</p></div>
+              })}
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  )
+}
+
 function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: () => void; onPool: () => void }) {
   const [setDetailsOpen, setSetDetailsOpen] = useState(false)
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
@@ -845,18 +897,20 @@ function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: (
       : `หน่วยที่ใช้คำนวณ: ${sellingUnit}`
     : ''
   const shopeeIdentity = `SKU ${sku} · Item ${product.item_id}${product.model_id ? ` / Model ${product.model_id}` : ''}`
+  const canManagePool = product.sml_item_code && (product.shared_pool_enabled || product.warning_codes.includes('duplicate_sml_item'))
+  const excludedLocations = product.last_preview_excluded_locations ?? []
   return (
     <>
-    <div className="grid gap-3 px-3 py-2 lg:grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_132px] lg:items-center">
+    <div className="grid gap-x-3 gap-y-2 px-3 py-2 lg:grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] lg:items-center">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium leading-5" title={itemName}>{itemName}</p>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
+        <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs">
           {optionName && (
-            <span className="max-w-[45%] shrink-0 truncate rounded-sm border border-primary/25 bg-primary/10 px-1.5 py-0.5 font-semibold text-primary" title={`ตัวเลือกสินค้า: ${optionName}`}>
-              ตัวเลือก: {optionName}
+            <span className="max-w-[58%] shrink-0 truncate font-semibold text-foreground" title={`ตัวเลือกสินค้า: ${optionName}`}>
+              <span className="font-normal text-muted-foreground">ตัวเลือก:</span> {optionName}
             </span>
           )}
-          <span className="min-w-0 truncate text-muted-foreground" title={shopeeIdentity}>{shopeeIdentity}</span>
+          <span className="min-w-0 truncate text-muted-foreground" title={shopeeIdentity}>SKU: {sku}</span>
         </div>
         {(product.shared_pool_enabled || product.warning_codes.length > 0) && <div className="mt-1 flex flex-wrap gap-1">{product.shared_pool_enabled && <Badge variant="outline" className="border-info/30 bg-info/10 text-info">สต๊อกร่วม {formatNumber(product.pool_allocation_pct)}%</Badge>}{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
       </div>
@@ -870,13 +924,11 @@ function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: (
           )}
         </div>
         <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${conversionText}${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
-        {product.marketplace_alias_id && <Link to={`/marketplace-aliases?q=${encodeURIComponent(product.model_sku || product.item_sku || String(product.item_id))}`} className="mt-0.5 inline-flex text-[11px] font-medium text-primary hover:underline">ดูใน Product Master</Link>}
       </div>
       <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">คงเหลือ SML</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</span>{product.last_preview_balance != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
-          {!!product.last_preview_excluded_balance && <p className="text-[11px] text-warning" title="ยอดของสินค้านี้ในคลังหรือพื้นที่เก็บอื่น ดูตำแหน่งจากผล Dry-run ด้านบน">คลัง/พื้นที่อื่น {formatNumber(product.last_preview_excluded_balance)}{baseUnit ? ` ${baseUnit}` : ''}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">Shopee ตอนนี้</p>
@@ -888,15 +940,25 @@ function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: (
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</span>{product.last_preview_target != null && sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
         </div>
       </div>
-      {product.sml_item_code && (product.shared_pool_enabled || product.warning_codes.includes('duplicate_sml_item')) ? (
+      {canManagePool ? (
         <div className="flex items-center justify-end gap-1">
-          <Button variant="outline" size="sm" className="min-w-0 flex-1 px-2" onClick={onPool}><GitMerge className="h-4 w-4" />{product.shared_pool_enabled ? 'ปรับสัดส่วน' : 'แบ่งสต๊อก'}</Button>
-          <Tooltip>
-            <TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onMap} aria-label="เปลี่ยนการจับคู่สินค้า"><Settings2 className="h-4 w-4" /></Button></TooltipTrigger>
-            <TooltipContent>เปลี่ยนการจับคู่สินค้า</TooltipContent>
-          </Tooltip>
+          <Button variant="outline" size="sm" className="h-8 flex-1 whitespace-nowrap px-2.5" onClick={onPool}><GitMerge className="h-4 w-4" />{product.shared_pool_enabled ? 'ปรับสัดส่วน' : 'แบ่งสต๊อก'}</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="คำสั่งเพิ่มเติม" title="คำสั่งเพิ่มเติม"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem onSelect={onMap}><Settings2 className="h-4 w-4" />เปลี่ยนสินค้าและหน่วย SML</DropdownMenuItem>
+              {product.marketplace_alias_id && <DropdownMenuItem asChild><Link to={`/marketplace-aliases?q=${encodeURIComponent(product.model_sku || product.item_sku || String(product.item_id))}`}>ดูใน Product Master</Link></DropdownMenuItem>}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      ) : <Button variant="outline" size="sm" className="px-2" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>}
+      ) : <Button variant="outline" size="sm" className="h-8 justify-self-end whitespace-nowrap px-2.5 lg:w-full" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยนสินค้า' : 'จับคู่สินค้า'}</Button>}
+      {(excludedLocations.length > 0 || !!product.last_preview_excluded_balance) && (
+        <ProductExcludedLocations
+          locations={excludedLocations}
+          fallbackBalance={product.last_preview_excluded_balance}
+          fallbackUnit={baseUnit}
+        />
+      )}
     </div>
     <SetProductDetailsDialog
       open={setDetailsOpen}

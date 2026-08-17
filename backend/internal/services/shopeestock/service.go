@@ -591,6 +591,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if len(itemCodes) > 0 {
 		request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
 			ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes, ScopeMode: settings.ScopeMode,
+			IncludeItemExcludedLocations: true,
 		}}}
 		for _, pair := range settings.Locations {
 			request.Scopes[0].Locations = append(request.Scopes[0].Locations, sml.StockLocationPair{Warehouse: pair.Warehouse, Location: pair.Location})
@@ -605,7 +606,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		for _, item := range balances.Scopes[0].Items {
 			balanceMap[item.ItemCode] = item
 		}
-		excludedLocations = previewExcludedLocations(balances.Scopes[0].ExcludedLocations)
+		excludedLocations = previewExcludedLocations("", balances.Scopes[0].ExcludedLocations)
 	}
 	result := &PreviewResult{
 		RunID: runID, ShopID: shopID, AsOfDate: asOfDate,
@@ -656,6 +657,14 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				}
 				line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-pendingBase, 0), settings.StockPct, line.UnitFactor)
 				line.SetComponents = components
+				componentLocations := make([][]ExcludedStockLocation, 0, len(components))
+				for _, component := range components {
+					componentBalance, exists := balanceMap[component.ItemCode]
+					if exists {
+						componentLocations = append(componentLocations, previewExcludedLocations(component.ItemCode, componentBalance.ExcludedLocations))
+					}
+				}
+				line.ExcludedLocations = mergePreviewExcludedLocations(componentLocations...)
 				for _, component := range components {
 					if component.Bottleneck && line.BottleneckItemCode == "" {
 						line.BottleneckItemCode = component.ItemCode
@@ -672,6 +681,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 			line.ScopeBalance = balance.BalanceQty
 			line.ExcludedBalance = balance.ExcludedBalanceQty
+			line.ExcludedLocations = previewExcludedLocations(product.SMLItemCode, balance.ExcludedLocations)
 			line.MinQty = balance.MinQty
 			line.MaxQty = balance.MaxQty
 			pendingBase := line.PendingNexflowQty * line.UnitFactor

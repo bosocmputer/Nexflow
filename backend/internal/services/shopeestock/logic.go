@@ -25,10 +25,11 @@ func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 	return int64(math.Floor(balance * stockPct / 100 / unitFactor))
 }
 
-func previewExcludedLocations(items []sml.StockBalanceLocation) []ExcludedStockLocation {
+func previewExcludedLocations(itemCode string, items []sml.StockBalanceLocation) []ExcludedStockLocation {
 	result := make([]ExcludedStockLocation, 0, len(items))
 	for _, item := range items {
 		result = append(result, ExcludedStockLocation{
+			ItemCode:      itemCode,
 			WarehouseCode: item.WarehouseCode,
 			WarehouseName: item.WarehouseName,
 			LocationCode:  item.LocationCode,
@@ -36,6 +37,35 @@ func previewExcludedLocations(items []sml.StockBalanceLocation) []ExcludedStockL
 			UnitCode:      item.UnitCode,
 			BalanceQty:    item.BalanceQty,
 		})
+	}
+	return result
+}
+
+func mergePreviewExcludedLocations(groups ...[]ExcludedStockLocation) []ExcludedStockLocation {
+	values := map[string]*ExcludedStockLocation{}
+	for _, group := range groups {
+		for _, item := range group {
+			key := strings.Join([]string{item.ItemCode, item.WarehouseCode, item.LocationCode, item.UnitCode}, "\x00")
+			current := values[key]
+			if current == nil {
+				copy := item
+				current = &copy
+				values[key] = current
+				continue
+			}
+			current.BalanceQty += item.BalanceQty
+		}
+	}
+	keys := make([]string, 0, len(values))
+	for key, value := range values {
+		if value != nil && math.Abs(value.BalanceQty) > 1e-9 {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	result := make([]ExcludedStockLocation, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, *values[key])
 	}
 	return result
 }

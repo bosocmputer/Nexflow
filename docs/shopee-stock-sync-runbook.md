@@ -79,6 +79,8 @@ percentage and parent unit factor. Components are never mapped manually.
 6. Run dry-run and review changed, blocked, and excluded balances. Nexflow lists
    every non-zero excluded balance by SML warehouse, location, and unit. These
    balances are informational only and are never included in the Shopee target.
+   The latest item-level breakdown is stored with each Shopee model so the
+   product row continues to show the warehouse and location after a page reload.
    Negative excluded balances should be corrected in SML. Blocked models
    remain untouched in Shopee and do not stop valid models from syncing.
    For set products, expand the calculation and verify every component balance,

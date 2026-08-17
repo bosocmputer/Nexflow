@@ -129,10 +129,11 @@ type StockCatalogPage struct {
 }
 
 type StockBalanceScopeRequest struct {
-	ScopeID   string              `json:"scope_id"`
-	ItemCodes []string            `json:"item_codes"`
-	ScopeMode string              `json:"scope_mode"`
-	Locations []StockLocationPair `json:"locations,omitempty"`
+	ScopeID                      string              `json:"scope_id"`
+	ItemCodes                    []string            `json:"item_codes"`
+	ScopeMode                    string              `json:"scope_mode"`
+	Locations                    []StockLocationPair `json:"locations,omitempty"`
+	IncludeItemExcludedLocations bool                `json:"include_item_excluded_locations,omitempty"`
 }
 
 type StockBalanceBatchRequest struct {
@@ -141,15 +142,16 @@ type StockBalanceBatchRequest struct {
 }
 
 type StockBalanceItem struct {
-	ItemCode           string  `json:"item_code"`
-	ItemName           string  `json:"item_name"`
-	UnitCode           string  `json:"unit_code"`
-	RawBalanceQty      float64 `json:"raw_balance_qty"`
-	BalanceQty         float64 `json:"balance_qty"`
-	ExcludedBalanceQty float64 `json:"excluded_balance_qty"`
-	MinQty             float64 `json:"min_qty"`
-	MaxQty             float64 `json:"max_qty"`
-	NegativeClamped    bool    `json:"negative_clamped"`
+	ItemCode           string                 `json:"item_code"`
+	ItemName           string                 `json:"item_name"`
+	UnitCode           string                 `json:"unit_code"`
+	RawBalanceQty      float64                `json:"raw_balance_qty"`
+	BalanceQty         float64                `json:"balance_qty"`
+	ExcludedBalanceQty float64                `json:"excluded_balance_qty"`
+	ExcludedLocations  []StockBalanceLocation `json:"excluded_locations"`
+	MinQty             float64                `json:"min_qty"`
+	MaxQty             float64                `json:"max_qty"`
+	NegativeClamped    bool                   `json:"negative_clamped"`
 }
 
 type StockBalanceLocation struct {

@@ -18,24 +18,27 @@ func TestStockSyncClientSendsTenantAndTypedBatch(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if len(req.Scopes) != 1 || req.Scopes[0].Locations[0].Warehouse != "01" {
+		if len(req.Scopes) != 1 || req.Scopes[0].Locations[0].Warehouse != "01" || !req.Scopes[0].IncludeItemExcludedLocations {
 			t.Fatalf("unexpected request: %#v", req)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"as_of_date":"2026-08-10","scopes":[{"scope_id":"shop:1","items":[{"item_code":"SKU1","balance_qty":12}],"excluded_locations":[{"warehouse_code":"W2","warehouse_name":"คลังสำรอง","location_code":"S2","location_name":"ชั้นสอง","unit_code":"ชิ้น","balance_qty":-3}]}],"checked_at":"2026-08-10T00:00:00Z"}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"as_of_date":"2026-08-10","scopes":[{"scope_id":"shop:1","items":[{"item_code":"SKU1","balance_qty":12,"excluded_locations":[{"warehouse_code":"W2","warehouse_name":"คลังสำรอง","location_code":"S2","location_name":"ชั้นสอง","unit_code":"ชิ้น","balance_qty":-2}]}],"excluded_locations":[{"warehouse_code":"W2","warehouse_name":"คลังสำรอง","location_code":"S2","location_name":"ชั้นสอง","unit_code":"ชิ้น","balance_qty":-3}]}],"checked_at":"2026-08-10T00:00:00Z"}}`))
 	}))
 	defer server.Close()
 
 	client := NewStockSyncClient(PartyConfig{BaseURL: server.URL, GUID: "secret", Database: "aoy"})
 	result, err := client.BalancesBatch(context.Background(), StockBalanceBatchRequest{
 		AsOfDate: "2026-08-10",
-		Scopes:   []StockBalanceScopeRequest{{ScopeID: "shop:1", ItemCodes: []string{"SKU1"}, ScopeMode: "selected", Locations: []StockLocationPair{{Warehouse: "01", Location: "01"}}}},
+		Scopes:   []StockBalanceScopeRequest{{ScopeID: "shop:1", ItemCodes: []string{"SKU1"}, ScopeMode: "selected", Locations: []StockLocationPair{{Warehouse: "01", Location: "01"}}, IncludeItemExcludedLocations: true}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Scopes[0].Items[0].BalanceQty != 12 {
 		t.Fatalf("unexpected balance: %#v", result)
+	}
+	if len(result.Scopes[0].Items[0].ExcludedLocations) != 1 || result.Scopes[0].Items[0].ExcludedLocations[0].BalanceQty != -2 {
+		t.Fatalf("unexpected item excluded locations: %#v", result.Scopes[0].Items[0].ExcludedLocations)
 	}
 	if len(result.Scopes[0].ExcludedLocations) != 1 || result.Scopes[0].ExcludedLocations[0].WarehouseName != "คลังสำรอง" || result.Scopes[0].ExcludedLocations[0].UnitCode != "ชิ้น" || result.Scopes[0].ExcludedLocations[0].BalanceQty != -3 {
 		t.Fatalf("unexpected excluded locations: %#v", result.Scopes[0].ExcludedLocations)
