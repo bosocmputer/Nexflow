@@ -413,6 +413,60 @@ func (s *Service) UpdateMapping(ctx context.Context, shopID, itemID, modelID int
 	return s.store.UpdateMapping(ctx, shopID, itemID, modelID, request, userID)
 }
 
+func (s *Service) GetSharedPool(ctx context.Context, shopID int64, smlItemCode string) (*SharedPool, error) {
+	if shopID <= 0 || strings.TrimSpace(smlItemCode) == "" {
+		return nil, invalid("กรุณาระบุร้านและรหัสสินค้า SML")
+	}
+	return s.store.GetSharedPool(ctx, shopID, smlItemCode)
+}
+
+func (s *Service) UpdateSharedPool(ctx context.Context, shopID int64, request SharedPoolUpdate, userID string) (*SharedPool, error) {
+	if shopID <= 0 {
+		return nil, invalid("ร้าน Shopee ไม่ถูกต้อง")
+	}
+	normalized, err := normalizeSharedPoolUpdate(request)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.UpdateSharedPool(ctx, shopID, normalized, userID)
+}
+
+func normalizeSharedPoolUpdate(request SharedPoolUpdate) (SharedPoolUpdate, error) {
+	request.SMLItemCode = strings.TrimSpace(request.SMLItemCode)
+	if request.SMLItemCode == "" {
+		return request, invalid("กรุณาระบุรหัสสินค้า SML")
+	}
+	if len(request.Members) < 2 || len(request.Members) > 50 {
+		return request, invalid("สต๊อกร่วมกันต้องมีรายการ Shopee ตั้งแต่ 2 ถึง 50 รายการ")
+	}
+	total := 0.0
+	seen := make(map[string]struct{}, len(request.Members))
+	for index := range request.Members {
+		member := &request.Members[index]
+		key := stockProductKey(member.ItemID, member.ModelID)
+		if member.ItemID <= 0 || member.ModelID < 0 || member.UpdatedAt.IsZero() {
+			return request, invalid("ข้อมูลรายการ Shopee ไม่ครบ กรุณารีเฟรชแล้วลองใหม่")
+		}
+		if _, exists := seen[key]; exists {
+			return request, invalid("พบรายการ Shopee ซ้ำในกลุ่ม")
+		}
+		if member.AllocationPct <= 0 || member.AllocationPct > 100 || math.IsNaN(member.AllocationPct) || math.IsInf(member.AllocationPct, 0) {
+			return request, invalid("สัดส่วนของแต่ละรายการต้องมากกว่า 0 และไม่เกิน 100%")
+		}
+		rounded := math.Round(member.AllocationPct*100) / 100
+		if math.Abs(member.AllocationPct-rounded) > 0.000001 {
+			return request, invalid("สัดส่วนกำหนดได้ไม่เกิน 2 ตำแหน่งทศนิยม")
+		}
+		member.AllocationPct = rounded
+		seen[key] = struct{}{}
+		total += member.AllocationPct
+	}
+	if math.Abs(total-100) > 0.001 {
+		return request, invalid("สัดส่วนสต๊อกทุกรายการรวมกันต้องเท่ากับ 100%")
+	}
+	return request, nil
+}
+
 func (s *Service) SearchCatalog(ctx context.Context, query string) ([]CatalogOption, error) {
 	query = strings.TrimSpace(query)
 	if len([]rune(query)) < 2 || len([]rune(query)) > 100 {
@@ -461,6 +515,11 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if len(products) == 0 {
 		return fail(errors.New("ยังไม่มีรายการสินค้า Shopee กรุณากดอัปเดตรายการสินค้าก่อน"))
 	}
+	pendingReservations, err := s.store.PendingShopeeReservations(ctx, shopID)
+	if err != nil {
+		return fail(fmt.Errorf("load pending Shopee stock reservations: %w", err))
+	}
+	sharedPools := validSharedPoolProducts(products)
 	otherShopItems, err := s.store.EnabledSMLItemsOtherShops(ctx, shopID)
 	if err != nil {
 		return fail(err)
@@ -492,7 +551,11 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		if product.Excluded || product.SMLItemCode == "" {
 			continue
 		}
-		key := strconv.FormatInt(product.ItemID, 10) + ":" + strconv.FormatInt(product.ModelID, 10)
+		key := stockProductKey(product.ItemID, product.ModelID)
+		ownerKey := key
+		if _, pooled := sharedPools[product.SMLItemCode]; pooled {
+			ownerKey = "pool:" + product.SMLItemCode
+		}
 		consumed := []string{product.SMLItemCode}
 		if product.SMLItemType == 3 {
 			consumed = nil
@@ -509,7 +572,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			if componentOwners[code] == nil {
 				componentOwners[code] = map[string]struct{}{}
 			}
-			componentOwners[code][key] = struct{}{}
+			componentOwners[code][ownerKey] = struct{}{}
 		}
 	}
 	itemSet := map[string]struct{}{}
@@ -543,16 +606,27 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 	}
 	result := &PreviewResult{RunID: runID, ShopID: shopID, AsOfDate: asOfDate, Lines: make([]PreviewLine, 0, len(products))}
-	previousTargets := make([]int64, 0, len(products))
-	nextTargets := make([]int64, 0, len(products))
+	productByKey := make(map[string]ProductRow, len(products))
+	lineIndex := make(map[string]int, len(products))
+	excludedBalanceSeen := map[string]struct{}{}
 	for _, product := range products {
-		line := PreviewLine{ItemID: product.ItemID, ModelID: product.ModelID, SMLItemCode: product.SMLItemCode, UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved, WarningCodes: append([]string(nil), product.WarningCodes...), ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash}
 		if product.Excluded {
 			result.SkippedCount++
 			continue
 		}
 		result.TotalCount++
-		key := strconv.FormatInt(product.ItemID, 10) + ":" + strconv.FormatInt(product.ModelID, 10)
+		key := stockProductKey(product.ItemID, product.ModelID)
+		productByKey[key] = product
+		line := PreviewLine{
+			ItemID: product.ItemID, ModelID: product.ModelID, SMLItemCode: product.SMLItemCode,
+			UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved,
+			PendingNexflowQty: pendingReservations[key], WarningCodes: append([]string(nil), product.WarningCodes...),
+			ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash,
+			SharedPoolEnabled: product.SharedPoolEnabled, PoolAllocationPct: product.PoolAllocationPct,
+		}
+		if _, pooled := sharedPools[product.SMLItemCode]; pooled {
+			line.WarningCodes = removeWarning(line.WarningCodes, "duplicate_sml_item")
+		}
 		if hasSharedComponentStock(consumedByProduct[key], componentOwners, otherShopItems) {
 			line.WarningCodes = appendUnique(line.WarningCodes, "shared_component_stock")
 		}
@@ -567,9 +641,13 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 					line.WarningCodes = appendUnique(line.WarningCodes, "set_definition_changed")
 					_ = s.store.SetDryRunRequired(context.Background(), shopID)
 				}
-				target, availableSets, components, setWarnings := CalculateSetTarget(definition, balanceMap, settings.StockPct, product.UnitFactor)
-				line.TargetStock = target
+				_, availableSets, components, setWarnings := CalculateSetTarget(definition, balanceMap, settings.StockPct, product.UnitFactor)
 				line.ScopeBalance = float64(availableSets)
+				pendingBase := line.PendingNexflowQty * line.UnitFactor
+				if pendingBase > line.ScopeBalance {
+					line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
+				}
+				line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-pendingBase, 0), settings.StockPct, line.UnitFactor)
 				line.SetComponents = components
 				for _, component := range components {
 					if component.Bottleneck && line.BottleneckItemCode == "" {
@@ -589,9 +667,60 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			line.ExcludedBalance = balance.ExcludedBalanceQty
 			line.MinQty = balance.MinQty
 			line.MaxQty = balance.MaxQty
-			result.ExcludedBalance += balance.ExcludedBalanceQty
-			line.TargetStock = CalculateTarget(line.ScopeBalance, settings.StockPct, line.UnitFactor)
+			if _, counted := excludedBalanceSeen[product.SMLItemCode]; !counted {
+				result.ExcludedBalance += balance.ExcludedBalanceQty
+				excludedBalanceSeen[product.SMLItemCode] = struct{}{}
+			}
+			pendingBase := line.PendingNexflowQty * line.UnitFactor
+			if pendingBase > line.ScopeBalance {
+				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
+			}
+			line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-pendingBase, 0), settings.StockPct, line.UnitFactor)
 		}
+		lineIndex[key] = len(result.Lines)
+		result.Lines = append(result.Lines, line)
+	}
+
+	for _, members := range sharedPools {
+		allocations := make([]SharedPoolAllocation, 0, len(members))
+		pendingBase := 0.0
+		poolBalance := 0.0
+		for _, member := range members {
+			key := stockProductKey(member.ItemID, member.ModelID)
+			index, ok := lineIndex[key]
+			if !ok {
+				continue
+			}
+			line := result.Lines[index]
+			poolBalance = line.ScopeBalance
+			pendingBase += line.PendingNexflowQty * line.UnitFactor
+			allocations = append(allocations, SharedPoolAllocation{
+				ItemID: member.ItemID, ModelID: member.ModelID, UnitFactor: member.UnitFactor, AllocationPct: member.PoolAllocationPct,
+			})
+		}
+		targets, poolBaseTarget, warnings := CalculateSharedPoolTargets(poolBalance, pendingBase, settings.StockPct, allocations)
+		for _, member := range members {
+			key := stockProductKey(member.ItemID, member.ModelID)
+			index, ok := lineIndex[key]
+			if !ok {
+				continue
+			}
+			line := &result.Lines[index]
+			line.PoolBaseTarget = poolBaseTarget
+			if pendingBase > poolBalance {
+				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
+			}
+			for _, warning := range warnings {
+				line.WarningCodes = appendUnique(line.WarningCodes, warning)
+			}
+			line.TargetStock = targets[key]
+		}
+	}
+
+	previousTargets := make([]int64, 0, len(result.Lines))
+	nextTargets := make([]int64, 0, len(result.Lines))
+	for index := range result.Lines {
+		line := &result.Lines[index]
 		if line.ReservedStock > int64(line.TargetStock) {
 			line.WarningCodes = appendUnique(line.WarningCodes, "reserved_stock_exceeds_target")
 		}
@@ -605,6 +734,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			result.SkippedCount++
 		}
 		previous := int64(0)
+		product := productByKey[stockProductKey(line.ItemID, line.ModelID)]
 		if product.LastSuccessTarget != nil {
 			previous = *product.LastSuccessTarget
 		}
@@ -612,7 +742,6 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			previousTargets = append(previousTargets, previous)
 			nextTargets = append(nextTargets, line.TargetStock)
 		}
-		result.Lines = append(result.Lines, line)
 	}
 	result.CircuitBreaker = ZeroDropCircuit(previousTargets, nextTargets)
 	if result.CircuitBreaker != "" {

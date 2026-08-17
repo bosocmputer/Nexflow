@@ -513,6 +513,8 @@ func main() {
 		api.POST("/settings/shopee-stock/:shop_id/catalog-sync", middleware.RequireRole("admin"), shopeeStockH.SyncCatalog)
 		api.POST("/settings/shopee-stock/:shop_id/preview", middleware.RequireRole("admin"), shopeeStockH.Preview)
 		api.POST("/settings/shopee-stock/:shop_id/run", middleware.RequireRole("admin"), shopeeStockH.Run)
+		api.GET("/settings/shopee-stock/:shop_id/shared-pool", middleware.RequireRole("admin"), shopeeStockH.SharedPool)
+		api.PUT("/settings/shopee-stock/:shop_id/shared-pool", middleware.RequireRole("admin"), shopeeStockH.UpdateSharedPool)
 		api.PUT("/settings/shopee-stock/:shop_id/mappings/:item_id/:model_id", middleware.RequireRole("admin"), shopeeStockH.UpdateMapping)
 		api.GET("/settings/shopee-settlement-defaults", middleware.RequireRole("admin", "staff"), shopeeH.GetSettlementDefaults)
 		api.PUT("/settings/shopee-settlement-defaults", middleware.RequireRole("admin"), shopeeH.UpdateSettlementDefaults)

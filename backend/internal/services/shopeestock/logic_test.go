@@ -100,6 +100,111 @@ func TestCalculateTargetConvertsSmallestUnitToShopeeSellingUnit(t *testing.T) {
 	}
 }
 
+func TestCalculateSharedPoolTargetsSubtractsPendingOrdersBeforeAllocation(t *testing.T) {
+	members := []SharedPoolAllocation{
+		{ItemID: 10, ModelID: 101, UnitFactor: 1, AllocationPct: 80},
+		{ItemID: 20, ModelID: 201, UnitFactor: 1, AllocationPct: 20},
+	}
+
+	targets, poolBaseTarget, warnings := CalculateSharedPoolTargets(63, 13, 80, members)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if poolBaseTarget != 40 {
+		t.Fatalf("pool base target = %d, want floor((63-13)*0.8)=40", poolBaseTarget)
+	}
+	if targets[stockProductKey(10, 101)] != 32 || targets[stockProductKey(20, 201)] != 8 {
+		t.Fatalf("targets = %v, want 32/8", targets)
+	}
+}
+
+func TestCalculateSharedPoolTargetsNeverOvercommitsDifferentSellingUnits(t *testing.T) {
+	members := []SharedPoolAllocation{
+		{ItemID: 10, ModelID: 101, UnitFactor: 1, AllocationPct: 50},
+		{ItemID: 20, ModelID: 201, UnitFactor: 6, AllocationPct: 50},
+	}
+
+	targets, poolBaseTarget, warnings := CalculateSharedPoolTargets(101, 0, 80, members)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	allocatedBase := targets[stockProductKey(10, 101)] + targets[stockProductKey(20, 201)]*6
+	if allocatedBase > poolBaseTarget {
+		t.Fatalf("allocated base %d exceeds pool target %d", allocatedBase, poolBaseTarget)
+	}
+}
+
+func TestCalculateSharedPoolTargetsRejectsInvalidAllocation(t *testing.T) {
+	tests := []struct {
+		name    string
+		members []SharedPoolAllocation
+	}{
+		{name: "one member", members: []SharedPoolAllocation{{ItemID: 1, UnitFactor: 1, AllocationPct: 100}}},
+		{name: "sum below 100", members: []SharedPoolAllocation{{ItemID: 1, UnitFactor: 1, AllocationPct: 60}, {ItemID: 2, UnitFactor: 1, AllocationPct: 30}}},
+		{name: "duplicate member", members: []SharedPoolAllocation{{ItemID: 1, ModelID: 2, UnitFactor: 1, AllocationPct: 50}, {ItemID: 1, ModelID: 2, UnitFactor: 1, AllocationPct: 50}}},
+		{name: "invalid factor", members: []SharedPoolAllocation{{ItemID: 1, UnitFactor: 0, AllocationPct: 50}, {ItemID: 2, UnitFactor: 1, AllocationPct: 50}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, warnings := CalculateSharedPoolTargets(100, 0, 80, test.members); len(warnings) == 0 {
+				t.Fatal("invalid pool must return a warning")
+			}
+		})
+	}
+}
+
+func TestNormalizeSharedPoolUpdateRequiresCompleteOneHundredPercent(t *testing.T) {
+	now := time.Now().UTC()
+	request := SharedPoolUpdate{
+		SMLItemCode: " AH-0001 ",
+		Members: []SharedPoolMemberUpdate{
+			{ItemID: 1, ModelID: 10, AllocationPct: 70, UpdatedAt: now},
+			{ItemID: 2, ModelID: 20, AllocationPct: 30, UpdatedAt: now},
+		},
+	}
+	got, err := normalizeSharedPoolUpdate(request)
+	if err != nil {
+		t.Fatalf("normalizeSharedPoolUpdate: %v", err)
+	}
+	if got.SMLItemCode != "AH-0001" {
+		t.Fatalf("item code = %q", got.SMLItemCode)
+	}
+
+	request.Members[1].AllocationPct = 29
+	if _, err := normalizeSharedPoolUpdate(request); err == nil {
+		t.Fatal("allocation below 100 must fail")
+	}
+	request.Members[1].AllocationPct = 30
+	request.Members[1].ItemID = 1
+	request.Members[1].ModelID = 10
+	if _, err := normalizeSharedPoolUpdate(request); err == nil {
+		t.Fatal("duplicate member must fail")
+	}
+	request.Members[1].ItemID = 2
+	request.Members[1].ModelID = 20
+	request.Members[0].AllocationPct = 66.667
+	request.Members[1].AllocationPct = 33.333
+	if _, err := normalizeSharedPoolUpdate(request); err == nil {
+		t.Fatal("allocation with more than two decimal places must fail")
+	}
+}
+
+func TestValidSharedPoolProductsRequiresEveryActiveMember(t *testing.T) {
+	products := []ProductRow{
+		{ItemID: 1, ModelID: 10, SMLItemCode: "AH-0001", UnitFactor: 1, SharedPoolEnabled: true, PoolAllocationPct: 70},
+		{ItemID: 2, ModelID: 20, SMLItemCode: "AH-0001", UnitFactor: 1, SharedPoolEnabled: true, PoolAllocationPct: 30},
+		{ItemID: 3, ModelID: 30, SMLItemCode: "AH-0002", UnitFactor: 1, SharedPoolEnabled: true, PoolAllocationPct: 50},
+		{ItemID: 4, ModelID: 40, SMLItemCode: "AH-0002", UnitFactor: 1, SharedPoolEnabled: false, PoolAllocationPct: 50},
+	}
+	pools := validSharedPoolProducts(products)
+	if len(pools["AH-0001"]) != 2 {
+		t.Fatalf("valid pool members = %+v", pools["AH-0001"])
+	}
+	if _, ok := pools["AH-0002"]; ok {
+		t.Fatal("partially enabled pool must remain blocked")
+	}
+}
+
 func TestCalculateSetTargetUsesBottleneckComponentAndParentUnit(t *testing.T) {
 	definition := sml.StockSetDefinition{
 		ItemCode: "AH-0058", StockValid: true,

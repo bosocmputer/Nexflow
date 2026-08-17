@@ -74,6 +74,8 @@ type ProductRow struct {
 	UnitFactor                 float64                 `json:"unit_factor"`
 	ManualUnitFactor           *float64                `json:"manual_unit_factor,omitempty"`
 	MatchSource                string                  `json:"match_source"`
+	SharedPoolEnabled          bool                    `json:"shared_pool_enabled"`
+	PoolAllocationPct          float64                 `json:"pool_allocation_pct"`
 	MarketplaceAliasID         string                  `json:"marketplace_alias_id,omitempty"`
 	MarketplaceAliasUpdatedAt  *time.Time              `json:"marketplace_alias_updated_at,omitempty"`
 	Excluded                   bool                    `json:"excluded"`
@@ -83,6 +85,8 @@ type ProductRow struct {
 	LastPreviewMinQty          *float64                `json:"last_preview_min_qty,omitempty"`
 	LastPreviewMaxQty          *float64                `json:"last_preview_max_qty,omitempty"`
 	LastPreviewTarget          *int64                  `json:"last_preview_target,omitempty"`
+	LastPreviewPendingQty      *float64                `json:"last_preview_pending_qty,omitempty"`
+	LastPreviewPoolBaseTarget  *int64                  `json:"last_preview_pool_base_target,omitempty"`
 	LastSuccessTarget          *int64                  `json:"last_success_target,omitempty"`
 	UpdatedAt                  time.Time               `json:"updated_at"`
 }
@@ -144,6 +148,51 @@ type MappingUpdate struct {
 	MarketplaceAliasUpdatedAt *time.Time `json:"marketplace_alias_updated_at,omitempty"`
 }
 
+type SharedPoolMember struct {
+	ItemID                    int64     `json:"item_id"`
+	ModelID                   int64     `json:"model_id"`
+	ItemName                  string    `json:"item_name"`
+	ModelName                 string    `json:"model_name"`
+	ItemSKU                   string    `json:"item_sku"`
+	ModelSKU                  string    `json:"model_sku"`
+	ShopeeAvailable           int64     `json:"shopee_available"`
+	ShopeeReserved            int64     `json:"shopee_reserved"`
+	SMLUnitCode               string    `json:"sml_unit_code"`
+	SMLUnitName               string    `json:"sml_unit_name"`
+	SMLBaseUnitCode           string    `json:"sml_base_unit_code"`
+	SMLBaseUnitName           string    `json:"sml_base_unit_name"`
+	UnitFactor                float64   `json:"unit_factor"`
+	SharedPoolEnabled         bool      `json:"shared_pool_enabled"`
+	PoolAllocationPct         float64   `json:"pool_allocation_pct"`
+	LastPreviewBalance        *float64  `json:"last_preview_balance,omitempty"`
+	LastPreviewPendingQty     *float64  `json:"last_preview_pending_qty,omitempty"`
+	LastPreviewTarget         *int64    `json:"last_preview_target,omitempty"`
+	LastPreviewPoolBaseTarget *int64    `json:"last_preview_pool_base_target,omitempty"`
+	UpdatedAt                 time.Time `json:"updated_at"`
+}
+
+type SharedPool struct {
+	ShopID          int64              `json:"shop_id"`
+	SMLItemCode     string             `json:"sml_item_code"`
+	SMLItemName     string             `json:"sml_item_name"`
+	StockPct        float64            `json:"stock_pct"`
+	Configured      bool               `json:"configured"`
+	AllocationTotal float64            `json:"allocation_total"`
+	Members         []SharedPoolMember `json:"members"`
+}
+
+type SharedPoolMemberUpdate struct {
+	ItemID        int64     `json:"item_id"`
+	ModelID       int64     `json:"model_id"`
+	AllocationPct float64   `json:"allocation_pct"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type SharedPoolUpdate struct {
+	SMLItemCode string                   `json:"sml_item_code"`
+	Members     []SharedPoolMemberUpdate `json:"members"`
+}
+
 type CatalogDue struct {
 	ShopID int64
 	Full   bool
@@ -183,7 +232,11 @@ type PreviewLine struct {
 	UnitFactor         float64                    `json:"unit_factor"`
 	CurrentStock       int64                      `json:"current_stock"`
 	ReservedStock      int64                      `json:"reserved_stock"`
+	PendingNexflowQty  float64                    `json:"pending_nexflow_qty"`
 	TargetStock        int64                      `json:"target_stock"`
+	SharedPoolEnabled  bool                       `json:"shared_pool_enabled"`
+	PoolAllocationPct  float64                    `json:"pool_allocation_pct"`
+	PoolBaseTarget     int64                      `json:"pool_base_target"`
 	Changed            bool                       `json:"changed"`
 	Blocked            bool                       `json:"blocked"`
 	WarningCodes       []string                   `json:"warning_codes"`

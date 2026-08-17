@@ -12,6 +12,19 @@ Target stock:
 floor(max(SML scope balance, 0) * stock percentage / 100 / unit factor)
 ```
 
+When multiple active Shopee listings intentionally use the same SML item,
+Nexflow requires an admin-defined shared-stock allocation totaling exactly
+100%. Pending Shopee orders that have not reached SML are reserved first:
+
+```text
+pool = floor(max(SML scope balance - pending order base units, 0) * stock percentage / 100)
+listing target = floor(pool * listing allocation percentage / 100 / unit factor)
+```
+
+The pool is blocked until every active listing has a valid allocation. This
+prevents Nexflow from publishing the full SML balance independently to each
+duplicate Shopee listing.
+
 For an SML set product (`item_type=3`), Nexflow reads the current component
 definition from `sml-api-bybos`, calculates how many complete sets every
 component can form, uses the bottleneck component, then applies the shop
@@ -23,6 +36,12 @@ percentage and parent unit factor. Components are never mapped manually.
 - Stock writes require Central Shopee Gateway mode.
 - Selecting or changing a warehouse scope, percentage, or mapping disables the
   shop and requires a new dry-run.
+- Saving or changing a shared-stock allocation disables the shop and requires a
+  new dry-run. The allocation must include every active listing using that SML
+  item and total exactly 100%.
+- Paid/active Shopee orders without an SML document reserve stock before the
+  target is calculated, preventing a later sync from restoring stock that an
+  incoming order has already consumed.
 - SML errors or malformed responses never become zero-stock updates.
 - Minimum and maximum SML quantities are shown for the selected scope as
   reference values only; they never change the target-stock formula.
@@ -53,6 +72,8 @@ percentage and parent unit factor. Components are never mapped manually.
    and barcode matching are case-sensitive; Nexflow does not guess units from
    product names. A manual unit factor is allowed only after an admin explicitly
    confirms it, and that override is audited.
+   If multiple Shopee listings sell the same SML item, use **แบ่งสต๊อก**, review
+   every member, and save an allocation totaling 100%.
 5. Choose exactly one SML warehouse and one location. Orphan or blank-location
    balances are diagnostics only and are never included in the selected scope.
 6. Run dry-run and review changed, blocked, and excluded balances. Blocked models

@@ -139,6 +139,37 @@ func (h *ShopeeStockHandler) UpdateMapping(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *ShopeeStockHandler) SharedPool(c *gin.Context) {
+	shopID, ok := h.shopID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetSharedPool(c.Request.Context(), shopID, c.Query("sml_item_code"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *ShopeeStockHandler) UpdateSharedPool(c *gin.Context) {
+	shopID, ok := h.shopID(c)
+	if !ok {
+		return
+	}
+	var request shopeestock.SharedPoolUpdate
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลสต๊อกร่วมกันไม่ถูกต้อง"})
+		return
+	}
+	result, err := h.service.UpdateSharedPool(c.Request.Context(), shopID, request, c.GetString("user_id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *ShopeeStockHandler) SearchCatalog(c *gin.Context) {
 	items, err := h.service.SearchCatalog(c.Request.Context(), c.Query("q"))
 	if err != nil {

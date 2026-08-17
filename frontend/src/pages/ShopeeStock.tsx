@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleOff,
+  GitMerge,
   Info,
   Loader2,
   PackageCheck,
@@ -108,6 +109,8 @@ type ProductRow = {
   unit_factor: number
   manual_unit_factor?: number
   match_source: string
+  shared_pool_enabled: boolean
+  pool_allocation_pct: number
   excluded: boolean
   warning_codes: string[]
   last_preview_balance?: number
@@ -115,8 +118,41 @@ type ProductRow = {
   last_preview_min_qty?: number
   last_preview_max_qty?: number
   last_preview_target?: number
+  last_preview_pending_qty?: number
+  last_preview_pool_base_target?: number
   last_success_target?: number
   updated_at: string
+}
+type SharedPoolMember = {
+  item_id: number
+  model_id: number
+  item_name: string
+  model_name: string
+  item_sku: string
+  model_sku: string
+  shopee_available: number
+  shopee_reserved: number
+  sml_unit_code: string
+  sml_unit_name: string
+  sml_base_unit_code: string
+  sml_base_unit_name: string
+  unit_factor: number
+  shared_pool_enabled: boolean
+  pool_allocation_pct: number
+  last_preview_balance?: number
+  last_preview_pending_qty?: number
+  last_preview_target?: number
+  last_preview_pool_base_target?: number
+  updated_at: string
+}
+type SharedPool = {
+  shop_id: number
+  sml_item_code: string
+  sml_item_name: string
+  stock_pct: number
+  configured: boolean
+  allocation_total: number
+  members: SharedPoolMember[]
 }
 type SyncRun = {
   id: string
@@ -213,6 +249,8 @@ const WARNING_LABEL: Record<string, string> = {
   set_component_unit_invalid: 'หน่วยส่วนประกอบไม่ถูกต้อง',
   set_allocation_invalid: 'สัดส่วนราคาส่วนประกอบไม่ถูกต้อง',
   shared_component_stock: 'ส่วนประกอบถูกใช้ร่วมกับสินค้าชุดอื่น',
+  shared_pool_invalid: 'การแบ่งสต๊อกร่วมกันไม่ถูกต้อง',
+  pending_orders_exceed_sml_stock: 'ออเดอร์ที่ยังไม่ลง SML มากกว่าสต๊อกคงเหลือ',
   set_product_schema_unsupported: 'ฐานข้อมูล SML นี้ยังไม่รองรับข้อมูลสินค้าชุด',
 }
 
@@ -315,6 +353,7 @@ export default function ShopeeStock() {
   const [busy, setBusy] = useState('')
   const [preview, setPreview] = useState<Preview | null>(null)
   const [mapping, setMapping] = useState<ProductRow | null>(null)
+  const [sharedPoolItemCode, setSharedPoolItemCode] = useState('')
   const [catalogInfoOpen, setCatalogInfoOpen] = useState(false)
   const [locationsOpen, setLocationsOpen] = useState(false)
   const [warehouseCode, setWarehouseCode] = useState('')
@@ -552,6 +591,7 @@ export default function ShopeeStock() {
                 setShopID(id)
                 setPage(1)
                 setPreview(null)
+                setSharedPoolItemCode('')
                 setLocationsOpen(false)
                 void load(id)
               }}
@@ -693,7 +733,7 @@ export default function ShopeeStock() {
 
         {tab === 'history' ? <HistoryList runs={data?.runs ?? []} /> : (
           <>
-            <div className="hidden grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_96px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
+            <div className="hidden grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_132px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
               <span>สินค้า Shopee</span>
               <span>สินค้าที่จับคู่ใน SML</span>
               <div className="grid grid-cols-3 gap-3 text-right">
@@ -703,7 +743,7 @@ export default function ShopeeStock() {
               </div>
               <span />
             </div>
-            <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} />)}</div>
+            <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} onPool={() => setSharedPoolItemCode(product.sml_item_code)} />)}</div>
             {!data?.products.length && (
               <div className="flex flex-col items-center px-4 py-10 text-center">
                 <PackageCheck className="mb-3 h-7 w-7 text-muted-foreground" aria-hidden="true" />
@@ -723,14 +763,21 @@ export default function ShopeeStock() {
         )}
       </section>
 
-      <MappingDialog product={mapping} shopID={shopID} onClose={() => setMapping(null)} onSaved={async () => { setMapping(null); setPreview(null); await load(shopID) }} />
+      <MappingDialog product={mapping} shopID={shopID} onClose={() => setMapping(null)} onConfigurePool={(itemCode) => { setMapping(null); setSharedPoolItemCode(itemCode) }} onSaved={async () => { setMapping(null); setPreview(null); await load(shopID) }} />
+      <SharedPoolDialog
+        shopID={shopID}
+        itemCode={sharedPoolItemCode}
+        fallbackStockPct={draft?.stock_pct ?? 80}
+        onClose={() => setSharedPoolItemCode('')}
+        onSaved={async () => { setSharedPoolItemCode(''); setPreview(null); await load(shopID) }}
+      />
       <CatalogInfoDialog open={catalogInfoOpen} onOpenChange={setCatalogInfoOpen} />
       </div>
     </TooltipProvider>
   )
 }
 
-function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => void }) {
+function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: () => void; onPool: () => void }) {
   const [setDetailsOpen, setSetDetailsOpen] = useState(false)
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
   const itemName = productItemName(product)
@@ -745,7 +792,7 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
   const shopeeIdentity = `SKU ${sku} · Item ${product.item_id}${product.model_id ? ` / Model ${product.model_id}` : ''}`
   return (
     <>
-    <div className="grid gap-3 px-3 py-2 lg:grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_96px] lg:items-center">
+    <div className="grid gap-3 px-3 py-2 lg:grid-cols-[minmax(260px,1.45fr)_minmax(190px,1fr)_minmax(260px,auto)_132px] lg:items-center">
       <div className="min-w-0">
         <p className="truncate text-sm font-medium leading-5" title={itemName}>{itemName}</p>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs">
@@ -756,7 +803,7 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
           )}
           <span className="min-w-0 truncate text-muted-foreground" title={shopeeIdentity}>{shopeeIdentity}</span>
         </div>
-        {product.warning_codes.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
+        {(product.shared_pool_enabled || product.warning_codes.length > 0) && <div className="mt-1 flex flex-wrap gap-1">{product.shared_pool_enabled && <Badge variant="outline" className="border-info/30 bg-info/10 text-info">สต๊อกร่วม {formatNumber(product.pool_allocation_pct)}%</Badge>}{product.warning_codes.map((code) => <Badge key={code} variant="outline" className="border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200">{WARNING_LABEL[code] || code}</Badge>)}</div>}
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -786,7 +833,15 @@ function ProductLine({ product, onMap }: { product: ProductRow; onMap: () => voi
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</span>{product.last_preview_target != null && sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
         </div>
       </div>
-      <Button variant="outline" size="sm" className="px-2" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>
+      {product.sml_item_code && (product.shared_pool_enabled || product.warning_codes.includes('duplicate_sml_item')) ? (
+        <div className="flex items-center justify-end gap-1">
+          <Button variant="outline" size="sm" className="min-w-0 flex-1 px-2" onClick={onPool}><GitMerge className="h-4 w-4" />{product.shared_pool_enabled ? 'ปรับสัดส่วน' : 'แบ่งสต๊อก'}</Button>
+          <Tooltip>
+            <TooltipTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onMap} aria-label="เปลี่ยนการจับคู่สินค้า"><Settings2 className="h-4 w-4" /></Button></TooltipTrigger>
+            <TooltipContent>เปลี่ยนการจับคู่สินค้า</TooltipContent>
+          </Tooltip>
+        </div>
+      ) : <Button variant="outline" size="sm" className="px-2" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยน' : 'จับคู่'}</Button>}
     </div>
     <SetProductDetailsDialog
       open={setDetailsOpen}
@@ -882,7 +937,176 @@ function CatalogInfoDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   )
 }
 
-function MappingDialog({ product, shopID, onClose, onSaved }: { product: ProductRow | null; shopID: number; onClose: () => void; onSaved: () => Promise<void> }) {
+function sharedPoolMemberKey(member: Pick<SharedPoolMember, 'item_id' | 'model_id'>) {
+  return `${member.item_id}:${member.model_id}`
+}
+
+function equalSharedPoolAllocations(members: SharedPoolMember[]) {
+  if (!members.length) return {} as Record<string, string>
+  const base = Math.floor(10000 / members.length) / 100
+  return Object.fromEntries(members.map((member, index) => [
+    sharedPoolMemberKey(member),
+    (index === members.length - 1 ? 100 - base * (members.length - 1) : base).toFixed(2),
+  ]))
+}
+
+function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved }: { shopID: number; itemCode: string; fallbackStockPct: number; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [pool, setPool] = useState<SharedPool | null>(null)
+  const [allocations, setAllocations] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [retryNonce, setRetryNonce] = useState(0)
+  const requestSequence = useRef(0)
+
+  useEffect(() => {
+    if (!itemCode || !shopID) {
+      setPool(null)
+      setAllocations({})
+      setLoadError('')
+      return
+    }
+    const current = requestSequence.current + 1
+    requestSequence.current = current
+    setLoading(true)
+    setPool(null)
+    setAllocations({})
+    setLoadError('')
+    void client.get<SharedPool>(`/api/settings/shopee-stock/${shopID}/shared-pool`, { params: { sml_item_code: itemCode } })
+      .then((response) => {
+        if (requestSequence.current !== current) return
+        const nextPool = response.data
+        setPool(nextPool)
+        setAllocations(nextPool.configured
+          ? Object.fromEntries(nextPool.members.map((member) => [sharedPoolMemberKey(member), member.pool_allocation_pct.toFixed(2)]))
+          : equalSharedPoolAllocations(nextPool.members))
+      })
+      .catch((error) => {
+        if (requestSequence.current !== current) return
+        const message = errorText(error)
+        setLoadError(message)
+        toast.error(message)
+      })
+      .finally(() => { if (requestSequence.current === current) setLoading(false) })
+  }, [itemCode, shopID, retryNonce])
+
+  const allocationValues = pool?.members.map((member) => Number(allocations[sharedPoolMemberKey(member)] ?? 0)) ?? []
+  const allocationTotal = allocationValues.reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0)
+  const allocationValid = !!pool && pool.members.length >= 2 && allocationValues.every((value) => Number.isFinite(value) && value > 0 && value <= 100) && Math.abs(allocationTotal - 100) < 0.001
+  const dirty = !!pool && (!pool.configured || pool.members.some((member) => Math.abs(Number(allocations[sharedPoolMemberKey(member)] ?? 0) - member.pool_allocation_pct) > 0.001))
+  const scopeBalance = pool?.members.find((member) => member.last_preview_balance != null)?.last_preview_balance
+  const pendingBase = pool?.members.reduce((total, member) => total + (member.last_preview_pending_qty ?? 0) * member.unit_factor, 0) ?? 0
+  const stockPct = pool?.stock_pct ?? fallbackStockPct
+  const poolBaseTarget = scopeBalance == null ? null : Math.floor(Math.max(scopeBalance - pendingBase, 0) * stockPct / 100)
+  const baseUnit = pool?.members[0] ? formatUnitLabel(pool.members[0].sml_base_unit_code, pool.members[0].sml_base_unit_name) : ''
+
+  const save = async () => {
+    if (!pool || !allocationValid || saving) return
+    setSaving(true)
+    try {
+      await client.put(`/api/settings/shopee-stock/${shopID}/shared-pool`, {
+        sml_item_code: pool.sml_item_code,
+        members: pool.members.map((member) => ({
+          item_id: member.item_id,
+          model_id: member.model_id,
+          allocation_pct: Number(allocations[sharedPoolMemberKey(member)]),
+          updated_at: member.updated_at,
+        })),
+      })
+      toast.success('บันทึกสัดส่วนสต๊อกร่วมกันแล้ว กรุณาตรวจ Dry-run ใหม่')
+      await onSaved()
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={!!itemCode} onOpenChange={(open) => !open && !saving && onClose()}>
+      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><GitMerge className="h-5 w-5 text-info" />แบ่งสต๊อกที่ใช้ร่วมกัน</DialogTitle>
+          <DialogDescription>กำหนดว่าสต๊อก SML ก้อนเดียวกันจะแบ่งให้แต่ละรายการ Shopee เท่าไร ยอดรวมต้องเท่ากับ 100%</DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดรายการในกลุ่ม...</div>
+        ) : loadError ? (
+          <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-6 text-center">
+            <AlertTriangle className="h-6 w-6 text-destructive" />
+            <div><p className="text-sm font-medium">โหลดรายการสต๊อกร่วมกันไม่สำเร็จ</p><p className="mt-1 text-xs text-muted-foreground">{loadError}</p></div>
+            <Button type="button" variant="outline" size="sm" onClick={() => setRetryNonce((value) => value + 1)}><RefreshCw className="h-4 w-4" />ลองใหม่</Button>
+          </div>
+        ) : pool ? (
+          <div className="space-y-4">
+            <div className="rounded-md border bg-muted/30 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0"><p className="truncate text-sm font-semibold">{pool.sml_item_code} · {pool.sml_item_name}</p><p className="text-xs text-muted-foreground">ส่งขึ้น Shopee {formatNumber(stockPct)}% ก่อนแบ่งตามสัดส่วนด้านล่าง</p></div>
+                <Button type="button" variant="outline" size="sm" onClick={() => setAllocations(equalSharedPoolAllocations(pool.members))}>แบ่งเท่ากัน</Button>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-3 border-t pt-2 text-xs">
+                <div><span className="text-muted-foreground">คงเหลือ SML</span><p className="mt-0.5 font-mono text-sm font-semibold">{scopeBalance == null ? 'รอ Dry-run' : `${formatNumber(scopeBalance)} ${baseUnit}`}</p></div>
+                <div><span className="text-muted-foreground">ออเดอร์รอลง SML</span><p className="mt-0.5 font-mono text-sm font-semibold">{scopeBalance == null ? 'รอ Dry-run' : `${formatNumber(pendingBase)} ${baseUnit}`}</p></div>
+                <div><span className="text-muted-foreground">ก้อนที่นำไปแบ่ง</span><p className="mt-0.5 font-mono text-sm font-semibold">{poolBaseTarget == null ? 'รอ Dry-run' : `${formatNumber(poolBaseTarget)} ${baseUnit}`}</p></div>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-md border">
+              <div className="hidden grid-cols-[minmax(0,1fr)_110px_120px_130px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground md:grid">
+                <span>รายการ Shopee</span><span className="text-right">Shopee ตอนนี้</span><span className="text-right">สัดส่วน</span><span className="text-right">ประมาณการส่ง</span>
+              </div>
+              <div className="divide-y">
+                {pool.members.map((member) => {
+                  const key = sharedPoolMemberKey(member)
+                  const allocation = Number(allocations[key] ?? 0)
+                  const target = poolBaseTarget == null || !Number.isFinite(allocation) || member.unit_factor <= 0
+                    ? null
+                    : Math.floor(poolBaseTarget * allocation / 100 / member.unit_factor)
+                  const itemName = member.item_name.trim() || member.model_name.trim() || `Item ${member.item_id}`
+                  const optionName = member.model_name.trim() && member.model_name.trim() !== itemName ? member.model_name.trim() : ''
+                  const sellingUnit = formatUnitLabel(member.sml_unit_code, member.sml_unit_name)
+                  return (
+                    <div key={key} className="grid gap-2 px-3 py-2.5 md:grid-cols-[minmax(0,1fr)_110px_120px_130px] md:items-center md:gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium" title={itemName}>{itemName}</p>
+                        <p className="truncate text-xs text-muted-foreground" title={optionName || undefined}>{optionName ? `ตัวเลือก: ${optionName} · ` : ''}Item {member.item_id}{member.model_id ? ` / Model ${member.model_id}` : ''}</p>
+                        <p className="text-[11px] text-muted-foreground">Shopee 1 ชิ้น ใช้ {formatNumber(member.unit_factor)} {baseUnit}</p>
+                      </div>
+                      <div className="flex items-center justify-between text-sm md:block md:text-right"><span className="text-xs text-muted-foreground md:hidden">Shopee ตอนนี้</span><span className="font-mono font-medium">{formatNumber(member.shopee_available)} {sellingUnit}</span></div>
+                      <div>
+                        <Label htmlFor={`pool-${key}`} className="sr-only">สัดส่วนของ {itemName}</Label>
+                        <div className="relative">
+                          <Input id={`pool-${key}`} type="number" min="0.01" max="100" step="0.01" inputMode="decimal" className="h-9 pr-8 text-right" value={allocations[key] ?? ''} onChange={(event) => setAllocations((current) => ({ ...current, [key]: event.target.value }))} />
+                          <span className="pointer-events-none absolute right-3 top-2 text-xs text-muted-foreground">%</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-sm md:block md:text-right"><span className="text-xs text-muted-foreground md:hidden">ประมาณการส่ง</span><span className="font-mono font-semibold">{target == null ? 'รอ Dry-run' : `${formatNumber(target)} ${sellingUnit}`}</span></div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <Alert className={allocationValid ? 'border-success/40 bg-success/10' : 'border-warning/50 bg-warning/10'}>
+              {allocationValid ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+              <AlertTitle>สัดส่วนรวม {formatNumber(allocationTotal)}%</AlertTitle>
+              <AlertDescription>{allocationValid ? 'พร้อมบันทึก การเปลี่ยนค่านี้จะปิดซิงก์และบังคับตรวจ Dry-run ใหม่' : 'ปรับสัดส่วนของทุกรายการให้รวมกันเท่ากับ 100%'}</AlertDescription>
+            </Alert>
+            <p className="text-xs text-muted-foreground">Nexflow จะส่งสต๊อกตามสัดส่วนนี้แทนการส่งยอดเต็มซ้ำให้ทุกสินค้า และจะหักออเดอร์ที่ยังไม่ลง SML ก่อนคำนวณ</p>
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>ยกเลิก</Button>
+          <Button type="button" onClick={save} disabled={!allocationValid || !dirty || saving}>{saving && <Loader2 className="h-4 w-4 animate-spin" />}{saving ? 'กำลังบันทึก...' : 'บันทึกสัดส่วน'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: { product: ProductRow | null; shopID: number; onClose: () => void; onConfigurePool: (itemCode: string) => void; onSaved: () => Promise<void> }) {
   const [selected, setSelected] = useState<StockCatalogOption | null>(null)
   const [units, setUnits] = useState<StockCatalogUnit[]>([])
   const [unitCode, setUnitCode] = useState('')
@@ -1018,8 +1242,9 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>รหัส SML นี้ผูกกับหลายรายการ Shopee</AlertTitle>
             <AlertDescription>
-              ไม่ใช่ข้อมูลซ้ำจาก Excel หรือ API แต่เป็น Shopee Item/Model คนละรายการที่ใช้สต๊อก SML ก้อนเดียวกัน ระบบจึงหยุดซิงก์เพื่อป้องกันยอดถูกส่งซ้ำ ให้ยกเว้นรายการหนึ่ง หรือเลือกรหัส SML คนละรหัสเมื่อเป็นสินค้าคนละก้อนจริง
+              รายการเหล่านี้ใช้สต๊อก SML ก้อนเดียวกัน ให้กำหนดสัดส่วนรวม 100% ก่อน ระบบจึงจะแบ่งยอดและซิงก์ได้อย่างปลอดภัย
             </AlertDescription>
+            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => product.sml_item_code && onConfigurePool(product.sml_item_code)}><GitMerge className="h-4 w-4" />ตั้งค่าสต๊อกร่วมกัน</Button>
           </Alert>
         )}
         {selected && (

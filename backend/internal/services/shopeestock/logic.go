@@ -3,6 +3,7 @@ package shopeestock
 import (
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,87 @@ func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 		return 0
 	}
 	return int64(math.Floor(balance * stockPct / 100 / unitFactor))
+}
+
+type SharedPoolAllocation struct {
+	ItemID        int64
+	ModelID       int64
+	UnitFactor    float64
+	AllocationPct float64
+}
+
+func stockProductKey(itemID, modelID int64) string {
+	return strconv.FormatInt(itemID, 10) + ":" + strconv.FormatInt(modelID, 10)
+}
+
+// CalculateSharedPoolTargets allocates one SML stock balance across multiple
+// Shopee models. The calculation stays in the SML base unit until the final
+// model conversion, so rounding can only hold stock back and never overcommit.
+func CalculateSharedPoolTargets(
+	balance, pendingBase, stockPct float64,
+	members []SharedPoolAllocation,
+) (map[string]int64, int64, []string) {
+	targets := make(map[string]int64, len(members))
+	if len(members) < 2 || stockPct <= 0 || stockPct > 100 || math.IsNaN(stockPct) || math.IsInf(stockPct, 0) {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	totalPct := 0.0
+	seen := make(map[string]struct{}, len(members))
+	for _, member := range members {
+		key := stockProductKey(member.ItemID, member.ModelID)
+		if _, exists := seen[key]; exists || member.UnitFactor <= 0 || math.IsNaN(member.UnitFactor) || math.IsInf(member.UnitFactor, 0) ||
+			member.AllocationPct <= 0 || member.AllocationPct > 100 || math.IsNaN(member.AllocationPct) || math.IsInf(member.AllocationPct, 0) {
+			return targets, 0, []string{"shared_pool_invalid"}
+		}
+		seen[key] = struct{}{}
+		totalPct += member.AllocationPct
+	}
+	if math.Abs(totalPct-100) > 0.001 {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	availableBase := math.Max(balance-math.Max(pendingBase, 0), 0)
+	poolBaseTarget := int64(math.Floor(availableBase * stockPct / 100))
+	for _, member := range members {
+		allocatedBase := float64(poolBaseTarget) * member.AllocationPct / 100
+		targets[stockProductKey(member.ItemID, member.ModelID)] = int64(math.Floor(allocatedBase / member.UnitFactor))
+	}
+	return targets, poolBaseTarget, nil
+}
+
+func validSharedPoolProducts(products []ProductRow) map[string][]ProductRow {
+	groups := map[string][]ProductRow{}
+	for _, product := range products {
+		if product.Excluded || strings.TrimSpace(product.SMLItemCode) == "" {
+			continue
+		}
+		groups[product.SMLItemCode] = append(groups[product.SMLItemCode], product)
+	}
+	for itemCode, members := range groups {
+		if len(members) < 2 {
+			delete(groups, itemCode)
+			continue
+		}
+		total := 0.0
+		valid := true
+		for _, member := range members {
+			valid = valid && member.SharedPoolEnabled && member.PoolAllocationPct > 0 && member.UnitFactor > 0
+			total += member.PoolAllocationPct
+		}
+		if !valid || math.Abs(total-100) > 0.001 {
+			delete(groups, itemCode)
+		}
+	}
+	return groups
+}
+
+func removeWarning(warnings []string, remove string) []string {
+	out := warnings[:0]
+	for _, warning := range warnings {
+		if warning != remove {
+			out = append(out, warning)
+		}
+	}
+	return out
 }
 
 func CalculateSetTarget(

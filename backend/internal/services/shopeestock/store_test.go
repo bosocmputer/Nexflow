@@ -68,3 +68,28 @@ func TestProductCountsTotalForStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingShopeeReservationsAggregatesByItemAndModel(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM shopee_order_snapshots snapshot.*snapshot\.erp_status NOT IN.*GROUP BY item_id,model_id`).
+		WithArgs(int64(264993963)).
+		WillReturnRows(sqlmock.NewRows([]string{"item_id", "model_id", "pending_qty"}).
+			AddRow(int64(1001), int64(2001), 3.0).
+			AddRow(int64(1002), int64(2002), 7.0))
+
+	reservations, err := NewStore(db).PendingShopeeReservations(context.Background(), 264993963)
+	if err != nil {
+		t.Fatalf("PendingShopeeReservations: %v", err)
+	}
+	if reservations[stockProductKey(1001, 2001)] != 3 || reservations[stockProductKey(1002, 2002)] != 7 {
+		t.Fatalf("reservations=%v", reservations)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}

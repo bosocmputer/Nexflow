@@ -78,6 +78,7 @@ Key recent migrations:
 | 077 | scoped Marketplace Product Master, bill item identities, stock mapping links, impact indexes |
 | 078 | SML set-product catalog/components, document validity and Shopee set-stock definition hashes |
 | 079 | TikTok gross line amounts, durable amount review and one source artifact per import run |
+| 080 | Safe shared SML stock allocation across multiple active Shopee listings |
 
 ---
 

@@ -494,9 +494,28 @@ func markDuplicateMappings(ctx context.Context, tx *sql.Tx) error {
 		   AND m.warning_codes ? 'duplicate_sml_item'`); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		WITH active_groups AS (
+		  SELECT m.shop_id,m.sml_item_code,COUNT(*) AS member_count
+		    FROM shopee_stock_mappings m
+		    JOIN shopee_stock_products p USING (shop_id,item_id,model_id)
+		   WHERE p.is_active=true AND m.excluded=false AND m.sml_item_code<>''
+		   GROUP BY m.shop_id,m.sml_item_code
+		)
+		UPDATE shopee_stock_mappings m
+		   SET shared_pool_enabled=false,pool_allocation_pct=100,updated_at=NOW()
+		  FROM shopee_stock_products p,active_groups g
+		 WHERE p.shop_id=m.shop_id AND p.item_id=m.item_id AND p.model_id=m.model_id
+		   AND p.is_active=true AND g.shop_id=m.shop_id AND g.sml_item_code=m.sml_item_code
+		   AND g.member_count=1 AND (m.shared_pool_enabled=true OR m.pool_allocation_pct<>100)`); err != nil {
+		return err
+	}
 	_, err := tx.ExecContext(ctx, `
 		WITH duplicated AS (
-		  SELECT m.shop_id,m.sml_item_code FROM shopee_stock_mappings m
+		  SELECT m.shop_id,m.sml_item_code,
+		         BOOL_AND(m.shared_pool_enabled) AS all_pool_enabled,
+		         SUM(m.pool_allocation_pct)::float8 AS allocation_total
+		    FROM shopee_stock_mappings m
 		  JOIN shopee_stock_products p USING (shop_id,item_id,model_id)
 		  WHERE p.is_active=true AND m.excluded=false AND m.sml_item_code<>''
 		  GROUP BY m.shop_id,m.sml_item_code HAVING COUNT(*) > 1
@@ -505,7 +524,8 @@ func markDuplicateMappings(ctx context.Context, tx *sql.Tx) error {
 		   SET warning_codes=m.warning_codes||'["duplicate_sml_item"]'::jsonb,updated_at=NOW()
 		  FROM shopee_stock_products p, duplicated d
 		 WHERE p.shop_id=m.shop_id AND p.item_id=m.item_id AND p.model_id=m.model_id
-		   AND p.is_active=true AND d.shop_id=m.shop_id AND d.sml_item_code=m.sml_item_code`)
+		   AND p.is_active=true AND d.shop_id=m.shop_id AND d.sml_item_code=m.sml_item_code
+		   AND NOT (d.all_pool_enabled AND ABS(d.allocation_total-100) <= 0.001)`)
 	return err
 }
 
@@ -519,6 +539,180 @@ func (s *Store) RefreshDuplicateMappings(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Store) GetSharedPool(ctx context.Context, shopID int64, smlItemCode string) (*SharedPool, error) {
+	smlItemCode = strings.TrimSpace(smlItemCode)
+	if shopID <= 0 || smlItemCode == "" {
+		return nil, sql.ErrNoRows
+	}
+	var stockPct float64
+	if err := s.db.QueryRowContext(ctx, `SELECT stock_pct::float8 FROM shopee_stock_settings WHERE shop_id=$1`, shopID).Scan(&stockPct); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
+		       p.shopee_available,p.shopee_reserved,m.sml_unit_code,COALESCE(c.units,'[]'::jsonb),
+		       m.unit_factor::float8,m.shared_pool_enabled,m.pool_allocation_pct::float8,
+		       m.last_preview_balance::float8,m.last_preview_pending_qty::float8,
+		       m.last_preview_target,m.last_preview_pool_base_target,m.updated_at,
+		       COALESCE(c.item_name,'')
+		  FROM shopee_stock_mappings m
+		  JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
+		  LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
+		 WHERE m.shop_id=$1 AND m.sml_item_code=$2 AND m.excluded=false AND p.is_active=true
+		 ORDER BY p.item_name,p.model_name,p.item_id,p.model_id`, shopID, smlItemCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	pool := &SharedPool{ShopID: shopID, SMLItemCode: smlItemCode, StockPct: stockPct, Members: []SharedPoolMember{}}
+	allEnabled := true
+	for rows.Next() {
+		var member SharedPoolMember
+		var unitsJSON []byte
+		if err := rows.Scan(&member.ItemID, &member.ModelID, &member.ItemName, &member.ModelName, &member.ItemSKU, &member.ModelSKU,
+			&member.ShopeeAvailable, &member.ShopeeReserved, &member.SMLUnitCode, &unitsJSON,
+			&member.UnitFactor, &member.SharedPoolEnabled, &member.PoolAllocationPct,
+			&member.LastPreviewBalance, &member.LastPreviewPendingQty, &member.LastPreviewTarget,
+			&member.LastPreviewPoolBaseTarget, &member.UpdatedAt, &pool.SMLItemName); err != nil {
+			return nil, err
+		}
+		var units []sml.StockCatalogUnit
+		if err := json.Unmarshal(unitsJSON, &units); err != nil {
+			return nil, fmt.Errorf("decode SML units for shared pool %s: %w", smlItemCode, err)
+		}
+		product := ProductRow{SMLUnitCode: member.SMLUnitCode}
+		populateProductUnitNames(&product, units)
+		member.SMLUnitName = product.SMLUnitName
+		member.SMLBaseUnitCode = product.SMLBaseUnitCode
+		member.SMLBaseUnitName = product.SMLBaseUnitName
+		pool.AllocationTotal += member.PoolAllocationPct
+		allEnabled = allEnabled && member.SharedPoolEnabled
+		pool.Members = append(pool.Members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(pool.Members) < 2 {
+		return nil, sql.ErrNoRows
+	}
+	pool.Configured = allEnabled && mathAbs(pool.AllocationTotal-100) <= 0.001
+	return pool, nil
+}
+
+func (s *Store) UpdateSharedPool(ctx context.Context, shopID int64, request SharedPoolUpdate, userID string) (*SharedPool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `
+		SELECT m.item_id,m.model_id,m.updated_at
+		  FROM shopee_stock_mappings m
+		  JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
+		 WHERE m.shop_id=$1 AND m.sml_item_code=$2 AND m.excluded=false AND p.is_active=true
+		 ORDER BY m.item_id,m.model_id
+		 FOR UPDATE OF m`, shopID, request.SMLItemCode)
+	if err != nil {
+		return nil, err
+	}
+	type currentMember struct {
+		itemID, modelID int64
+		updatedAt       time.Time
+	}
+	current := []currentMember{}
+	for rows.Next() {
+		var member currentMember
+		if err := rows.Scan(&member.itemID, &member.modelID, &member.updatedAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		current = append(current, member)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if len(current) < 2 || len(current) != len(request.Members) {
+		return nil, invalid("รายการในกลุ่มเปลี่ยนแล้ว กรุณารีเฟรชและตั้งค่าสต๊อกร่วมกันใหม่")
+	}
+	requested := make(map[string]SharedPoolMemberUpdate, len(request.Members))
+	for _, member := range request.Members {
+		requested[stockProductKey(member.ItemID, member.ModelID)] = member
+	}
+	for _, member := range current {
+		requestMember, ok := requested[stockProductKey(member.itemID, member.modelID)]
+		if !ok {
+			return nil, invalid("กรุณากำหนดสัดส่วนให้ครบทุกรายการ Shopee ในกลุ่ม")
+		}
+		if requestMember.UpdatedAt.IsZero() || !requestMember.UpdatedAt.Equal(member.updatedAt) {
+			return nil, ErrMappingConflict
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings
+			SET shared_pool_enabled=true,pool_allocation_pct=$4,updated_by=NULLIF($5,'')::uuid,updated_at=NOW()
+			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$6`,
+			shopID, member.itemID, member.modelID, requestMember.AllocationPct, userID, member.updatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return nil, ErrMappingConflict
+		}
+	}
+	if err := markDuplicateMappings(ctx, tx); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings
+		SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
+		return nil, err
+	}
+	detail := map[string]any{"shop_id": shopID, "sml_item_code": request.SMLItemCode, "member_count": len(request.Members), "allocations": request.Members}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,detail)
+		VALUES('shopee_shared_stock_pool_updated',NULLIF($1,'')::uuid,'shopee_stock','info',$2)`, userID, mustJSON(detail)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.GetSharedPool(ctx, shopID, request.SMLItemCode)
+}
+
+func (s *Store) PendingShopeeReservations(ctx context.Context, shopID int64) (map[string]float64, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT (item->>'item_id')::bigint AS item_id,
+		       COALESCE(NULLIF(item->>'model_id',''),'0')::bigint AS model_id,
+		       SUM((item->>'model_quantity_purchased')::numeric)::float8 AS pending_qty
+		  FROM shopee_order_snapshots snapshot
+		 CROSS JOIN LATERAL jsonb_array_elements(COALESCE(snapshot.raw_detail->'item_list','[]'::jsonb)) item
+		 WHERE snapshot.shop_id=$1
+		   AND snapshot.sml_doc_no=''
+		   AND snapshot.erp_status NOT IN ('sent','cancelled')
+		   AND snapshot.order_status NOT IN ('CANCELLED','IN_CANCEL','UNPAID')
+		   AND COALESCE(item->>'item_id','') ~ '^[0-9]+$'
+		   AND COALESCE(item->>'model_id','0') ~ '^[0-9]+$'
+		   AND COALESCE(item->>'model_quantity_purchased','') ~ '^[0-9]+([.][0-9]+)?$'
+		 GROUP BY item_id,model_id`, shopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reservations := map[string]float64{}
+	for rows.Next() {
+		var itemID, modelID int64
+		var qty float64
+		if err := rows.Scan(&itemID, &modelID, &qty); err != nil {
+			return nil, err
+		}
+		reservations[stockProductKey(itemID, modelID)] = qty
+	}
+	return reservations, rows.Err()
+}
+
+func mathAbs(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func (s *Store) EnabledSMLItemsOtherShops(ctx context.Context, shopID int64) (map[string]struct{}, error) {
@@ -631,10 +825,11 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
 		       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
 		       COALESCE(c.units,'[]'::jsonb),
-		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
+		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
+		       COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
-		       m.last_preview_target,m.last_success_target,m.updated_at,
+		       m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,m.last_success_target,m.updated_at,
 		       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
 		       COALESCE(c.set_document_valid,true),COALESCE(c.set_stock_valid,true),COALESCE(c.set_components,'[]'::jsonb)
 		  FROM shopee_stock_products p
@@ -664,9 +859,9 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		var warnings, unitsJSON, componentsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
 			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
-			&item.MatchSource, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
+			&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
-			&item.LastPreviewTarget, &item.LastSuccessTarget, &item.UpdatedAt,
+			&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
 			&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
 			&item.SetDocumentValid, &item.SetStockValid, &componentsJSON); err != nil {
 			return nil, 0, ProductCounts{}, err
@@ -689,14 +884,16 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 		return nil, err
 	}
 	defer tx.Rollback()
-	var productName, modelName, itemSKU, modelSKU string
-	if err := tx.QueryRowContext(ctx, `SELECT item_name,model_name,item_sku,model_sku FROM shopee_stock_products
-		WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND is_active=true FOR UPDATE`, shopID, itemID, modelID).Scan(&productName, &modelName, &itemSKU, &modelSKU); err != nil {
+	var productName, modelName, itemSKU, modelSKU, previousSMLItemCode string
+	if err := tx.QueryRowContext(ctx, `SELECT p.item_name,p.model_name,p.item_sku,p.model_sku,m.sml_item_code
+		FROM shopee_stock_products p JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
+		WHERE p.shop_id=$1 AND p.item_id=$2 AND p.model_id=$3 AND p.is_active=true FOR UPDATE OF m`, shopID, itemID, modelID).
+		Scan(&productName, &modelName, &itemSKU, &modelSKU, &previousSMLItemCode); err != nil {
 		return nil, err
 	}
 	if request.Excluded && strings.TrimSpace(request.SMLItemCode) == "" {
 		result, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings
-			SET excluded=true,updated_by=NULLIF($5,'')::uuid,updated_at=NOW()
+			SET excluded=true,shared_pool_enabled=false,pool_allocation_pct=100,updated_by=NULLIF($5,'')::uuid,updated_at=NOW()
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`, shopID, itemID, modelID, request.UpdatedAt, userID)
 		if err != nil {
 			return nil, err
@@ -801,7 +998,9 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 	result, err := tx.ExecContext(ctx, `
 		UPDATE shopee_stock_mappings
 		   SET sml_item_code=$5,sml_unit_code=$6,unit_factor=$7,manual_unit_factor=$8,match_source='manual',excluded=$9,
-		       warning_codes=$10,marketplace_alias_id=$12,set_definition_hash=$13,updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
+		       warning_codes=$10,marketplace_alias_id=$12,set_definition_hash=$13,
+		       shared_pool_enabled=false,pool_allocation_pct=100,
+		       updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
 		 WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`,
 		shopID, itemID, modelID, request.UpdatedAt, item.ItemCode, unit.Code, factor, request.ManualUnitFactor, request.Excluded, warnings, userID, aliasID, definitionHash)
 	if err != nil {
@@ -1023,12 +1222,13 @@ func (s *Store) SavePreview(ctx context.Context, shopID int64, result *PreviewRe
 	for _, line := range result.Lines {
 		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings SET
 			last_preview_balance=$4,last_preview_excluded_balance=$5,last_preview_min_qty=$6,
-			last_preview_max_qty=$7,last_preview_target=$8,
+			last_preview_max_qty=$7,last_preview_target=$8,last_preview_pending_qty=$12,
+			last_preview_pool_base_target=NULLIF($13,0),
 			set_definition_hash=CASE WHEN $9=3 AND $10=false THEN $11 ELSE set_definition_hash END,
 			updated_at=updated_at
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3`, shopID, line.ItemID, line.ModelID,
 			line.ScopeBalance, line.ExcludedBalance, line.MinQty, line.MaxQty, line.TargetStock,
-			line.ItemType, line.Blocked, line.SetDefinitionHash); err != nil {
+			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingNexflowQty, line.PoolBaseTarget); err != nil {
 			return err
 		}
 		if !line.Changed && !line.Blocked {
