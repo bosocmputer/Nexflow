@@ -41,6 +41,16 @@ func TestCalculateTarget(t *testing.T) {
 	}
 }
 
+func TestPreviewExcludedLocationsPreservesSMLWarehouseDetails(t *testing.T) {
+	got := previewExcludedLocations([]sml.StockBalanceLocation{{
+		WarehouseCode: "W2", WarehouseName: "คลังสำรอง",
+		LocationCode: "S2", LocationName: "ชั้นสอง", UnitCode: "ชิ้น", BalanceQty: -3,
+	}})
+	if len(got) != 1 || got[0].WarehouseCode != "W2" || got[0].WarehouseName != "คลังสำรอง" || got[0].LocationCode != "S2" || got[0].LocationName != "ชั้นสอง" || got[0].UnitCode != "ชิ้น" || got[0].BalanceQty != -3 {
+		t.Fatalf("excluded locations = %#v", got)
+	}
+}
+
 func TestNormalizeSelectedScopeRequiresWarehouseAndLocation(t *testing.T) {
 	tests := []struct {
 		name      string

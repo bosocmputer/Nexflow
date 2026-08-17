@@ -76,7 +76,10 @@ percentage and parent unit factor. Components are never mapped manually.
    every member, and save an allocation totaling 100%.
 5. Choose exactly one SML warehouse and one location. Orphan or blank-location
    balances are diagnostics only and are never included in the selected scope.
-6. Run dry-run and review changed, blocked, and excluded balances. Blocked models
+6. Run dry-run and review changed, blocked, and excluded balances. Nexflow lists
+   every non-zero excluded balance by SML warehouse, location, and unit. These
+   balances are informational only and are never included in the Shopee target.
+   Negative excluded balances should be corrected in SML. Blocked models
    remain untouched in Shopee and do not stop valid models from syncing.
    For set products, expand the calculation and verify every component balance,
    required quantity, possible sets, and the bottleneck component.

@@ -17,6 +17,7 @@ import {
   Save,
   Search,
   Settings2,
+  Warehouse,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Link } from 'react-router-dom'
@@ -188,6 +189,14 @@ type Preview = {
   skipped_count: number
   blocked_count: number
   excluded_balance: number
+  excluded_locations?: Array<{
+    warehouse_code: string
+    warehouse_name: string
+    location_code: string
+    location_name: string
+    unit_code: string
+    balance_qty: number
+  }>
   circuit_breaker?: string
   lines: Array<{
     item_id: number
@@ -219,6 +228,7 @@ type Preview = {
     bottleneck_item_code?: string
   }>
 }
+type ExcludedLocation = NonNullable<Preview['excluded_locations']>[number]
 
 const STATUS_TABS = [
   { key: 'ready', label: 'พร้อมซิงก์' },
@@ -282,6 +292,50 @@ function formatUnitLabel(code?: string, name?: string) {
   const unitName = name?.trim() ?? ''
   if (unitName && unitCode && unitName !== unitCode) return `${unitName} (${unitCode})`
   return unitName || unitCode
+}
+
+function stockLocationLabel(code: string, name: string, fallback: string) {
+  const values = [code.trim(), name.trim()].filter(Boolean)
+  return values.length ? values.join(' · ') : fallback
+}
+
+function uniqueExcludedLocationCount(locations: ExcludedLocation[]) {
+  return new Set(locations.map((item) => `${item.warehouse_code}\u0000${item.location_code}`)).size
+}
+
+function ExcludedStockLocations({ locations }: { locations: ExcludedLocation[] }) {
+  if (!locations.length) return null
+  const negativeCount = locations.filter((item) => item.balance_qty < 0).length
+  return (
+    <section className="overflow-hidden rounded-md border border-warning/40 bg-warning/5" aria-labelledby="excluded-stock-title">
+      <div className="flex flex-col gap-2 border-b border-warning/30 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-2">
+          <Warehouse className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+          <div className="min-w-0">
+            <h2 id="excluded-stock-title" className="text-sm font-semibold">พบยอดคงเหลือในคลัง/พื้นที่เก็บอื่น</h2>
+            <p className="text-xs text-muted-foreground">ตำแหน่งเหล่านี้ไม่ได้ถูกเลือก ระบบจะแสดงไว้ให้ตรวจสอบ แต่ไม่นำยอดไปคำนวณหรือส่ง Shopee</p>
+          </div>
+        </div>
+        <Badge variant="outline" className="w-fit shrink-0 border-warning/40 bg-background">{formatNumber(uniqueExcludedLocationCount(locations))} ตำแหน่ง</Badge>
+      </div>
+      <div className="max-h-64 divide-y overflow-y-auto">
+        {locations.map((item) => {
+          const warehouse = stockLocationLabel(item.warehouse_code, item.warehouse_name, 'ไม่ระบุคลัง')
+          const location = stockLocationLabel(item.location_code, item.location_name, 'ไม่ระบุพื้นที่เก็บ')
+          return (
+            <div key={`${item.warehouse_code}:${item.location_code}:${item.unit_code}`} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:gap-3">
+              <p className="min-w-0 truncate" title={warehouse}><span className="text-muted-foreground">คลัง:</span> <span className="font-medium text-foreground">{warehouse}</span></p>
+              <p className="min-w-0 truncate" title={location}><span className="text-muted-foreground">พื้นที่เก็บ:</span> <span className="font-medium text-foreground">{location}</span></p>
+              <p className={cn('whitespace-nowrap font-mono text-sm font-semibold tabular-nums sm:text-right', item.balance_qty < 0 ? 'text-destructive' : 'text-foreground')}>
+                {formatNumber(item.balance_qty)} <span className="font-sans text-[11px] font-normal">{item.unit_code || 'หน่วยเล็ก'}</span>
+              </p>
+            </div>
+          )
+        })}
+      </div>
+      {negativeCount > 0 && <p className="border-t border-warning/30 px-3 py-2 text-xs text-destructive">พบยอดติดลบ {formatNumber(negativeCount)} รายการ ควรตรวจการรับเข้า/ตัดสต๊อกของตำแหน่งดังกล่าวใน SML</p>}
+    </section>
+  )
 }
 
 function bangkokDate() {
@@ -709,7 +763,8 @@ export default function ShopeeStock() {
       </section>
 
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ระบบหยุดร้านนี้เพื่อความปลอดภัย</AlertTitle><AlertDescription>{draft.paused_reason}{draft.last_error ? ` · ${draft.last_error}` : ''}</AlertDescription></Alert>}
-      {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? 'ระบบหยุดทั้งร้านเพื่อความปลอดภัย' : preview.blocked_count ? `พร้อมเปิดซิงก์ โดยเว้น ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'Dry-run ผ่านแล้ว'}</AlertTitle><AlertDescription>ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)} · ยอดนอกขอบเขต {formatNumber(preview.excluded_balance)}{preview.circuit_breaker && ` · ${preview.circuit_breaker}`}</AlertDescription></Alert>}
+      {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? 'ระบบหยุดทั้งร้านเพื่อความปลอดภัย' : preview.blocked_count ? `พร้อมเปิดซิงก์ โดยเว้น ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'Dry-run ผ่านแล้ว'}</AlertTitle><AlertDescription>ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)}{(preview.excluded_locations?.length ?? 0) > 0 ? ` · พบสต๊อกในคลัง/พื้นที่อื่น ${formatNumber(uniqueExcludedLocationCount(preview.excluded_locations ?? []))} ตำแหน่ง` : preview.excluded_balance !== 0 ? ` · พบยอดในคลัง/พื้นที่อื่น ${formatNumber(preview.excluded_balance)}` : ''}{preview.circuit_breaker && ` · ${preview.circuit_breaker}`}</AlertDescription></Alert>}
+      <ExcludedStockLocations locations={preview?.excluded_locations ?? []} />
       {preview?.lines?.some((line) => line.blocked) && <section className="rounded-md border border-warning/40 bg-warning/5"><div className="border-b px-4 py-3"><h2 className="text-sm font-semibold">รายการที่ระบบจะไม่ส่งไป Shopee</h2><p className="text-xs text-muted-foreground">แก้ข้อมูลใน SML หรือกดจับคู่สินค้าแต่ละรายการ แล้วทำ Dry-run ใหม่</p></div><div className="divide-y">{(preview.lines ?? []).filter((line) => line.blocked).slice(0, 20).map((line) => <div key={`${line.item_id}:${line.model_id}`} className="grid gap-1 px-4 py-2 text-sm sm:grid-cols-[minmax(180px,1fr)_minmax(220px,1.4fr)]"><span className="truncate">{productNames.get(`${line.item_id}:${line.model_id}`) || `Item ${line.item_id}${line.model_id ? ` / Model ${line.model_id}` : ''}`}</span><span className="text-amber-800 dark:text-amber-200">{line.warning_codes.map((code) => WARNING_LABEL[code] || code).join(' · ')}</span></div>)}{preview.blocked_count > 20 && <p className="px-4 py-2 text-xs text-muted-foreground">แสดง 20 จาก {formatNumber(preview.blocked_count)} รายการ ใช้แท็บ “ต้องแก้” เพื่อจัดการต่อ</p>}</div></section>}
       {preview?.lines?.some((line) => line.item_type === 3) && <SetStockPreviewList lines={preview.lines.filter((line) => line.item_type === 3)} productNames={productNames} />}
 
@@ -821,7 +876,7 @@ function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: (
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">คงเหลือ SML</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</span>{product.last_preview_balance != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
-          {!!product.last_preview_excluded_balance && <p className="text-[11px] text-warning">นอกขอบเขต {formatNumber(product.last_preview_excluded_balance)}</p>}
+          {!!product.last_preview_excluded_balance && <p className="text-[11px] text-warning" title="ยอดของสินค้านี้ในคลังหรือพื้นที่เก็บอื่น ดูตำแหน่งจากผล Dry-run ด้านบน">คลัง/พื้นที่อื่น {formatNumber(product.last_preview_excluded_balance)}{baseUnit ? ` ${baseUnit}` : ''}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
           <p className="text-[11px] text-muted-foreground lg:hidden">Shopee ตอนนี้</p>

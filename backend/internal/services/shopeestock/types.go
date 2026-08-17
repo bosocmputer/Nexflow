@@ -246,6 +246,15 @@ type PreviewLine struct {
 	BottleneckItemCode string                     `json:"bottleneck_item_code,omitempty"`
 }
 
+type ExcludedStockLocation struct {
+	WarehouseCode string  `json:"warehouse_code"`
+	WarehouseName string  `json:"warehouse_name"`
+	LocationCode  string  `json:"location_code"`
+	LocationName  string  `json:"location_name"`
+	UnitCode      string  `json:"unit_code"`
+	BalanceQty    float64 `json:"balance_qty"`
+}
+
 type SetStockComponentPreview struct {
 	ItemCode        string  `json:"item_code"`
 	ItemName        string  `json:"item_name"`
@@ -259,16 +268,17 @@ type SetStockComponentPreview struct {
 }
 
 type PreviewResult struct {
-	RunID           string        `json:"run_id"`
-	ShopID          int64         `json:"shop_id"`
-	AsOfDate        string        `json:"as_of_date"`
-	TotalCount      int           `json:"total_count"`
-	ChangedCount    int           `json:"changed_count"`
-	SkippedCount    int           `json:"skipped_count"`
-	BlockedCount    int           `json:"blocked_count"`
-	ExcludedBalance float64       `json:"excluded_balance"`
-	CircuitBreaker  string        `json:"circuit_breaker,omitempty"`
-	Lines           []PreviewLine `json:"lines"`
+	RunID             string                  `json:"run_id"`
+	ShopID            int64                   `json:"shop_id"`
+	AsOfDate          string                  `json:"as_of_date"`
+	TotalCount        int                     `json:"total_count"`
+	ChangedCount      int                     `json:"changed_count"`
+	SkippedCount      int                     `json:"skipped_count"`
+	BlockedCount      int                     `json:"blocked_count"`
+	ExcludedBalance   float64                 `json:"excluded_balance"`
+	ExcludedLocations []ExcludedStockLocation `json:"excluded_locations"`
+	CircuitBreaker    string                  `json:"circuit_breaker,omitempty"`
+	Lines             []PreviewLine           `json:"lines"`
 }
 
 type SyncResult struct {

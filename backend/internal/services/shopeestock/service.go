@@ -587,6 +587,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	}
 	sort.Strings(itemCodes)
 	balanceMap := map[string]sml.StockBalanceItem{}
+	excludedLocations := []ExcludedStockLocation{}
 	if len(itemCodes) > 0 {
 		request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
 			ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes, ScopeMode: settings.ScopeMode,
@@ -604,11 +605,17 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		for _, item := range balances.Scopes[0].Items {
 			balanceMap[item.ItemCode] = item
 		}
+		excludedLocations = previewExcludedLocations(balances.Scopes[0].ExcludedLocations)
 	}
-	result := &PreviewResult{RunID: runID, ShopID: shopID, AsOfDate: asOfDate, Lines: make([]PreviewLine, 0, len(products))}
+	result := &PreviewResult{
+		RunID: runID, ShopID: shopID, AsOfDate: asOfDate,
+		ExcludedLocations: excludedLocations, Lines: make([]PreviewLine, 0, len(products)),
+	}
+	for _, location := range excludedLocations {
+		result.ExcludedBalance += location.BalanceQty
+	}
 	productByKey := make(map[string]ProductRow, len(products))
 	lineIndex := make(map[string]int, len(products))
-	excludedBalanceSeen := map[string]struct{}{}
 	for _, product := range products {
 		if product.Excluded {
 			result.SkippedCount++
@@ -667,10 +674,6 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			line.ExcludedBalance = balance.ExcludedBalanceQty
 			line.MinQty = balance.MinQty
 			line.MaxQty = balance.MaxQty
-			if _, counted := excludedBalanceSeen[product.SMLItemCode]; !counted {
-				result.ExcludedBalance += balance.ExcludedBalanceQty
-				excludedBalanceSeen[product.SMLItemCode] = struct{}{}
-			}
 			pendingBase := line.PendingNexflowQty * line.UnitFactor
 			if pendingBase > line.ScopeBalance {
 				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")

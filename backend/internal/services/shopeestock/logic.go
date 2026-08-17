@@ -25,6 +25,21 @@ func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 	return int64(math.Floor(balance * stockPct / 100 / unitFactor))
 }
 
+func previewExcludedLocations(items []sml.StockBalanceLocation) []ExcludedStockLocation {
+	result := make([]ExcludedStockLocation, 0, len(items))
+	for _, item := range items {
+		result = append(result, ExcludedStockLocation{
+			WarehouseCode: item.WarehouseCode,
+			WarehouseName: item.WarehouseName,
+			LocationCode:  item.LocationCode,
+			LocationName:  item.LocationName,
+			UnitCode:      item.UnitCode,
+			BalanceQty:    item.BalanceQty,
+		})
+	}
+	return result
+}
+
 type SharedPoolAllocation struct {
 	ItemID        int64
 	ModelID       int64

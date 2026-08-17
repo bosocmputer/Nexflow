@@ -152,9 +152,19 @@ type StockBalanceItem struct {
 	NegativeClamped    bool    `json:"negative_clamped"`
 }
 
+type StockBalanceLocation struct {
+	WarehouseCode string  `json:"warehouse_code"`
+	WarehouseName string  `json:"warehouse_name"`
+	LocationCode  string  `json:"location_code"`
+	LocationName  string  `json:"location_name"`
+	UnitCode      string  `json:"unit_code"`
+	BalanceQty    float64 `json:"balance_qty"`
+}
+
 type StockBalanceScopeResult struct {
-	ScopeID string             `json:"scope_id"`
-	Items   []StockBalanceItem `json:"items"`
+	ScopeID           string                 `json:"scope_id"`
+	Items             []StockBalanceItem     `json:"items"`
+	ExcludedLocations []StockBalanceLocation `json:"excluded_locations"`
 }
 
 type StockBalanceBatchResponse struct {
