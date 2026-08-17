@@ -197,7 +197,7 @@ const WARNING_LABEL: Record<string, string> = {
   unit_factor_below_one: 'อัตราส่วนต่ำกว่า 1',
   unit_ratio_mismatch: 'ratio ไม่ตรงกับ stand/divide',
   unit_not_found: 'ไม่พบหน่วยที่เลือกใน SML แล้ว',
-  duplicate_sml_item: 'สินค้า SML ถูกใช้ซ้ำ',
+  duplicate_sml_item: 'สินค้า SML เดียวกันผูกกับหลายรายการ Shopee',
   stock_balance_missing: 'ไม่พบยอดคงเหลือ',
   reserved_stock_exceeds_target: 'สต๊อกจอง Shopee สูงกว่าเป้าหมาย',
   master_target_changed: 'Master เปลี่ยนสินค้า ต้องเลือกหน่วยและทำ Dry-run ใหม่',
@@ -504,7 +504,7 @@ export default function ShopeeStock() {
         ? { title: 'ไม่มีรายการที่ต้องแก้', description: 'สินค้าที่ใช้งานอยู่พร้อมสำหรับขั้นตอน Dry-run แล้ว' }
         : tab === 'excluded'
           ? { title: 'ยังไม่มีสินค้าที่ถูกยกเว้น', description: 'สินค้าที่ไม่ต้องการซิงก์จะปรากฏในแท็บนี้' }
-          : { title: 'ยังไม่มีสินค้าในแท็บนี้', description: selectedSetting?.last_catalog_sync_at ? 'ลองตรวจแท็บอื่นหรืออัปเดตรายการสินค้าอีกครั้ง' : 'อัปเดตรายการสินค้าเพื่อดึงข้อมูลจาก Shopee และ SML' }
+          : { title: 'ยังไม่มีสินค้าในแท็บนี้', description: selectedSetting?.last_catalog_sync_at ? 'ลองตรวจแท็บอื่นหรืออัปเดตรายการสินค้าจาก Shopee อีกครั้ง' : 'อัปเดตรายการสินค้าจาก Shopee เพื่อดึงสินค้าและตัวเลือกล่าสุดมาตรวจกับ SML' }
 
   if (loading && !data) {
     return <div className="flex min-h-[320px] items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
@@ -649,14 +649,14 @@ export default function ShopeeStock() {
         <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center">
-              <Button variant="outline" size="sm" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังดึงข้อมูล...' : 'อัปเดตรายการสินค้า'}</Button>
+              <Button variant="outline" size="sm" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังอัปเดตจาก Shopee...' : 'อัปเดตรายการสินค้าจาก Shopee'}</Button>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCatalogInfoOpen(true)} aria-label="อัปเดตรายการสินค้าคืออะไร">
+                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCatalogInfoOpen(true)} aria-label="อัปเดตรายการสินค้าจาก Shopee คืออะไร">
                     <Info className="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>อัปเดตรายการสินค้าคืออะไร</TooltipContent>
+                <TooltipContent>อัปเดตรายการสินค้าจาก Shopee คืออะไร</TooltipContent>
               </Tooltip>
             </div>
             <Button variant="outline" size="sm" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจสต๊อก'}</Button>
@@ -714,7 +714,7 @@ export default function ShopeeStock() {
                 ) : tab === 'ready' && productCounts.fix > 0 ? (
                   <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setTab('fix'); setPage(1) }}>เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})</Button>
                 ) : !selectedSetting?.last_catalog_sync_at ? (
-                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดตรายการสินค้า</Button>
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดตรายการสินค้าจาก Shopee</Button>
                 ) : null}
               </div>
             )}
@@ -856,8 +856,8 @@ function CatalogInfoDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>อัปเดตรายการสินค้าคืออะไร</DialogTitle>
-          <DialogDescription>ดึงข้อมูลล่าสุดมาไว้ใน Nexflow เพื่อเตรียมตรวจและจับคู่สินค้า</DialogDescription>
+          <DialogTitle>อัปเดตรายการสินค้าจาก Shopee</DialogTitle>
+          <DialogDescription>ดึงสินค้าและตัวเลือกล่าสุดจาก Shopee มาตรวจเทียบกับสินค้าและหน่วยนับใน SML</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <div>
@@ -921,7 +921,7 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
       const response = await client.get<{ items: StockCatalogOption[] }>('/api/settings/shopee-stock/catalog-search', { params: { q: picked.item_code } })
       const item = (response.data.items ?? []).find((candidate) => candidate.item_code === picked.item_code)
       if (!item) {
-        toast.error('ไม่พบข้อมูลหน่วยของสินค้านี้ กรุณาอัปเดตรายการสินค้าแล้วลองใหม่')
+        toast.error('ไม่พบข้อมูลหน่วยของสินค้านี้ กรุณาอัปเดตรายการสินค้าจาก Shopee แล้วลองใหม่')
         return
       }
       setSelected(item)
@@ -1013,6 +1013,15 @@ function MappingDialog({ product, shopID, onClose, onSaved }: { product: Product
           </div>
         )}
       >
+        {product?.warning_codes.includes('duplicate_sml_item') && (
+          <Alert className="mt-4 border-warning/50 bg-warning/10">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>รหัส SML นี้ผูกกับหลายรายการ Shopee</AlertTitle>
+            <AlertDescription>
+              ไม่ใช่ข้อมูลซ้ำจาก Excel หรือ API แต่เป็น Shopee Item/Model คนละรายการที่ใช้สต๊อก SML ก้อนเดียวกัน ระบบจึงหยุดซิงก์เพื่อป้องกันยอดถูกส่งซ้ำ ให้ยกเว้นรายการหนึ่ง หรือเลือกรหัส SML คนละรหัสเมื่อเป็นสินค้าคนละก้อนจริง
+            </AlertDescription>
+          </Alert>
+        )}
         {selected && (
               <div className="mt-4 space-y-3 border-t pt-4">
                 <div className="rounded-md border bg-muted/30 p-3">
