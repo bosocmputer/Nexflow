@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import client from '../api/client'
 import { notifyWorkQueueChanged } from '../lib/work-queue-events'
 import { humanizeSMLConnectionError } from '../lib/sml-readiness'
@@ -10,6 +10,7 @@ interface BillsFilter {
   status?: string
   shopee_status?: string
   source?: string
+  input_channel?: string
   bill_type?: string
   document_route?: string
   email_account_id?: string
@@ -107,8 +108,10 @@ export function useBills(filter: BillsFilter = {}) {
   const [data, setData] = useState<BillListResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const requestRef = useRef(0)
 
   const fetch = useCallback(async () => {
+    const requestID = ++requestRef.current
     setLoading(true)
     setError(null)
     try {
@@ -118,6 +121,7 @@ export function useBills(filter: BillsFilter = {}) {
       if (filter.status) params.set('status', filter.status)
       if (filter.shopee_status) params.set('shopee_status', filter.shopee_status)
       if (filter.source) params.set('source', filter.source)
+      if (filter.input_channel) params.set('input_channel', filter.input_channel)
       if (filter.bill_type) params.set('bill_type', filter.bill_type)
       if (filter.document_route) params.set('document_route', filter.document_route)
       if (filter.email_account_id) params.set('email_account_id', filter.email_account_id)
@@ -130,11 +134,13 @@ export function useBills(filter: BillsFilter = {}) {
       if (filter.limit) params.set('limit', String(filter.limit))
       if (filter.include_total) params.set('include_total', 'true')
       const res = await client.get<BillListResponse>(`/api/bills?${params}`)
-      setData(res.data)
+      if (requestID === requestRef.current) setData(res.data)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch bills')
+      if (requestID === requestRef.current) {
+        setError(e instanceof Error ? e.message : 'Failed to fetch bills')
+      }
     } finally {
-      setLoading(false)
+      if (requestID === requestRef.current) setLoading(false)
     }
   }, [JSON.stringify(filter)])
 
@@ -256,12 +262,14 @@ export async function getActiveBulkSendJob(params: {
   bill_type: string
   document_route?: string
   shopee_shop_id?: string
+  input_channel?: string
 }): Promise<BulkSendJob | null> {
   const search = new URLSearchParams()
   if (params.source) search.set('source', params.source)
   if (params.bill_type) search.set('bill_type', params.bill_type)
   if (params.document_route) search.set('document_route', params.document_route)
   if (params.shopee_shop_id) search.set('shopee_shop_id', params.shopee_shop_id)
+  if (params.input_channel) search.set('input_channel', params.input_channel)
   try {
     const res = await client.get<BulkSendJob>(`/api/bills/bulk-send-jobs/active?${search}`)
     return res.data

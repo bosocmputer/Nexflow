@@ -28,6 +28,7 @@ import { SMLMasterCodePicker } from '@/pages/BillDetail/components/SMLMasterCode
 import { ShelfPicker, WarehousePicker } from '@/pages/BillDetail/components/WarehousePicker'
 import { REMARK2_NONE, SML_REMARK2_OPTIONS, normalizeRemark2, remark2PayloadValue } from '@/lib/smlRemark2'
 import { ENABLE_REMARK2 } from '@/lib/featureFlags'
+import { billInputChannelLabel } from '@/lib/billInputChannel'
 import { isSMLReady, smlBlockedMessage, humanizeSMLConnectionError } from '@/lib/sml-readiness'
 import {
   createBulkSendJob,
@@ -171,14 +172,16 @@ function bulkJobStorageKey(filters: Props['filters']) {
     filters.bill_type || '',
     filters.document_route || '',
     filters.shopee_shop_id || '',
+    filters.input_channel || '',
   ].join(':')
 }
 
 function bulkFilterSummary(filters: Props['filters']) {
   const parts = [
-    filters.source ? `source=${filters.source}` : '',
-    filters.document_route ? `route=${filters.document_route}` : '',
-    filters.shopee_shop_id ? `shop=${filters.shopee_shop_id}` : '',
+    filters.input_channel ? `ช่องทาง ${billInputChannelLabel(filters.input_channel)}` : '',
+    filters.source && !filters.input_channel ? `ช่องทาง ${filters.source}` : '',
+    filters.document_route ? `ปลายทาง ${filters.document_route}` : '',
+    filters.shopee_shop_id ? `ร้าน Shopee ${filters.shopee_shop_id}` : '',
     filters.shopee_status ? `order status=${filters.shopee_status}` : '',
     filters.email_account_id ? `inbox=${filters.email_account_id}` : '',
     filters.search ? `ค้นหา "${filters.search}"` : '',
@@ -233,6 +236,7 @@ interface Props {
     email_account_id?: string
     shopee_status?: string
     shopee_shop_id?: string
+    input_channel?: string
     search?: string
   }
   onDone?: () => void
@@ -267,7 +271,10 @@ export function BulkSendDialog({
   const [showSlowHint, setShowSlowHint] = useState(false)
   const [mode, setMode] = useState<BulkDialogMode>('setup')
   const { readiness: smlReadiness, loading: smlReadinessLoading } = useSMLReadiness()
-  const storageKey = useMemo(() => bulkJobStorageKey(filters), [filters.source, filters.bill_type, filters.document_route, filters.shopee_shop_id])
+  const storageKey = useMemo(
+    () => bulkJobStorageKey(filters),
+    [filters.source, filters.bill_type, filters.document_route, filters.shopee_shop_id, filters.input_channel],
+  )
 
   const readyCount = candidates.filter((c) => c.ready).length
   const skippedCount = candidates.length - readyCount
@@ -524,6 +531,7 @@ export function BulkSendDialog({
           bill_type: filters.bill_type,
           document_route: filters.document_route,
           shopee_shop_id: filters.shopee_shop_id,
+          input_channel: filters.input_channel,
         })
         if (!alive) return
         if (active) {
@@ -554,6 +562,7 @@ export function BulkSendDialog({
         if (filters.email_account_id) params.set('email_account_id', filters.email_account_id)
         if (filters.shopee_status) params.set('shopee_status', filters.shopee_status)
         if (filters.shopee_shop_id) params.set('shopee_shop_id', filters.shopee_shop_id)
+        if (filters.input_channel) params.set('input_channel', filters.input_channel)
         if (filters.search) params.set('search', filters.search)
         const res = await client.get<{ data: Bill[]; total: number }>(`/api/bills?${params}`)
         const list = res.data.data ?? []
@@ -598,6 +607,7 @@ export function BulkSendDialog({
     filters.email_account_id,
     filters.shopee_status,
     filters.shopee_shop_id,
+    filters.input_channel,
     filters.search,
     billType,
     job,

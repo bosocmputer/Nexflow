@@ -135,6 +135,7 @@ const TikTokShippingSourceSKU = "__tiktok_shipping__"
 type BillListFilter struct {
 	Status         string `form:"status"`
 	Source         string `form:"source"`
+	InputChannel   string `form:"input_channel"`
 	BillType       string `form:"bill_type"`
 	DocumentRoute  string `form:"document_route"`
 	EmailAccountID string `form:"email_account_id"`

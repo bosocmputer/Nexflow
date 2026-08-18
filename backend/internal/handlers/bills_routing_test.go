@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/config"
 	"nexflow/internal/models"
@@ -265,6 +266,35 @@ func TestBulkJobMatchesSnapshotFilterScopesShopeeShop(t *testing.T) {
 	}
 	if bulkJobMatchesSnapshotFilter(json.RawMessage(`{"source":"shopee"}`), "shopee_shop_id", "1029622928") {
 		t.Fatal("missing shopee_shop_id should not match a shop-specific filter")
+	}
+}
+
+func TestBulkJobMatchesSnapshotFilterScopesInputChannel(t *testing.T) {
+	snapshot := json.RawMessage(`{"source":"shopee","input_channel":"shopee_excel"}`)
+	if !bulkJobMatchesSnapshotFilter(snapshot, "input_channel", "shopee_excel") {
+		t.Fatal("expected matching input channel to resume active job")
+	}
+	if bulkJobMatchesSnapshotFilter(snapshot, "input_channel", "shopee") {
+		t.Fatal("different input channel should not resume another filtered job")
+	}
+}
+
+func TestValidateBillInputChannel(t *testing.T) {
+	valid := models.BillListFilter{InputChannel: " shopee_excel "}
+	validRecorder := httptest.NewRecorder()
+	validContext, _ := gin.CreateTestContext(validRecorder)
+	if !validateBillInputChannel(validContext, &valid) || valid.InputChannel != "shopee_excel" {
+		t.Fatalf("valid channel was rejected or not normalized: %#v", valid)
+	}
+
+	invalid := models.BillListFilter{InputChannel: "marketplace"}
+	invalidRecorder := httptest.NewRecorder()
+	invalidContext, _ := gin.CreateTestContext(invalidRecorder)
+	if validateBillInputChannel(invalidContext, &invalid) {
+		t.Fatal("invalid channel should be rejected")
+	}
+	if invalidRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", invalidRecorder.Code, http.StatusBadRequest)
 	}
 }
 

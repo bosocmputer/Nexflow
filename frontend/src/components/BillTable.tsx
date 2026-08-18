@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import BillStatusBadge from '@/components/BillStatusBadge'
 import { DataTable } from '@/components/common/DataTable'
-import { billSourceLabel } from '@/lib/labels'
+import { BillInputChannelBadge } from '@/components/BillInputChannelBadge'
 import {
   isShopeePurchaseBill,
   isShopeeSalesBill,
@@ -140,16 +140,14 @@ export default function BillTable({
         },
         {
           key: 'source',
-          header: 'ช่องทาง',
+          header: 'ช่องทางรับข้อมูล',
           className: 'py-2',
           width: '19%',
           cell: (b) => {
             const inbox = emailInboxLabel(b)
             return (
               <div className="flex min-w-0 flex-col gap-1.5">
-                <span className="inline-flex w-fit rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                  {billSourceLabel(b.source)}
-                </span>
+                <BillInputChannelBadge bill={b} />
                 <ShopeeShopLine bill={b} />
                 <EmailGroupLine bill={b} />
                 {inbox && (
@@ -306,9 +304,7 @@ function MobileBillCard({
         {isShopeePurchaseBill(bill) && <ShopeePurchaseSummary bill={bill} />}
         {isShopeeSalesBill(bill) && <ShopeeSalesSummary bill={bill} />}
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-            {billSourceLabel(bill.source)}
-          </span>
+          <BillInputChannelBadge bill={bill} />
           <ShopeeShopLine bill={bill} />
           <EmailGroupLine bill={bill} />
         </div>

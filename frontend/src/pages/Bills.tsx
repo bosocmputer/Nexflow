@@ -1,12 +1,25 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Filter, Info, Search, Send, Store, UploadCloud } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileSpreadsheet,
+  Filter,
+  Info,
+  Search,
+  Send,
+  Store,
+  UploadCloud,
+  X,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -36,12 +49,25 @@ import {
 } from '@/lib/labels'
 import { cn } from '@/lib/utils'
 import { WORK_QUEUE_CHANGED_EVENT } from '@/lib/work-queue-events'
+import {
+  BILL_INPUT_CHANNEL_OPTIONS,
+  billInputChannelSource,
+  isBillInputChannel,
+  type BillInputChannel,
+} from '@/lib/billInputChannel'
+import {
+  ENABLE_LAZADA_EXCEL,
+  ENABLE_SHOPEE_EXCEL,
+  ENABLE_TIKTOK_EXCEL,
+} from '@/lib/featureFlags'
 import type { Bill } from '@/types'
 
 const DEFAULT_PER_PAGE = 20
 const PAGE_SIZE_OPTIONS = [20, 50, 100] as const
 const BULK_BATCH_SIZE = 100
 const ALL = '__all__'
+type InputChannelFilter = typeof ALL | BillInputChannel
+const VALID_INPUT_CHANNELS = [ALL, ...BILL_INPUT_CHANNEL_OPTIONS.map((option) => option.value)]
 
 interface ShopeeShopOption {
   id: string
@@ -81,13 +107,10 @@ const MODE_CONFIG: Record<BillsMode, {
   title: string
   description: string
   source: string
-  sourceLabel?: string
   billType: 'purchase' | 'sale'
   documentRoute?: string
   destination: string
   docCode: string
-  routeLabel: string
-  routeTo: string
   emptyTitle: string
   emptyDescription: string
   emptyActionLabel: string
@@ -100,13 +123,10 @@ const MODE_CONFIG: Record<BillsMode, {
     title: PAGE_TITLE.salesOrders,
     description: 'คิวเอกสารขายที่ปลายทางเป็นใบสั่งขาย ยังใช้งานได้ครบสำหรับช่องทางที่ตั้งค่าไว้',
     source: '',
-    sourceLabel: 'Marketplace Excel',
     billType: 'sale',
     documentRoute: 'saleorder',
     destination: 'ขาย -> ใบสั่งขาย',
     docCode: 'SR',
-    routeLabel: 'Marketplace Excel',
-    routeTo: '/import/shopee',
     emptyTitle: 'ยังไม่มีใบสั่งขาย',
     emptyDescription: 'นำเข้าไฟล์ Shopee, Lazada หรือ TikTok แล้วเอกสารที่ตั้งปลายทางเป็นใบสั่งขายจะมาอยู่หน้านี้',
     emptyActionLabel: 'นำเข้าไฟล์ Marketplace',
@@ -119,13 +139,10 @@ const MODE_CONFIG: Record<BillsMode, {
     title: PAGE_TITLE.saleInvoices,
     description: 'เส้นทางใช้งานหลักสำหรับงานขาย Marketplace ตรวจรายการจาก Shopee, Lazada หรือ TikTok แล้วส่งเป็นขายสินค้าและบริการ / SI เข้า SML',
     source: '',
-    sourceLabel: 'Marketplace Excel',
     billType: 'sale',
     documentRoute: 'saleinvoice',
     destination: 'ขาย -> ขายสินค้าและบริการ',
     docCode: 'SI',
-    routeLabel: 'Marketplace Excel',
-    routeTo: '/import/shopee',
     emptyTitle: 'ยังไม่มีเอกสารขายสินค้าและบริการ',
     emptyDescription: 'นำเข้าไฟล์ Shopee, Lazada หรือ TikTok แล้วเลือกปลายทาง SML เป็นขายสินค้าและบริการ เอกสารจะมาอยู่หน้านี้',
     emptyActionLabel: 'นำเข้าไฟล์ Marketplace',
@@ -182,16 +199,27 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   const [shopeeShopId, setShopeeShopId] = useState(() => searchParams.get('shopee_shop_id') || ALL)
   const [shopeeShops, setShopeeShops] = useState<ShopeeShopOption[]>([])
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
+  const [debouncedSearch, setDebouncedSearch] = useState(search)
+  const [inputChannel, setInputChannel] = useState<InputChannelFilter>(() =>
+    readURLFilter(searchParams, 'input_channel', VALID_INPUT_CHANNELS) as InputChannelFilter,
+  )
   const [archiveMode, setArchiveMode] = useState<ArchiveMode>(() => readURLArchive(searchParams))
   const [bulkOpen, setBulkOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<{
     kind: 'archive' | 'restore' | 'delete' | 'permanent'
     bill: Bill
   } | null>(null)
-  const showShopeeShopFilter = true
+  const legacySource = config.source || (searchParams.get('source') ?? '')
+  const effectiveSource = inputChannel === ALL ? legacySource : ''
+  const showShopeeShopFilter =
+    inputChannel === 'shopee' ||
+    inputChannel === 'shopee_excel' ||
+    (inputChannel === ALL && (!effectiveSource || effectiveSource === 'shopee'))
   const canManageBills = user?.role === 'admin' || user?.role === 'staff'
   const canPermanentDelete = user?.role === 'admin'
-  const effectiveSource = config.source || (searchParams.get('source') ?? '')
+  const countsRequestRef = useRef(0)
+  const selectedInputChannel = inputChannel === ALL ? '' : inputChannel
+  const bulkSource = effectiveSource || billInputChannelSource(selectedInputChannel)
 
   const { data, loading, refetch } = useBills({
     page,
@@ -199,10 +227,11 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     include_total: true,
     status: status === ALL ? '' : status,
     source: effectiveSource,
+    input_channel: selectedInputChannel,
     bill_type: config.billType,
     document_route: config.documentRoute,
     shopee_shop_id: showShopeeShopFilter && shopeeShopId !== ALL ? shopeeShopId : '',
-    search,
+    search: debouncedSearch,
     archived: archiveMode === 'active' ? '' : archiveMode,
   })
   const bills = data?.data ?? []
@@ -229,10 +258,42 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   const selectedStatusLabel = STATUS_OPTIONS.find((o) => o.value === status)?.label ?? 'สถานะอื่น'
   const selectedArchiveLabel = ARCHIVE_OPTIONS.find((o) => o.value === archiveMode)?.label ?? 'รายการปกติ'
   const secondaryStatusActive = SECONDARY_STATUS_OPTIONS.some((o) => o.value === status)
+  const hasActiveFilters =
+    status !== ALL ||
+    inputChannel !== ALL ||
+    shopeeShopId !== ALL ||
+    archiveMode !== 'active' ||
+    search.trim() !== '' ||
+    legacySource !== ''
 
   const resetPage = (cb: () => void) => {
     cb()
     setPage(1)
+  }
+
+  const handleInputChannelChange = (value: string) => {
+    if (value !== ALL && !isBillInputChannel(value)) return
+    resetPage(() => {
+      setInputChannel(value as InputChannelFilter)
+      if (value !== ALL && value !== 'shopee' && value !== 'shopee_excel') {
+        setShopeeShopId(ALL)
+      }
+    })
+  }
+
+  const clearFilters = () => {
+    setStatus(ALL)
+    setInputChannel(ALL)
+    setShopeeShopId(ALL)
+    setSearch('')
+    setDebouncedSearch('')
+    setArchiveMode('active')
+    setPage(1)
+    if (legacySource) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('source')
+      setSearchParams(next, { replace: true })
+    }
   }
 
   const refreshAll = () => {
@@ -259,17 +320,19 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     setPage(Math.min(next, totalPages))
   }
 
-  const fetchCounts = async () => {
+  const fetchCounts = useCallback(async () => {
+    const requestID = ++countsRequestRef.current
     const params = new URLSearchParams()
     if (effectiveSource) params.set('source', effectiveSource)
+    if (selectedInputChannel) params.set('input_channel', selectedInputChannel)
     params.set('bill_type', config.billType)
     if (config.documentRoute) params.set('document_route', config.documentRoute)
     if (archiveMode !== 'active') params.set('archived', archiveMode)
     if (showShopeeShopFilter && shopeeShopId !== ALL) params.set('shopee_shop_id', shopeeShopId)
-    if (search) params.set('search', search)
+    if (debouncedSearch) params.set('search', debouncedSearch)
     const res = await client.get<typeof counts>(`/api/bills/counts?${params}`)
-    setCounts(res.data)
-  }
+    if (requestID === countsRequestRef.current) setCounts(res.data)
+  }, [effectiveSource, selectedInputChannel, config.billType, config.documentRoute, archiveMode, showShopeeShopFilter, shopeeShopId, debouncedSearch])
 
   const handleConfirmedAction = async () => {
     if (!confirmAction) return
@@ -294,6 +357,11 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   }
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [search])
+
+  useEffect(() => {
     let alive = true
     client.get<{ data: ShopeeShopOption[] }>('/api/shopee-api/connections')
       .then((res) => {
@@ -309,8 +377,7 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     fetchCounts().catch(() => {
       setCounts({ needs_review: 0, pending: 0, sent: 0, failed: 0, skipped: 0, total: 0 })
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveSource, config.billType, config.documentRoute, archiveMode, shopeeShopId, search])
+  }, [fetchCounts])
 
   useEffect(() => {
     const onWorkQueueChanged = () => {
@@ -321,8 +388,7 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     }
     window.addEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
     return () => window.removeEventListener(WORK_QUEUE_CHANGED_EVENT, onWorkQueueChanged)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refetch, effectiveSource, config.billType, config.documentRoute, archiveMode, shopeeShopId, search])
+  }, [refetch, fetchCounts])
 
   useEffect(() => {
     if (!loading && data && page > totalPages) {
@@ -338,13 +404,18 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     const next = new URLSearchParams(searchParams)
     if (status === ALL) next.delete('status')
     else next.set('status', status)
+    if (inputChannel === ALL) next.delete('input_channel')
+    else {
+      next.set('input_channel', inputChannel)
+      next.delete('source')
+    }
     next.delete('shopee_status')
     if (showShopeeShopFilter && shopeeShopId !== ALL) next.set('shopee_shop_id', shopeeShopId)
     else next.delete('shopee_shop_id')
     if (archiveMode === 'active') next.delete('archived')
     else next.set('archived', archiveMode)
     next.delete('email_account_id')
-    if (search.trim()) next.set('search', search)
+    if (debouncedSearch) next.set('search', debouncedSearch)
     else next.delete('search')
     if (page > 1) next.set('page', String(page))
     else next.delete('page')
@@ -356,8 +427,9 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     }
   }, [
     status,
+    inputChannel,
     archiveMode,
-    search,
+    debouncedSearch,
     page,
     perPage,
     showShopeeShopFilter,
@@ -382,11 +454,9 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
               <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
               <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
                 <Info className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
-                <Link to={config.routeTo} className="font-medium text-link hover:underline">
-                  {config.routeLabel}
-                </Link>
-                <span>→</span>
-                <span className="font-medium text-foreground">{config.destination}</span>
+                <span>Shopee และไฟล์ Marketplace</span>
+                <span aria-hidden="true">→</span>
+                <span className="font-medium text-foreground">ปลายทาง SML: {config.destination}</span>
               </span>
             </div>
           </div>
@@ -395,17 +465,47 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
             <QueueMetricChip label="พร้อมส่ง" value={counts.pending} tone="primary" />
             <QueueMetricChip label="ส่งแล้ว" value={counts.sent} tone="success" />
             <QueueMetricChip label="ไม่สำเร็จ" value={counts.failed} tone="danger" />
-            <Button
-              asChild
-              size="sm"
-              variant={mode === 'sale-invoice' ? 'default' : 'outline'}
-              className="h-8 w-full justify-center gap-1.5 sm:w-auto"
-            >
-              <Link to={config.emptyActionTo}>
-                <UploadCloud className="h-4 w-4" />
-                {config.emptyActionLabel}
-              </Link>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant={mode === 'sale-invoice' ? 'default' : 'outline'}
+                  className="h-8 w-full justify-center gap-1.5 sm:w-auto"
+                >
+                  <UploadCloud className="h-4 w-4" />
+                  นำเข้าไฟล์
+                  <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuLabel className="text-xs">เลือกไฟล์จากแพลตฟอร์ม</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {ENABLE_SHOPEE_EXCEL && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/import/shopee">
+                      <FileSpreadsheet className="text-[#ee4d2d]" />
+                      Shopee Excel
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                {ENABLE_LAZADA_EXCEL && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/import/lazada">
+                      <FileSpreadsheet className="text-[#1d3491]" />
+                      Lazada Excel
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                {ENABLE_TIKTOK_EXCEL && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/import/tiktok">
+                      <FileSpreadsheet className="text-foreground" />
+                      TikTok Excel
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button asChild size="sm" variant="outline" className="h-8 w-full justify-center sm:w-auto">
               <Link to="/settings/channels">ตั้งค่าเส้นทาง</Link>
             </Button>
@@ -413,8 +513,8 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
         </div>
 
         <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
-          <div className="grid gap-2 xl:grid-cols-[minmax(260px,340px)_minmax(0,1fr)_auto] xl:items-center">
-            <div className="relative w-full">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+            <div className="relative w-full lg:max-w-[360px] lg:flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={config.searchPlaceholder}
@@ -424,74 +524,43 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
               />
             </div>
 
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {QUICK_STATUS_OPTIONS.map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  onClick={() => resetPage(() => setStatus(o.value))}
-                  className={cn(
-                    'h-7 rounded-full border px-2.5 text-xs font-medium transition-colors',
-                    status === o.value
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-                  )}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
+            <Select value={inputChannel} onValueChange={handleInputChannelChange}>
+              <SelectTrigger className="h-8 w-full text-xs lg:w-[205px]" aria-label="กรองตามช่องทางรับข้อมูล">
+                <SelectValue placeholder="ทุกช่องทางรับข้อมูล" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>ทุกช่องทางรับข้อมูล</SelectItem>
+                {BILL_INPUT_CHANNEL_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <span className="inline-flex items-center gap-2">
+                      {option.excel ? (
+                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                      ) : (
+                        <span className="h-2 w-2 rounded-full bg-[#ee4d2d]" aria-hidden="true" />
+                      )}
+                      {option.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 w-full min-w-0 justify-center gap-1.5 xl:w-auto"
-              disabled={bulkDisabled}
-              onClick={() => setBulkOpen(true)}
-            title={
-              archiveMode !== 'active'
-                  ? 'ส่ง SML แบบกลุ่มปิดไว้เมื่อดูบิลที่เก็บแล้ว เพื่อไม่ส่งเอกสารย้อนหลังโดยไม่ตั้งใจ'
-                  : !bulkStatusAllowed
-                    ? 'ส่ง SML แบบกลุ่มส่งเฉพาะเอกสารสถานะพร้อมส่ง จึงเปิดได้เมื่อเลือกทุกสถานะหรือสถานะพร้อมส่ง'
-                  : counts.needs_review > 0
-                    ? `มีรายการต้องตรวจสินค้า ${counts.needs_review.toLocaleString()} รายการ ปุ่มนี้ส่งเฉพาะเอกสารสถานะพร้อมส่ง`
-                    : bulkButtonLabel
-              }
-            >
-              <Send className="h-3.5 w-3.5" />
-              <span className="truncate">{bulkCompactLabel}</span>
-            </Button>
-          </div>
-
-          <div className="grid gap-1.5 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant={secondaryStatusActive ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-8 w-full justify-between gap-1.5 px-2.5 text-xs sm:w-auto"
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    <Filter className="h-3.5 w-3.5" />
-                    {secondaryStatusActive ? selectedStatusLabel : 'สถานะอื่น'}
-                  </span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
-                <DropdownMenuLabel className="text-xs">สถานะเอกสาร</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={status}
-                  onValueChange={(value) => resetPage(() => setStatus(value))}
-                >
-                  {SECONDARY_STATUS_OPTIONS.map((o) => (
-                    <DropdownMenuRadioItem key={o.value} value={o.value}>
-                      {o.label}
-                    </DropdownMenuRadioItem>
+            {showShopeeShopFilter && shopeeShops.length > 0 && (
+              <Select value={shopeeShopId} onValueChange={(value) => resetPage(() => setShopeeShopId(value))}>
+                <SelectTrigger className="h-8 w-full text-xs lg:w-[230px]" aria-label="กรองตามร้าน Shopee">
+                  <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-[#9f2f16]" />
+                  <SelectValue placeholder="ร้าน Shopee" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>ทุกร้าน Shopee</SelectItem>
+                  {shopeeShops.map((shop) => (
+                    <SelectItem key={shop.id} value={String(shop.shop_id)}>
+                      {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
+                    </SelectItem>
                   ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </SelectContent>
+              </Select>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -499,9 +568,10 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
                   type="button"
                   variant={archiveMode === 'active' ? 'outline' : 'default'}
                   size="sm"
-                  className="h-8 w-full justify-between gap-1.5 px-2.5 text-xs sm:w-auto"
+                  className="h-8 w-full justify-between gap-1.5 px-2.5 text-xs lg:w-auto"
                 >
                   {selectedArchiveLabel}
+                  <ChevronDown className="h-3.5 w-3.5 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-52">
@@ -519,25 +589,85 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-            {showShopeeShopFilter && shopeeShops.length > 0 && (
-              <Select value={shopeeShopId} onValueChange={(value) => resetPage(() => setShopeeShopId(value))}>
-                <SelectTrigger
-                  className="h-8 w-full text-xs sm:w-[220px]"
-                  aria-label="กรองตามร้าน Shopee"
-                >
-                  <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-accent-strong" />
-                  <SelectValue placeholder="ร้าน Shopee" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>ทุกร้าน Shopee</SelectItem>
-                  {shopeeShops.map((shop) => (
-                    <SelectItem key={shop.id} value={String(shop.shop_id)}>
-                      {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            {hasActiveFilters && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 w-full justify-center gap-1.5 px-2.5 text-xs text-muted-foreground lg:w-auto"
+                onClick={clearFilters}
+              >
+                <X className="h-3.5 w-3.5" />
+                ล้างตัวกรอง
+              </Button>
             )}
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-border/50 pt-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {QUICK_STATUS_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => resetPage(() => setStatus(o.value))}
+                  className={cn(
+                    'h-7 rounded-full border px-2.5 text-xs font-medium transition-colors',
+                    status === o.value
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={secondaryStatusActive ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-7 justify-between gap-1.5 px-2.5 text-xs"
+                  >
+                    <Filter className="h-3.5 w-3.5" />
+                    {secondaryStatusActive ? selectedStatusLabel : 'สถานะอื่น'}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-48">
+                  <DropdownMenuLabel className="text-xs">สถานะเอกสาร</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={status}
+                    onValueChange={(value) => resetPage(() => setStatus(value))}
+                  >
+                    {SECONDARY_STATUS_OPTIONS.map((o) => (
+                      <DropdownMenuRadioItem key={o.value} value={o.value}>
+                        {o.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 w-full min-w-0 justify-center gap-1.5 lg:w-auto"
+              disabled={bulkDisabled}
+              onClick={() => setBulkOpen(true)}
+              title={
+                archiveMode !== 'active'
+                  ? 'ส่ง SML แบบกลุ่มปิดไว้เมื่อดูบิลที่เก็บแล้ว เพื่อไม่ส่งเอกสารย้อนหลังโดยไม่ตั้งใจ'
+                  : !bulkStatusAllowed
+                    ? 'ส่ง SML แบบกลุ่มส่งเฉพาะเอกสารสถานะพร้อมส่ง จึงเปิดได้เมื่อเลือกทุกสถานะหรือสถานะพร้อมส่ง'
+                    : counts.needs_review > 0
+                      ? `มีรายการต้องตรวจสินค้า ${counts.needs_review.toLocaleString()} รายการ ปุ่มนี้ส่งเฉพาะเอกสารสถานะพร้อมส่ง`
+                      : bulkButtonLabel
+              }
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span className="truncate">{bulkCompactLabel}</span>
+            </Button>
           </div>
 
           {counts.needs_review > 0 && archiveMode === 'active' && (
@@ -548,7 +678,7 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
         </div>
       </div>
 
-      {!loading && bills.length === 0 && !search && status === ALL && archiveMode === 'active' ? (
+      {!loading && bills.length === 0 && !hasActiveFilters && !effectiveSource ? (
         <EmptyState
           icon={UploadCloud}
           title={config.emptyTitle}
@@ -664,11 +794,12 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
         title={config.title}
         billType={config.billType}
         filters={{
-          source: effectiveSource,
+          source: bulkSource,
+          input_channel: selectedInputChannel,
           bill_type: config.billType,
           document_route: config.documentRoute,
           shopee_shop_id: showShopeeShopFilter && shopeeShopId !== ALL ? shopeeShopId : '',
-          search,
+          search: debouncedSearch,
         }}
         onDone={() => {
           setPage(1)

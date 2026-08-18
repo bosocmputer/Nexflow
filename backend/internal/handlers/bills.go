@@ -668,11 +668,28 @@ func (h *BillHandler) resolveItemName(itemCode, rawName string) string {
 	return rawName
 }
 
+func validateBillInputChannel(c *gin.Context, f *models.BillListFilter) bool {
+	f.InputChannel = strings.TrimSpace(f.InputChannel)
+	if f.InputChannel == "" {
+		return true
+	}
+	switch f.InputChannel {
+	case "shopee", "shopee_excel", "lazada_excel", "tiktok_excel":
+		return true
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "input_channel ไม่ถูกต้อง"})
+		return false
+	}
+}
+
 // GET /api/bills
 func (h *BillHandler) List(c *gin.Context) {
 	var f models.BillListFilter
 	if err := c.ShouldBindQuery(&f); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !validateBillInputChannel(c, &f) {
 		return
 	}
 	if h.blockPurchaseFlow(c, f.BillType) {
@@ -719,6 +736,9 @@ func (h *BillHandler) Counts(c *gin.Context) {
 	var f models.BillListFilter
 	if err := c.ShouldBindQuery(&f); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !validateBillInputChannel(c, &f) {
 		return
 	}
 	if h.blockPurchaseFlow(c, f.BillType) {
@@ -2374,6 +2394,10 @@ func (h *BillHandler) GetActiveBulkSendJob(c *gin.Context) {
 		return
 	}
 	if !bulkJobMatchesSnapshotFilter(job.FilterSnapshot, "shopee_shop_id", c.Query("shopee_shop_id")) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "active bulk send job not found"})
+		return
+	}
+	if !bulkJobMatchesSnapshotFilter(job.FilterSnapshot, "input_channel", c.Query("input_channel")) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "active bulk send job not found"})
 		return
 	}

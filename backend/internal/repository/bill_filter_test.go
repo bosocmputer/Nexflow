@@ -43,6 +43,36 @@ func TestBillWhereDateAndShopeeStatusFilters(t *testing.T) {
 	}
 }
 
+func TestBillWhereInputChannelFilters(t *testing.T) {
+	tests := []struct {
+		name        string
+		channel     string
+		wantSource  string
+		wantFlow    string
+		wantExclude bool
+	}{
+		{name: "Shopee API and realtime", channel: "shopee", wantSource: "shopee", wantFlow: "shopee_excel", wantExclude: true},
+		{name: "Shopee Excel", channel: "shopee_excel", wantSource: "shopee", wantFlow: "shopee_excel"},
+		{name: "Lazada Excel", channel: "lazada_excel", wantSource: "lazada", wantFlow: "lazada_excel"},
+		{name: "TikTok Excel", channel: "tiktok_excel", wantSource: "tiktok", wantFlow: "tiktok_excel"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			where, args, _ := billWhere(models.BillListFilter{InputChannel: tt.channel})
+			if !strings.Contains(where, "b.source = $") || !strings.Contains(where, "b.raw_data->>'flow'") {
+				t.Fatalf("where = %q, missing input channel predicates", where)
+			}
+			if tt.wantExclude && !strings.Contains(where, "<>") {
+				t.Fatalf("where = %q, Shopee channel must exclude Excel imports", where)
+			}
+			if len(args) != 2 || args[0] != tt.wantSource || args[1] != tt.wantFlow {
+				t.Fatalf("args = %#v, want [%q %q]", args, tt.wantSource, tt.wantFlow)
+			}
+		})
+	}
+}
+
 func TestBillWhereOrderLikeSearchUsesExactOrderPredicate(t *testing.T) {
 	where, args, _ := billWhere(models.BillListFilter{Search: "260518Q4C1HSMB"})
 	for _, want := range []string{

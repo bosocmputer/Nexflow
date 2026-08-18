@@ -372,6 +372,19 @@ func billWhere(f models.BillListFilter) (string, []interface{}, int) {
 		args = append(args, f.Source)
 		argN++
 	}
+	// InputChannel describes how the bill entered Nexflow. Source alone cannot
+	// distinguish Shopee API/realtime orders from Shopee Excel imports.
+	switch f.InputChannel {
+	case "shopee":
+		where += fmt.Sprintf(" AND b.source = $%d AND COALESCE(b.raw_data->>'flow', '') <> $%d", argN, argN+1)
+		args = append(args, "shopee", "shopee_excel")
+		argN += 2
+	case "shopee_excel", "lazada_excel", "tiktok_excel":
+		source := strings.TrimSuffix(f.InputChannel, "_excel")
+		where += fmt.Sprintf(" AND b.source = $%d AND b.raw_data->>'flow' = $%d", argN, argN+1)
+		args = append(args, source, f.InputChannel)
+		argN += 2
+	}
 	if f.BillType != "" {
 		where += fmt.Sprintf(" AND b.bill_type = $%d", argN)
 		args = append(args, f.BillType)
