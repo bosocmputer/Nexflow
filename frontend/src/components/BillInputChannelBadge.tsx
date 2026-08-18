@@ -10,8 +10,8 @@ import { cn } from '@/lib/utils'
 import type { Bill } from '@/types'
 
 const CHANNEL_CLASS: Record<BillInputChannel, string> = {
-  shopee: 'border-[#c93d20] bg-[#c93d20] text-white',
-  shopee_excel: 'border-[#c93d20] bg-[#c93d20] text-white',
+  shopee: 'border-[#EE4D2D] bg-[#EE4D2D] text-white',
+  shopee_excel: 'border-[#EE4D2D] bg-[#EE4D2D] text-white',
   lazada_excel: 'border-[#1d3491] bg-[#1d3491] text-white',
   tiktok_excel: 'border-[#111817] bg-[#111817] text-white',
 }

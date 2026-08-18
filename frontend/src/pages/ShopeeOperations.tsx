@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Eye,
   FilePlus2,
+  Info,
   Loader2,
   RadioTower,
   RefreshCw,
@@ -33,6 +34,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -49,6 +51,7 @@ import {
 } from '@/components/ui/tooltip'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { useNotificationsStore } from '@/lib/notifications-store'
+import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
@@ -357,14 +360,14 @@ const SHOP_STATUS_OPTIONS = [
   { value: 'CANCELLED', label: 'CANCELLED' },
 ]
 const ERP_STATUS_OPTIONS = [
-  { value: ALL, label: 'ทุกสถานะ ERP' },
+  { value: ALL, label: 'ทุกสถานะเอกสาร' },
   { value: 'pending', label: 'รอสร้างเอกสาร' },
-  { value: 'pending_erp', label: 'สร้างเอกสารแล้ว รอส่ง SML' },
+  { value: 'pending_erp', label: 'รอส่ง SML' },
   { value: 'needs_review', label: 'ต้องตรวจ' },
   { value: 'sent', label: 'ส่ง SML แล้ว' },
-  { value: 'failed', label: 'Failed - ส่งไม่สำเร็จ' },
-  { value: 'blocked', label: 'Pending - บล็อก' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'failed', label: 'ส่งไม่สำเร็จ' },
+  { value: 'blocked', label: 'ถูกบล็อก' },
+  { value: 'cancelled', label: 'ยกเลิก' },
 ]
 const DIAGNOSTIC_FILTERS: Array<{ value: DiagnosticsFilter; label: string }> = [
   { value: 'all', label: 'ทั้งหมด' },
@@ -381,6 +384,23 @@ const STATUS_GROUP_TABS: Array<{ value: StatusGroup; label: string }> = [
   { value: 'completed', label: 'สำเร็จ' },
   { value: 'cancelled', label: 'ยกเลิก/คืนเงิน/คืนสินค้า' },
 ]
+
+const ERP_STATUS_HELP = [
+  { value: 'รอสร้างเอกสาร', detail: 'ยังไม่มีเอกสารขายใน Nexflow' },
+  { value: 'รอส่ง SML', detail: 'สร้างเอกสารแล้ว แต่ยังไม่ได้บันทึกเข้า SML' },
+  { value: 'ต้องตรวจ', detail: 'ข้อมูลสินค้า ยอดเงิน หรือการตั้งค่ายังต้องให้ผู้ใช้ตรวจ' },
+  { value: 'ส่ง SML แล้ว', detail: 'เอกสารถูกบันทึกเข้า SML สำเร็จ' },
+  { value: 'ส่งไม่สำเร็จ', detail: 'การส่งเข้า SML มีข้อผิดพลาดและต้องดำเนินการใหม่' },
+] as const
+
+const PAYMENT_DATA_STATUS_HELP = [
+  { value: 'ยังไม่ดึงข้อมูล', detail: 'ยังไม่มีงานดึงรายละเอียดการรับเงินสำหรับคำสั่งซื้อนี้' },
+  { value: 'ข้อมูลพร้อม', detail: 'Nexflow ดึงรายละเอียดรายรับและค่าธรรมเนียมจาก Shopee มาแล้ว' },
+  { value: 'รอดึงข้อมูล', detail: 'ระบบเข้าคิวเพื่อดึงรายละเอียดจาก Shopee' },
+  { value: 'กำลังดึงข้อมูล', detail: 'ระบบกำลังติดต่อ Shopee เพื่ออ่านรายละเอียด' },
+  { value: 'ยังไม่มีข้อมูล', detail: 'Shopee ยังไม่คืนข้อมูล Escrow สำหรับคำสั่งซื้อนี้' },
+  { value: 'ดึงไม่สำเร็จ', detail: 'ดึงข้อมูลไม่สำเร็จและระบบจะลองใหม่หรือต้องตรวจการเชื่อมต่อ' },
+] as const
 
 const emptyCounts: Counts = {
   total: 0,
@@ -1195,7 +1215,7 @@ export default function ShopeeOperations() {
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <h1 className="text-lg font-semibold tracking-normal">คำสั่งซื้อ Shopee</h1>
-                <Badge className="h-6 bg-primary px-2 text-[11px] text-primary-foreground">Push/Sync</Badge>
+                <Badge className="h-6 border-[#EE4D2D] bg-[#EE4D2D] px-2 text-[11px] text-white hover:bg-[#EE4D2D]">เรียลไทม์</Badge>
                 <span
                   className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground"
                   title="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
@@ -1369,7 +1389,7 @@ export default function ShopeeOperations() {
 
         <div className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1040px] text-sm">
+            <table className="w-full min-w-[960px] text-sm">
               <thead className="bg-muted/50 text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">
@@ -1381,26 +1401,46 @@ export default function ShopeeOperations() {
                         onCheckedChange={(checked) => toggleAllVisibleEligible(checked === true)}
                         aria-label="เลือก order ที่สร้างเอกสารได้ทั้งหมดในหน้านี้"
                       />
-                      <span>Order</span>
+                      <span>คำสั่งซื้อ / ร้าน</span>
                     </div>
                   </th>
-                  <th className="px-3 py-2 text-left">ลูกค้า / ร้าน</th>
                   <th className="px-3 py-2 text-right">ยอดเงิน</th>
-                  <th className="px-3 py-2 text-left">Shopee</th>
-                  <th className="px-3 py-2 text-left">ERP</th>
-                  <th className="px-3 py-2 text-left">Logistics</th>
-                  <th className="px-3 py-2 text-right">Action</th>
+                  <th className="px-3 py-2 text-left">
+                    <StatusColumnHelp
+                      label="สถานะ Shopee"
+                      title="ความหมายสถานะคำสั่งซื้อ Shopee"
+                      description="สถานะการชำระเงินและจัดส่งล่าสุดที่ Nexflow อ่านจาก Shopee"
+                      items={SHOPEE_ORDER_STATUS_DEFINITIONS}
+                    />
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    <StatusColumnHelp
+                      label="เอกสาร Nexflow / SML"
+                      title="ความหมายสถานะเอกสาร"
+                      description="เป็นสถานะการสร้างเอกสารใน Nexflow และการบันทึกเข้า SML ไม่ใช่สถานะจัดส่งของ Shopee"
+                      items={ERP_STATUS_HELP}
+                    />
+                  </th>
+                  <th className="px-3 py-2 text-left">
+                    <StatusColumnHelp
+                      label="ข้อมูลรับเงิน"
+                      title="Escrow คืออะไร"
+                      description="Escrow คือรายละเอียดเงินที่ Shopee ถือไว้ รวมยอดสุทธิ ส่วนลด และค่าธรรมเนียม สถานะนี้บอกเพียงว่า Nexflow ดึงรายละเอียดมาได้หรือไม่ ไม่ได้แปลว่า Shopee โอนเงินเข้าบัญชีธนาคารแล้ว"
+                      items={PAYMENT_DATA_STATUS_HELP}
+                    />
+                  </th>
+                  <th className="px-3 py-2 text-right">จัดการ</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">กำลังโหลด...</td>
+                    <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">กำลังโหลด...</td>
                   </tr>
                 )}
                 {!loading && orders.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-8">
+                    <td colSpan={6} className="px-3 py-8">
                       <div className="mx-auto max-w-lg text-center">
                         <RadioTower className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
                         <div className="font-medium">ยังไม่มี order ในคิวนี้</div>
@@ -1420,7 +1460,7 @@ export default function ShopeeOperations() {
                       key={order.id}
                       className={cn('border-t border-border hover:bg-muted/30', focusedOrderSN === order.order_sn && 'bg-primary/5', checked && 'bg-primary/5')}
                     >
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <div className="flex items-start gap-3">
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -1440,48 +1480,39 @@ export default function ShopeeOperations() {
                         </Tooltip>
                         <div className="min-w-0">
                           <div className="font-mono text-xs font-medium text-foreground">{order.order_sn}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {order.last_order_update_at ? dayjs(order.last_order_update_at).format('DD/MM/YY HH:mm') : 'ยังไม่มี update_time'}
+                          <div className="mt-0.5 flex max-w-[280px] items-center gap-1.5 text-xs text-muted-foreground">
+                            <span className="truncate">{order.shop_label || order.shop_id}</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="shrink-0">
+                              {order.last_order_update_at ? dayjs(order.last_order_update_at).format('DD/MM/YY HH:mm') : 'ยังไม่มีเวลาอัปเดต'}
+                            </span>
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2">
-                      <div className="font-medium">{order.buyer_username || '-'}</div>
-                      <div className="text-xs text-muted-foreground">{order.shop_label || order.shop_id}</div>
+                    <td className="px-3 py-2 text-right align-top tabular-nums">
+                      <div className="font-medium">{money(order.total_amount)}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">{order.item_count.toLocaleString()} รายการ</div>
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <div>{money(order.total_amount)}</div>
-                      <div className="text-xs text-muted-foreground">{order.item_count.toLocaleString()} รายการ</div>
-                      <PaymentBreakdownBadge status={order.payment_breakdown_status} />
+                    <td className="px-3 py-2 align-top">
+                      <OrderStatusBadge status={order.order_status} />
+                      {(order.logistics_status || order.tracking_number) && (
+                        <div className="mt-1 max-w-[190px] truncate text-xs text-muted-foreground" title={`${shippingStateLabel(order)}${carrierLabel(order) ? ` · ${carrierLabel(order)}` : ''}`}>
+                          {shippingStateLabel(order)}{carrierLabel(order) ? ` · ${carrierLabel(order)}` : ''}
+                        </div>
+                      )}
                     </td>
-                    <td className="px-3 py-2"><OrderStatusBadge status={order.order_status} /></td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <ERPStatusBadge status={order.erp_status} />
                       <div className="mt-1 text-xs text-muted-foreground">
                         {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
                       </div>
                       {cancelSMLBadge(order)}
-                      {isImportFallbackBill(order) && (
-                        <Badge variant="outline" className="mt-1 h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
-                          สร้างจากนำเข้าย้อนหลัง
-                        </Badge>
-                      )}
                     </td>
-                    <td className="px-3 py-2">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs font-medium">{shippingStateLabel(order)}</span>
-                        {externalShipment(order) && (
-                          <Badge variant="outline" className="h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">Seller Center</Badge>
-                        )}
-                      </div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">{carrierLabel(order) || '-'}</div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                        <span className="font-mono text-[11px] text-muted-foreground">{order.tracking_number || order.package_number || '-'}</span>
-                        <UpdateSourceBadge source={order.last_update_source} />
-                      </div>
+                    <td className="px-3 py-2 align-top">
+                      <PaymentBreakdownBadge status={order.payment_breakdown_status} />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <div className="flex flex-wrap justify-end gap-1.5">
                         {order.bill_id && (
                           <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
@@ -1491,20 +1522,14 @@ export default function ShopeeOperations() {
                             </Link>
                           </Button>
                         )}
-                        {canChangeDocumentRoute(order) && (
-                          <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
-                            <Link to={documentPath(order)} onClick={(event) => event.stopPropagation()} title="เปิดเอกสารเดิมเพื่อเก็บไว้และสร้างใหม่ตามเส้นทาง SML ล่าสุด">
-                              <RefreshCw className="h-3.5 w-3.5" />
-                              เปลี่ยนเส้นทาง
-                            </Link>
-                          </Button>
+                        {!order.bill_id && (
+                          <GuardedButton
+                            icon={<FilePlus2 className="h-3.5 w-3.5" />}
+                            label="สร้างเอกสาร"
+                            disabledReason={erpDisabledReason(order)}
+                            onClick={() => { setSelected(order); setERPDialogOpen(true) }}
+                          />
                         )}
-                        <GuardedButton
-                          icon={<FilePlus2 className="h-3.5 w-3.5" />}
-                          label="สร้างเอกสาร"
-                          disabledReason={erpDisabledReason(order)}
-                          onClick={() => { setSelected(order); setERPDialogOpen(true) }}
-                        />
                         {shouldShowCancelSMLAction(order) && (
                           <GuardedButton
                             icon={<AlertTriangle className="h-3.5 w-3.5" />}
@@ -1523,7 +1548,7 @@ export default function ShopeeOperations() {
                           }}
                         >
                           <Truck className="h-3.5 w-3.5" />
-                          Timeline
+                          รายละเอียด
                         </Button>
                       </div>
                     </td>
@@ -1999,16 +2024,63 @@ function tabCount(counts: Counts, tab: StatusGroup) {
   return 0
 }
 
+function StatusColumnHelp({
+  label,
+  title,
+  description,
+  items,
+}: {
+  label: string
+  title: string
+  description: string
+  items: ReadonlyArray<{ value: string; label?: string; detail: string }>
+}) {
+  return (
+    <div className="flex items-center gap-1 whitespace-nowrap">
+      <span>{label}</span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`ดูคำอธิบาย ${label}`}
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="max-h-[min(360px,calc(100vh-2rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-3 text-left">
+          <div className="text-sm font-semibold text-foreground">{title}</div>
+          <p className="mt-1 text-xs font-normal leading-5 text-muted-foreground">{description}</p>
+          <div className="mt-3 space-y-2 border-t border-border pt-3">
+            {items.map((item) => (
+              <div key={item.value} className="grid grid-cols-[minmax(92px,auto)_minmax(0,1fr)] gap-2 text-xs font-normal leading-5">
+                <div className="font-medium text-foreground">
+                  {item.label || item.value}
+                  {item.label && <div className="font-mono text-[10px] font-normal text-muted-foreground">{item.value}</div>}
+                </div>
+                <div className="text-muted-foreground">{item.detail}</div>
+              </div>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
 function OrderStatusBadge({ status }: { status: string }) {
   const s = status.toUpperCase()
+  const meta = shopeeOrderStatusDefinition(s)
   return (
     <Badge variant="outline" className={cn(
-      'bg-background',
-      s === 'CANCELLED' && 'border-destructive/40 bg-destructive/10 text-destructive',
+      'whitespace-nowrap bg-background',
+      (s === 'CANCELLED' || s === 'IN_CANCEL') && 'border-destructive/40 bg-destructive/10 text-destructive',
       s === 'SHIPPED' || s === 'COMPLETED' ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : '',
-      s === 'READY_TO_SHIP' || s === 'PROCESSED' ? 'border-info/40 bg-info/10 text-info' : '',
-    )}>
-      {s || '-'}
+      s === 'READY_TO_SHIP' && 'border-[#EE4D2D]/40 bg-[#EE4D2D]/10 text-[#C23B21]',
+      s === 'PROCESSED' && 'border-info/40 bg-info/10 text-info',
+      s === 'UNPAID' && 'border-warning/40 bg-warning/10 text-warning',
+    )} title={meta ? `${s}: ${meta.detail}` : s}>
+      {meta?.label || s || '-'}
     </Badge>
   )
 }
@@ -2040,36 +2112,18 @@ function SourceBadge({ source, verify }: { source?: string; verify?: boolean }) 
   )
 }
 
-function UpdateSourceBadge({ source }: { source?: string }) {
-  const normalized = String(source ?? '').trim()
-  if (!normalized || normalized === 'unknown') return null
-  return (
-    <Badge variant="outline" className={cn(
-      'h-5 bg-background px-1.5 text-[10px]',
-      normalized === 'push' && 'border-info/40 bg-info/10 text-info',
-      normalized === 'sync' && 'border-muted-foreground/30 text-muted-foreground',
-      normalized === 'shipping' && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
-    )}>
-      {sourceLabel(normalized)}
-    </Badge>
-  )
-}
-
 function PaymentBreakdownBadge({ status }: { status?: string }) {
-  const normalized = String(status ?? '').trim().toLowerCase()
-  if (!normalized) return null
+  const normalized = String(status ?? '').trim().toLowerCase() || 'not_started'
   const meta = paymentBreakdownBadgeMeta(normalized)
   return (
-    <div className="mt-1 flex justify-end">
-      <span
-        className={cn('inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-medium leading-none', meta.className)}
-        title={meta.title}
-        aria-label={meta.title}
-      >
-        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', meta.dotClassName)} />
-        {meta.label}
-      </span>
-    </div>
+    <span
+      className={cn('inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium leading-5', meta.className)}
+      title={meta.title}
+      aria-label={meta.title}
+    >
+      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', meta.dotClassName)} />
+      {meta.label}
+    </span>
   )
 }
 
@@ -2077,35 +2131,42 @@ function paymentBreakdownBadgeMeta(status: string) {
   switch (status) {
     case 'ready':
       return {
-        label: 'Escrow พร้อม',
-        title: 'ข้อมูลชำระเงิน Shopee escrow พร้อมแล้ว',
+        label: 'ข้อมูลพร้อม',
+        title: 'ดึงรายละเอียดเงินรับ ส่วนลด และค่าธรรมเนียมจาก Shopee แล้ว',
         className: 'text-accentStrong',
         dotClassName: 'bg-accentStrong',
       }
     case 'failed':
       return {
-        label: 'ดึงยอดไม่ได้',
+        label: 'ดึงไม่สำเร็จ',
         title: 'ดึงข้อมูลชำระเงิน Shopee ไม่สำเร็จ',
         className: 'text-destructive',
         dotClassName: 'bg-destructive',
       }
     case 'unavailable':
       return {
-        label: 'ไม่มี escrow',
+        label: 'ยังไม่มีข้อมูล',
         title: 'Shopee ยังไม่มีข้อมูล escrow สำหรับออเดอร์นี้',
         className: 'text-warning',
         dotClassName: 'bg-warning',
       }
     case 'running':
       return {
-        label: 'กำลังดึงยอด',
+        label: 'กำลังดึงข้อมูล',
         title: 'กำลังดึงข้อมูลชำระเงินจาก Shopee',
         className: 'text-info',
         dotClassName: 'bg-info',
       }
+    case 'not_started':
+      return {
+        label: 'ยังไม่ดึงข้อมูล',
+        title: 'ยังไม่มีงานดึงรายละเอียดการรับเงินสำหรับคำสั่งซื้อนี้',
+        className: 'text-muted-foreground',
+        dotClassName: 'bg-muted-foreground/50',
+      }
     default:
       return {
-        label: 'รอยอด Shopee',
+        label: 'รอดึงข้อมูล',
         title: 'รอดึงข้อมูลชำระเงินจาก Shopee',
         className: 'text-info',
         dotClassName: 'bg-info',
@@ -2175,14 +2236,14 @@ function diagnosticsEventVisible(event: PushEvent, filter: DiagnosticsFilter) {
 
 function erpStatusLabel(status: string) {
   switch (status) {
-    case 'blocked': return 'Pending - บล็อก'
+    case 'blocked': return 'ถูกบล็อก'
     case 'pending': return 'รอสร้างเอกสาร'
-    case 'pending_erp': return 'สร้างเอกสารแล้ว รอส่ง SML'
+    case 'pending_erp': return 'รอส่ง SML'
     case 'needs_review': return 'ต้องตรวจ'
     case 'sent': return 'ส่ง SML แล้ว'
-    case 'failed': return 'Failed - ไม่สำเร็จ'
-    case 'cancelled': return 'Cancelled'
-    case 'waiting_shopee': return 'Completed - รอ Shopee'
+    case 'failed': return 'ส่งไม่สำเร็จ'
+    case 'cancelled': return 'ยกเลิก'
+    case 'waiting_shopee': return 'รอ Shopee'
     default: return status || '-'
   }
 }
@@ -2197,11 +2258,6 @@ function documentPath(order: OrderSnapshot) {
     default:
       return `/bills/${billID}`
   }
-}
-
-function isImportFallbackBill(order: OrderSnapshot) {
-  const flow = (order.bill_source_flow || '').toLowerCase()
-  return flow === 'shopee_api' || flow === 'shopee_excel'
 }
 
 function canChangeDocumentRoute(order: OrderSnapshot) {
@@ -2313,9 +2369,24 @@ function externalShipment(order: OrderSnapshot) {
 }
 
 function shippingStateLabel(order: OrderSnapshot) {
-  if (externalShipment(order)) return 'จัดส่งแล้วจาก Seller Center'
-  if (shipmentStarted(order)) return 'จัดส่งแล้ว'
-  return order.logistics_status || 'ยังไม่จัดส่ง'
+  switch (String(order.logistics_status ?? '').trim().toUpperCase()) {
+    case 'LOGISTICS_READY':
+      return 'พร้อมส่งให้ขนส่ง'
+    case 'LOGISTICS_REQUEST_CREATED':
+      return 'สร้างรายการจัดส่งแล้ว'
+    case 'LOGISTICS_PICKUP_DONE':
+      return 'ขนส่งรับพัสดุแล้ว'
+    case 'LOGISTICS_DELIVERY_DONE':
+      return 'จัดส่งสำเร็จ'
+    case 'LOGISTICS_DELIVERY_FAILED':
+      return 'จัดส่งไม่สำเร็จ'
+    case 'LOGISTICS_REQUEST_CANCELED':
+      return 'ยกเลิกการจัดส่ง'
+    case 'LOGISTICS_INVALID':
+      return 'ไม่มีสถานะจัดส่ง'
+    default:
+      return order.tracking_number ? 'มีเลขติดตามแล้ว' : 'ยังไม่จัดส่ง'
+  }
 }
 
 function carrierLabel(order: OrderSnapshot | null | undefined) {

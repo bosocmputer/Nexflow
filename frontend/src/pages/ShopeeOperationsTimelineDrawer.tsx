@@ -33,6 +33,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
 
 export type ShopeeTimelineOrder = {
   id: string
@@ -670,14 +671,17 @@ function paymentRows(payment: ShopeeOrderPaymentBreakdown): Array<{ label: strin
 
 function OrderStatusBadge({ status }: { status: string }) {
   const s = status.toUpperCase()
+  const meta = shopeeOrderStatusDefinition(s)
   return (
     <Badge variant="outline" className={cn(
-      'bg-background',
-      s === 'CANCELLED' && 'border-destructive/40 bg-destructive/10 text-destructive',
+      'whitespace-nowrap bg-background',
+      (s === 'CANCELLED' || s === 'IN_CANCEL') && 'border-destructive/40 bg-destructive/10 text-destructive',
       s === 'SHIPPED' || s === 'COMPLETED' ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : '',
-      s === 'READY_TO_SHIP' || s === 'PROCESSED' ? 'border-info/40 bg-info/10 text-info' : '',
-    )}>
-      {s || '-'}
+      s === 'READY_TO_SHIP' && 'border-[#EE4D2D]/40 bg-[#EE4D2D]/10 text-[#C23B21]',
+      s === 'PROCESSED' && 'border-info/40 bg-info/10 text-info',
+      s === 'UNPAID' && 'border-warning/40 bg-warning/10 text-warning',
+    )} title={meta ? `${s}: ${meta.detail}` : s}>
+      {meta?.label || s || '-'}
     </Badge>
   )
 }
