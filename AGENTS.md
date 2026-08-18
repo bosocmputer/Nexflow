@@ -9,6 +9,66 @@
 
 ---
 
+## 0. Current UAT Handoff (2026-08-18)
+
+Read this section first when resuming work in a new session.
+
+- Application baseline: `main` / `origin/main` application commit `5ef8b40`
+  (`Simplify Shopee operations status table`).
+- The same committed application code is deployed to Demo, AOY, and Lanboon.
+  Tenant databases, SML tenants, credentials, channel routes, and feature flags
+  remain isolated and must never be copied between instances without an explicit
+  migration request.
+- Verified on 2026-08-18: Demo, AOY, Lanboon, and Central Shopee Gateway health
+  endpoints all returned HTTP 200 with database status `ok`.
+- AOY is the active production UAT tenant. The user has handed the current build
+  to the AOY admin and is waiting for real-usage feedback. Do not treat silence as
+  acceptance; inspect the reported tenant, record, and runtime logs before fixing
+  any new feedback.
+
+Current AOY UAT scope:
+
+1. Marketplace sales flow: Marketplace input -> Nexflow bill -> Product Master
+   mapping -> SML sale invoice -> SML stock recalculation.
+2. Marketplace amount correctness: full product amount, discount, buyer-paid
+   shipping item, and net document totals for Shopee API/Excel, Lazada Excel, and
+   TikTok Excel.
+3. Unified Marketplace Product Master shared by imports, Bill Detail, and Shopee
+   stock mapping.
+4. Shopee stock sync: exactly one SML warehouse/location, dry-run before writes,
+   full stock numbers, shared-stock allocation, and excluded-location details.
+5. SML set-product document expansion. Controlled AOY document
+   `BF-INV26080028` was verified in SML and then deleted by the user. AOY document
+   expansion is enabled; Shopee set-stock still lacks a real Shopee set-product
+   UAT case.
+6. UI under feedback: `/sale-invoices` input-channel filters/tags and compact
+   `/shopee-operations` rows/status explanations. Shopee brand color is
+   `#EE4D2D`.
+
+Known deferred or incomplete validation:
+
+- Lazada Open API is pending approval; current Lazada flow is Excel import.
+- Marketplace settlement / accounts-receivable posting is deferred. Do not infer
+  payment posting from the sales invoice flow.
+- Cross-environment duplicate prevention was intentionally deferred after the
+  user removed 13 restored/legacy duplicate SML documents.
+- Shopee set-stock needs a future tenant/shop with a real set product before it
+  can be declared production-validated end to end.
+- Demo and Lanboon run the same code but may have paid features or Shopee runtime
+  flags disabled. Verify per-instance status instead of assuming AOY settings.
+
+Resume checklist:
+
+1. Run `git status --short` and `git log -1 --oneline`.
+2. Check `/health` for all three instances and the Shopee Gateway.
+3. Ask for or inspect the newest AOY user feedback and the exact affected order,
+   bill, SKU, shop, or SML document number.
+4. Preserve tenant isolation and deploy the same committed code with
+   `scripts/deploy_nextstep_instances.py`; change runtime flags only for the
+   explicitly requested tenant.
+
+---
+
 ## 1. Tech Stack
 
 ```
@@ -229,4 +289,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-14 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-18 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
