@@ -25,6 +25,13 @@ func TestBillOrderByDocumentDateDesc(t *testing.T) {
 	}
 }
 
+func TestBillOrderByLatestDesc(t *testing.T) {
+	got := billOrderBy(models.BillListFilter{Sort: "latest_desc"}, false)
+	if got != "b.created_at DESC, b.id DESC" {
+		t.Fatalf("latest order = %q", got)
+	}
+}
+
 func TestBillWhereArchivedModes(t *testing.T) {
 	where, _, _ := billWhere(models.BillListFilter{Archived: "include"})
 	if strings.Contains(where, "archived_at") {

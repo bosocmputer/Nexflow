@@ -684,7 +684,7 @@ func validateBillInputChannel(c *gin.Context, f *models.BillListFilter) bool {
 
 func validateBillSort(c *gin.Context, f *models.BillListFilter) bool {
 	f.Sort = strings.TrimSpace(f.Sort)
-	if f.Sort == "" || f.Sort == "document_date_desc" {
+	if f.Sort == "" || f.Sort == "latest_desc" || f.Sort == "document_date_desc" {
 		return true
 	}
 	c.JSON(http.StatusBadRequest, gin.H{"error": "sort ไม่ถูกต้อง"})

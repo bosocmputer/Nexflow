@@ -19,7 +19,7 @@ interface BillsFilter {
   archived?: 'include' | 'only' | ''
   date_from?: string
   date_to?: string
-  sort?: 'document_date_desc'
+  sort?: 'latest_desc' | 'document_date_desc'
   cursor?: string
   limit?: number
   include_total?: boolean

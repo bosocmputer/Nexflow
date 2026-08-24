@@ -351,6 +351,9 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 }
 
 func billOrderBy(f models.BillListFilter, useCursor bool) string {
+	if f.Sort == "latest_desc" {
+		return "b.created_at DESC, b.id DESC"
+	}
 	if f.Sort == "document_date_desc" && !useCursor {
 		// Marketplace importers persist doc_date as YYYY-MM-DD. Keep malformed or
 		// legacy rows deterministic by falling back to the local creation date.
