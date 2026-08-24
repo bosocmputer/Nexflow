@@ -13,8 +13,8 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `84f949e`
-  (`Add durable Shopee Auto SML workflow`).
+- Application baseline: production application commit `64f3c46`
+  (`Align Shopee Auto SML route config`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
@@ -50,6 +50,9 @@ Current AOY UAT scope:
    have no cutoff, and the durable queue is empty. Do not enable a shop without
    a controlled new order and the checklist in
    `docs/shopee-auto-sml-runbook.md`.
+8. AOY `shopee_realtime / sale` still has an empty `doc_time`. Auto SML
+   preflight must remain blocked until an admin saves the intended document time
+   in `/settings/channels`; do not guess or silently seed this accounting value.
 
 Known deferred or incomplete validation:
 
