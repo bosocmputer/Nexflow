@@ -9,12 +9,12 @@
 
 ---
 
-## 0. Current UAT Handoff (2026-08-18)
+## 0. Current UAT Handoff (2026-08-24)
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: `main` / `origin/main` application commit `5ef8b40`
-  (`Simplify Shopee operations status table`).
+- Application baseline: production application commit `84f949e`
+  (`Add durable Shopee Auto SML workflow`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
@@ -44,6 +44,12 @@ Current AOY UAT scope:
 6. UI under feedback: `/sale-invoices` input-channel filters/tags and compact
    `/shopee-operations` rows/status explanations. Shopee brand color is
    `#EE4D2D`.
+7. Shopee READY_TO_SHIP Auto SML migration 082 and UI are deployed. Demo and
+   Lanboon have the global flag disabled. AOY has
+   `SHOPEE_AUTO_SML_ENABLED=true`, but both AOY shop settings remain disabled,
+   have no cutoff, and the durable queue is empty. Do not enable a shop without
+   a controlled new order and the checklist in
+   `docs/shopee-auto-sml-runbook.md`.
 
 Known deferred or incomplete validation:
 
@@ -289,4 +295,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-18 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-24 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
