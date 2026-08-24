@@ -62,7 +62,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–081** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–082** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -93,6 +93,7 @@ Key recent migrations:
 | 079 | TikTok gross line amounts, durable amount review and one source artifact per import run |
 | 080 | Safe shared SML stock allocation across multiple active Shopee listings |
 | 081 | Persist excluded SML warehouse/location details per Shopee stock mapping |
+| 082 | Durable per-shop Shopee READY_TO_SHIP Auto SML queue, cutoff, leases, retries and circuit breaker |
 
 ---
 
@@ -115,6 +116,7 @@ ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 ENABLE_LINE_MYSHOP=true
+SHOPEE_AUTO_SML_ENABLED=false
 ```
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX`, `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS`, and
@@ -124,6 +126,10 @@ rollback.
 
 `ENABLE_LINE_MYSHOP` and `VITE_ENABLE_LINE_MYSHOP` also default to enabled. Set
 either to `false` to hide or disable the LINE MyShop integration during rollback.
+
+`SHOPEE_AUTO_SML_ENABLED` defaults to `false`. A tenant-level value of `true`
+only starts the durable worker; each shop remains disabled until an admin passes
+the readiness check and confirms activation in `/shopee-operations`.
 
 ---
 

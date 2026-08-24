@@ -516,6 +516,21 @@ func (r *ShopeeRealtimeRepo) LinkSnapshotBill(ctx context.Context, shopID int64,
 	return err
 }
 
+func (r *ShopeeRealtimeRepo) MarkOrderERPStatus(ctx context.Context, shopID int64, orderSN, erpStatus, errMsg string) error {
+	if shopID <= 0 || strings.TrimSpace(orderSN) == "" {
+		return nil
+	}
+	if len(errMsg) > 800 {
+		errMsg = errMsg[:800]
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_order_snapshots
+		   SET erp_status=$3,last_error=$4,updated_at=NOW()
+		 WHERE shop_id=$1 AND order_sn=$2`,
+		shopID, strings.TrimSpace(orderSN), strings.TrimSpace(erpStatus), strings.TrimSpace(errMsg))
+	return err
+}
+
 type ShopeeSnapshotRef struct {
 	ShopID  int64
 	OrderSN string
@@ -1184,6 +1199,15 @@ func (r *ShopeeRealtimeRepo) OrderTimeline(ctx context.Context, shopID int64, or
 		            COALESCE(status, '') AS status,
 		            updated_at AS created_at
 		       FROM shopee_sml_cancellations
+		      WHERE shop_id = $1 AND order_sn = $2
+		     UNION ALL
+		     SELECT 'Nexflow Auto SML' AS source,
+		            'auto_sml' AS kind,
+		            'สร้างบิล SML อัตโนมัติ' AS title,
+		            COALESCE(CONCAT_WS(' · ', NULLIF(sml_doc_no, ''), NULLIF(last_error_message, '')), '') AS detail,
+		            COALESCE(status, '') AS status,
+		            updated_at AS created_at
+		       FROM shopee_auto_sml_jobs
 		      WHERE shop_id = $1 AND order_sn = $2
 		   ) x
 		  WHERE created_at IS NOT NULL

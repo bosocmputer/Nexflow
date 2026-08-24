@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -22,6 +24,88 @@ func TestParseShopeePushPayloadAllowsShopLevelAuthorizationEvent(t *testing.T) {
 	}
 	if event.ShopID != 264993963 || event.OrderSN != "" || event.PushName != "open_api_authorization_expiry" {
 		t.Fatalf("event = %+v", event)
+	}
+}
+
+func TestShopeeRealtimeBillIdentityRequiresScopedRealtimeOrder(t *testing.T) {
+	bill := &models.Bill{Source: "shopee", RawData: json.RawMessage(`{
+		"flow":"shopee_realtime","shopee_shop_id":"264993963","shopee_order_id":"ORDER-1"
+	}`)}
+	shopID, orderSN, ok := shopeeRealtimeBillIdentity(bill)
+	if !ok || shopID != 264993963 || orderSN != "ORDER-1" {
+		t.Fatalf("unexpected identity: shop=%d order=%q ok=%v", shopID, orderSN, ok)
+	}
+	bill.RawData = json.RawMessage(`{"flow":"shopee_excel","shopee_shop_id":"264993963","shopee_order_id":"ORDER-1"}`)
+	if _, _, ok := shopeeRealtimeBillIdentity(bill); ok {
+		t.Fatal("Shopee Excel must not claim the realtime ERP send lease")
+	}
+}
+
+func TestAutoSMLReviewClassification(t *testing.T) {
+	for _, message := range []string{
+		"ยังไม่มีข้อมูลสินค้า SML กรุณารีเฟรชสินค้า SML ก่อน",
+		"กรุณาตั้งค่ารายการค่าขนส่ง",
+		"ยอดจาก Marketplace มีส่วนต่าง",
+		"สินค้าชุดยังไม่พร้อม",
+	} {
+		if !autoSMLUserActionError(message) {
+			t.Fatalf("expected actionable error for %q", message)
+		}
+	}
+	if autoSMLUserActionError("SML request timeout") {
+		t.Fatal("timeout must remain retryable")
+	}
+	if got := autoSMLReviewCode("กรุณาตั้งค่ารายการค่าขนส่ง"); got != "shipping_config_missing" {
+		t.Fatalf("unexpected review code %q", got)
+	}
+}
+
+func TestShopeeRealtimeRouteSignatureChangesForDocumentRoutingFields(t *testing.T) {
+	cfg := ShopeeConfigRequest{
+		Endpoint: "saleinvoice", DocFormat: "SI", CustCode: "AR-001",
+		WHCode: "AB-1", ShelfCode: "001", VATType: 1, VATRate: 7,
+	}
+	base := &models.ChannelDefault{
+		Endpoint: "saleinvoice", DocFormatCode: "SI", PartyCode: "AR-001",
+		DocPrefix: "BF-INV", DocRunningFormat: "YYMM####", WHCode: "AB-1",
+		ShelfCode: "001", VATType: 1, VATRate: 7,
+	}
+	want := shopeeRealtimeRouteSignature(cfg, base)
+
+	changed := *base
+	changed.DocPrefix = "BF-SI"
+	if got := shopeeRealtimeRouteSignature(cfg, &changed); got == want {
+		t.Fatal("route signature must change when document prefix changes")
+	}
+
+	changed = *base
+	changed.ShippingItemCode = "AH-SHIP"
+	changed.ShippingItemEnabled = true
+	if got := shopeeRealtimeRouteSignature(cfg, &changed); got == want {
+		t.Fatal("route signature must change when shipping configuration changes")
+	}
+}
+
+func TestClassifySMLSendFailure(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		err    error
+		want   string
+	}{
+		{name: "timeout", status: http.StatusRequestTimeout, want: "transient"},
+		{name: "rate limit", status: http.StatusTooManyRequests, want: "transient"},
+		{name: "server error", status: http.StatusBadGateway, want: "transient"},
+		{name: "network error", err: errors.New("connection reset"), want: "transient"},
+		{name: "validation", status: http.StatusBadRequest, want: "user_action"},
+		{name: "business rejection body", status: http.StatusOK, want: "user_action"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifySMLSendFailure(tt.status, tt.err); got != tt.want {
+				t.Fatalf("classifySMLSendFailure(%d, %v) = %q, want %q", tt.status, tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

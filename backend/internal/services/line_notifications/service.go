@@ -118,6 +118,128 @@ func (s *Service) EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *mode
 	})
 }
 
+func (s *Service) EnqueueShopeeAutoSMLSuccess(ctx context.Context, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
+	return s.enqueueShopeeAutoSML(ctx, "success", in, dedupeKey)
+}
+
+func (s *Service) EnqueueShopeeAutoSMLReview(ctx context.Context, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
+	return s.enqueueShopeeAutoSML(ctx, "review", in, dedupeKey)
+}
+
+func (s *Service) EnqueueShopeeAutoSMLFailure(ctx context.Context, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
+	return s.enqueueShopeeAutoSML(ctx, "failure", in, dedupeKey)
+}
+
+func (s *Service) enqueueShopeeAutoSML(ctx context.Context, kind string, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
+	if s == nil || s.repo == nil || in.ShopID <= 0 || strings.TrimSpace(in.OrderSN) == "" {
+		return 0, nil
+	}
+	title := "สร้างบิล SML จาก Shopee สำเร็จ"
+	severity := "info"
+	if kind == "review" {
+		title = "ออเดอร์ Shopee ต้องตรวจสอบก่อนส่ง SML"
+		severity = "warning"
+	} else if kind == "failure" {
+		title = "ส่งออเดอร์ Shopee เข้า SML ไม่สำเร็จ"
+		severity = "error"
+	}
+	actionURL := shopeeAutoSMLActionURL(s.publicBaseURL, in)
+	message := buildShopeeAutoSMLText(title, in, actionURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := buildShopeeAutoSMLFlex(title, kind, in, actionURL); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText, flexPayload, payloadVersion = alt, raw, 1
+			}
+		}
+	}
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source: "shopee_realtime", Severity: severity, Title: title,
+		Body:      strings.Join(filterNonEmpty([]string{strings.TrimSpace(in.ShopLabel), "Order SN " + strings.TrimSpace(in.OrderSN), strings.TrimSpace(in.ErrorMessage)}), " · "),
+		ActionURL: actionURL, EntityType: "shopee_order", EntityID: fmt.Sprintf("%d:%s", in.ShopID, strings.TrimSpace(in.OrderSN)),
+		DedupeKey: strings.TrimSpace(dedupeKey), MessageText: message, AltText: altText,
+		FlexPayload: flexPayload, PayloadVersion: payloadVersion,
+	})
+}
+
+func buildShopeeAutoSMLText(title string, in models.ShopeeAutoSMLNotification, actionURL string) string {
+	lines := []string{title}
+	if strings.TrimSpace(in.ShopLabel) != "" {
+		lines = append(lines, "ร้าน: "+strings.TrimSpace(in.ShopLabel))
+	}
+	lines = append(lines, "Order SN: "+strings.TrimSpace(in.OrderSN))
+	if in.TotalAmount != 0 {
+		lines = append(lines, "ยอดรวม: "+formatLineMoneyValue(in.TotalAmount))
+	}
+	if strings.TrimSpace(in.BillID) != "" {
+		lines = append(lines, "Bill ID: "+strings.TrimSpace(in.BillID))
+	}
+	if strings.TrimSpace(in.SMLDocNo) != "" {
+		lines = append(lines, "SML Doc No: "+strings.TrimSpace(in.SMLDocNo))
+	}
+	if strings.TrimSpace(in.ErrorMessage) != "" {
+		lines = append(lines, "ต้องดำเนินการ: "+strings.TrimSpace(in.ErrorMessage))
+	}
+	if strings.TrimSpace(actionURL) != "" {
+		lines = append(lines, "เปิดใน Nexflow: "+strings.TrimSpace(actionURL))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotification, actionURL string) (string, map[string]any) {
+	color := "#16A34A"
+	if kind == "review" {
+		color = "#D97706"
+	} else if kind == "failure" {
+		color = "#DC2626"
+	}
+	shop := strings.TrimSpace(in.ShopLabel)
+	if shop == "" {
+		shop = fmt.Sprintf("shop_id %d", in.ShopID)
+	}
+	body := []map[string]any{
+		flexText(title, "lg", "bold", "#0F172A", "", true),
+		flexText(shop, "sm", "", "#64748B", "", true),
+	}
+	if in.TotalAmount != 0 {
+		body = append(body, flexAmountRow("ยอดรวม", formatLineMoneyValue(in.TotalAmount), color))
+	}
+	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{
+		{"Order SN", in.OrderSN},
+		{"Bill ID", in.BillID},
+		{"SML Doc No", in.SMLDocNo},
+	})
+	if strings.TrimSpace(in.ErrorMessage) != "" {
+		body = append(body,
+			map[string]any{"type": "separator", "margin": "md"},
+			flexText("สิ่งที่ต้องดำเนินการ", "sm", "bold", "#334155", "md", true),
+			flexText(in.ErrorMessage, "sm", "", color, "", true),
+		)
+	}
+	contents := map[string]any{
+		"type": "bubble", "size": "mega",
+		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
+	}
+	if isAbsoluteHTTPURL(actionURL) {
+		contents["footer"] = flexButtonFooter("เปิดใน Nexflow", actionURL)
+	}
+	return strings.Join(filterNonEmpty([]string{title, shop, in.OrderSN}), " · "), contents
+}
+
+func shopeeAutoSMLActionURL(publicBaseURL string, in models.ShopeeAutoSMLNotification) string {
+	path := "/shopee-operations?order=" + url.QueryEscape(strings.TrimSpace(in.OrderSN))
+	if strings.TrimSpace(in.BillID) != "" {
+		path = "/sale-invoices/" + url.PathEscape(strings.TrimSpace(in.BillID))
+	}
+	base := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+	if base == "" {
+		return path
+	}
+	return base + path
+}
+
 func (s *Service) EnqueueShopeeSettlementReady(ctx context.Context, run models.ShopeeSettlementLineRun, dedupeKey string) (int, error) {
 	if s == nil || s.repo == nil || !s.settlementLineAlertsEnabled || strings.TrimSpace(run.ID) == "" || run.TotalCount <= 0 {
 		return 0, nil

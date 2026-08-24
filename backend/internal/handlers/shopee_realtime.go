@@ -63,15 +63,17 @@ func isShopeeRealtimeShopNotConfigured(err error) bool {
 }
 
 type ShopeeRealtimeHandler struct {
-	repo             *repository.ShopeeRealtimeRepo
-	notificationRepo *repository.NotificationRepo
-	lineNotifier     lineOrderNotifier
-	broker           *events.Broker
-	importH          *ShopeeImportHandler
-	billH            *BillHandler
-	cancelClient     *sml.SaleInvoiceCancelClient
-	cfg              *config.Config
-	logger           *zap.Logger
+	repo              *repository.ShopeeRealtimeRepo
+	autoSMLRepo       *repository.ShopeeAutoSMLRepo
+	notificationRepo  *repository.NotificationRepo
+	lineRecipientRepo *repository.LineNotificationRepo
+	lineNotifier      lineOrderNotifier
+	broker            *events.Broker
+	importH           *ShopeeImportHandler
+	billH             *BillHandler
+	cancelClient      *sml.SaleInvoiceCancelClient
+	cfg               *config.Config
+	logger            *zap.Logger
 }
 
 func NewShopeeRealtimeHandler(repo *repository.ShopeeRealtimeRepo, notificationRepo *repository.NotificationRepo, broker *events.Broker, importH *ShopeeImportHandler, billH *BillHandler, cfg *config.Config, logger *zap.Logger) *ShopeeRealtimeHandler {
@@ -81,6 +83,12 @@ func NewShopeeRealtimeHandler(repo *repository.ShopeeRealtimeRepo, notificationR
 type lineOrderNotifier interface {
 	EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, dedupeKey string) (int, error)
 	EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error)
+}
+
+type lineAutoSMLNotifier interface {
+	EnqueueShopeeAutoSMLSuccess(context.Context, models.ShopeeAutoSMLNotification, string) (int, error)
+	EnqueueShopeeAutoSMLReview(context.Context, models.ShopeeAutoSMLNotification, string) (int, error)
+	EnqueueShopeeAutoSMLFailure(context.Context, models.ShopeeAutoSMLNotification, string) (int, error)
 }
 
 type shippingOrderRequest struct {
@@ -141,6 +149,13 @@ type shopeeCreateDocumentOutcome struct {
 func (h *ShopeeRealtimeHandler) SetLineNotifier(notifier lineOrderNotifier) {
 	if h != nil {
 		h.lineNotifier = notifier
+	}
+}
+
+func (h *ShopeeRealtimeHandler) SetAutoSML(repo *repository.ShopeeAutoSMLRepo, lineRecipients *repository.LineNotificationRepo) {
+	if h != nil {
+		h.autoSMLRepo = repo
+		h.lineRecipientRepo = lineRecipients
 	}
 }
 
@@ -309,6 +324,12 @@ func (h *ShopeeRealtimeHandler) ListOrders(c *gin.Context) {
 		h.logger.Warn("shopee_realtime: list snapshots failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลด Shopee Realtime ไม่สำเร็จ"})
 		return
+	}
+	if h.autoSMLRepo != nil {
+		if err := h.autoSMLRepo.DecorateSnapshots(c.Request.Context(), rows); err != nil {
+			h.logger.Warn("shopee_realtime: decorate auto sml status failed", zap.Error(err))
+		}
+		h.decorateAutoSMLManualReasons(c.Request.Context(), rows)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rows, "total": total, "page": page, "per_page": perPage})
 }
@@ -653,6 +674,10 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 }
 
 func (h *ShopeeRealtimeHandler) createDocumentForOrder(ctx context.Context, shopID int64, orderSN, userID, traceID string, requestRaw json.RawMessage) shopeeCreateDocumentOutcome {
+	return h.createDocumentForOrderMode(ctx, shopID, orderSN, userID, traceID, requestRaw, false)
+}
+
+func (h *ShopeeRealtimeHandler) createDocumentForOrderMode(ctx context.Context, shopID int64, orderSN, userID, traceID string, requestRaw json.RawMessage, requireReadyToShip bool) shopeeCreateDocumentOutcome {
 	orderSN = strings.TrimSpace(orderSN)
 	out := shopeeCreateDocumentOutcome{ShopID: shopID, OrderSN: orderSN, HTTPStatus: http.StatusOK}
 	action, actionState, err := h.repo.StartAction(ctx, shopID, orderSN, "create_document", userID, requestRaw)
@@ -710,6 +735,17 @@ func (h *ShopeeRealtimeHandler) createDocumentForOrder(ctx context.Context, shop
 		out.Reason = msg
 		out.Message = msg
 		out.HTTPStatus = http.StatusBadGateway
+		return out
+	}
+	if requireReadyToShip && strings.ToUpper(strings.TrimSpace(snap.OrderStatus)) != "READY_TO_SHIP" {
+		msg := "สถานะล่าสุดของ Shopee ไม่ใช่ READY_TO_SHIP จึงยกเลิกงานอัตโนมัติ"
+		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "status_changed"}, msg)
+		out.Status = "skipped"
+		out.OrderSN = snap.OrderSN
+		out.ERPStatus = snap.ERPStatus
+		out.Reason = msg
+		out.Message = msg
+		out.HTTPStatus = http.StatusConflict
 		return out
 	}
 	switch strings.ToUpper(snap.OrderStatus) {
@@ -1136,6 +1172,21 @@ func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDe
 			strings.TrimSpace(def.Endpoint),
 			strings.TrimSpace(def.DocFormatCode),
 			strings.TrimSpace(def.PartyCode),
+			strings.TrimSpace(def.DocPrefix),
+			strings.TrimSpace(def.DocRunningFormat),
+			strings.TrimSpace(def.BranchCode),
+			strings.TrimSpace(def.SaleCode),
+			strings.TrimSpace(def.UnitCode),
+			strings.TrimSpace(def.DocTime),
+			strconv.FormatBool(def.ShippingItemEnabled),
+			strings.TrimSpace(def.ShippingItemCode),
+			strings.TrimSpace(def.ShippingItemUnitCode),
+			strings.TrimSpace(def.WHCode),
+			strings.TrimSpace(def.ShelfCode),
+			strconv.Itoa(def.VATType),
+			fmt.Sprintf("%.4f", def.VATRate),
+			strconv.Itoa(def.InquiryType),
+			strings.TrimSpace(def.Remark2),
 		)
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
@@ -2897,6 +2948,7 @@ func (h *ShopeeRealtimeHandler) syncConnection(ctx context.Context, conn *Shopee
 			}
 			h.queuePaymentBreakdownIfEligible(ctx, d, after)
 			h.notifySnapshotChange(ctx, before, after, nil, suppressNewOrderNotifications)
+			h.maybeEnqueueAutoSML(ctx, d, after)
 			synced++
 		}
 	}
@@ -2949,6 +3001,7 @@ func (h *ShopeeRealtimeHandler) reconcileOrder(ctx context.Context, shopID int64
 		}
 		payment := h.paymentBreakdownForNewOrderNotification(ctx, conn, d, before, after, suppressNewOrderNotifications)
 		h.notifySnapshotChange(ctx, before, after, payment, suppressNewOrderNotifications)
+		h.maybeEnqueueAutoSML(ctx, d, after)
 		latest = after
 	}
 	if latest == nil {

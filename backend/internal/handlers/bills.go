@@ -1077,6 +1077,29 @@ func isShopeeRealtimeBill(bill *models.Bill) bool {
 	return strings.TrimSpace(raw.Flow) == "shopee_realtime"
 }
 
+func shopeeRealtimeBillIdentity(bill *models.Bill) (int64, string, bool) {
+	if !isShopeeRealtimeBill(bill) {
+		return 0, "", false
+	}
+	var raw struct {
+		ShopID  string `json:"shopee_shop_id"`
+		OrderSN string `json:"shopee_order_id"`
+		OrderID string `json:"order_id"`
+	}
+	if err := json.Unmarshal(bill.RawData, &raw); err != nil {
+		return 0, "", false
+	}
+	shopID, err := strconv.ParseInt(strings.TrimSpace(raw.ShopID), 10, 64)
+	orderSN := strings.TrimSpace(raw.OrderSN)
+	if orderSN == "" {
+		orderSN = strings.TrimSpace(raw.OrderID)
+	}
+	if err != nil || shopID <= 0 || orderSN == "" {
+		return 0, "", false
+	}
+	return shopID, orderSN, true
+}
+
 func (h *BillHandler) hasShopeeRealtimeSnapshot(ctx context.Context, billID string) bool {
 	if h == nil || h.shopeeRealtimeRepo == nil || strings.TrimSpace(billID) == "" {
 		return false
@@ -1140,6 +1163,7 @@ type RetryRequest struct {
 }
 
 type retrySendOptions struct {
+	Context           context.Context
 	UserID            string
 	TraceID           string
 	Via               string
@@ -1153,10 +1177,12 @@ type retrySendResult struct {
 	HTTPStatus     int
 	Message        string
 	Error          string
+	FailureClass   string
 	DocNo          string
 	DocNoAttempted string
 	Route          string
 	Skipped        bool
+	LeaseBusy      bool
 	Warnings       []hiddenItemCodeWarning
 	LogWarning     string
 }
@@ -1249,6 +1275,7 @@ func (h *BillHandler) Retry(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	result := h.sendBillToSML(bill, req, retrySendOptions{
+		Context: c.Request.Context(),
 		UserID:  c.GetString("user_id"),
 		TraceID: c.GetString("trace_id"),
 		Via:     "retry",
@@ -1500,11 +1527,53 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	if bill == nil {
 		return retrySendResult{HTTPStatus: http.StatusNotFound, Error: "bill not found"}
 	}
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	defer func() {
 		h.syncShopeeRealtimeFromSendResult(bill, result)
 	}()
 	if opts.Via == "" {
 		opts.Via = "retry"
+	}
+	if shopID, orderSN, ok := shopeeRealtimeBillIdentity(bill); ok && h.shopeeRealtimeRepo != nil {
+		requestRaw, _ := json.Marshal(gin.H{"bill_id": bill.ID, "via": opts.Via})
+		action, state, err := h.shopeeRealtimeRepo.StartAction(ctx, shopID, orderSN, "erp_send", opts.UserID, requestRaw)
+		if err != nil {
+			return retrySendResult{HTTPStatus: http.StatusServiceUnavailable, Error: "เริ่มสิทธิ์ส่ง SML ไม่สำเร็จ กรุณาลองใหม่"}
+		}
+		if state == "done" {
+			docNo := strings.TrimSpace(action.SMLDocNo)
+			if docNo == "" && bill.SMLDocNo != nil {
+				docNo = strings.TrimSpace(*bill.SMLDocNo)
+			}
+			return retrySendResult{HTTPStatus: http.StatusOK, Message: "เอกสารนี้ส่งเข้า SML แล้ว", DocNo: docNo, Skipped: true}
+		}
+		if state != "started" {
+			return retrySendResult{HTTPStatus: http.StatusConflict, Error: "เอกสารนี้กำลังถูกส่งเข้า SML กรุณารอสักครู่", Skipped: true, LeaseBusy: true}
+		}
+		defer func() {
+			status := "failed"
+			errMsg := strings.TrimSpace(result.Error)
+			if result.HTTPStatus == http.StatusOK {
+				status = "done"
+				errMsg = ""
+			} else if result.HTTPStatus == http.StatusAccepted || result.Skipped {
+				status = "blocked"
+				if errMsg == "" {
+					errMsg = strings.TrimSpace(result.Message)
+				}
+			}
+			response, _ := json.Marshal(gin.H{
+				"http_status": result.HTTPStatus,
+				"message":     result.Message,
+				"error":       result.Error,
+			})
+			if err := h.shopeeRealtimeRepo.CompleteAction(ctx, action.IdempotencyKey, status, bill.ID, result.DocNo, response, errMsg); err != nil && h.log != nil {
+				h.log.Warn("complete shopee erp send lease failed", zap.String("bill_id", bill.ID), zap.Error(err))
+			}
+		}()
 	}
 	switch bill.Status {
 	case "failed", "pending", "needs_review":
@@ -1546,7 +1615,7 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 				Error: "ยอดเต็มหรือส่วนลดของรายการสินค้าไม่ถูกต้อง กรุณาแก้ไขก่อนส่ง SML", Skipped: true}
 		}
 	}
-	readiness := h.checkSMLReadiness(context.Background(), false)
+	readiness := h.checkSMLReadiness(ctx, false)
 	if !readiness.Ready {
 		targetID := bill.ID
 		h.auditSMLReadinessBlocked("sml_readiness_blocked", &targetID, opts.UserID, opts.TraceID, opts.Via, readiness)
@@ -1644,6 +1713,9 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 
 func (h *BillHandler) syncShopeeRealtimeFromSendResult(bill *models.Bill, result retrySendResult) {
 	if h == nil || h.shopeeRealtimeRepo == nil || bill == nil || !isShopeeRealtimeBill(bill) {
+		return
+	}
+	if result.LeaseBusy {
 		return
 	}
 	status := ""
@@ -1877,6 +1949,7 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 		return retrySendResult{
 			HTTPStatus:     http.StatusBadGateway,
 			Error:          "SML send failed: " + storedErr,
+			FailureClass:   classifySMLSendFailure(statusCode, err),
 			DocNoAttempted: reqDocNo,
 			Route:          route,
 		}
@@ -1987,6 +2060,7 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 		return retrySendResult{
 			HTTPStatus:     http.StatusBadGateway,
 			Error:          "SML send failed: " + storedErr,
+			FailureClass:   classifySMLSendFailure(statusCode, err),
 			DocNoAttempted: reqDocNo,
 			Route:          route,
 		}
@@ -2009,6 +2083,26 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 		DocNoAttempted: reqDocNo,
 		Route:          route,
 		LogWarning:     logWarning,
+	}
+}
+
+func classifySMLSendFailure(statusCode int, err error) string {
+	switch {
+	case statusCode == http.StatusRequestTimeout,
+		statusCode == http.StatusTooEarly,
+		statusCode == http.StatusTooManyRequests,
+		statusCode >= http.StatusInternalServerError:
+		return "transient"
+	case statusCode >= http.StatusBadRequest:
+		return "user_action"
+	case statusCode == 0 && err != nil:
+		return "transient"
+	case err != nil:
+		return "transient"
+	default:
+		// A 2xx transport response with an unsuccessful SML body is a
+		// deterministic business rejection until the user fixes its data.
+		return "user_action"
 	}
 }
 
@@ -2604,11 +2698,12 @@ func (h *BillHandler) runBulkSendJob(jobID string) {
 		return
 	}
 	traceID := fmt.Sprintf("bulk-job-%s", job.ID)
+	ctx := context.Background()
 	userID := ""
 	if job.CreatedBy != nil {
 		userID = *job.CreatedBy
 	}
-	readiness := h.checkSMLReadiness(context.Background(), false)
+	readiness := h.checkSMLReadiness(ctx, false)
 	if !readiness.Ready {
 		h.auditSMLReadinessBlocked("sml_readiness_blocked", nil, userID, traceID, "bulk_job", readiness)
 		_ = h.bulkJobRepo.MarkJobFailed(jobID, readiness.Message)
@@ -2651,6 +2746,7 @@ func (h *BillHandler) runBulkSendJob(jobID string) {
 		}
 
 		result := h.sendBillToSML(bill, payload, retrySendOptions{
+			Context:           ctx,
 			UserID:            userID,
 			TraceID:           traceID,
 			Via:               "bulk_job",

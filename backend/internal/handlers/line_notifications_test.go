@@ -24,7 +24,7 @@ func TestLineNotificationStatusReturnsOnlyReadinessCounts(t *testing.T) {
 
 	mock.ExpectQuery("SELECT COUNT\\(\\*\\), COUNT\\(\\*\\) FILTER \\(WHERE enabled = TRUE\\).*FROM line_oa_accounts").
 		WillReturnRows(sqlmock.NewRows([]string{"total", "enabled"}).AddRow(2, 1))
-	mock.ExpectQuery("SELECT COUNT\\(\\*\\), COUNT\\(\\*\\) FILTER \\(WHERE enabled = TRUE\\).*FROM line_notification_recipients").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\), COUNT\\(\\*\\) FILTER \\(WHERE r.enabled = TRUE AND oa.enabled = TRUE\\).*FROM line_notification_recipients r.*LEFT JOIN line_oa_accounts oa").
 		WillReturnRows(sqlmock.NewRows([]string{"total", "enabled"}).AddRow(3, 2))
 
 	h := &LineNotificationHandler{

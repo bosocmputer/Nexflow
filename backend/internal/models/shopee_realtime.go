@@ -35,6 +35,7 @@ type ShopeeOrderSnapshot struct {
 	RawDetail              json.RawMessage               `json:"raw_detail,omitempty"`
 	ShippingTracking       []ShopeeShippingTrackingEvent `json:"shipping_tracking,omitempty"`
 	ShipActionStatus       string                        `json:"ship_action_status,omitempty"`
+	AutoSML                ShopeeAutoSMLJobView          `json:"auto_sml,omitempty"`
 	LastUpdateSource       string                        `json:"last_update_source,omitempty"`
 	LastOrderUpdateAt      *time.Time                    `json:"last_order_update_at,omitempty"`
 	LastSyncedAt           time.Time                     `json:"last_synced_at"`

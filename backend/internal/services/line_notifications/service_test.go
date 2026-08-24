@@ -69,6 +69,29 @@ func TestBuildShopeeNewOrderLineTextShowsProductAndOmitsStatusNoise(t *testing.T
 	}
 }
 
+func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
+	in := models.ShopeeAutoSMLNotification{
+		ShopID: 264993963, ShopLabel: "Henna.milkford", OrderSN: "ORDER-1",
+		BillID: "bill-id", SMLDocNo: "BF-INV26080099", TotalAmount: 12345.5,
+	}
+	text := buildShopeeAutoSMLText("สร้างบิล SML จาก Shopee สำเร็จ", in, "https://nexflow.example/sale-invoices/bill-id")
+	for _, want := range []string{"ORDER-1", "BF-INV26080099", "12,345.50"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("text missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "฿") {
+		t.Fatalf("LINE money must not include currency symbol: %s", text)
+	}
+	if strings.Contains(strings.ToLower(text), "buyer") || strings.Contains(strings.ToLower(text), "phone") {
+		t.Fatalf("text contains buyer PII field: %s", text)
+	}
+	alt, flex := buildShopeeAutoSMLFlex("สร้างบิล SML จาก Shopee สำเร็จ", "success", in, "https://nexflow.example/sale-invoices/bill-id")
+	if alt == "" || flex == nil {
+		t.Fatal("expected rich Flex payload")
+	}
+}
+
 func TestBuildShopeeNewOrderLineTextFallsBackToItemCount(t *testing.T) {
 	msg := BuildShopeeNewOrderLineText(&models.ShopeeOrderSnapshot{
 		ShopID:      264993963,

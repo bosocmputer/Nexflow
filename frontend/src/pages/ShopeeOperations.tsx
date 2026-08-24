@@ -15,6 +15,7 @@ import {
   Loader2,
   RadioTower,
   RefreshCw,
+  RotateCcw,
   Search,
   Truck,
 } from 'lucide-react'
@@ -43,6 +44,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
   TooltipContent,
@@ -54,6 +56,7 @@ import { useNotificationsStore } from '@/lib/notifications-store'
 import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
+import { useAuthStore } from '@/store/auth'
 import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
 
 type Connection = {
@@ -142,6 +145,45 @@ type OrderSnapshot = {
   payment_breakdown_status?: string
   last_order_update_at?: string
   last_synced_at: string
+  auto_sml?: AutoSMLJobView
+}
+
+type AutoSMLJobView = {
+  status?: string
+  error_code?: string
+  error_message?: string
+  updated_at?: string
+  manual_send_locked?: boolean
+}
+
+type AutoSMLSetting = {
+  shop_id: number
+  shop_label?: string
+  enabled: boolean
+  eligible_after?: string
+  paused_reason?: string
+  paused_at?: string
+  consecutive_system_failures: number
+  last_success_at?: string
+  last_failure_at?: string
+  queued_count: number
+  needs_review_count: number
+  failed_count: number
+  oldest_queued_at?: string
+  operational_warning?: string
+  updated_at: string
+}
+
+type AutoSMLSettingsResponse = {
+  global_enabled: boolean
+  settings: AutoSMLSetting[]
+  route?: Readiness['sml']
+  line: {
+    status: string
+    total_recipients: number
+    enabled_recipients: number
+  }
+  checked_at: string
 }
 
 type ShippingTrackingEvent = {
@@ -442,7 +484,12 @@ function readStatusGroup(params: URLSearchParams): StatusGroup {
 
 export default function ShopeeOperations() {
   const [params, setParams] = useSearchParams()
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin')
   const [readiness, setReadiness] = useState<Readiness | null>(null)
+  const [autoSML, setAutoSML] = useState<AutoSMLSettingsResponse | null>(null)
+  const [autoSMLDialogOpen, setAutoSMLDialogOpen] = useState(false)
+  const [autoSMLSaving, setAutoSMLSaving] = useState(false)
+  const [autoSMLRetryingKey, setAutoSMLRetryingKey] = useState('')
   const [counts, setCounts] = useState<Counts>(emptyCounts)
   const [orders, setOrders] = useState<OrderSnapshot[]>([])
   const [total, setTotal] = useState(0)
@@ -523,6 +570,8 @@ export default function ShopeeOperations() {
   const selectedConnectionID = readiness?.connections.find((c) => String(c.shop_id) === shopID)?.id
     || readiness?.connections[0]?.id
     || ''
+  const selectedAutoSMLSetting = autoSML?.settings.find((setting) => String(setting.shop_id) === shopID)
+  const enabledAutoSMLShopCount = autoSML?.settings.filter((setting) => setting.enabled && !setting.paused_reason).length ?? 0
   const pickupAddresses = shippingParams?.pickup?.address_list ?? []
   const dropoffBranches = shippingParams?.dropoff?.branch_list ?? []
   const selectedPickupAddress = pickupAddresses.find((address) => logisticsIDKey(address.address_id) === selectedPickupAddressID)
@@ -619,6 +668,15 @@ export default function ShopeeOperations() {
     setReadiness(res.data)
   }
 
+  const loadAutoSMLSettings = async () => {
+    try {
+      const res = await client.get<AutoSMLSettingsResponse>('/api/shopee-operations/auto-sml/settings')
+      setAutoSML(res.data)
+    } catch {
+      setAutoSML(null)
+    }
+  }
+
   const loadOrders = async () => {
     const requestSeq = listRequestSeq.current + 1
     listRequestSeq.current = requestSeq
@@ -656,12 +714,13 @@ export default function ShopeeOperations() {
         setPendingListRefresh(true)
         return
       }
-      void loadOrders()
+      void Promise.all([loadOrders(), loadAutoSMLSettings()])
     }, 450)
   }
 
   useEffect(() => {
     loadReadiness().catch((e) => toast.error('โหลดความพร้อมคำสั่งซื้อ Shopee ไม่สำเร็จ: ' + apiError(e)))
+    void loadAutoSMLSettings()
   }, [])
 
   useEffect(() => {
@@ -772,6 +831,39 @@ export default function ShopeeOperations() {
       toast.error('สร้างเอกสารไม่สำเร็จ: ' + apiError(e))
     } finally {
       setSavingERP(false)
+    }
+  }
+
+  const updateAutoSML = async (enabled: boolean) => {
+    if (shopID === ALL || autoSMLSaving) return
+    setAutoSMLSaving(true)
+    try {
+      const res = await client.put(`/api/shopee-operations/shops/${shopID}/auto-sml`, {
+        enabled,
+        confirm: enabled ? 'ENABLE_AUTO_SML' : '',
+      })
+      toast.success(res.data.message || (enabled ? 'เปิด Auto SML แล้ว' : 'ปิด Auto SML แล้ว'))
+      setAutoSMLDialogOpen(false)
+      await Promise.all([loadAutoSMLSettings(), loadOrders()])
+    } catch (e) {
+      toast.error((enabled ? 'เปิด' : 'ปิด') + ' Auto SML ไม่สำเร็จ: ' + apiError(e))
+    } finally {
+      setAutoSMLSaving(false)
+    }
+  }
+
+  const retryAutoSML = async (order: OrderSnapshot) => {
+    const key = orderKey(order)
+    if (autoSMLRetryingKey) return
+    setAutoSMLRetryingKey(key)
+    try {
+      const res = await client.post(`/api/shopee-operations/${order.shop_id}/${encodeURIComponent(order.order_sn)}/auto-sml/retry`)
+      toast.success(res.data.message || 'นำออเดอร์กลับเข้าคิวแล้ว')
+      await Promise.all([loadAutoSMLSettings(), loadOrders()])
+    } catch (e) {
+      toast.error('ลอง Auto SML ใหม่ไม่สำเร็จ: ' + apiError(e))
+    } finally {
+      setAutoSMLRetryingKey('')
     }
   }
 
@@ -1224,7 +1316,7 @@ export default function ShopeeOperations() {
                 </span>
               </div>
               <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-                งานประจำวัน: ติดตาม order สดจาก Shopee, สร้างเอกสารใน Nexflow แล้วส่ง SML จากคิวเอกสารเดิม{' '}
+                ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อเป็น READY_TO_SHIP และข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
                 <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
                   <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
                 </Button>
@@ -1243,6 +1335,27 @@ export default function ShopeeOperations() {
                   ))}
                 </SelectContent>
               </Select>
+              <div className="flex h-8 min-w-[184px] items-center justify-between gap-3 rounded-md border border-border bg-background px-2.5">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium">สร้างบิล SML อัตโนมัติ</div>
+                  <div className="truncate text-[10px] text-muted-foreground">
+                    {shopID === ALL
+                      ? `เปิด ${enabledAutoSMLShopCount}/${autoSML?.settings.length ?? 0} ร้าน`
+                      : autoSMLStatusSummary(autoSML, selectedAutoSMLSetting)}
+                  </div>
+                </div>
+                {shopID !== ALL && (
+                  <Switch
+                    aria-label="เปิดสร้างบิล SML อัตโนมัติ"
+                    checked={Boolean(selectedAutoSMLSetting?.enabled && !selectedAutoSMLSetting.paused_reason)}
+                    disabled={!isAdmin || autoSMLSaving || !autoSML?.global_enabled || !selectedAutoSMLSetting}
+                    onCheckedChange={(checked) => {
+                      if (checked) setAutoSMLDialogOpen(true)
+                      else void updateAutoSML(false)
+                    }}
+                  />
+                )}
+              </div>
               <Button variant="outline" size="sm" className="h-8 gap-2 bg-background" onClick={() => { setDiagnosticsOpen((v) => !v); if (!diagnosticsOpen) void loadDiagnostics() }}>
                 <Eye className="h-4 w-4" />
                 ตรวจระบบ
@@ -1253,6 +1366,12 @@ export default function ShopeeOperations() {
               </Button>
             </div>
           </div>
+
+          {shopID !== ALL && selectedAutoSMLSetting?.operational_warning && (
+            <div className="mt-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              {selectedAutoSMLSetting.operational_warning} กรุณาตรวจระบบก่อนเปิดหรือส่งงานต่อ
+            </div>
+          )}
 
           {diagnosticsOpen && (
             <div className="mt-3 rounded-md border border-border bg-muted/30 p-3">
@@ -1507,6 +1626,7 @@ export default function ShopeeOperations() {
                       <div className="mt-1 text-xs text-muted-foreground">
                         {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
                       </div>
+                      <AutoSMLStatusBadge job={order.auto_sml} />
                       {cancelSMLBadge(order)}
                     </td>
                     <td className="px-3 py-2 align-top">
@@ -1529,6 +1649,24 @@ export default function ShopeeOperations() {
                             disabledReason={erpDisabledReason(order)}
                             onClick={() => { setSelected(order); setERPDialogOpen(true) }}
                           />
+                        )}
+                        {['needs_review', 'failed'].includes(order.auto_sml?.status ?? '') && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1.5"
+                            disabled={Boolean(autoSMLRetryingKey)}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void retryAutoSML(order)
+                            }}
+                            title={order.auto_sml?.error_message || 'ตรวจและแก้ข้อมูลก่อนลองใหม่'}
+                          >
+                            {autoSMLRetryingKey === orderKey(order)
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <RotateCcw className="h-3.5 w-3.5" />}
+                            ลองอัตโนมัติใหม่
+                          </Button>
                         )}
                         {shouldShowCancelSMLAction(order) && (
                           <GuardedButton
@@ -1602,6 +1740,42 @@ export default function ShopeeOperations() {
             </div>
           </div>
         </div>
+
+        <Dialog open={autoSMLDialogOpen} onOpenChange={(open) => !autoSMLSaving && setAutoSMLDialogOpen(open)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>เปิดสร้างบิล SML อัตโนมัติ?</DialogTitle>
+              <DialogDescription>
+                ร้าน {selectedAutoSMLSetting?.shop_label || shopID} จะเริ่มเฉพาะออเดอร์ใหม่หลังยืนยันครั้งนี้
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="grid gap-2 rounded-md border border-border bg-muted/30 p-3 sm:grid-cols-2">
+                <AutoSMLFact label="สถานะที่ทำงาน" value="READY_TO_SHIP เท่านั้น" />
+                <AutoSMLFact label="ออเดอร์ย้อนหลัง" value="ไม่ประมวลผล" />
+                <AutoSMLFact label="ปลายทาง SML" value={readiness?.sml.route || 'ยังไม่ตั้งค่า'} />
+                <AutoSMLFact label="ผู้รับ LINE" value={`${autoSML?.line.enabled_recipients ?? 0} ราย`} />
+              </div>
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>ระบบตรวจข้อมูลก่อนส่งทุกครั้ง</AlertTitle>
+                <AlertDescription>
+                  ถ้าสินค้ายังไม่จับคู่ ยอดเงินไม่ตรง หรือการตั้งค่าไม่พร้อม ระบบจะหยุดออเดอร์นั้นไว้ที่ “ต้องตรวจ” และแจ้ง LINE โดยไม่ส่ง SML ผิดรายการ
+                </AlertDescription>
+              </Alert>
+              <p className="text-xs text-muted-foreground">
+                การเปิดนี้ไม่จัดส่งสินค้า ไม่สร้างใบปะหน้า และไม่เปลี่ยนข้อมูลรับชำระ Shopee
+              </p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAutoSMLDialogOpen(false)} disabled={autoSMLSaving}>ยกเลิก</Button>
+              <Button onClick={() => void updateAutoSML(true)} disabled={autoSMLSaving}>
+                {autoSMLSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                ยืนยันและเริ่มจากออเดอร์ใหม่
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={bulkDialogOpen} onOpenChange={(open) => {
           if (bulkCreating) return
@@ -2098,6 +2272,55 @@ function ERPStatusBadge({ status }: { status: string }) {
   )
 }
 
+function AutoSMLStatusBadge({ job }: { job?: AutoSMLJobView }) {
+  const status = job?.status ?? ''
+  if (!status) return null
+  const meta: Record<string, { label: string; className: string }> = {
+    queued: { label: 'รออัตโนมัติ', className: 'border-info/40 bg-info/10 text-info' },
+    running: { label: 'กำลังสร้าง SML', className: 'border-info/40 bg-info/10 text-info' },
+    retry_wait: { label: 'กำลังลองใหม่', className: 'border-warning/40 bg-warning/10 text-warning' },
+    needs_review: { label: 'Auto: ต้องตรวจ', className: 'border-warning/40 bg-warning/10 text-warning' },
+    succeeded: { label: 'Auto: ส่ง SML แล้ว', className: 'border-accentStrong/40 bg-primary/10 text-accentStrong' },
+    failed: { label: 'Auto: ล้มเหลว', className: 'border-destructive/40 bg-destructive/10 text-destructive' },
+    cancelled: { label: 'Auto: ยกเลิก', className: 'border-border bg-muted text-muted-foreground' },
+    paused: { label: 'Auto: หยุดชั่วคราว', className: 'border-warning/40 bg-warning/10 text-warning' },
+    manual_required: { label: 'Auto: ส่งด้วยมือ', className: 'border-border bg-muted text-muted-foreground' },
+  }
+  const value = meta[status] ?? { label: status, className: 'border-border bg-background text-muted-foreground' }
+  return (
+    <Badge variant="outline" className={cn('mt-1 h-5 whitespace-nowrap px-1.5 text-[10px]', value.className)} title={job?.error_message || value.label}>
+      {status === 'running' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+      {value.label}
+    </Badge>
+  )
+}
+
+function autoSMLStatusSummary(data: AutoSMLSettingsResponse | null, setting?: AutoSMLSetting) {
+  if (!data) return 'ตรวจสอบสถานะไม่ได้'
+  if (!data.global_enabled) return 'ยังไม่เปิดใช้ในระบบนี้'
+  if (!setting) return 'ไม่พบการตั้งค่าร้าน'
+  if (setting.paused_reason) return `หยุดชั่วคราว · ${autoSMLPausedReason(setting.paused_reason)}`
+  if (!setting.enabled) return 'ปิดอยู่'
+  if (setting.operational_warning) return setting.operational_warning
+  if (setting.queued_count > 0) return `เปิดอยู่ · รอ ${setting.queued_count.toLocaleString()}`
+  return 'เปิดอยู่ · พร้อมรับออเดอร์ใหม่'
+}
+
+function autoSMLPausedReason(reason: string) {
+  if (reason === 'route_changed') return 'เส้นทาง SML เปลี่ยน'
+  if (reason === 'system_failures') return 'SML ล้มเหลวต่อเนื่อง'
+  return 'ต้องตรวจระบบ'
+}
+
+function AutoSMLFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="truncate font-medium" title={value}>{value}</div>
+    </div>
+  )
+}
+
 function SourceBadge({ source, verify }: { source?: string; verify?: boolean }) {
   const label = verify ? 'Console Verify' : sourceLabel(source)
   return (
@@ -2323,6 +2546,7 @@ function orderKey(order: OrderSnapshot) {
 }
 
 function erpDisabledReason(order: OrderSnapshot) {
+  if (order.auto_sml?.manual_send_locked) return 'ระบบอัตโนมัติกำลังสร้างและส่ง SML สำหรับออเดอร์นี้'
   if (order.order_status === 'UNPAID') return 'order ยังไม่ชำระเงิน'
   if (order.order_status === 'CANCELLED' || order.order_status === 'IN_CANCEL') return 'order ถูกยกเลิกแล้ว'
   if (order.bill_id || order.erp_status === 'pending_erp' || order.erp_status === 'sent') {
@@ -2334,6 +2558,7 @@ function erpDisabledReason(order: OrderSnapshot) {
 }
 
 function bulkCreateDisabledReason(order: OrderSnapshot, readiness: Readiness | null) {
+  if (order.auto_sml?.manual_send_locked) return 'ระบบอัตโนมัติกำลังทำงานกับออเดอร์นี้'
   if (!readiness?.sml.can_create_document) return readiness?.sml.message || 'ยังไม่ได้ตั้งค่า route คำสั่งซื้อ Shopee'
   if (order.bill_id) return 'สร้างเอกสารแล้ว'
   if (order.order_status === 'UNPAID') return 'order ยังไม่ชำระเงิน'

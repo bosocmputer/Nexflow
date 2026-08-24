@@ -86,6 +86,7 @@ type Config struct {
 	ShopeeOrderEscrowEnrichmentEnabled bool
 	ShopeeRealtimeWebhookSecret        string
 	ShopeeRealtimeSyncIntervalSeconds  int
+	ShopeeAutoSMLEnabled               bool
 	LineMyShopEnabled                  bool
 	PurchaseFlowEnabled                bool
 
@@ -159,6 +160,7 @@ func Load() *Config {
 		ShopeeOrderEscrowEnrichmentEnabled: getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
 		ShopeeRealtimeWebhookSecret:        getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
 		ShopeeRealtimeSyncIntervalSeconds:  getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
+		ShopeeAutoSMLEnabled:               getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
 		LineMyShopEnabled:                  getEnvBool("ENABLE_LINE_MYSHOP", true),
 		PurchaseFlowEnabled:                false,
 		BackupCronHour:                     getEnvInt("BACKUP_CRON_HOUR", 0),

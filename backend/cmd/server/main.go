@@ -80,6 +80,7 @@ func main() {
 	lineMyShopRepo := repository.NewLineMyShopRepo(db)
 	appSettingsRepo := repository.NewAppSettingsRepo(db)
 	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db)
+	shopeeAutoSMLRepo := repository.NewShopeeAutoSMLRepo(db)
 	notificationRepo := repository.NewNotificationRepo(db)
 	nextStepNotificationRepo := repository.NewNextStepMarketplaceNotificationRepo(db)
 	if err := appSettingsRepo.ApplyToConfig(cfg); err != nil {
@@ -252,6 +253,7 @@ func main() {
 		zap.Bool("purchase_flow_enabled", cfg.PurchaseFlowEnabled),
 		zap.Bool("sml_set_product_expansion_enabled", cfg.SMLSetProductExpansionEnabled),
 		zap.Bool("shopee_set_stock_enabled", cfg.ShopeeSetStockEnabled),
+		zap.Bool("shopee_auto_sml_enabled", cfg.ShopeeAutoSMLEnabled),
 		zap.String("product_mapping_master_mode", mappingMode),
 	)
 
@@ -329,6 +331,7 @@ func main() {
 	shopeeH.SetSettlementLineNotifier(lineNotificationSvc)
 	shopeeRealtimeH := handlers.NewShopeeRealtimeHandler(shopeeRealtimeRepo, notificationRepo, eventBroker, shopeeH, billH, cfg, logger)
 	shopeeRealtimeH.SetLineNotifier(lineNotificationSvc)
+	shopeeRealtimeH.SetAutoSML(shopeeAutoSMLRepo, lineNotificationRepo)
 	shopeeRealtimeH.SetSMLCancelClient(saleInvoiceCancelClient)
 	shopeeGatewayInternalH := handlers.NewShopeeGatewayInternalHandler(db, cfg, shopeeRealtimeH, logger)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
@@ -536,11 +539,14 @@ func main() {
 		api.GET("/shopee-operations/readiness", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Readiness)
 		api.GET("/shopee-operations/orders", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ListOrders)
 		api.GET("/shopee-operations/counts", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Counts)
+		api.GET("/shopee-operations/auto-sml/settings", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.AutoSMLSettings)
+		api.PUT("/shopee-operations/shops/:shop_id/auto-sml", middleware.RequireRole("admin"), shopeeRealtimeH.UpdateAutoSMLSetting)
 		api.POST("/shopee-operations/sync", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SyncNow)
 		api.POST("/shopee-operations/create-documents/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocumentsPreview)
 		api.POST("/shopee-operations/create-documents", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocuments)
 		api.POST("/shopee-operations/:shop_id/:order_sn/notifications/read", middleware.RequireRole("admin", "staff"), notificationH.MarkShopeeOrderRead)
 		api.POST("/shopee-operations/:shop_id/:order_sn/create-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CreateDocument)
+		api.POST("/shopee-operations/:shop_id/:order_sn/auto-sml/retry", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.RetryAutoSML)
 		api.GET("/shopee-operations/:shop_id/:order_sn/cancel-sml-document/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocumentPreview)
 		api.POST("/shopee-operations/:shop_id/:order_sn/cancel-sml-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocument)
 		api.POST("/shopee-operations/:shop_id/:order_sn/save-erp", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SaveERP)
@@ -663,6 +669,9 @@ func main() {
 	go lineNotificationSvc.StartWorker(appCtx, 15*time.Second, 10)
 	if cfg.ShopeeRealtimeOpsEnabled {
 		go shopeeRealtimeH.StartReconcileWorker(appCtx, 5*time.Second, 10)
+	}
+	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeAutoSMLEnabled {
+		shopeeRealtimeH.StartAutoSMLWorker(appCtx)
 	}
 	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeOrderEscrowEnrichmentEnabled {
 		go shopeeRealtimeH.StartPaymentBreakdownWorker(appCtx, 10*time.Second, 5)
