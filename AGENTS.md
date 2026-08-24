@@ -13,8 +13,8 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `41e0c57`
-  (`Use current time for Auto SML documents`).
+- Application baseline: production application commit `dc3931a`
+  (`Clarify Shopee Auto SML control`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
