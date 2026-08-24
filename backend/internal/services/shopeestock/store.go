@@ -476,16 +476,20 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 		if !ok {
 			match.Warnings = []string{"sku_not_found"}
 		}
-		warnings, _ := json.Marshal(match.Warnings)
 		aliasID := ""
 		if ok && match.Source == "sku" && match.ItemCode != "" && match.DocumentValid {
-			aliasID, err = upsertShopeeStockMasterTx(ctx, tx, shopID, product.ItemID, product.ModelID,
-				product.ItemName, product.ModelName, product.ItemSKU, product.ModelSKU, match.ItemCode, match.UnitCode,
-				"exact_sku", "", "", nil)
-			if err != nil {
+			err = tx.QueryRowContext(ctx, `SELECT id::text FROM marketplace_item_aliases
+				WHERE source='shopee' AND account_key='shop:'||$1::text AND external_item_id=$2 AND external_variant_id=$3
+				  AND is_active=true ORDER BY mapping_revision DESC,id LIMIT 1`, shopID,
+				strconv.FormatInt(product.ItemID, 10), strconv.FormatInt(product.ModelID, 10)).Scan(&aliasID)
+			if errors.Is(err, sql.ErrNoRows) {
+				aliasID = ""
+				match.Warnings = appendUnique(match.Warnings, "conversion_policy_missing")
+			} else if err != nil {
 				return err
 			}
 		}
+		warnings, _ := json.Marshal(match.Warnings)
 		if _, err := mappingStmt.ExecContext(ctx, shopID, product.ItemID, product.ModelID, match.ItemCode, match.UnitCode, match.Factor, match.Source, warnings, aliasID, match.SetDefinitionHash); err != nil {
 			return err
 		}
@@ -829,6 +833,44 @@ func (s *Store) EnabledSMLItemsOtherShops(ctx context.Context, shopID int64) (ma
 	return items, rows.Err()
 }
 
+func (s *Store) ManualUnmanagedConsumedItems(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT item_code FROM (
+		SELECT m.sml_item_code AS item_code
+		FROM shopee_stock_mappings m JOIN marketplace_item_aliases a ON a.id=m.marketplace_alias_id
+		WHERE m.excluded=false AND m.sml_item_code<>'' AND a.is_active=true AND a.stock_policy='manual_unmanaged'
+		UNION
+		SELECT component->>'item_code'
+		FROM shopee_stock_mappings m
+		JOIN marketplace_item_aliases a ON a.id=m.marketplace_alias_id
+		JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.item_type=3
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
+		WHERE m.excluded=false AND a.is_active=true AND a.stock_policy='manual_unmanaged'
+	) consumed WHERE item_code<>''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]struct{}{}
+	for rows.Next() {
+		var itemCode string
+		if err := rows.Scan(&itemCode); err != nil {
+			return nil, err
+		}
+		result[itemCode] = struct{}{}
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) SharedPoolPoliciesManaged(ctx context.Context, shopID int64, itemCode string) (bool, error) {
+	var managed bool
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)>=2 AND BOOL_AND(COALESCE(a.stock_policy,'blocked')='managed')
+		FROM shopee_stock_mappings m
+		JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
+		LEFT JOIN marketplace_item_aliases a ON a.id=m.marketplace_alias_id AND a.is_active=true
+		WHERE m.shop_id=$1 AND m.sml_item_code=$2 AND m.excluded=false AND p.is_active=true`, shopID, itemCode).Scan(&managed)
+	return managed, err
+}
+
 func (s *Store) ListProducts(ctx context.Context, shopID int64) ([]ProductRow, error) {
 	products, _, _, err := s.listProducts(ctx, shopID, ProductFilter{Page: 1, Size: 100000})
 	return products, err
@@ -941,7 +983,8 @@ func (s *Store) ListProductGroupVariants(ctx context.Context, shopID int64, filt
 	rows, err := s.db.QueryContext(ctx, `SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
 	       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
 	       COALESCE(c.units,'[]'::jsonb),m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
-	       COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
+	       COALESCE(a.id::text,''),a.updated_at,COALESCE(a.conversion_status,'needs_review'),
+	       COALESCE(a.stock_policy,'blocked'),COALESCE(a.sales_enabled,false),COALESCE(a.quantity_multiplier,1),m.excluded,m.warning_codes,
 	       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,COALESCE(m.last_preview_excluded_locations,'[]'::jsonb),
 	       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,m.last_success_target,m.updated_at,
 	       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
@@ -950,7 +993,7 @@ func (s *Store) ListProductGroupVariants(ctx context.Context, shopID int64, filt
 	JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
 	LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
 	LEFT JOIN LATERAL (
-	  SELECT master.id,master.updated_at FROM marketplace_item_aliases master
+	  SELECT master.id,master.updated_at,master.conversion_status,master.stock_policy,master.sales_enabled,master.quantity_multiplier FROM marketplace_item_aliases master
 	  WHERE master.is_active=true AND master.source='shopee'
 	    AND ((master.id=m.marketplace_alias_id) OR (master.account_key='shop:'||p.shop_id::text AND master.external_item_id=p.item_id::text AND master.external_variant_id=p.model_id::text))
 	  ORDER BY (master.id=m.marketplace_alias_id) DESC LIMIT 1
@@ -1047,7 +1090,8 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
 		       COALESCE(c.units,'[]'::jsonb),
 		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
-		       COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
+		       COALESCE(a.id::text,''),a.updated_at,COALESCE(a.conversion_status,'needs_review'),
+		       COALESCE(a.stock_policy,'blocked'),COALESCE(a.sales_enabled,false),COALESCE(a.quantity_multiplier,1),m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
 		       COALESCE(m.last_preview_excluded_locations,'[]'::jsonb),
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
@@ -1058,7 +1102,7 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		  JOIN shopee_stock_mappings m USING (shop_id,item_id,model_id)
 		  LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
 		  LEFT JOIN LATERAL (
-		    SELECT master.id,master.updated_at
+		    SELECT master.id,master.updated_at,master.conversion_status,master.stock_policy,master.sales_enabled,master.quantity_multiplier
 		      FROM marketplace_item_aliases master
 		     WHERE master.is_active=true AND master.source='shopee'
 		       AND ((master.id=m.marketplace_alias_id)
@@ -1081,7 +1125,8 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		var warnings, unitsJSON, componentsJSON, excludedLocationsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
 			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
-			&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
+			&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt,
+			&item.MarketplaceConversionStatus, &item.MarketplaceStockPolicy, &item.MarketplaceSalesEnabled, &item.MarketplaceQuantityMultiplier, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &excludedLocationsJSON, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
 			&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
 			&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
@@ -1110,7 +1155,8 @@ func scanStockProductRow(row stockProductScanner) (ProductRow, error) {
 	var warnings, unitsJSON, componentsJSON, excludedLocationsJSON []byte
 	if err := row.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
 		&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
-		&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
+		&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt,
+		&item.MarketplaceConversionStatus, &item.MarketplaceStockPolicy, &item.MarketplaceSalesEnabled, &item.MarketplaceQuantityMultiplier, &item.Excluded, &warnings,
 		&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &excludedLocationsJSON, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
 		&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
 		&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
@@ -1129,141 +1175,34 @@ func scanStockProductRow(row stockProductScanner) (ProductRow, error) {
 }
 
 func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64, request MappingUpdate, userID string) (*ProductRow, error) {
+	if !request.Excluded || strings.TrimSpace(request.SMLItemCode) != "" {
+		return nil, invalid("การแก้ Product Master ต้องใช้ impact preview และ revision job")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	var productName, modelName, itemSKU, modelSKU, previousSMLItemCode string
-	if err := tx.QueryRowContext(ctx, `SELECT p.item_name,p.model_name,p.item_sku,p.model_sku,m.sml_item_code
+	var previousSMLItemCode string
+	if err := tx.QueryRowContext(ctx, `SELECT m.sml_item_code
 		FROM shopee_stock_products p JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
 		WHERE p.shop_id=$1 AND p.item_id=$2 AND p.model_id=$3 AND p.is_active=true FOR UPDATE OF m`, shopID, itemID, modelID).
-		Scan(&productName, &modelName, &itemSKU, &modelSKU, &previousSMLItemCode); err != nil {
+		Scan(&previousSMLItemCode); err != nil {
 		return nil, err
 	}
-	if request.Excluded && strings.TrimSpace(request.SMLItemCode) == "" {
-		result, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings
+	result, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings
 			SET excluded=true,shared_pool_enabled=false,pool_allocation_pct=100,updated_by=NULLIF($5,'')::uuid,updated_at=NOW()
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`, shopID, itemID, modelID, request.UpdatedAt, userID)
-		if err != nil {
-			return nil, err
-		}
-		if affected, _ := result.RowsAffected(); affected == 0 {
-			return nil, ErrMappingConflict
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
-			return nil, err
-		}
-		if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, "", "", true); err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(); err != nil {
-			return nil, err
-		}
-		// The mapping transaction is already committed. Duplicate warnings can be
-		// rebuilt by the next catalog refresh; do not report a successful save as
-		// failed because this derived-state refresh was temporarily unavailable.
-		_ = s.RefreshDuplicateMappings(ctx)
-		return s.findProduct(ctx, shopID, itemID, modelID)
-	}
-	var item sml.StockCatalogItem
-	var unitsJSON, barcodesJSON, setWarningsJSON, setComponentsJSON []byte
-	var componentCount int
-	var definitionHash string
-	var documentValid, stockValid bool
-	err = tx.QueryRowContext(ctx, `SELECT item_code,item_name,standard_unit_code,units,barcodes,COALESCE(source_updated_at,to_timestamp(0)),
-		item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes,set_components
-		FROM shopee_stock_sml_catalog WHERE item_code=$1 AND is_active=true`, request.SMLItemCode).Scan(
-		&item.ItemCode, &item.ItemName, &item.StandardUnit, &unitsJSON, &barcodesJSON, &item.UpdatedAt,
-		&item.ItemType, &componentCount, &definitionHash, &documentValid, &stockValid, &setWarningsJSON, &setComponentsJSON)
 	if err != nil {
 		return nil, err
 	}
-	_ = json.Unmarshal(unitsJSON, &item.Units)
-	_ = json.Unmarshal(barcodesJSON, &item.Barcodes)
-	if item.ItemType == 3 {
-		definition := &sml.StockSetDefinition{ItemCode: item.ItemCode, ComponentCount: componentCount, Hash: definitionHash, DocumentValid: documentValid, StockValid: stockValid}
-		_ = json.Unmarshal(setWarningsJSON, &definition.WarningCodes)
-		_ = json.Unmarshal(setComponentsJSON, &definition.Components)
-		item.SetDefinition = definition
-		item.SetComponents = append([]sml.StockSetComponent(nil), definition.Components...)
-		if !definition.StockValid {
-			return nil, invalid("สินค้าชุดนี้ยังไม่พร้อมซิงก์สต๊อก กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการ")
-		}
-		if !definition.DocumentValid {
-			return nil, invalid("สินค้าชุดนี้ยังไม่พร้อมใช้ใน Product Master กรุณาแก้ส่วนประกอบใน SML แล้วอัปเดตรายการ")
-		}
-	}
-	var unit sml.StockCatalogUnit
-	found := false
-	for _, candidate := range item.Units {
-		if candidate.Code == request.SMLUnitCode {
-			unit, found = candidate, true
-			break
-		}
-	}
-	if !found {
-		return nil, ErrInvalidUnit
-	}
-	exactSKU := strings.TrimSpace(modelSKU)
-	if exactSKU == "" {
-		exactSKU = strings.TrimSpace(itemSKU)
-	}
-	masterMatchMethod := "manual_identity"
-	if exactSKU != "" {
-		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM shopee_stock_sml_catalog WHERE item_code=$1 AND is_active=true)`, exactSKU).Scan(&exists); err != nil {
-			return nil, err
-		}
-		if exists && exactSKU != item.ItemCode {
-			return nil, invalid("SKU ตรงกับสินค้า SML " + exactSKU + " อยู่แล้ว จึงไม่สามารถจับคู่ข้ามรหัสได้")
-		}
-		if exists {
-			masterMatchMethod = "exact_sku"
-		}
-	}
-	factor := UnitFactor(unit)
-	warningsList := UnitWarnings(unit)
-	if item.ItemType == 3 {
-		for _, warning := range stockSetWarnings(item) {
-			warningsList = appendUnique(warningsList, warning)
-		}
-	}
-	if request.ManualUnitFactor != nil {
-		if *request.ManualUnitFactor < 1 {
-			return nil, ErrInvalidManualFactor
-		}
-		factor = *request.ManualUnitFactor
-		warningsList = nil
-	}
-	warnings, _ := json.Marshal(warningsList)
-	aliasID, err := upsertShopeeStockMasterTx(ctx, tx, shopID, itemID, modelID, productName, modelName, itemSKU, modelSKU,
-		item.ItemCode, item.StandardUnit, masterMatchMethod, userID, request.MarketplaceAliasID, request.MarketplaceAliasUpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	if err := applyShopeeStockMasterToOpenBillsTx(ctx, tx, shopID, itemID, modelID, aliasID, item.ItemCode, item.StandardUnit); err != nil {
-		return nil, err
-	}
-	result, err := tx.ExecContext(ctx, `
-		UPDATE shopee_stock_mappings
-		   SET sml_item_code=$5,sml_unit_code=$6,unit_factor=$7,manual_unit_factor=$8,match_source='manual',excluded=$9,
-		       warning_codes=$10,marketplace_alias_id=$12,set_definition_hash=$13,
-		       shared_pool_enabled=false,pool_allocation_pct=100,
-		       updated_by=NULLIF($11,'')::uuid,updated_at=NOW()
-		 WHERE shop_id=$1 AND item_id=$2 AND model_id=$3 AND updated_at=$4`,
-		shopID, itemID, modelID, request.UpdatedAt, item.ItemCode, unit.Code, factor, request.ManualUnitFactor, request.Excluded, warnings, userID, aliasID, definitionHash)
-	if err != nil {
-		return nil, err
-	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
+	if affected, _ := result.RowsAffected(); affected == 0 {
 		return nil, ErrMappingConflict
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 		return nil, err
 	}
-	if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, aliasID, item.ItemCode, request.Excluded); err != nil {
+	if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, "", previousSMLItemCode, true); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1409,28 +1348,6 @@ func marketplaceMasterConflict(err error) error {
 	return err
 }
 
-func applyShopeeStockMasterToOpenBillsTx(ctx context.Context, tx *sql.Tx, shopID, itemID, modelID int64, aliasID, itemCode, unitCode string) error {
-	accountKey := "shop:" + strconv.FormatInt(shopID, 10)
-	_, err := tx.ExecContext(ctx, `UPDATE bill_items bi
-		SET item_code=$1,unit_code=$2,mapped=true,marketplace_alias_id=$3
-		FROM bills b
-		WHERE bi.bill_id=b.id AND b.source='shopee' AND b.source_account_key=$4
-		  AND b.bill_type='sale' AND b.status IN ('pending','needs_review') AND b.archived_at IS NULL
-		  AND bi.source_item_id=$5 AND bi.source_variant_id=$6
-		  AND NOT EXISTS (SELECT 1 FROM sml_catalog c WHERE c.is_active=true
-		    AND c.item_code=btrim(replace(COALESCE(bi.source_sku,''),chr(65279),'')))`,
-		itemCode, unitCode, aliasID, accountKey, strconv.FormatInt(itemID, 10), strconv.FormatInt(modelID, 10))
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE bills b SET status='pending',error_msg=NULL
-		WHERE b.source='shopee' AND b.source_account_key=$1 AND b.bill_type='sale'
-		  AND b.status='needs_review' AND b.archived_at IS NULL
-		  AND NOT EXISTS (SELECT 1 FROM bill_items bi WHERE bi.bill_id=b.id
-		    AND (COALESCE(bi.item_code,'')='' OR bi.mapped IS DISTINCT FROM true))`, accountKey)
-	return err
-}
-
 func nonEmptyStrings(values ...string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1477,6 +1394,37 @@ func (s *Store) QueuePreviewRun(ctx context.Context, shopID int64, asOfDate stri
 		       ),'{}'::jsonb),0
 		FROM shopee_stock_settings st WHERE st.shop_id=$1
 		RETURNING id::text`, shopID, asOfDate).Scan(&id)
+	return id, err
+}
+
+func (s *Store) CreateSyncRun(ctx context.Context, shopID int64, trigger, asOfDate, leaseOwner string, fencingToken int64, leaseDuration time.Duration) (string, error) {
+	if leaseDuration <= 0 {
+		leaseDuration = 2 * time.Minute
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx, `INSERT INTO shopee_stock_runs
+		(shop_id,run_type,trigger_source,status,as_of_date,config_version,catalog_generation_id,demand_revision_snapshot,
+		 lease_fencing_token,lease_owner,lease_until,heartbeat_at,progress_pct)
+		SELECT st.shop_id,'sync',$2,'running',$3::date,st.config_version,
+		       (SELECT id FROM sml_catalog_sync_runs WHERE status='active' ORDER BY activated_at DESC NULLS LAST,created_at DESC LIMIT 1),
+		       COALESCE((
+		         SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
+		         FROM marketplace_stock_demand_versions d
+		         JOIN LATERAL jsonb_array_elements(st.locations) location
+		           ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+		         WHERE d.item_code IN (
+		           SELECT m.sml_item_code FROM shopee_stock_mappings m
+		           WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
+		           UNION
+		           SELECT component->>'item_code'
+		           FROM shopee_stock_mappings m
+		           JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.item_type=3
+		           CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
+		           WHERE m.shop_id=st.shop_id AND m.excluded=false
+		         )
+		       ),'{}'::jsonb),$5,$4,NOW()+make_interval(secs=>$6),NOW(),0
+		FROM shopee_stock_settings st WHERE st.shop_id=$1
+		RETURNING id::text`, shopID, trigger, asOfDate, leaseOwner, fencingToken, int(leaseDuration.Seconds())).Scan(&id)
 	return id, err
 }
 
@@ -1609,6 +1557,49 @@ func validatePreviewSnapshot(ctx context.Context, queryer previewSnapshotQueryer
 
 func (s *Store) ValidatePreviewSnapshot(ctx context.Context, runID, leaseOwner string) (bool, error) {
 	return validatePreviewSnapshot(ctx, s.db, runID, leaseOwner)
+}
+
+// RenewAndValidateLiveWrite is the last database gate before each Shopee
+// update_stock call. It renews the fenced shop lease and only renews the run
+// lease while every configuration/catalog/demand snapshot still matches.
+func (s *Store) RenewAndValidateLiveWrite(ctx context.Context, runID string, shopID int64, leaseOwner string, fencingToken int64, duration time.Duration) (bool, error) {
+	if duration <= 0 {
+		duration = 2 * time.Minute
+	}
+	var valid bool
+	err := s.db.QueryRowContext(ctx, `WITH renewed AS (
+		UPDATE shopee_stock_leases SET lease_until=NOW()+make_interval(secs=>$5),heartbeat_at=NOW(),updated_at=NOW()
+		WHERE shop_id=$2 AND owner_id=$3 AND fencing_token=$4 AND lease_until>NOW()
+		RETURNING shop_id
+	)
+	UPDATE shopee_stock_runs r SET lease_until=NOW()+make_interval(secs=>$5),heartbeat_at=NOW()
+	FROM shopee_stock_settings st,renewed
+	WHERE r.id=$1::uuid AND r.shop_id=$2 AND r.shop_id=st.shop_id AND r.status='running'
+	  AND r.lease_owner=$3 AND r.lease_fencing_token=$4 AND r.lease_until>NOW()
+	  AND st.enabled=true AND st.dry_run_required=false AND st.paused_reason=''
+	  AND r.config_version=st.config_version
+	  AND r.catalog_generation_id IS NOT DISTINCT FROM (
+	    SELECT id FROM sml_catalog_sync_runs WHERE status='active' ORDER BY activated_at DESC NULLS LAST,created_at DESC LIMIT 1
+	  )
+	  AND r.demand_revision_snapshot=COALESCE((
+	    SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
+	    FROM marketplace_stock_demand_versions d
+	    JOIN LATERAL jsonb_array_elements(st.locations) location
+	      ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+	    WHERE d.item_code IN (
+	      SELECT m.sml_item_code FROM shopee_stock_mappings m WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
+	      UNION
+	      SELECT component->>'item_code' FROM shopee_stock_mappings m
+	      JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.item_type=3
+	      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
+	      WHERE m.shop_id=st.shop_id AND m.excluded=false
+	    )
+	  ),'{}'::jsonb)
+	RETURNING true`, runID, shopID, leaseOwner, fencingToken, int(duration.Seconds())).Scan(&valid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return valid, err
 }
 
 func (s *Store) GetRun(ctx context.Context, shopID int64, runID string) (*Run, error) {
@@ -1929,6 +1920,135 @@ func (s *Store) AcquireCatalogLease(ctx context.Context, owner string, duration 
 	}
 	affected, _ := result.RowsAffected()
 	return affected > 0, nil
+}
+
+func (s *Store) ClaimPolicyJob(ctx context.Context, owner string, duration time.Duration) (*PolicyJob, error) {
+	if duration <= 0 {
+		duration = 2 * time.Minute
+	}
+	var job PolicyJob
+	var aliasID, requestedBy sql.NullString
+	err := s.db.QueryRowContext(ctx, `WITH candidate AS (
+		SELECT p.id FROM shopee_stock_policy_jobs p
+		JOIN marketplace_mapping_jobs m ON m.alias_id=p.marketplace_alias_id
+		  AND m.target_revision=p.target_revision AND m.job_type='mapping_reconcile' AND m.status='completed'
+		WHERE ((p.status='queued') OR (p.status IN ('failed','unknown') AND p.next_attempt_at<=NOW() AND p.attempt_count<10)
+		  OR (p.status='running' AND p.lease_until<NOW()))
+		ORDER BY p.created_at,p.id FOR UPDATE SKIP LOCKED LIMIT 1
+	)
+	UPDATE shopee_stock_policy_jobs p SET status='running',lease_owner=$1,
+		lease_until=NOW()+make_interval(secs=>$2),heartbeat_at=NOW(),attempt_count=attempt_count+1,
+		error_message='',finished_at=NULL,updated_at=NOW()
+	FROM candidate WHERE p.id=candidate.id
+	RETURNING p.id::text,p.shop_id,p.marketplace_alias_id::text,p.target_revision,p.item_id,p.model_id,
+		p.policy_action,p.status,p.request_hash,p.attempt_count,p.lease_owner,p.lease_until,p.error_message,
+		p.requested_by::text,p.created_at,p.finished_at`, owner, int(duration.Seconds())).Scan(
+		&job.ID, &job.ShopID, &aliasID, &job.TargetRevision, &job.ItemID, &job.ModelID, &job.PolicyAction,
+		&job.Status, &job.RequestHash, &job.AttemptCount, &job.LeaseOwner, &job.LeaseUntil, &job.ErrorMessage,
+		&requestedBy, &job.CreatedAt, &job.FinishedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	job.MarketplaceAlias = aliasID.String
+	job.RequestedBy = requestedBy.String
+	return &job, nil
+}
+
+func (s *Store) AttachPolicyFencingToken(ctx context.Context, jobID, owner string, token int64) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_policy_jobs SET lease_fencing_token=$3,heartbeat_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, jobID, owner, token)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrSyncInProgress
+	}
+	return nil
+}
+
+func (s *Store) ValidatePolicyJob(ctx context.Context, job *PolicyJob, token int64) (bool, error) {
+	if job == nil {
+		return false, nil
+	}
+	var valid bool
+	err := s.db.QueryRowContext(ctx, `SELECT p.status='running' AND p.lease_owner=$2 AND p.lease_until>NOW()
+		AND p.lease_fencing_token=$3 AND a.mapping_revision=p.target_revision AND a.stock_policy='zeroing'
+		AND l.owner_id=$2 AND l.fencing_token=$3 AND l.lease_until>NOW()
+		FROM shopee_stock_policy_jobs p
+		JOIN marketplace_item_aliases a ON a.id=p.marketplace_alias_id
+		JOIN shopee_stock_leases l ON l.shop_id=p.shop_id
+		WHERE p.id=$1::uuid FOR SHARE OF p,a,l`, job.ID, job.LeaseOwner, token).Scan(&valid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return valid, err
+}
+
+func (s *Store) CompletePolicyZeroing(ctx context.Context, job *PolicyJob, token int64) error {
+	if job == nil {
+		return errors.New("stock policy job is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE marketplace_item_aliases SET stock_policy='disabled_zero',updated_at=NOW()
+		WHERE id=$1::uuid AND mapping_revision=$2 AND stock_policy='zeroing'`, job.MarketplaceAlias, job.TargetRevision)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrPreviewStale
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings SET shared_pool_enabled=false,
+		warning_codes=(warning_codes-'stock_policy_zeroing')||'["stock_policy_disabled_zero"]'::jsonb,updated_at=NOW()
+		WHERE marketplace_alias_id=$1::uuid`, job.MarketplaceAlias); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_products SET shopee_available=0,updated_at=NOW()
+		WHERE shop_id=$1 AND item_id=$2 AND model_id=$3`, job.ShopID, job.ItemID, job.ModelID); err != nil {
+		return err
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE shopee_stock_policy_jobs SET status='completed',lease_owner='',lease_until=NULL,
+		heartbeat_at=NOW(),error_message='',finished_at=NOW(),updated_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND lease_fencing_token=$3 AND status='running'`, job.ID, job.LeaseOwner, token)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrSyncInProgress
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,target_id,revision,job_id,before_state,after_state,detail)
+		VALUES('shopee_stock_zero_confirmed',NULLIF($1,'')::uuid,'shopee_stock','info',$2::uuid,$3,$4::uuid,
+		jsonb_build_object('stock_policy','zeroing'),jsonb_build_object('stock_policy','disabled_zero'),
+		jsonb_build_object('shop_id',$5,'item_id',$6,'model_id',$7,'read_back_confirmed',true))`,
+		job.RequestedBy, job.MarketplaceAlias, job.TargetRevision, job.ID, job.ShopID, job.ItemID, job.ModelID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) FailPolicyJob(ctx context.Context, job *PolicyJob, unknown bool, cause error) error {
+	if job == nil {
+		return nil
+	}
+	status := "failed"
+	if unknown {
+		status = "unknown"
+	}
+	delay := time.Duration(1<<min(job.AttemptCount, 8)) * 15 * time.Second
+	message := "stock zeroing failed"
+	if cause != nil {
+		message = userSafeError(cause)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_policy_jobs SET status=$3,error_message=$4,
+		next_attempt_at=NOW()+make_interval(secs=>$5),lease_owner='',lease_until=NULL,updated_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, job.ID, job.LeaseOwner, status, message, int(delay.Seconds()))
+	return err
 }
 
 func (s *Store) ReleaseCatalogLease(ctx context.Context, owner string) error {

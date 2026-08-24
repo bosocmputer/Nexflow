@@ -41,6 +41,7 @@ type Config struct {
 	SetStockEnabled          bool
 	ReservationLedgerEnabled bool
 	GroupedUIEnabled         bool
+	ConversionMode           string
 	Environment              string
 	InstanceID               string
 }
@@ -357,7 +358,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 		return nil, ErrDryRunRequired
 	}
 	owner := s.leaseOwner("sync", shopID)
-	lease, err := s.store.AcquireLease(ctx, shopID, owner, 2*time.Minute)
+	fencingToken, lease, err := s.store.AcquireFencedLease(ctx, shopID, owner, 2*time.Minute)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +366,11 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 		return nil, ErrSyncInProgress
 	}
 	defer func() { _ = s.store.ReleaseLease(context.Background(), shopID, owner) }()
-	preview, err := s.calculate(ctx, shopID, TodayBangkok(), "sync", trigger, false, "", "")
+	runID, err := s.store.CreateSyncRun(ctx, shopID, trigger, TodayBangkok(), owner, fencingToken, 2*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := s.calculate(ctx, shopID, TodayBangkok(), "sync", trigger, false, runID, owner)
 	if err != nil {
 		_ = s.store.RecordSyncChecked(context.Background(), shopID, userSafeError(err), nextScheduledRunAfter(*settings, time.Now()))
 		return nil, err
@@ -374,7 +379,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	if preview.CircuitBreaker != "" {
 		reason := preview.CircuitBreaker
 		_ = s.store.SetPaused(context.Background(), shopID, reason, "SML stock เปลี่ยนผิดปกติ จึงหยุดทั้งร้านเพื่อความปลอดภัย")
-		_ = s.store.FinishRun(ctx, preview.RunID, "paused", preview, 0, reason)
+		_ = s.store.FinishLeasedPreviewRun(ctx, preview.RunID, owner, "paused", preview, 0, reason)
 		return result, fmt.Errorf("หยุดซิงก์เพื่อความปลอดภัย: %s", reason)
 	}
 	changed := make([]PreviewLine, 0)
@@ -387,12 +392,12 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	locationID, multipleWarehouses, err := s.sellerLocationID(ctx, shopID)
 	if err != nil {
 		_ = s.store.RecordSyncChecked(context.Background(), shopID, userSafeError(err), nextScheduledRunAfter(*settings, time.Now()))
-		_ = s.store.FinishRun(ctx, preview.RunID, "failed", preview, 1, userSafeError(err))
+		_ = s.store.FinishLeasedPreviewRun(ctx, preview.RunID, owner, "failed", preview, 1, userSafeError(err))
 		return result, err
 	}
 	if multipleWarehouses {
 		_ = s.store.SetPaused(context.Background(), shopID, "multiple_shopee_warehouses", "Shopee มีหลาย seller warehouse locations")
-		_ = s.store.FinishRun(ctx, preview.RunID, "paused", preview, 0, "multiple_shopee_warehouses")
+		_ = s.store.FinishLeasedPreviewRun(ctx, preview.RunID, owner, "paused", preview, 0, "multiple_shopee_warehouses")
 		return result, errors.New("Shopee มีหลาย seller warehouse locations ซึ่ง v1 ยังไม่รองรับ")
 	}
 	type groupResult struct {
@@ -414,7 +419,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 				return
 			}
 			defer func() { <-sem }()
-			results <- s.updateItemStock(ctx, settings, preview.RunID, itemID, locationID, lines)
+			results <- s.updateItemStock(ctx, settings, preview.RunID, owner, fencingToken, itemID, locationID, lines)
 		}()
 	}
 	wg.Wait()
@@ -441,7 +446,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 		errorMessage = "มีรายการอัปเดตไม่สำเร็จหรือยังไม่ทราบผล กรุณาตรวจประวัติ"
 	}
 	_ = s.store.RecordSyncChecked(context.Background(), shopID, errorMessage, nextScheduledRunAfter(*settings, time.Now()))
-	if err := s.store.FinishRun(ctx, preview.RunID, status, preview, result.ErrorCount+result.UnknownCount, ""); err != nil {
+	if err := s.store.FinishLeasedPreviewRun(ctx, preview.RunID, owner, status, preview, result.ErrorCount+result.UnknownCount, ""); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -485,6 +490,9 @@ func (s *Service) UpdateMapping(ctx context.Context, shopID, itemID, modelID int
 	if request.UpdatedAt.IsZero() || (!request.Excluded && (request.SMLItemCode == "" || request.SMLUnitCode == "")) {
 		return nil, invalid("กรุณาเลือกสินค้า/หน่วย SML และรีเฟรชรายการก่อนแก้ไข")
 	}
+	if !request.Excluded {
+		return nil, invalid("การแก้ Product Master ต้องใช้ impact preview และ revision job")
+	}
 	if !request.Excluded && request.MarketplaceAliasID != "" && request.MarketplaceAliasUpdatedAt == nil {
 		return nil, invalid("ข้อมูล Product Master ไม่ครบ กรุณารีเฟรชรายการแล้วลองใหม่")
 	}
@@ -492,6 +500,72 @@ func (s *Service) UpdateMapping(ctx context.Context, shopID, itemID, modelID int
 		return nil, ErrInvalidManualFactor
 	}
 	return s.store.UpdateMapping(ctx, shopID, itemID, modelID, request, userID)
+}
+
+func (s *Service) ProductForMutation(ctx context.Context, shopID, itemID, modelID int64) (*ProductRow, error) {
+	if s == nil || s.store == nil || shopID <= 0 || itemID <= 0 || modelID < 0 {
+		return nil, invalid("สินค้า Shopee ไม่ถูกต้อง")
+	}
+	return s.store.findProduct(ctx, shopID, itemID, modelID)
+}
+
+func (s *Service) ExecutePolicyJob(ctx context.Context, job *PolicyJob) error {
+	if job == nil || job.PolicyAction != "zero_then_disable" {
+		return errors.New("unsupported stock policy job")
+	}
+	token, acquired, err := s.store.AcquireFencedLease(ctx, job.ShopID, job.LeaseOwner, 2*time.Minute)
+	if err != nil {
+		_ = s.store.FailPolicyJob(context.Background(), job, false, err)
+		return err
+	}
+	if !acquired {
+		_ = s.store.FailPolicyJob(context.Background(), job, false, ErrSyncInProgress)
+		return ErrSyncInProgress
+	}
+	defer func() { _ = s.store.ReleaseLease(context.Background(), job.ShopID, job.LeaseOwner) }()
+	if err := s.store.AttachPolicyFencingToken(ctx, job.ID, job.LeaseOwner, token); err != nil {
+		return err
+	}
+	valid, err := s.store.ValidatePolicyJob(ctx, job, token)
+	if err != nil || !valid {
+		if err == nil {
+			err = ErrPreviewStale
+		}
+		_ = s.store.FailPolicyJob(context.Background(), job, false, err)
+		return err
+	}
+	locationID, multiple, err := s.sellerLocationID(ctx, job.ShopID)
+	if err != nil || multiple {
+		if err == nil {
+			err = errors.New("Shopee มีหลาย seller warehouse locations ซึ่งยังไม่รองรับการตั้ง stock เป็น 0 อัตโนมัติ")
+		}
+		_ = s.store.FailPolicyJob(context.Background(), job, false, err)
+		return err
+	}
+	line := PreviewLine{ItemID: job.ItemID, ModelID: job.ModelID, TargetStock: 0}
+	request := shopeeapi.UpdateStockRequest{ItemID: job.ItemID, StockList: []shopeeapi.ModelStock{{
+		ModelID: job.ModelID, SellerStock: []shopeeapi.SellerStock{{LocationID: locationID, Stock: 0}},
+	}}}
+	response, writeErr := s.shopee.UpdateStock(ctx, "", job.ShopID, request)
+	if writeErr != nil {
+		if s.readBackMatches(context.Background(), job.ShopID, job.ItemID, locationID, []PreviewLine{line}) {
+			return s.store.CompletePolicyZeroing(ctx, job, token)
+		}
+		unknown := isUnknownWrite(writeErr)
+		_ = s.store.FailPolicyJob(context.Background(), job, unknown, writeErr)
+		return writeErr
+	}
+	if len(response.Response.FailureList) > 0 {
+		err = fmt.Errorf("Shopee rejected stock zero: %s", response.Response.FailureList[0].FailedReason)
+		_ = s.store.FailPolicyJob(context.Background(), job, false, err)
+		return err
+	}
+	if !s.readBackMatches(context.Background(), job.ShopID, job.ItemID, locationID, []PreviewLine{line}) {
+		err = errors.New("Shopee stock zero write was not confirmed by read-back")
+		_ = s.store.FailPolicyJob(context.Background(), job, true, err)
+		return err
+	}
+	return s.store.CompletePolicyZeroing(ctx, job, token)
 }
 
 func (s *Service) GetSharedPool(ctx context.Context, shopID int64, smlItemCode string) (*SharedPool, error) {
@@ -508,6 +582,15 @@ func (s *Service) UpdateSharedPool(ctx context.Context, shopID int64, request Sh
 	normalized, err := normalizeSharedPoolUpdate(request)
 	if err != nil {
 		return nil, err
+	}
+	if strings.EqualFold(strings.TrimSpace(s.cfg.ConversionMode), "active") {
+		managed, err := s.store.SharedPoolPoliciesManaged(ctx, shopID, normalized.SMLItemCode)
+		if err != nil {
+			return nil, err
+		}
+		if !managed {
+			return nil, invalid("สต๊อกร่วมใช้ได้เฉพาะรายการที่เปิดให้ Nexflow จัดการ stock ทุกตัวเลือก")
+		}
 	}
 	return s.store.UpdateSharedPool(ctx, shopID, normalized, userID)
 }
@@ -603,6 +686,24 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if len(products) == 0 {
 		return fail(errors.New("ยังไม่มีรายการสินค้า Shopee กรุณากดอัปเดตรายการสินค้าก่อน"))
 	}
+	if strings.EqualFold(strings.TrimSpace(s.cfg.ConversionMode), "active") {
+		for index := range products {
+			conversionStatus := strings.TrimSpace(products[index].MarketplaceConversionStatus)
+			if conversionStatus == "" {
+				conversionStatus = "policy_missing"
+			}
+			if conversionStatus != "ready" {
+				products[index].WarningCodes = appendUnique(products[index].WarningCodes, "conversion_"+conversionStatus)
+			}
+			stockPolicy := strings.TrimSpace(products[index].MarketplaceStockPolicy)
+			if stockPolicy == "" {
+				stockPolicy = "blocked"
+			}
+			if stockPolicy != "managed" {
+				products[index].WarningCodes = appendUnique(products[index].WarningCodes, "stock_policy_"+stockPolicy)
+			}
+		}
+	}
 	if runLeaseOwner != "" {
 		if err := s.store.UpdatePreviewRunProgress(ctx, runID, runLeaseOwner, 0, 20); err != nil {
 			return fail(err)
@@ -679,6 +780,23 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				componentOwners[code] = map[string]struct{}{}
 			}
 			componentOwners[code][ownerKey] = struct{}{}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(s.cfg.ConversionMode), "active") {
+		manualConsumed, loadErr := s.store.ManualUnmanagedConsumedItems(ctx)
+		if loadErr != nil {
+			return fail(loadErr)
+		}
+		for index := range products {
+			if products[index].MarketplaceStockPolicy != "managed" {
+				continue
+			}
+			for _, code := range consumedByProduct[stockProductKey(products[index].ItemID, products[index].ModelID)] {
+				if _, conflict := manualConsumed[code]; conflict {
+					products[index].WarningCodes = appendUnique(products[index].WarningCodes, "manual_unmanaged_shared_stock")
+					break
+				}
+			}
 		}
 	}
 	itemSet := map[string]struct{}{}
@@ -1022,7 +1140,7 @@ func (s *Service) fetchShopeeProducts(ctx context.Context, shopID int64, locatio
 	return products, nil
 }
 
-func (s *Service) updateItemStock(ctx context.Context, settings *Settings, runID string, itemID int64, locationID shopeeapi.StringID, lines []PreviewLine) (out struct {
+func (s *Service) updateItemStock(ctx context.Context, settings *Settings, runID, leaseOwner string, fencingToken, itemID int64, locationID shopeeapi.StringID, lines []PreviewLine) (out struct {
 	success         []PreviewLine
 	errors, unknown int
 }) {
@@ -1040,6 +1158,18 @@ func (s *Service) updateItemStock(ctx context.Context, settings *Settings, runID
 	var response *shopeeapi.UpdateStockResponse
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
+		valid, validateErr := s.store.RenewAndValidateLiveWrite(ctx, runID, settings.ShopID, leaseOwner, fencingToken, 2*time.Minute)
+		if validateErr != nil || !valid {
+			message := "stock configuration changed before write"
+			if validateErr != nil {
+				message = userSafeError(validateErr)
+			}
+			for _, line := range lines {
+				_ = s.store.SaveSyncAttempt(context.Background(), runID, settings.ShopID, line, "blocked", "stale_before_write", message, "")
+			}
+			out.errors = len(lines)
+			return
+		}
 		response, err = s.shopee.UpdateStock(ctx, "", settings.ShopID, request)
 		if err == nil {
 			break

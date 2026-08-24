@@ -74,11 +74,56 @@ type MarketplaceAliasIdentity struct {
 }
 
 type MarketplaceAliasImpact struct {
-	OpenItems      int  `json:"open_items"`
-	OpenBills      int  `json:"open_bills"`
-	StockMappings  int  `json:"stock_mappings"`
-	StockConflicts int  `json:"stock_conflicts"`
-	DryRunRequired bool `json:"dry_run_required"`
+	CurrentMappingRevision int64            `json:"current_mapping_revision"`
+	OpenItems              int              `json:"open_items"`
+	OpenBills              int              `json:"open_bills"`
+	AttemptedItems         int              `json:"attempted_items"`
+	ArchivedItems          int              `json:"archived_items"`
+	ManualOverrideItems    int              `json:"manual_override_items"`
+	Reservations           int              `json:"reservations"`
+	ReservationMoves       int              `json:"reservation_moves"`
+	StockMappings          int              `json:"stock_mappings"`
+	StockConflicts         int              `json:"stock_conflicts"`
+	LegacyManualFactors    int              `json:"legacy_manual_factors"`
+	LegacyExclusions       int              `json:"legacy_exclusions"`
+	AffectedShopIDs        []int64          `json:"affected_shop_ids"`
+	StockConfigVersions    map[string]int64 `json:"stock_config_versions"`
+	BeforeFormula          string           `json:"before_formula"`
+	AfterFormula           string           `json:"after_formula"`
+	ConversionStatus       string           `json:"conversion_status"`
+	DryRunRequired         bool             `json:"dry_run_required"`
+	ImpactDigest           string           `json:"impact_digest"`
+}
+
+type MarketplaceMappingJob struct {
+	ID             string         `json:"id"`
+	AliasID        string         `json:"alias_id"`
+	TargetRevision int64          `json:"target_revision"`
+	JobType        string         `json:"job_type"`
+	Status         string         `json:"status"`
+	ProcessedCount int64          `json:"processed_count"`
+	SkippedCount   int64          `json:"skipped_count"`
+	FailedCount    int64          `json:"failed_count"`
+	ResultSummary  map[string]any `json:"result_summary"`
+	ErrorMessage   string         `json:"error_message,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	StartedAt      *time.Time     `json:"started_at,omitempty"`
+	FinishedAt     *time.Time     `json:"finished_at,omitempty"`
+}
+
+type MarketplaceStockPolicyJob struct {
+	ID               string     `json:"id"`
+	ShopID           int64      `json:"shop_id"`
+	MarketplaceAlias string     `json:"marketplace_alias_id,omitempty"`
+	TargetRevision   int64      `json:"target_revision"`
+	ItemID           int64      `json:"item_id"`
+	ModelID          int64      `json:"model_id"`
+	PolicyAction     string     `json:"policy_action"`
+	Status           string     `json:"status"`
+	AttemptCount     int        `json:"attempt_count"`
+	ErrorMessage     string     `json:"error_message,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
 }
 
 // MarketplaceAliasReviewFilter controls pagination + filtering for ReviewGroupsPaged.

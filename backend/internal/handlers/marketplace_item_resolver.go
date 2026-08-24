@@ -509,17 +509,16 @@ func marketplaceBillItemFromResolution(
 		batch.aliasUsage[existing.ID]++
 		return bi, mapped, nil
 	}
-	mutation := repository.MarketplaceAliasMutation{
+	scopeConfirmed := true
+	mutation := repository.MarketplaceAliasProposal{
 		Identity: identity,
 		BillType: "sale", ItemCode: cat.ItemCode, UnitCode: cat.UnitCode,
-		MatchMethod: "exact_sku", ScopeConfirmed: true, ConfirmedBy: confirmedBy,
+		MatchMethod: "exact_sku", ScopeConfirmed: &scopeConfirmed, ConfirmedBy: confirmedBy,
 	}
 	if resolved.alias != nil {
-		version := resolved.alias.UpdatedAt
-		mutation.ID = resolved.alias.ID
-		mutation.Version = &version
+		mutation.AliasID = resolved.alias.ID
 	}
-	result, err := aliasRepo.SaveAndApply(mutation)
+	result, err := aliasRepo.CommitCurrentMutation(context.Background(), mutation)
 	if err != nil {
 		return bi, false, fmt.Errorf("save exact SKU master: %w", err)
 	}

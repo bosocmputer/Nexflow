@@ -20,14 +20,24 @@ import (
 
 type ShopeeStockHandler struct {
 	service *shopeestock.Service
+	aliases *repository.MarketplaceAliasRepo
 	audit   *repository.AuditLogRepo
 	log     *zap.Logger
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
-func NewShopeeStockHandler(service *shopeestock.Service, audit *repository.AuditLogRepo, log *zap.Logger) *ShopeeStockHandler {
-	return &ShopeeStockHandler{service: service, audit: audit, log: log}
+func firstNonEmptyHandler(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func NewShopeeStockHandler(service *shopeestock.Service, aliases *repository.MarketplaceAliasRepo, audit *repository.AuditLogRepo, log *zap.Logger) *ShopeeStockHandler {
+	return &ShopeeStockHandler{service: service, aliases: aliases, audit: audit, log: log}
 }
 
 func (h *ShopeeStockHandler) Overview(c *gin.Context) {
@@ -252,12 +262,46 @@ func (h *ShopeeStockHandler) UpdateMapping(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลการจับคู่ไม่ถูกต้อง"})
 		return
 	}
-	result, err := h.service.UpdateMapping(c.Request.Context(), shopID, itemID, modelID, request, c.GetString("user_id"))
+	if request.Excluded {
+		result, err := h.service.UpdateMapping(c.Request.Context(), shopID, itemID, modelID, request, c.GetString("user_id"))
+		if err != nil {
+			h.fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+	if h.aliases == nil || strings.TrimSpace(request.ImpactDigest) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาตรวจผลกระทบล่าสุดก่อนบันทึก Product Master"})
+		return
+	}
+	product, err := h.service.ProductForMutation(c.Request.Context(), shopID, itemID, modelID)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, result)
+	scopeConfirmed := true
+	result, err := h.aliases.CommitMutation(c.Request.Context(), repository.MarketplaceAliasProposal{
+		AliasID: request.MarketplaceAliasID,
+		Identity: models.MarketplaceAliasIdentity{
+			Source: "shopee", AccountKey: "shop:" + strconv.FormatInt(shopID, 10),
+			ExternalItemID: strconv.FormatInt(itemID, 10), ExternalVariantID: strconv.FormatInt(modelID, 10),
+			SourceSKU: firstNonEmptyHandler(product.ModelSKU, product.ItemSKU), RawName: firstNonEmptyHandler(product.ModelName, product.ItemName),
+		},
+		BillType: "sale", ItemCode: request.SMLItemCode, UnitCode: request.SMLUnitCode,
+		QuantityMultiplier: request.QuantityMultiplier, SalesEnabled: request.SalesEnabled, StockPolicy: request.StockPolicy,
+		ScopeConfirmed: &scopeConfirmed, MatchMethod: "manual_identity", ConfirmedBy: c.GetString("user_id"),
+		ExpectedRevision: request.ExpectedRevision, ExpectedImpactDigest: request.ImpactDigest,
+	})
+	if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
+		c.JSON(http.StatusConflict, gin.H{"error": "Product Master หรือ stock job เปลี่ยนไปแล้ว กรุณารีเฟรชและตรวจผลกระทบใหม่"})
+		return
+	}
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
 }
 
 func (h *ShopeeStockHandler) SharedPool(c *gin.Context) {

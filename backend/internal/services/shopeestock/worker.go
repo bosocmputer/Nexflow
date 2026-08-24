@@ -14,10 +14,11 @@ type Worker struct {
 	log          *zap.Logger
 	syncSlots    chan struct{}
 	previewSlots chan struct{}
+	policySlots  chan struct{}
 }
 
 func NewWorker(service *Service, log *zap.Logger) *Worker {
-	return &Worker{service: service, log: log, syncSlots: make(chan struct{}, 5), previewSlots: make(chan struct{}, 2)}
+	return &Worker{service: service, log: log, syncSlots: make(chan struct{}, 5), previewSlots: make(chan struct{}, 2), policySlots: make(chan struct{}, 1)}
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -45,6 +46,46 @@ func (w *Worker) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				w.previewTick(ctx)
+			}
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				w.policyTick(ctx)
+			}
+		}
+	}()
+}
+
+func (w *Worker) policyTick(ctx context.Context) {
+	select {
+	case w.policySlots <- struct{}{}:
+	default:
+		return
+	}
+	owner := w.service.leaseOwner("policy", time.Now().UnixNano())
+	job, err := w.service.store.ClaimPolicyJob(ctx, owner, 2*time.Minute)
+	if err != nil || job == nil {
+		<-w.policySlots
+		if err != nil {
+			w.log.Warn("claim Shopee stock policy job", zap.Error(err))
+		}
+		return
+	}
+	go func() {
+		defer func() { <-w.policySlots }()
+		runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		if err := w.service.ExecutePolicyJob(runCtx, job); err != nil {
+			_ = w.service.store.FailPolicyJob(context.Background(), job, isUnknownWrite(err), err)
+			if !errors.Is(err, ErrSyncInProgress) {
+				w.log.Warn("execute Shopee stock policy job", zap.String("job_id", job.ID), zap.Int64("shop_id", job.ShopID), zap.Error(err))
 			}
 		}
 	}()

@@ -77,6 +77,7 @@ func main() {
 	auditLogRepo := repository.NewAuditLogRepo(db)
 	catalogRepo := repository.NewSMLCatalogRepo(db)
 	aliasRepo := repository.NewMarketplaceAliasRepo(db)
+	repository.NewMarketplaceMappingWorker(aliasRepo, cfg.MarketplaceConversionMode, cfg.MarketplaceReservationLedgerEnabled, logger).Start(appCtx)
 	artifactRepo := repository.NewBillArtifactRepo(db)
 	channelDefaultRepo := repository.NewChannelDefaultRepo(db)
 	docCounterRepo := repository.NewDocCounterRepo(db)
@@ -371,12 +372,13 @@ func main() {
 		SetStockEnabled:          cfg.ShopeeSetStockEnabled,
 		ReservationLedgerEnabled: cfg.MarketplaceReservationLedgerEnabled,
 		GroupedUIEnabled:         cfg.MarketplaceGroupedUIEnabled,
+		ConversionMode:           cfg.MarketplaceConversionMode,
 		Environment:              cfg.ShopeeOpenAPIEnv,
 		InstanceID:               cfg.ShopeeGatewayTenant,
 	}, logger)
 	shopeestock.NewWorker(stockService, logger).Start(appCtx)
 	stockrecalc.NewWorker(billRepo, appSettingsRepo, cfg, stockSMLClient, logger).Start(appCtx)
-	shopeeStockH := handlers.NewShopeeStockHandler(stockService, auditLogRepo, logger)
+	shopeeStockH := handlers.NewShopeeStockHandler(stockService, marketplaceAliasRepo, auditLogRepo, logger)
 
 	// Webhooks (no auth)
 	// Webhook routes:
@@ -591,6 +593,10 @@ func main() {
 		api.GET("/marketplace-aliases/product-groups", middleware.RequireRole("admin", "staff"), aliasH.ProductGroups)
 		api.GET("/marketplace-aliases/product-groups/:parent_key/variants", middleware.RequireRole("admin", "staff"), aliasH.ProductGroupVariants)
 		api.GET("/marketplace-aliases", middleware.RequireRole("admin", "staff"), aliasH.List)
+		api.GET("/marketplace-aliases/jobs/:id", middleware.RequireRole("admin", "staff"), aliasH.Job)
+		api.POST("/marketplace-aliases/jobs/:id/retry", middleware.RequireRole("admin"), aliasH.RetryJob)
+		api.GET("/marketplace-aliases/policy-jobs/:id", middleware.RequireRole("admin", "staff"), aliasH.PolicyJob)
+		api.POST("/marketplace-aliases/policy-jobs/:id/retry", middleware.RequireRole("admin"), aliasH.RetryPolicyJob)
 		api.POST("/marketplace-aliases/impact-preview", middleware.RequireRole("admin"), aliasH.ImpactPreview)
 		api.POST("/marketplace-aliases/confirm", middleware.RequireRole("admin"), aliasH.Confirm)
 		api.PUT("/marketplace-aliases/:id", middleware.RequireRole("admin"), aliasH.Update)

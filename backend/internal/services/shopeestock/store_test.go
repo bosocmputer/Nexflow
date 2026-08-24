@@ -265,6 +265,44 @@ func TestQueuePreviewRunSnapshotsConfigCatalogAndDemandRevisions(t *testing.T) {
 	}
 }
 
+func TestCreateSyncRunSnapshotsRevisionsAndFencingToken(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)INSERT INTO shopee_stock_runs.*run_type.*config_version.*catalog_generation_id.*demand_revision_snapshot.*lease_fencing_token.*SELECT.*'sync'.*st.config_version.*RETURNING id::text`).
+		WithArgs(int64(42), "scheduler", "2026-08-24", "sync-1", int64(9), 120).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("run-sync-1"))
+
+	runID, err := NewStore(db).CreateSyncRun(context.Background(), 42, "scheduler", "2026-08-24", "sync-1", 9, 2*time.Minute)
+	if err != nil || runID != "run-sync-1" {
+		t.Fatalf("runID=%q err=%v", runID, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenewAndValidateLiveWriteFailsClosedWhenSnapshotChanged(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)WITH renewed AS.*UPDATE shopee_stock_leases.*fencing_token=\$4.*UPDATE shopee_stock_runs.*config_version=st.config_version.*demand_revision_snapshot.*RETURNING true`).
+		WithArgs("run-sync-1", int64(42), "sync-1", int64(9), 120).
+		WillReturnRows(sqlmock.NewRows([]string{"valid"}))
+
+	valid, err := NewStore(db).RenewAndValidateLiveWrite(context.Background(), "run-sync-1", 42, "sync-1", 9, 2*time.Minute)
+	if err != nil || valid {
+		t.Fatalf("valid=%v err=%v", valid, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClaimQueuedPreviewUsesSkipLockedAndRenewableLease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

@@ -86,6 +86,9 @@ export interface UnitOption {
   name_2?: string
   stand_value?: number
   divide_value?: number
+	stand_value_exact?: string
+	divide_value_exact?: string
+	generation_id?: string
   is_default?: boolean
 }
 
@@ -389,11 +392,56 @@ export interface MarketplaceCursorPage<T> {
 }
 
 export interface MarketplaceAliasImpact {
+  current_mapping_revision: number
   open_items: number
   open_bills: number
+  attempted_items: number
+  archived_items: number
+  manual_override_items: number
+  reservations: number
+  reservation_moves: number
   stock_mappings: number
   stock_conflicts: number
+  legacy_manual_factors: number
+  legacy_exclusions: number
+  affected_shop_ids: number[]
+  stock_config_versions: Record<string, number>
+  before_formula: string
+  after_formula: string
+  conversion_status: 'ready' | 'needs_review' | 'stale' | 'blocked'
   dry_run_required: boolean
+  impact_digest: string
+}
+
+export interface MarketplaceMappingJob {
+  id: string
+  alias_id: string
+  target_revision: number
+  job_type: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  processed_count: number
+  skipped_count: number
+  failed_count: number
+  result_summary: Record<string, unknown>
+  error_message?: string
+  created_at: string
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+export interface MarketplaceStockPolicyJob {
+  id: string
+  shop_id: number
+  marketplace_alias_id?: string
+  target_revision: number
+  item_id: number
+  model_id: number
+  policy_action: 'zero_then_disable'
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'unknown'
+  attempt_count: number
+  error_message?: string
+  created_at: string
+  finished_at?: string | null
 }
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────

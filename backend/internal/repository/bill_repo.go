@@ -940,6 +940,71 @@ func (r *BillRepo) UpdateBillItemFields(billID, itemID string, itemCode, unitCod
 	return tx.Commit()
 }
 
+// ApplyMarketplaceMasterToBillItem clears item/unit manual overrides only
+// after the operator explicitly confirmed the Product Master impact. The bill
+// lock and current_sml_attempt predicate keep this update on never-attempted
+// documents only.
+func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias *models.MarketplaceItemAlias, enforceConversion bool) error {
+	if alias == nil || strings.TrimSpace(alias.ID) == "" {
+		return errors.New("marketplace alias is required")
+	}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockBillForManualMutation(tx, billID); err != nil {
+		return err
+	}
+	setHash := ""
+	_ = tx.QueryRow(`SELECT set_definition_hash FROM sml_catalog WHERE item_code=$1`, alias.ItemCode).Scan(&setHash)
+	stand, divide, generation := "", "", ""
+	if alias.UnitStandValue != nil {
+		stand = strings.TrimSpace(*alias.UnitStandValue)
+	}
+	if alias.UnitDivideValue != nil {
+		divide = strings.TrimSpace(*alias.UnitDivideValue)
+	}
+	if alias.UnitCatalogGeneration != nil {
+		generation = strings.TrimSpace(*alias.UnitCatalogGeneration)
+	}
+	issue := ""
+	if alias.ConversionStatus != "ready" {
+		issue = "conversion_" + alias.ConversionStatus
+	} else if !alias.SalesEnabled {
+		issue = "sales_disabled"
+	}
+	mapped := true
+	if enforceConversion && issue != "" {
+		mapped = false
+	}
+	result, err := tx.Exec(`UPDATE bill_items SET marketplace_alias_id=$3::uuid,item_code=$4,unit_code=$5,mapped=$6,
+		source_qty=COALESCE(source_qty,qty),gross_amount=COALESCE(gross_amount,ROUND(qty*COALESCE(price,0),2)),
+		sml_qty=CASE WHEN $7<>'' AND $8<>'' THEN qty*$9::numeric ELSE NULL END,
+		quantity_multiplier_snapshot=$9,unit_stand_value_snapshot=NULLIF($7,'')::numeric,
+		unit_divide_value_snapshot=NULLIF($8,'')::numeric,
+		base_qty_snapshot=CASE WHEN $7<>'' AND $8<>'' THEN qty*$9::numeric*$7::numeric/$8::numeric ELSE NULL END,
+		mapping_revision_snapshot=$10,unit_catalog_generation_snapshot=NULLIF($11,'')::uuid,
+		set_definition_hash_snapshot=$12,conversion_issue_code=$13,
+		conversion_override_fields=(COALESCE(conversion_override_fields,'{}'::jsonb)-'item_code'-'unit_code')
+		WHERE bill_id=$1::uuid AND id=$2::uuid`, billID, itemID, alias.ID, alias.ItemCode, alias.UnitCode, mapped,
+		stand, divide, alias.QuantityMultiplier, alias.MappingRevision, generation, setHash, issue)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrBillMutationConflict
+	}
+	if _, err := tx.Exec(`UPDATE bills b SET mutation_revision=mutation_revision+1,
+		status=CASE WHEN EXISTS (SELECT 1 FROM bill_items bi WHERE bi.bill_id=b.id AND bi.mapped IS DISTINCT FROM true)
+		  THEN 'needs_review' WHEN status='needs_review' THEN 'pending' ELSE status END,
+		error_msg=CASE WHEN $2='' THEN NULL ELSE $2 END
+		WHERE id=$1::uuid AND current_sml_attempt_id IS NULL AND archived_at IS NULL`, billID, issue); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func lockBillForManualMutation(tx *sql.Tx, billID string) error {
 	var status string
 	var archivedAt sql.NullTime

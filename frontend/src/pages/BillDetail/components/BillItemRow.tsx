@@ -123,7 +123,7 @@ export function BillItemRow({
     })
   }
 
-  const performSave = async () => {
+  const performSave = async (confirmedImpact: MarketplaceAliasImpact | null = null) => {
     setSaving(true)
     try {
       const nextQty = Number(draft.qty)
@@ -137,6 +137,10 @@ export function BillItemRow({
         ...(nextPrice !== (item.price ?? 0) ? { price: nextPrice } : {}),
         ...(nextDiscount !== (item.discount_amount ?? 0) ? { discount_amount: nextDiscount } : {}),
         remember_mapping: canRememberMapping && rememberMapping,
+        ...(canRememberMapping && rememberMapping && confirmedImpact ? {
+          expected_master_mapping_revision: confirmedImpact.current_mapping_revision,
+          remember_mapping_impact_digest: confirmedImpact.impact_digest,
+        } : {}),
       })
 
       const prevCode = item.item_code ?? ''
@@ -425,7 +429,7 @@ export function BillItemRow({
         title="ยืนยันบันทึกเป็น Product Master?"
         description={saveImpact ? `สินค้า SML: ${draft.item_code}\nเอกสารเปิด: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? ` · พบ conflict ${saveImpact.stock_conflicts.toLocaleString()}` : ''}${saveImpact.dry_run_required ? '\nหลังบันทึกต้องทำ Dry-run ใหม่ก่อนซิงก์สต๊อก' : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน` : undefined}
         confirmLabel="บันทึก Master"
-        onConfirm={async () => { setSaveImpact(null); await performSave() }}
+        onConfirm={async () => { const impact = saveImpact; setSaveImpact(null); await performSave(impact) }}
       />
       </>
     )
@@ -582,7 +586,7 @@ export function BillItemRow({
         title="ยืนยันบันทึกเป็น Product Master?"
         description={saveImpact ? `สินค้า SML: ${draft.item_code}\nเอกสารเปิด: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? ` · พบ conflict ${saveImpact.stock_conflicts.toLocaleString()}` : ''}${saveImpact.dry_run_required ? '\nหลังบันทึกต้องทำ Dry-run ใหม่ก่อนซิงก์สต๊อก' : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน` : undefined}
         confirmLabel="บันทึก Master"
-        onConfirm={async () => { setSaveImpact(null); await performSave() }}
+        onConfirm={async () => { const impact = saveImpact; setSaveImpact(null); await performSave(impact) }}
       />
     </>
   )

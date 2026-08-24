@@ -96,6 +96,10 @@ type ProductRow = {
   model_sku: string
   marketplace_alias_id?: string | null
   marketplace_alias_updated_at?: string | null
+  marketplace_conversion_status?: string
+  marketplace_stock_policy?: 'managed' | 'zeroing' | 'disabled_zero' | 'manual_unmanaged' | 'blocked'
+  marketplace_sales_enabled: boolean
+  marketplace_quantity_multiplier: number
   shopee_available: number
   shopee_reserved: number
   sml_item_code: string
@@ -283,6 +287,14 @@ const WARNING_LABEL: Record<string, string> = {
   shared_component_stock: 'ส่วนประกอบถูกใช้ร่วมกับสินค้าชุดอื่น',
   shared_pool_invalid: 'การแบ่งสต๊อกร่วมกันไม่ถูกต้อง',
   pending_orders_exceed_sml_stock: 'ออเดอร์ที่ยังไม่ลง SML มากกว่าสต๊อกคงเหลือ',
+  conversion_needs_review: 'หน่วยหรือ conversion ยังไม่ผ่านการยืนยัน',
+  conversion_stale: 'หน่วยหรือ conversion อ้างอิง Catalog รุ่นเก่า',
+  conversion_blocked: 'conversion ถูกบล็อกเพื่อความปลอดภัย',
+  stock_policy_blocked: 'ยังไม่เปิดให้ Nexflow ส่งสต๊อก',
+  stock_policy_zeroing: 'กำลังตั้ง stock เป็น 0 ก่อนปิด',
+  stock_policy_disabled_zero: 'ปิดแล้วและยืนยัน stock 0',
+  stock_policy_manual_unmanaged: 'ผู้ใช้เลือกจัดการ stock เอง',
+  manual_unmanaged_shared_stock: 'ใช้ stock เดียวกับ listing ที่ผู้ใช้จัดการเอง',
   set_product_schema_unsupported: 'ฐานข้อมูล SML นี้ยังไม่รองรับข้อมูลสินค้าชุด',
 }
 
@@ -1485,8 +1497,8 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
   const [selected, setSelected] = useState<StockCatalogOption | null>(null)
   const [units, setUnits] = useState<StockCatalogUnit[]>([])
   const [unitCode, setUnitCode] = useState('')
-  const [useManualFactor, setUseManualFactor] = useState(false)
-  const [manualFactor, setManualFactor] = useState('')
+  const [quantityMultiplier, setQuantityMultiplier] = useState('1')
+  const [stockPolicy, setStockPolicy] = useState<'managed' | 'blocked'>('blocked')
   const [busy, setBusy] = useState(false)
   const [confirmExclude, setConfirmExclude] = useState(false)
   const [saveImpact, setSaveImpact] = useState<MarketplaceAliasImpact | null>(null)
@@ -1498,8 +1510,8 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
     setSelected(product?.sml_item_code ? { item_code: product.sml_item_code, item_name: product.sml_item_name, standard_unit: product.sml_unit_code, units: [] } : null)
     setUnits([])
     setUnitCode(product?.sml_unit_code || '')
-    setUseManualFactor(product?.manual_unit_factor != null)
-    setManualFactor(product?.manual_unit_factor?.toString() || '')
+    setQuantityMultiplier(String(product?.marketplace_quantity_multiplier || 1))
+    setStockPolicy(product?.marketplace_stock_policy === 'managed' ? 'managed' : 'blocked')
     if (product?.sml_item_code) {
       setBusy(true)
       void client.get<{ items: StockCatalogOption[] }>('/api/settings/shopee-stock/catalog-search', { params: { q: product.sml_item_code } })
@@ -1534,13 +1546,13 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
     }
   }
   const validateSelection = () => {
-    const parsedManualFactor = Number(manualFactor)
+    const multiplier = Number(quantityMultiplier)
     if (!selected || !unitCode) return null
-    if (useManualFactor && (!Number.isFinite(parsedManualFactor) || parsedManualFactor < 1)) {
-      toast.error('อัตราส่วนที่กำหนดเองต้องไม่น้อยกว่า 1')
+    if (!Number.isInteger(multiplier) || multiplier < 1 || multiplier > 1_000_000) {
+      toast.error('จำนวนที่ตัดต้องเป็นจำนวนเต็ม 1 ถึง 1,000,000')
       return null
     }
-    return parsedManualFactor
+    return multiplier
   }
   const previewSave = async () => {
     if (!product || !selected || validateSelection() == null) return
@@ -1555,6 +1567,10 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         source_sku: product.model_sku || product.item_sku || '',
         raw_name: productDisplayName(product),
         item_code: selected.item_code,
+        unit_code: unitCode,
+        quantity_multiplier: validateSelection(),
+        sales_enabled: product.marketplace_sales_enabled ?? true,
+        stock_policy: stockPolicy,
       })
       setSaveImpact(response.data)
     } catch (error) {
@@ -1565,20 +1581,24 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
   }
   const save = async (excluded = false) => {
     if (!product || (!excluded && (!selected || !unitCode))) return
-    const parsedManualFactor = excluded ? 0 : validateSelection()
-    if (!excluded && parsedManualFactor == null) return
+    const multiplier = excluded ? 1 : validateSelection()
+    if (!excluded && multiplier == null) return
     setBusy(true)
     try {
-      await client.put(`/api/settings/shopee-stock/${shopID}/mappings/${product.item_id}/${product.model_id}`, {
+      const response = await client.put<{ job?: { id: string } }>(`/api/settings/shopee-stock/${shopID}/mappings/${product.item_id}/${product.model_id}`, {
         sml_item_code: excluded ? '' : selected?.item_code,
         sml_unit_code: excluded ? '' : unitCode,
-        manual_unit_factor: !excluded && useManualFactor ? parsedManualFactor : null,
         excluded,
         updated_at: product.updated_at,
         marketplace_alias_id: product.marketplace_alias_id || '',
         marketplace_alias_updated_at: product.marketplace_alias_updated_at || null,
+        quantity_multiplier: multiplier,
+        sales_enabled: product.marketplace_sales_enabled ?? true,
+        stock_policy: stockPolicy,
+        expected_mapping_revision: saveImpact?.current_mapping_revision ?? 0,
+        impact_digest: saveImpact?.impact_digest ?? '',
       })
-      toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : 'บันทึก Product Master แล้ว ต้อง Dry-run ใหม่')
+      toast.success(excluded ? 'ยกเว้นสินค้านี้แล้ว' : `บันทึก revision แล้ว กำลังปรับข้อมูล${response.data.job?.id ? ` · งาน ${response.data.job.id.slice(0, 8)}` : ''}`)
       notifyWorkQueueChanged()
       await onSaved()
     } catch (error) {
@@ -1608,7 +1628,7 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         footer={(
           <div className="flex flex-wrap justify-between gap-2">
             <Button type="button" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirmExclude(true)} disabled={busy}>ยกเว้นสินค้านี้</Button>
-            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={previewSave} disabled={busy || !selected || !unitCode || (useManualFactor && !manualFactor)}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}ตรวจผลกระทบ</Button></div>
+            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={previewSave} disabled={busy || !selected || !unitCode || !quantityMultiplier}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}ตรวจผลกระทบ</Button></div>
           </div>
         )}
       >
@@ -1639,16 +1659,22 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
                   <p className="text-xs text-muted-foreground">เลือกหน่วย SML ที่ต้องตัด เมื่อสินค้า Shopee รุ่นนี้ขายได้ 1 ชิ้น</p>
                   {selectedUnit && (
                     <p className="text-xs font-medium text-foreground">
-                      Shopee 1 ชิ้น = 1 {selectedUnitLabel}{baseUnitLabel && (selectedFactor !== 1 || selectedUnitLabel !== baseUnitLabel) ? ` = ${formatNumber(selectedFactor)} ${baseUnitLabel}` : ''}
+                      Shopee 1 ชิ้น = {quantityMultiplier || '-'} {selectedUnitLabel}{baseUnitLabel && Number.isInteger(Number(quantityMultiplier)) ? ` = ${formatNumber(Number(quantityMultiplier) * selectedFactor)} ${baseUnitLabel}` : ''}
                     </p>
                   )}
                 </div>
                 <div className="rounded-md border p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div><Label htmlFor="manual-factor">กำหนดอัตราส่วนเอง</Label><p className="text-xs text-muted-foreground">ใช้เฉพาะเมื่อข้อมูลหน่วยใน SML ยังไม่ถูกต้อง ระบบจะบันทึกไว้ในประวัติ</p></div>
-                    <Switch id="manual-factor" checked={useManualFactor} onCheckedChange={setUseManualFactor} />
-                  </div>
-                  {useManualFactor && <Input className="mt-3" inputMode="decimal" type="number" min="1" step="any" value={manualFactor} onChange={(event) => setManualFactor(event.target.value)} placeholder="เช่น 6" />}
+                  <Label htmlFor="quantity-multiplier">จำนวนหน่วย SML ที่ตัดต่อสินค้า Shopee 1 ชิ้น</Label>
+                  <Input id="quantity-multiplier" className="mt-2" inputMode="numeric" type="number" min="1" max="1000000" step="1" value={quantityMultiplier} onChange={(event) => setQuantityMultiplier(event.target.value)} />
+                  <p className="mt-1 text-xs text-muted-foreground">ใช้จำนวนเต็มและคูณกับอัตราส่วนของหน่วยจาก SML โดยไม่ใช้ factor ที่กรอกเอง</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="stock-policy">นโยบายซิงก์สต๊อก</Label>
+                  <Select value={stockPolicy} onValueChange={(value) => setStockPolicy(value as 'managed' | 'blocked')}>
+                    <SelectTrigger id="stock-policy"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="blocked">บล็อกไว้จนกว่า Dry-run จะผ่าน</SelectItem><SelectItem value="managed">ให้ Nexflow จัดการสต๊อก</SelectItem></SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">ทุกการเปลี่ยนแปลงจะหยุดร้านและบังคับ Dry-run ใหม่ก่อนส่ง stock จริง</p>
                 </div>
               </div>
             )}

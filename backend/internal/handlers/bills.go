@@ -3872,12 +3872,14 @@ func (h *BillHandler) DeleteItemRow(c *gin.Context) {
 
 // PUT /api/bills/:id/items/:item_id — edit item code/unit/qty/price before sending.
 type updateItemRequest struct {
-	ItemCode        *string  `json:"item_code"`
-	UnitCode        *string  `json:"unit_code"`
-	Qty             *float64 `json:"qty"`
-	Price           *float64 `json:"price"`
-	DiscountAmount  *float64 `json:"discount_amount"`
-	RememberMapping bool     `json:"remember_mapping"`
+	ItemCode                      *string  `json:"item_code"`
+	UnitCode                      *string  `json:"unit_code"`
+	Qty                           *float64 `json:"qty"`
+	Price                         *float64 `json:"price"`
+	DiscountAmount                *float64 `json:"discount_amount"`
+	RememberMapping               bool     `json:"remember_mapping"`
+	ExpectedMasterMappingRevision int64    `json:"expected_master_mapping_revision"`
+	RememberMappingImpactDigest   string   `json:"remember_mapping_impact_digest"`
 }
 
 func (h *BillHandler) UpdateItem(c *gin.Context) {
@@ -3970,6 +3972,7 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		}
 	}
 
+	var committedMaster *models.MarketplaceItemAlias
 	if req.RememberMapping {
 		if c.GetString("user_role") != "admin" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "เฉพาะผู้ดูแลระบบเท่านั้นที่บันทึก Product Master ได้"})
@@ -3977,6 +3980,10 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		}
 		if !isMarketplaceSource(bill.Source) || h.marketplaceAliasRepo == nil || req.ItemCode == nil || *req.ItemCode == "" {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "บิลนี้ไม่สามารถสร้าง Product Master ได้"})
+			return
+		}
+		if strings.TrimSpace(req.RememberMappingImpactDigest) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาตรวจผลกระทบ Product Master ใหม่ก่อนบันทึก"})
 			return
 		}
 		if bill.Source == "shopee" && bill.SourceAccountKey == "default" && existingItem.SourceItemID == "" {
@@ -3993,14 +4000,22 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		} else if existingItem.SourceSKU != "" {
 			method = "manual_sku"
 		}
-		if _, err := h.marketplaceAliasRepo.SaveAndApply(repository.MarketplaceAliasMutation{
+		scopeConfirmed := true
+		proposal := repository.MarketplaceAliasProposal{
 			Identity: models.MarketplaceAliasIdentity{Source: bill.Source, AccountKey: bill.SourceAccountKey,
 				ExternalItemID: existingItem.SourceItemID, ExternalVariantID: existingItem.SourceVariantID,
 				SourceSKU: existingItem.SourceSKU, RawName: existingItem.RawName},
 			BillType: bill.BillType, ItemCode: *req.ItemCode, UnitCode: unit, MatchMethod: method,
-			ScopeConfirmed: true, ConfirmedBy: c.GetString("user_id"),
-		}); err != nil {
-			if errors.Is(err, repository.ErrMarketplaceAliasConflict) {
+			ScopeConfirmed: &scopeConfirmed, ConfirmedBy: c.GetString("user_id"),
+			ExpectedRevision: req.ExpectedMasterMappingRevision, ExpectedImpactDigest: req.RememberMappingImpactDigest,
+		}
+		if existingItem.MarketplaceAliasID != nil {
+			proposal.AliasID = *existingItem.MarketplaceAliasID
+			proposal.ScopeConfirmed = nil
+		}
+		commitResult, err := h.marketplaceAliasRepo.CommitMutation(c.Request.Context(), proposal)
+		if err != nil {
+			if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
 				c.JSON(http.StatusConflict, gin.H{"error": "การจับคู่นี้ถูกแก้ไขหรือมีข้อมูลซ้ำ กรุณารีเฟรชแล้วลองใหม่"})
 				return
 			}
@@ -4008,9 +4023,14 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึก Product Master ไม่สำเร็จ และยังไม่มีบิลอื่นถูกเปลี่ยน"})
 			return
 		}
+		committedMaster = commitResult.Alias
 	}
 
-	if err := h.billRepo.UpdateBillItemFields(billID, itemID, req.ItemCode, req.UnitCode, req.Qty, req.Price, req.DiscountAmount); err != nil {
+	itemCode, unitCode := req.ItemCode, req.UnitCode
+	if committedMaster != nil {
+		itemCode, unitCode = nil, nil
+	}
+	if err := h.billRepo.UpdateBillItemFields(billID, itemID, itemCode, unitCode, req.Qty, req.Price, req.DiscountAmount); err != nil {
 		if errors.Is(err, repository.ErrBillMutationConflict) {
 			c.JSON(http.StatusConflict, gin.H{"error": "บิลถูกส่ง เริ่มส่ง หรือถูกแก้โดยผู้ใช้อื่นแล้ว กรุณารีเฟรชก่อนแก้ไข"})
 			return
@@ -4018,6 +4038,17 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		h.log.Error("UpdateItem", zap.String("bill", billID), zap.String("item", itemID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
+	}
+	if committedMaster != nil {
+		if err := h.billRepo.ApplyMarketplaceMasterToBillItem(billID, itemID, committedMaster, h.conversionModeForBill(bill) == "active"); err != nil {
+			if errors.Is(err, repository.ErrBillMutationConflict) {
+				c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือถูกแก้ระหว่างบันทึก Product Master กรุณารีเฟรช"})
+				return
+			}
+			h.log.Error("UpdateItem: apply committed marketplace master", zap.String("bill_id", billID), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Product Master ถูกบันทึกแล้ว แต่ปรับบิลนี้ไม่สำเร็จ กรุณารีเฟรช"})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "item updated", "master_saved": req.RememberMapping})

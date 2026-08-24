@@ -140,6 +140,10 @@ ALTER TABLE marketplace_item_aliases
   ADD COLUMN IF NOT EXISTS sales_enabled BOOLEAN NOT NULL DEFAULT true,
   ADD COLUMN IF NOT EXISTS stock_policy TEXT NOT NULL DEFAULT 'blocked';
 
+ALTER TABLE marketplace_item_aliases
+  ADD COLUMN IF NOT EXISTS stock_policy_acknowledged_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS stock_policy_acknowledged_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'marketplace_alias_quantity_multiplier_check') THEN
@@ -287,6 +291,9 @@ CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs (
   skipped_count BIGINT NOT NULL DEFAULT 0,
   failed_count BIGINT NOT NULL DEFAULT 0,
   result_summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+	attempt_count INTEGER NOT NULL DEFAULT 0,
+	error_message TEXT NOT NULL DEFAULT '',
+	heartbeat_at TIMESTAMPTZ,
   lease_owner TEXT NOT NULL DEFAULT '',
   lease_until TIMESTAMPTZ,
   requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -300,7 +307,10 @@ CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs (
 CREATE INDEX IF NOT EXISTS marketplace_mapping_jobs_claim_idx
   ON marketplace_mapping_jobs(status, lease_until, created_at);
 ALTER TABLE marketplace_mapping_jobs
-  ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+  ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
+  ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS error_message TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS marketplace_mapping_jobs_idempotency_uidx
   ON marketplace_mapping_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
@@ -457,6 +467,9 @@ CREATE TABLE IF NOT EXISTS shopee_stock_policy_jobs (
   tenant_key TEXT NOT NULL DEFAULT '',
   shop_id BIGINT NOT NULL REFERENCES shopee_api_connections(shop_id) ON DELETE CASCADE,
   marketplace_alias_id UUID REFERENCES marketplace_item_aliases(id) ON DELETE SET NULL,
+  target_revision BIGINT NOT NULL DEFAULT 0,
+  item_id BIGINT NOT NULL DEFAULT 0,
+  model_id BIGINT NOT NULL DEFAULT 0,
   policy_action TEXT NOT NULL CHECK (policy_action IN ('zero_then_disable')),
   status TEXT NOT NULL DEFAULT 'queued'
     CHECK (status IN ('queued','running','completed','failed','unknown')),
@@ -466,12 +479,21 @@ CREATE TABLE IF NOT EXISTS shopee_stock_policy_jobs (
   next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   lease_owner TEXT NOT NULL DEFAULT '',
   lease_until TIMESTAMPTZ,
+  lease_fencing_token BIGINT,
+  heartbeat_at TIMESTAMPTZ,
   error_message TEXT NOT NULL DEFAULT '',
   requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ
 );
+
+ALTER TABLE shopee_stock_policy_jobs
+  ADD COLUMN IF NOT EXISTS target_revision BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS item_id BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS model_id BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS lease_fencing_token BIGINT,
+  ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS shopee_stock_policy_jobs_claim_idx
   ON shopee_stock_policy_jobs(status, next_attempt_at, lease_until);

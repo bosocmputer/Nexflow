@@ -56,47 +56,51 @@ type LocationDiagnostic struct {
 }
 
 type ProductRow struct {
-	ShopID                       int64                   `json:"shop_id"`
-	ItemID                       int64                   `json:"item_id"`
-	ModelID                      int64                   `json:"model_id"`
-	ItemName                     string                  `json:"item_name"`
-	ModelName                    string                  `json:"model_name"`
-	ItemSKU                      string                  `json:"item_sku"`
-	ModelSKU                     string                  `json:"model_sku"`
-	ShopeeAvailable              int64                   `json:"shopee_available"`
-	ShopeeReserved               int64                   `json:"shopee_reserved"`
-	SMLItemCode                  string                  `json:"sml_item_code"`
-	SMLItemName                  string                  `json:"sml_item_name"`
-	SMLUnitCode                  string                  `json:"sml_unit_code"`
-	SMLUnitName                  string                  `json:"sml_unit_name"`
-	SMLBaseUnitCode              string                  `json:"sml_base_unit_code"`
-	SMLBaseUnitName              string                  `json:"sml_base_unit_name"`
-	SMLItemType                  int                     `json:"sml_item_type"`
-	SetComponentCount            int                     `json:"set_component_count"`
-	SetDefinitionHash            string                  `json:"set_definition_hash,omitempty"`
-	MappingSetDefinitionHash     string                  `json:"mapping_set_definition_hash,omitempty"`
-	SetDocumentValid             bool                    `json:"set_document_valid"`
-	SetStockValid                bool                    `json:"set_stock_valid"`
-	SetComponents                []sml.StockSetComponent `json:"set_components,omitempty"`
-	UnitFactor                   float64                 `json:"unit_factor"`
-	ManualUnitFactor             *float64                `json:"manual_unit_factor,omitempty"`
-	MatchSource                  string                  `json:"match_source"`
-	SharedPoolEnabled            bool                    `json:"shared_pool_enabled"`
-	PoolAllocationPct            float64                 `json:"pool_allocation_pct"`
-	MarketplaceAliasID           string                  `json:"marketplace_alias_id,omitempty"`
-	MarketplaceAliasUpdatedAt    *time.Time              `json:"marketplace_alias_updated_at,omitempty"`
-	Excluded                     bool                    `json:"excluded"`
-	WarningCodes                 []string                `json:"warning_codes"`
-	LastPreviewBalance           *float64                `json:"last_preview_balance,omitempty"`
-	LastPreviewExcludedBalance   *float64                `json:"last_preview_excluded_balance,omitempty"`
-	LastPreviewExcludedLocations []ExcludedStockLocation `json:"last_preview_excluded_locations,omitempty"`
-	LastPreviewMinQty            *float64                `json:"last_preview_min_qty,omitempty"`
-	LastPreviewMaxQty            *float64                `json:"last_preview_max_qty,omitempty"`
-	LastPreviewTarget            *int64                  `json:"last_preview_target,omitempty"`
-	LastPreviewPendingQty        *float64                `json:"last_preview_pending_qty,omitempty"`
-	LastPreviewPoolBaseTarget    *int64                  `json:"last_preview_pool_base_target,omitempty"`
-	LastSuccessTarget            *int64                  `json:"last_success_target,omitempty"`
-	UpdatedAt                    time.Time               `json:"updated_at"`
+	ShopID                        int64                   `json:"shop_id"`
+	ItemID                        int64                   `json:"item_id"`
+	ModelID                       int64                   `json:"model_id"`
+	ItemName                      string                  `json:"item_name"`
+	ModelName                     string                  `json:"model_name"`
+	ItemSKU                       string                  `json:"item_sku"`
+	ModelSKU                      string                  `json:"model_sku"`
+	ShopeeAvailable               int64                   `json:"shopee_available"`
+	ShopeeReserved                int64                   `json:"shopee_reserved"`
+	SMLItemCode                   string                  `json:"sml_item_code"`
+	SMLItemName                   string                  `json:"sml_item_name"`
+	SMLUnitCode                   string                  `json:"sml_unit_code"`
+	SMLUnitName                   string                  `json:"sml_unit_name"`
+	SMLBaseUnitCode               string                  `json:"sml_base_unit_code"`
+	SMLBaseUnitName               string                  `json:"sml_base_unit_name"`
+	SMLItemType                   int                     `json:"sml_item_type"`
+	SetComponentCount             int                     `json:"set_component_count"`
+	SetDefinitionHash             string                  `json:"set_definition_hash,omitempty"`
+	MappingSetDefinitionHash      string                  `json:"mapping_set_definition_hash,omitempty"`
+	SetDocumentValid              bool                    `json:"set_document_valid"`
+	SetStockValid                 bool                    `json:"set_stock_valid"`
+	SetComponents                 []sml.StockSetComponent `json:"set_components,omitempty"`
+	UnitFactor                    float64                 `json:"unit_factor"`
+	ManualUnitFactor              *float64                `json:"manual_unit_factor,omitempty"`
+	MatchSource                   string                  `json:"match_source"`
+	SharedPoolEnabled             bool                    `json:"shared_pool_enabled"`
+	PoolAllocationPct             float64                 `json:"pool_allocation_pct"`
+	MarketplaceAliasID            string                  `json:"marketplace_alias_id,omitempty"`
+	MarketplaceAliasUpdatedAt     *time.Time              `json:"marketplace_alias_updated_at,omitempty"`
+	MarketplaceConversionStatus   string                  `json:"marketplace_conversion_status,omitempty"`
+	MarketplaceStockPolicy        string                  `json:"marketplace_stock_policy,omitempty"`
+	MarketplaceSalesEnabled       bool                    `json:"marketplace_sales_enabled"`
+	MarketplaceQuantityMultiplier int64                   `json:"marketplace_quantity_multiplier"`
+	Excluded                      bool                    `json:"excluded"`
+	WarningCodes                  []string                `json:"warning_codes"`
+	LastPreviewBalance            *float64                `json:"last_preview_balance,omitempty"`
+	LastPreviewExcludedBalance    *float64                `json:"last_preview_excluded_balance,omitempty"`
+	LastPreviewExcludedLocations  []ExcludedStockLocation `json:"last_preview_excluded_locations,omitempty"`
+	LastPreviewMinQty             *float64                `json:"last_preview_min_qty,omitempty"`
+	LastPreviewMaxQty             *float64                `json:"last_preview_max_qty,omitempty"`
+	LastPreviewTarget             *int64                  `json:"last_preview_target,omitempty"`
+	LastPreviewPendingQty         *float64                `json:"last_preview_pending_qty,omitempty"`
+	LastPreviewPoolBaseTarget     *int64                  `json:"last_preview_pool_base_target,omitempty"`
+	LastSuccessTarget             *int64                  `json:"last_success_target,omitempty"`
+	UpdatedAt                     time.Time               `json:"updated_at"`
 }
 
 type ProductCounts struct {
@@ -197,6 +201,11 @@ type MappingUpdate struct {
 	UpdatedAt                 time.Time  `json:"updated_at"`
 	MarketplaceAliasID        string     `json:"marketplace_alias_id,omitempty"`
 	MarketplaceAliasUpdatedAt *time.Time `json:"marketplace_alias_updated_at,omitempty"`
+	QuantityMultiplier        int64      `json:"quantity_multiplier,omitempty"`
+	SalesEnabled              *bool      `json:"sales_enabled,omitempty"`
+	StockPolicy               string     `json:"stock_policy,omitempty"`
+	ExpectedRevision          int64      `json:"expected_mapping_revision,omitempty"`
+	ImpactDigest              string     `json:"impact_digest,omitempty"`
 }
 
 type SharedPoolMember struct {
@@ -371,4 +380,23 @@ type SyncResult struct {
 	BlockedCount int    `json:"blocked_count"`
 	ErrorCount   int    `json:"error_count"`
 	UnknownCount int    `json:"unknown_count"`
+}
+
+type PolicyJob struct {
+	ID               string
+	ShopID           int64
+	MarketplaceAlias string
+	TargetRevision   int64
+	ItemID           int64
+	ModelID          int64
+	PolicyAction     string
+	Status           string
+	RequestHash      string
+	AttemptCount     int
+	LeaseOwner       string
+	LeaseUntil       time.Time
+	ErrorMessage     string
+	RequestedBy      string
+	CreatedAt        time.Time
+	FinishedAt       *time.Time
 }
