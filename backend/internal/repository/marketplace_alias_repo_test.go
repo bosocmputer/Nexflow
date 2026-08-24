@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"testing"
@@ -10,6 +11,55 @@ import (
 
 	"nexflow/internal/models"
 )
+
+func TestMarketplaceAliasProductGroupsUsesBoundedKeysetPage(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)WITH all_rows AS.*matched_keys AS.*\(source,account_key,group_key\) > \(\$3,\$4,\$5\).*LIMIT \$6.*GROUP BY.*ORDER BY.*`).
+		WithArgs("shopee", "%pack%", "shopee", "shop:1", "100", 51).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"source", "account_key", "account_name", "parent_key", "parent_key_kind", "product_name",
+			"variant_count", "ready_count", "fix_count", "disabled_count", "updated_at",
+		}))
+
+	groups, more, err := NewMarketplaceAliasRepo(db).ProductGroups(context.Background(), MarketplaceProductGroupFilter{
+		Source: "shopee", Query: "pack", Limit: 50,
+		AfterSource: "shopee", AfterAccountKey: "shop:1", AfterParentKey: "100",
+	})
+	if err != nil || more || len(groups) != 0 {
+		t.Fatalf("groups=%#v more=%v err=%v", groups, more, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasGroupVariantsUsesChildKeysetWithoutOffset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM marketplace_item_aliases a.*alias_parent_key.*=\$3.*\(COALESCE\(a.external_variant_id,''\),a.id::text\) > \(\$4,\$5\).*LIMIT \$6`).
+		WithArgs("shopee", "shop:1", "100", "200", "alias-1", 101).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	variants, more, err := NewMarketplaceAliasRepo(db).ProductGroupVariants(context.Background(), MarketplaceProductVariantFilter{
+		Source: "shopee", AccountKey: "shop:1", ParentKey: "100", Limit: 100,
+		AfterVariantID: "200", AfterID: "alias-1",
+	})
+	if err != nil || more || len(variants) != 0 {
+		t.Fatalf("variants=%#v more=%v err=%v", variants, more, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestMarketplaceAliasIncrementUsageDoesNotChangeVersion(t *testing.T) {
 	db, mock, err := sqlmock.New()

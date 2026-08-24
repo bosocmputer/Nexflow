@@ -352,6 +352,40 @@ export interface MarketplaceItemAlias {
   product_active: boolean
   open_item_count: number
   stock_mapping_count: number
+	external_parent_id: string
+	parent_key: string
+	parent_key_kind: 'external' | 'derived'
+	source_product_name: string
+	source_variant_name: string
+	mapping_revision: number
+	metadata_updated_at?: string | null
+	quantity_multiplier: number
+	unit_stand_value?: string | null
+	unit_divide_value?: string | null
+	unit_catalog_generation?: string | null
+	conversion_status: 'ready' | 'needs_review' | 'stale' | 'blocked'
+	sales_enabled: boolean
+	stock_policy: 'managed' | 'zeroing' | 'disabled_zero' | 'manual_unmanaged' | 'blocked'
+}
+
+export interface MarketplaceProductGroup {
+	source: string
+	account_key: string
+	account_name?: string
+	parent_key: string
+	parent_key_kind: 'external' | 'derived'
+	product_name: string
+	variant_count: number
+	ready_count: number
+	fix_count: number
+	disabled_count: number
+	updated_at: string
+}
+
+export interface MarketplaceCursorPage<T> {
+	data: T[]
+	has_more: boolean
+	next_cursor: string
 }
 
 export interface MarketplaceAliasImpact {

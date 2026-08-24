@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
-import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceItemAlias } from '@/types'
+import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceProductGroup } from '@/types'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -25,6 +25,7 @@ const PER_PAGE = 30
 
 type TabKey = 'pending' | 'saved'
 type SourceFilter = 'all' | 'shopee' | 'lazada' | 'tiktok'
+type StatusFilter = 'all' | 'ready' | 'fix' | 'disabled'
 type PendingAction =
   | { kind: 'confirm'; group: MarketplaceAliasReviewGroup; product: CatalogMatch; impact: MarketplaceAliasImpact }
   | { kind: 'update'; alias: MarketplaceItemAlias; product: CatalogMatch; impact: MarketplaceAliasImpact }
@@ -42,6 +43,12 @@ export default function MarketplaceAliases() {
   const [tab, setTab] = useState<TabKey>(initialQuery ? 'saved' : 'pending')
   const [pending, setPending] = useState<MarketplaceAliasReviewGroup[]>([])
   const [saved, setSaved] = useState<MarketplaceItemAlias[]>([])
+	const [savedGroups, setSavedGroups] = useState<MarketplaceProductGroup[]>([])
+	const [groupedAvailable, setGroupedAvailable] = useState<boolean | null>(null)
+	const [groupCursor, setGroupCursor] = useState('')
+	const [groupCursorHistory, setGroupCursorHistory] = useState<string[]>([])
+	const [nextGroupCursor, setNextGroupCursor] = useState('')
+	const [status, setStatus] = useState<StatusFilter>('all')
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [source, setSource] = useState<SourceFilter>('all')
@@ -53,7 +60,9 @@ export default function MarketplaceAliases() {
   const [action, setAction] = useState<PendingAction | null>(null)
   const [previewing, setPreviewing] = useState(false)
 
-  const pages = Math.max(1, Math.ceil(total / PER_PAGE))
+	const groupedSaved = tab === 'saved' && groupedAvailable === true
+  const pages = groupedSaved ? groupCursorHistory.length + 1 + (nextGroupCursor ? 1 : 0) : Math.max(1, Math.ceil(total / PER_PAGE))
+	const currentPage = groupedSaved ? groupCursorHistory.length + 1 : page
   const pendingItems = useMemo(() => pending.reduce((sum, item) => sum + item.item_count, 0), [pending])
 
   const load = useCallback(async () => {
@@ -72,18 +81,33 @@ export default function MarketplaceAliases() {
         setPending(response.data.data ?? [])
         setTotal(response.data.total ?? 0)
       } else {
-        const aliasResponse = await client.get<{ data: MarketplaceItemAlias[]; total: number }>('/api/marketplace-aliases', {
-          params: { ...params, usable_only: true },
-        })
-        setSaved(aliasResponse.data.data ?? [])
-        setTotal(aliasResponse.data.total ?? 0)
+		if (groupedAvailable !== false) {
+		  try {
+			const groupResponse = await client.get<MarketplaceCursorPage<MarketplaceProductGroup>>('/api/marketplace-aliases/product-groups', {
+			  params: { source: params.source, q: params.q, status: status === 'all' ? undefined : status, cursor: groupCursor || undefined, limit: PER_PAGE },
+			})
+			setSavedGroups(groupResponse.data.data ?? [])
+			setNextGroupCursor(groupResponse.data.next_cursor ?? '')
+			setGroupedAvailable(true)
+			setTotal(0)
+			return
+		  } catch (error) {
+			if ((error as { response?: { status?: number } }).response?.status !== 404) throw error
+			setGroupedAvailable(false)
+		  }
+		}
+		const aliasResponse = await client.get<{ data: MarketplaceItemAlias[]; total: number }>('/api/marketplace-aliases', {
+		  params: { ...params, usable_only: true },
+		})
+		setSaved(aliasResponse.data.data ?? [])
+		setTotal(aliasResponse.data.total ?? 0)
       }
     } catch (error) {
       toast.error(errorMessage(error, 'โหลดข้อมูลการจับคู่สินค้าไม่สำเร็จ'))
     } finally {
       setLoading(false)
     }
-  }, [page, query, source, tab])
+	}, [groupCursor, groupedAvailable, page, query, source, status, tab])
 
   useEffect(() => { void load() }, [load])
 
@@ -177,7 +201,34 @@ export default function MarketplaceAliases() {
   const changeTab = (value: string) => {
     setTab(value as TabKey)
     setPage(1)
+	setGroupCursor('')
+	setGroupCursorHistory([])
   }
+
+	const resetProductPage = () => {
+	  setPage(1)
+	  setGroupCursor('')
+	  setGroupCursorHistory([])
+	}
+
+	const goNext = () => {
+	  if (groupedSaved && nextGroupCursor) {
+		setGroupCursorHistory((value) => [...value, groupCursor])
+		setGroupCursor(nextGroupCursor)
+		return
+	  }
+	  setPage((value) => value + 1)
+	}
+
+	const goPrevious = () => {
+	  if (groupedSaved) {
+		const previous = groupCursorHistory[groupCursorHistory.length - 1] ?? ''
+		setGroupCursorHistory((value) => value.slice(0, -1))
+		setGroupCursor(previous)
+		return
+	  }
+	  setPage((value) => value - 1)
+	}
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
@@ -205,19 +256,19 @@ export default function MarketplaceAliases() {
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') { setQuery(draft.trim()); setPage(1) }
+				  if (event.key === 'Enter') { setQuery(draft.trim()); resetProductPage() }
                 }}
                 placeholder={tab === 'pending' ? 'ค้นหาสินค้าที่ต้องจับคู่' : 'ค้นหาสินค้า Marketplace หรือรหัส SML'}
                 className="pl-8 pr-8"
               />
               {(draft || query) && (
-                <button type="button" aria-label="ล้างคำค้นหา" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => { setDraft(''); setQuery(''); setPage(1) }}>
+				<button type="button" aria-label="ล้างคำค้นหา" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" onClick={() => { setDraft(''); setQuery(''); resetProductPage() }}>
                   <X className="h-4 w-4" />
                 </button>
               )}
             </div>
-            <Button variant="outline" onClick={() => { setQuery(draft.trim()); setPage(1) }}>ค้นหา</Button>
-            <Select value={source} onValueChange={(value) => { setSource(value as SourceFilter); setPage(1) }}>
+			<Button variant="outline" onClick={() => { setQuery(draft.trim()); resetProductPage() }}>ค้นหา</Button>
+			<Select value={source} onValueChange={(value) => { setSource(value as SourceFilter); resetProductPage() }}>
               <SelectTrigger className="w-[145px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">ทุกช่องทาง</SelectItem>
@@ -226,26 +277,46 @@ export default function MarketplaceAliases() {
                 <SelectItem value="tiktok">TikTok</SelectItem>
               </SelectContent>
             </Select>
+			{tab === 'saved' && groupedAvailable !== false && (
+			  <Select value={status} onValueChange={(value) => { setStatus(value as StatusFilter); resetProductPage() }}>
+				<SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+				<SelectContent>
+				  <SelectItem value="all">ทุกสถานะ</SelectItem>
+				  <SelectItem value="ready">พร้อมใช้งาน</SelectItem>
+				  <SelectItem value="fix">ต้องตรวจสอบ</SelectItem>
+				  <SelectItem value="disabled">ปิดใช้งาน</SelectItem>
+				</SelectContent>
+			  </Select>
+			)}
           </div>
 
           <TabsContent value="pending" className="m-0">
             <PendingTable loading={loading} rows={pending} canManage={canManage} onPick={setPickerGroup} />
           </TabsContent>
           <TabsContent value="saved" className="m-0">
-            <SavedTable
+			{groupedAvailable === true ? <SavedGroupedTable
+			  key={`${source}:${query}:${status}:${groupCursor}`}
+			  loading={loading}
+			  rows={savedGroups}
+			  query={query}
+			  status={status}
+			  canManage={canManage}
+			  onEdit={setPickerAlias}
+			  onDelete={(alias) => void prepareDelete(alias)}
+			/> : <SavedTable
               loading={loading}
               rows={saved}
               canManage={canManage}
               onEdit={setPickerAlias}
               onDelete={(alias) => void prepareDelete(alias)}
-            />
+			/>}
           </TabsContent>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-            <span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่ · ${pendingItems.toLocaleString()} รายการในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า {page}/{pages}</span>
+			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่ · ${pendingItems.toLocaleString()} รายการในหน้านี้` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า {currentPage}/{pages}</span>
             <div className="flex gap-1">
-              <Button size="icon" variant="outline" className="h-8 w-8" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)} aria-label="หน้าก่อน"><ChevronLeft className="h-4 w-4" /></Button>
-              <Button size="icon" variant="outline" className="h-8 w-8" disabled={page >= pages || loading} onClick={() => setPage((value) => value + 1)} aria-label="หน้าถัดไป"><ChevronRight className="h-4 w-4" /></Button>
+			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? groupCursorHistory.length === 0 : page <= 1) || loading} onClick={goPrevious} aria-label="หน้าก่อน"><ChevronLeft className="h-4 w-4" /></Button>
+			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? !nextGroupCursor : page >= pages) || loading} onClick={goNext} aria-label="หน้าถัดไป"><ChevronRight className="h-4 w-4" /></Button>
             </div>
           </div>
         </div>
@@ -308,6 +379,158 @@ function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; 
       </Table>
     </div>
   )
+}
+
+type GroupVariantState = { rows: MarketplaceItemAlias[]; nextCursor: string; loading: boolean; error: string }
+
+function SavedGroupedTable({
+	loading,
+	rows,
+	query,
+	status,
+	canManage,
+	onEdit,
+	onDelete,
+}: {
+	loading: boolean
+	rows: MarketplaceProductGroup[]
+	query: string
+	status: StatusFilter
+	canManage: boolean
+	onEdit: (row: MarketplaceItemAlias) => void
+	onDelete: (row: MarketplaceItemAlias) => void
+}) {
+	const [expanded, setExpanded] = useState<Set<string>>(new Set())
+	const [variants, setVariants] = useState<Record<string, GroupVariantState>>({})
+
+	useEffect(() => {
+		setExpanded(new Set())
+		setVariants({})
+	}, [rows])
+
+	const groupKey = (group: MarketplaceProductGroup) => `${group.source}\u0000${group.account_key}\u0000${group.parent_key}`
+	const loadVariants = async (group: MarketplaceProductGroup, append = false) => {
+		const key = groupKey(group)
+		const current = variants[key]
+		setVariants((value) => ({ ...value, [key]: { rows: append ? current?.rows ?? [] : [], nextCursor: current?.nextCursor ?? '', loading: true, error: '' } }))
+		try {
+			const response = await client.get<MarketplaceCursorPage<MarketplaceItemAlias>>(
+				`/api/marketplace-aliases/product-groups/${encodeURIComponent(group.parent_key)}/variants`,
+				{ params: {
+					source: group.source,
+					account_key: group.account_key,
+					q: query || undefined,
+					status: status === 'all' ? undefined : status,
+					cursor: append ? current?.nextCursor || undefined : undefined,
+					limit: 100,
+				} },
+			)
+			setVariants((value) => ({
+				...value,
+				[key]: {
+					rows: append ? [...(current?.rows ?? []), ...(response.data.data ?? [])] : response.data.data ?? [],
+					nextCursor: response.data.next_cursor ?? '',
+					loading: false,
+					error: '',
+				},
+			}))
+		} catch (error) {
+			setVariants((value) => ({ ...value, [key]: { rows: current?.rows ?? [], nextCursor: current?.nextCursor ?? '', loading: false, error: errorMessage(error, 'โหลดตัวเลือกไม่สำเร็จ') } }))
+		}
+	}
+
+	const toggleGroup = (group: MarketplaceProductGroup) => {
+		const key = groupKey(group)
+		setExpanded((value) => {
+			const next = new Set(value)
+			if (next.has(key)) next.delete(key)
+			else next.add(key)
+			return next
+		})
+		if (!variants[key]) void loadVariants(group)
+	}
+
+	if (!loading && rows.length === 0) {
+		return <EmptyState icon={Tags} title="ไม่พบสินค้าหลัก" description="ลองเปลี่ยนคำค้นหา ช่องทาง หรือสถานะ" />
+	}
+	return (
+		<div className="overflow-x-auto">
+			<Table>
+				<TableHeader><TableRow><TableHead className="min-w-[360px]">สินค้าหลัก Marketplace</TableHead><TableHead className="min-w-[220px]">ตัวเลือก</TableHead><TableHead className="min-w-[150px]">ช่องทางและร้าน</TableHead><TableHead className="w-[92px] text-right">เปิดดู</TableHead></TableRow></TableHeader>
+				<TableBody>
+					{loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((group) => {
+						const key = groupKey(group)
+						const isOpen = expanded.has(key)
+						const child = variants[key]
+						return (
+							<Fragment key={key}>
+								<TableRow key={`${key}:parent`} className={cn(isOpen && 'bg-muted/25')}>
+									<TableCell>
+										<button type="button" className="w-full text-left" aria-expanded={isOpen} onClick={() => toggleGroup(group)}>
+											<div className="line-clamp-2 font-medium">{group.product_name || 'ไม่พบชื่อสินค้าหลัก'}</div>
+											<div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+												<span className="font-mono">{group.parent_key}</span>
+												{group.parent_key_kind === 'derived' && <Badge variant="outline">จัดกลุ่มจากชื่อ</Badge>}
+											</div>
+										</button>
+									</TableCell>
+									<TableCell>
+										<div className="font-medium tabular-nums">{group.variant_count.toLocaleString()} ตัวเลือก</div>
+										<div className="mt-1 flex flex-wrap gap-1">
+											{group.ready_count > 0 && <Badge variant="outline" className="border-success/30 bg-success/10 text-success">พร้อม {group.ready_count}</Badge>}
+											{group.fix_count > 0 && <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning">ตรวจสอบ {group.fix_count}</Badge>}
+											{group.disabled_count > 0 && <Badge variant="secondary">ปิด {group.disabled_count}</Badge>}
+										</div>
+									</TableCell>
+									<TableCell><ChannelAccount source={group.source} accountName={group.account_name} accountKey={group.account_key} /></TableCell>
+									<TableCell className="text-right"><Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => toggleGroup(group)} aria-label={isOpen ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={isOpen}><ChevronDown className={cn('h-4 w-4 transition-transform', isOpen && 'rotate-180')} /></Button></TableCell>
+								</TableRow>
+								{isOpen && (
+									<TableRow key={`${key}:children`} className="hover:bg-transparent">
+										<TableCell colSpan={4} className="bg-muted/10 p-0">
+											{child?.loading && child.rows.length === 0 && <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
+											{child?.error && <div className="flex items-center justify-between gap-3 px-4 py-4 text-sm text-destructive"><span>{child.error}</span><Button size="sm" variant="outline" onClick={() => void loadVariants(group)}>ลองใหม่</Button></div>}
+											{child && !child.loading && !child.error && child.rows.length === 0 && <div className="px-4 py-6 text-center text-sm text-muted-foreground">ไม่พบตัวเลือกที่ตรงกับตัวกรอง</div>}
+											{child?.rows.map((alias) => <GroupedVariantRow key={alias.id} alias={alias} canManage={canManage} onEdit={onEdit} onDelete={onDelete} />)}
+											{child?.nextCursor && <div className="flex justify-center border-t px-4 py-2"><Button size="sm" variant="outline" disabled={child.loading} onClick={() => void loadVariants(group, true)}>{child.loading && <Loader2 className="h-4 w-4 animate-spin" />}โหลดตัวเลือกเพิ่ม</Button></div>}
+										</TableCell>
+									</TableRow>
+								)}
+							</Fragment>
+						)
+					})}
+				</TableBody>
+			</Table>
+		</div>
+	)
+}
+
+function GroupedVariantRow({ alias, canManage, onEdit, onDelete }: { alias: MarketplaceItemAlias; canManage: boolean; onEdit: (row: MarketplaceItemAlias) => void; onDelete: (row: MarketplaceItemAlias) => void }) {
+	const status = alias.conversion_status === 'ready' && alias.sales_enabled ? 'ready' : alias.sales_enabled ? 'review' : 'disabled'
+	return (
+		<div className="grid min-h-16 grid-cols-[minmax(240px,1.25fr)_minmax(220px,1fr)_minmax(190px,0.8fr)_88px] items-center gap-4 border-t px-4 py-2 text-sm first:border-t-0">
+			<div className="min-w-0 pl-8">
+				<div className="line-clamp-2 font-medium">{alias.source_variant_name || alias.raw_name || 'ไม่มีชื่อตัวเลือก'}</div>
+				<div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono text-foreground">{alias.source_sku || '-'}</span></div>
+			</div>
+			<div className="min-w-0"><div className="font-mono font-semibold">{alias.item_code}</div><div className="truncate text-xs text-muted-foreground">{alias.item_name || 'ไม่พบชื่อสินค้า SML'} · {alias.unit_code || '-'}</div></div>
+			<div>
+				<Badge variant="outline" className={cn(status === 'ready' && 'border-success/30 bg-success/10 text-success', status === 'review' && 'border-warning/30 bg-warning/10 text-warning')}>{status === 'ready' ? 'พร้อมใช้งาน' : status === 'review' ? 'ต้องตรวจสอบ' : 'ปิดใช้งาน'}</Badge>
+				<div className="mt-1 text-xs text-muted-foreground">{conversionSummary(alias)}</div>
+			</div>
+			<div className="flex justify-end gap-1">{canManage ? <><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(alias)} aria-label="แก้ไขตัวเลือก"><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(alias)} aria-label="หยุดใช้ตัวเลือก"><Unlink className="h-4 w-4" /></Button></> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</div>
+		</div>
+	)
+}
+
+function conversionSummary(alias: MarketplaceItemAlias) {
+	const multiplier = alias.quantity_multiplier || 1
+	if (!alias.unit_stand_value || !alias.unit_divide_value) return `1 Marketplace = ${multiplier} ${alias.unit_code || 'หน่วย SML'}`
+	const stand = Number(alias.unit_stand_value)
+	const divide = Number(alias.unit_divide_value)
+	const factor = Number.isFinite(stand) && Number.isFinite(divide) && divide > 0 ? (multiplier * stand) / divide : null
+	const base = factor === null ? `${multiplier} × ${alias.unit_stand_value}/${alias.unit_divide_value}` : factor.toLocaleString('th-TH', { maximumFractionDigits: 6 })
+	return `1 Marketplace = ${multiplier} ${alias.unit_code || 'หน่วย SML'} = ${base} หน่วยฐาน`
 }
 
 function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: boolean; rows: MarketplaceItemAlias[]; canManage: boolean; onEdit: (row: MarketplaceItemAlias) => void; onDelete: (row: MarketplaceItemAlias) => void }) {

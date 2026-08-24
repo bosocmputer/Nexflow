@@ -98,3 +98,19 @@ type MarketplaceAliasReviewResult struct {
 	Page    int                           `json:"page"`
 	PerPage int                           `json:"per_page"`
 }
+
+// MarketplaceProductGroup is a parent-only summary. Variants are deliberately
+// loaded from a separate cursor endpoint when the operator expands a row.
+type MarketplaceProductGroup struct {
+	Source        string    `json:"source"`
+	AccountKey    string    `json:"account_key"`
+	AccountName   string    `json:"account_name,omitempty"`
+	ParentKey     string    `json:"parent_key"`
+	ParentKeyKind string    `json:"parent_key_kind"`
+	ProductName   string    `json:"product_name"`
+	VariantCount  int       `json:"variant_count"`
+	ReadyCount    int       `json:"ready_count"`
+	FixCount      int       `json:"fix_count"`
+	DisabledCount int       `json:"disabled_count"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}

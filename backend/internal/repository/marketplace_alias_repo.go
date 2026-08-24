@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -49,6 +50,172 @@ type MarketplaceAliasSaveResult struct {
 	AppliedItems int
 	ReadyBills   int
 	Impact       models.MarketplaceAliasImpact
+}
+
+type MarketplaceProductGroupFilter struct {
+	Source, Query, Status                        string
+	Limit                                        int
+	AfterSource, AfterAccountKey, AfterParentKey string
+}
+
+type MarketplaceProductVariantFilter struct {
+	Source, AccountKey, ParentKey string
+	Query, Status                 string
+	Limit                         int
+	AfterVariantID, AfterID       string
+}
+
+const marketplaceAliasParentKeySQL = `COALESCE(NULLIF(a.parent_key,''),NULLIF(a.external_parent_id,''),NULLIF(a.external_item_id,''),
+	'derived:'||md5(a.source||chr(31)||a.account_key||chr(31)||COALESCE(NULLIF(a.source_product_name,''),split_part(a.raw_name,' / ',1),a.normalized_key)))`
+
+func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter MarketplaceProductGroupFilter) ([]models.MarketplaceProductGroup, bool, error) {
+	if filter.Limit < 1 || filter.Limit > 50 {
+		filter.Limit = 30
+	}
+	args := []interface{}{}
+	allWhere := []string{"a.is_active=true"}
+	if source := strings.TrimSpace(strings.ToLower(filter.Source)); source != "" {
+		args = append(args, source)
+		allWhere = append(allWhere, fmt.Sprintf("a.source=$%d", len(args)))
+	}
+	matchedWhere := []string{"true"}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		args = append(args, "%"+query+"%")
+		n := len(args)
+		matchedWhere = append(matchedWhere, fmt.Sprintf(`(source_sku ILIKE $%d OR raw_name ILIKE $%d OR item_code ILIKE $%d OR item_name ILIKE $%d OR external_item_id ILIKE $%d OR external_variant_id ILIKE $%d)`, n, n, n, n, n, n))
+	}
+	switch strings.TrimSpace(filter.Status) {
+	case "ready":
+		matchedWhere = append(matchedWhere, "conversion_status='ready' AND scope_confirmed=true AND sales_enabled=true")
+	case "fix":
+		matchedWhere = append(matchedWhere, "(conversion_status<>'ready' OR scope_confirmed=false)")
+	case "disabled":
+		matchedWhere = append(matchedWhere, "(sales_enabled=false OR stock_policy IN ('disabled_zero','manual_unmanaged'))")
+	}
+	if filter.AfterSource != "" || filter.AfterAccountKey != "" || filter.AfterParentKey != "" {
+		args = append(args, filter.AfterSource, filter.AfterAccountKey, filter.AfterParentKey)
+		matchedWhere = append(matchedWhere, fmt.Sprintf("(source,account_key,group_key) > ($%d,$%d,$%d)", len(args)-2, len(args)-1, len(args)))
+	}
+	args = append(args, filter.Limit+1)
+	query := fmt.Sprintf(`WITH all_rows AS (
+		SELECT a.source,a.account_key,%s AS group_key,
+		       CASE WHEN a.parent_key<>'' THEN a.parent_key_kind
+		            WHEN a.external_parent_id<>'' OR a.external_item_id<>'' THEN 'external'
+		            ELSE 'derived' END AS group_key_kind,
+		       a.source_product_name,a.raw_name,a.source_sku,a.item_code,a.external_item_id,a.external_variant_id,
+		       a.conversion_status,a.scope_confirmed,a.sales_enabled,a.stock_policy,a.updated_at,
+		       COALESCE(c.item_name,'') AS item_name,
+		       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),'') AS account_name
+		FROM marketplace_item_aliases a
+		LEFT JOIN sml_catalog c ON c.item_code=a.item_code
+		LEFT JOIN shopee_api_connections sc ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+		WHERE %s
+	), matched_keys AS (
+		SELECT source,account_key,group_key
+		FROM all_rows
+		WHERE %s
+		GROUP BY source,account_key,group_key
+		ORDER BY source,account_key,group_key
+		LIMIT $%d
+	)
+	SELECT k.source,k.account_key,MAX(a.account_name),k.group_key,MAX(a.group_key_kind),
+	       COALESCE(NULLIF(MAX(a.source_product_name),''),MIN(split_part(a.raw_name,' / ',1)),k.group_key),
+	       COUNT(*)::int,
+	       COUNT(*) FILTER (WHERE a.conversion_status='ready' AND a.scope_confirmed=true AND a.sales_enabled=true)::int,
+	       COUNT(*) FILTER (WHERE a.conversion_status<>'ready' OR a.scope_confirmed=false)::int,
+	       COUNT(*) FILTER (WHERE a.sales_enabled=false OR a.stock_policy IN ('disabled_zero','manual_unmanaged'))::int,
+	       MAX(a.updated_at)
+	FROM matched_keys k JOIN all_rows a USING(source,account_key,group_key)
+	GROUP BY k.source,k.account_key,k.group_key
+	ORDER BY k.source,k.account_key,k.group_key`, marketplaceAliasParentKeySQL, strings.Join(allWhere, " AND "), strings.Join(matchedWhere, " AND "), len(args))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	groups := make([]models.MarketplaceProductGroup, 0, filter.Limit+1)
+	for rows.Next() {
+		var group models.MarketplaceProductGroup
+		if err := rows.Scan(&group.Source, &group.AccountKey, &group.AccountName, &group.ParentKey, &group.ParentKeyKind,
+			&group.ProductName, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.DisabledCount, &group.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		groups = append(groups, group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(groups) > filter.Limit
+	if hasMore {
+		groups = groups[:filter.Limit]
+	}
+	return groups, hasMore, nil
+}
+
+func (r *MarketplaceAliasRepo) ProductGroupVariants(ctx context.Context, filter MarketplaceProductVariantFilter) ([]models.MarketplaceItemAlias, bool, error) {
+	if filter.Limit < 1 || filter.Limit > 100 {
+		filter.Limit = 50
+	}
+	args := []interface{}{strings.TrimSpace(strings.ToLower(filter.Source)), strings.TrimSpace(filter.AccountKey), strings.TrimSpace(filter.ParentKey)}
+	where := []string{"a.is_active=true", "a.source=$1", "a.account_key=$2", "parent.alias_parent_key=$3"}
+	if filter.AfterVariantID != "" || filter.AfterID != "" {
+		args = append(args, filter.AfterVariantID, filter.AfterID)
+		where = append(where, fmt.Sprintf("(COALESCE(a.external_variant_id,''),a.id::text) > ($%d,$%d)", len(args)-1, len(args)))
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		args = append(args, "%"+query+"%")
+		n := len(args)
+		where = append(where, fmt.Sprintf("(a.source_sku ILIKE $%d OR a.raw_name ILIKE $%d OR a.item_code ILIKE $%d OR c.item_name ILIKE $%d OR a.external_variant_id ILIKE $%d)", n, n, n, n, n))
+	}
+	switch strings.TrimSpace(filter.Status) {
+	case "ready":
+		where = append(where, "a.conversion_status='ready' AND a.scope_confirmed=true AND a.sales_enabled=true")
+	case "fix":
+		where = append(where, "(a.conversion_status<>'ready' OR a.scope_confirmed=false)")
+	case "disabled":
+		where = append(where, "(a.sales_enabled=false OR a.stock_policy IN ('disabled_zero','manual_unmanaged'))")
+	}
+	args = append(args, filter.Limit+1)
+	querySQL := fmt.Sprintf(`SELECT a.id, a.source, a.account_key, a.external_item_id, a.external_variant_id,
+	       a.source_sku, a.raw_name, a.normalized_key,
+	       a.item_code, a.unit_code, a.confidence, a.confirmed_by,
+	       a.usage_count, a.last_used_at, a.created_at, a.updated_at,
+	       a.is_active, a.match_method, a.scope_confirmed,
+	       a.external_parent_id, a.parent_key, a.parent_key_kind, a.source_product_name, a.source_variant_name,
+	       a.mapping_revision, a.metadata_updated_at, a.quantity_multiplier,
+	       a.unit_stand_value::text, a.unit_divide_value::text, a.unit_catalog_generation::text,
+	       a.conversion_status, a.sales_enabled, a.stock_policy,
+	       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),''), COALESCE(c.item_name,''), COALESCE(u.email,''),
+	       COALESCE(c.is_active,false), 0, (SELECT COUNT(*) FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id=a.id)
+	FROM marketplace_item_aliases a
+	CROSS JOIN LATERAL (SELECT %s AS alias_parent_key) parent
+	LEFT JOIN sml_catalog c ON c.item_code=a.item_code
+	LEFT JOIN users u ON u.id=a.confirmed_by
+	LEFT JOIN shopee_api_connections sc ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+	WHERE %s
+	ORDER BY COALESCE(a.external_variant_id,''),a.id
+	LIMIT $%d`, marketplaceAliasParentKeySQL, strings.Join(where, " AND "), len(args))
+	rows, err := r.db.QueryContext(ctx, querySQL, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	variants := make([]models.MarketplaceItemAlias, 0, filter.Limit+1)
+	for rows.Next() {
+		alias, err := scanMarketplaceAliasListRow(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		variants = append(variants, *alias)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(variants) > filter.Limit
+	if hasMore {
+		variants = variants[:filter.Limit]
+	}
+	return variants, hasMore, nil
 }
 
 func (r *MarketplaceAliasRepo) Find(source, sourceSKU, rawName string) (*models.MarketplaceItemAlias, error) {
@@ -182,6 +349,25 @@ func scanAlias(row aliasScanner) (*models.MarketplaceItemAlias, error) {
 		return nil, err
 	}
 	return &a, nil
+}
+
+func scanMarketplaceAliasListRow(row aliasScanner) (*models.MarketplaceItemAlias, error) {
+	var alias models.MarketplaceItemAlias
+	if err := row.Scan(
+		&alias.ID, &alias.Source, &alias.AccountKey, &alias.ExternalItemID, &alias.ExternalVariantID,
+		&alias.SourceSKU, &alias.RawName, &alias.NormalizedKey, &alias.ItemCode, &alias.UnitCode,
+		&alias.Confidence, &alias.ConfirmedBy, &alias.UsageCount, &alias.LastUsedAt, &alias.CreatedAt, &alias.UpdatedAt,
+		&alias.IsActive, &alias.MatchMethod, &alias.ScopeConfirmed,
+		&alias.ExternalParentID, &alias.ParentKey, &alias.ParentKeyKind, &alias.SourceProductName, &alias.SourceVariantName,
+		&alias.MappingRevision, &alias.MetadataUpdatedAt, &alias.QuantityMultiplier,
+		&alias.UnitStandValue, &alias.UnitDivideValue, &alias.UnitCatalogGeneration,
+		&alias.ConversionStatus, &alias.SalesEnabled, &alias.StockPolicy,
+		&alias.AccountName, &alias.ItemName, &alias.ConfirmedName, &alias.ProductActive,
+		&alias.OpenItemCount, &alias.StockMappingCount,
+	); err != nil {
+		return nil, err
+	}
+	return &alias, nil
 }
 
 func (r *MarketplaceAliasRepo) Upsert(source, sourceSKU, rawName, itemCode, unitCode, confirmedBy string) (*models.MarketplaceItemAlias, error) {

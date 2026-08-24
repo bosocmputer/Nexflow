@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -40,15 +42,116 @@ type MarketplaceAliasHandler struct {
 	catalogRepo *repository.SMLCatalogRepo
 	auditRepo   *repository.AuditLogRepo
 	logger      *zap.Logger
+	groupedUI   bool
 }
 
 func NewMarketplaceAliasHandler(
 	aliasRepo *repository.MarketplaceAliasRepo,
 	catalogRepo *repository.SMLCatalogRepo,
 	auditRepo *repository.AuditLogRepo,
+	groupedUI bool,
 	logger *zap.Logger,
 ) *MarketplaceAliasHandler {
-	return &MarketplaceAliasHandler{aliasRepo: aliasRepo, catalogRepo: catalogRepo, auditRepo: auditRepo, logger: logger}
+	return &MarketplaceAliasHandler{aliasRepo: aliasRepo, catalogRepo: catalogRepo, auditRepo: auditRepo, groupedUI: groupedUI, logger: logger}
+}
+
+type marketplaceGroupCursor struct {
+	Source     string `json:"s"`
+	AccountKey string `json:"a"`
+	ParentKey  string `json:"p"`
+}
+
+type marketplaceVariantCursor struct {
+	VariantID string `json:"v"`
+	ID        string `json:"i"`
+}
+
+func encodeMarketplaceCursor(value any) string {
+	raw, _ := json.Marshal(value)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeMarketplaceCursor(raw string, target any) error {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(decoded, target)
+}
+
+func marketplacePageLimit(raw string, fallback, maximum int) int {
+	limit, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || limit < 1 {
+		return fallback
+	}
+	if limit > maximum {
+		return maximum
+	}
+	return limit
+}
+
+func (h *MarketplaceAliasHandler) ProductGroups(c *gin.Context) {
+	if !h.groupedUI {
+		c.JSON(http.StatusNotFound, gin.H{"error": "grouped_ui_disabled"})
+		return
+	}
+	var cursor marketplaceGroupCursor
+	if raw := c.Query("cursor"); raw != "" {
+		if err := decodeMarketplaceCursor(raw, &cursor); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cursor ไม่ถูกต้อง กรุณาโหลดหน้าแรกใหม่"})
+			return
+		}
+	}
+	groups, hasMore, err := h.aliasRepo.ProductGroups(c.Request.Context(), repository.MarketplaceProductGroupFilter{
+		Source: c.Query("source"), Query: c.Query("q"), Status: c.Query("status"),
+		Limit:       marketplacePageLimit(c.Query("limit"), 30, 50),
+		AfterSource: cursor.Source, AfterAccountKey: cursor.AccountKey, AfterParentKey: cursor.ParentKey,
+	})
+	if err != nil {
+		h.logger.Error("list marketplace product groups", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดกลุ่มสินค้า Marketplace ไม่สำเร็จ"})
+		return
+	}
+	next := ""
+	if hasMore && len(groups) > 0 {
+		last := groups[len(groups)-1]
+		next = encodeMarketplaceCursor(marketplaceGroupCursor{Source: last.Source, AccountKey: last.AccountKey, ParentKey: last.ParentKey})
+	}
+	c.JSON(http.StatusOK, gin.H{"data": groups, "has_more": hasMore, "next_cursor": next})
+}
+
+func (h *MarketplaceAliasHandler) ProductGroupVariants(c *gin.Context) {
+	if !h.groupedUI {
+		c.JSON(http.StatusNotFound, gin.H{"error": "grouped_ui_disabled"})
+		return
+	}
+	source, accountKey, parentKey := strings.TrimSpace(c.Query("source")), strings.TrimSpace(c.Query("account_key")), strings.TrimSpace(c.Param("parent_key"))
+	if !isMarketplaceSource(source) || accountKey == "" || parentKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ขอบเขตกลุ่มสินค้าไม่ครบ"})
+		return
+	}
+	var cursor marketplaceVariantCursor
+	if raw := c.Query("cursor"); raw != "" {
+		if err := decodeMarketplaceCursor(raw, &cursor); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cursor ไม่ถูกต้อง กรุณาเปิดกลุ่มใหม่"})
+			return
+		}
+	}
+	variants, hasMore, err := h.aliasRepo.ProductGroupVariants(c.Request.Context(), repository.MarketplaceProductVariantFilter{
+		Source: source, AccountKey: accountKey, ParentKey: parentKey, Query: c.Query("q"), Status: c.Query("status"),
+		Limit: marketplacePageLimit(c.Query("limit"), 50, 100), AfterVariantID: cursor.VariantID, AfterID: cursor.ID,
+	})
+	if err != nil {
+		h.logger.Error("list marketplace product variants", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดตัวเลือกสินค้า Marketplace ไม่สำเร็จ"})
+		return
+	}
+	next := ""
+	if hasMore && len(variants) > 0 {
+		last := variants[len(variants)-1]
+		next = encodeMarketplaceCursor(marketplaceVariantCursor{VariantID: last.ExternalVariantID, ID: last.ID})
+	}
+	c.JSON(http.StatusOK, gin.H{"data": variants, "has_more": hasMore, "next_cursor": next})
 }
 
 func (h *MarketplaceAliasHandler) ReviewGroups(c *gin.Context) {

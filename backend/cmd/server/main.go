@@ -345,7 +345,7 @@ func main() {
 	lazadaH.SetArtifactService(artifactSvc)
 	tiktokH := handlers.NewTikTokImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
 	tiktokH.SetArtifactService(artifactSvc)
-	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, logger)
+	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, cfg.MarketplaceGroupedUIEnabled, logger)
 	settingsH := handlers.NewSettingsHandler(platformRepo, logger)
 	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, auditLogRepo, cfg, logger)
 	channelDefaultsH := handlers.NewChannelDefaultsHandler(channelDefaultRepo, auditLogRepo, cfg.PurchaseFlowEnabled, logger)
@@ -583,6 +583,8 @@ func main() {
 
 		// Marketplace aliases (review queue)
 		api.GET("/marketplace-aliases/review-groups", middleware.RequireRole("admin", "staff"), aliasH.ReviewGroups)
+		api.GET("/marketplace-aliases/product-groups", middleware.RequireRole("admin", "staff"), aliasH.ProductGroups)
+		api.GET("/marketplace-aliases/product-groups/:parent_key/variants", middleware.RequireRole("admin", "staff"), aliasH.ProductGroupVariants)
 		api.GET("/marketplace-aliases", middleware.RequireRole("admin", "staff"), aliasH.List)
 		api.POST("/marketplace-aliases/impact-preview", middleware.RequireRole("admin"), aliasH.ImpactPreview)
 		api.POST("/marketplace-aliases/confirm", middleware.RequireRole("admin"), aliasH.Confirm)

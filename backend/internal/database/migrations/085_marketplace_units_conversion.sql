@@ -171,6 +171,18 @@ CREATE INDEX IF NOT EXISTS marketplace_alias_parent_page_idx
 CREATE INDEX IF NOT EXISTS marketplace_alias_conversion_idx
   ON marketplace_item_aliases(source, account_key, conversion_status, stock_policy, id)
   WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS marketplace_alias_raw_name_trgm_idx
+  ON marketplace_item_aliases USING GIN (raw_name gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS marketplace_alias_source_sku_trgm_idx
+  ON marketplace_item_aliases USING GIN (source_sku gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS marketplace_alias_product_name_trgm_idx
+  ON marketplace_item_aliases USING GIN (source_product_name gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS marketplace_alias_variant_name_trgm_idx
+  ON marketplace_item_aliases USING GIN (source_variant_name gin_trgm_ops)
+  WHERE is_active = true;
 
 ALTER TABLE bill_items
   ADD COLUMN IF NOT EXISTS source_line_id TEXT NOT NULL DEFAULT '',
