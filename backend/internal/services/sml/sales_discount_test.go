@@ -21,6 +21,20 @@ func TestBuildSaleOrderPayloadKeepsGrossLineAndAppliesHeaderDiscount(t *testing.
 	}
 }
 
+func TestBuildSaleOrderPayloadKeepsMarketplaceGrossWhenQuantityIsConverted(t *testing.T) {
+	gross := 120.0
+	payload := BuildSaleOrderPayload("BF-SO26080002", "2026-08-14", "TT-3", "2026-08-14", []SOItem{{
+		ItemCode: "SKU-PACK", Qty: 4, Price: 60, GrossAmount: &gross, UnitCode: "ชิ้น",
+	}}, SaleOrderConfig{DocFormat: "SO", CustCode: "AR001", UnitCode: "ชิ้น", VATType: 2}, "")
+
+	if payload.TotalValue != 120 || payload.TotalAmount != 120 {
+		t.Fatalf("header totals changed after conversion: %+v", payload)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].Qty != 4 || payload.Items[0].Price != 30 || payload.Items[0].SumAmount != 120 {
+		t.Fatalf("converted detail = %+v, want qty=4 price=30 gross=120", payload.Items)
+	}
+}
+
 func TestBuildInvoicePayloadCalculatesExcludedVATAfterDiscount(t *testing.T) {
 	gross := 100.0
 	payload := BuildInvoicePayload("BF-INV26080001", "2026-08-14", "TT-2", "2026-08-14", []ShopeeOrderItem{{

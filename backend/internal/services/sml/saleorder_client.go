@@ -159,11 +159,24 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 	if err != nil {
 		return 0, nil, err
 	}
+	status, response, _, err := c.CreateSaleOrderBytes(body, urlOverride)
+	return status, response, err
+}
+
+// CreateSaleOrderBytes sends a previously persisted wire payload without
+// re-marshalling it. Retry paths use this method so a doc_no is always replayed
+// byte-for-byte with the same quantities, amounts, route and set-expansion flag.
+func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) (int, *SaleOrderResponse, []byte, error) {
+	var payload SaleOrderPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, nil, nil, fmt.Errorf("decode immutable saleorder payload: %w", err)
+	}
 
 	url := resolveSMLURL(c.cfg.BaseURL, "/api/v1/ic/sale-orders", urlOverride)
 
 	backoffs := []time.Duration{0, 1 * time.Second, 3 * time.Second, 5 * time.Second}
 	var lastResp *SaleOrderResponse
+	var lastRespBody []byte
 	var lastStatus int
 	var lastErr error
 
@@ -174,7 +187,7 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 		for k, v := range c.headers() {
 			req.Header.Set(k, v)
@@ -209,6 +222,7 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 		var r SaleOrderResponse
 		_ = json.Unmarshal(respBody, &r)
 		lastResp = &r
+		lastRespBody = append(lastRespBody[:0], respBody...)
 		lastStatus = resp.StatusCode
 		lastErr = nil
 
@@ -220,7 +234,7 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 					zap.Int64("duration_ms", durMs),
 				)
 			}
-			return resp.StatusCode, &r, nil
+			return resp.StatusCode, &r, respBody, nil
 		}
 
 		if c.logger != nil {
@@ -239,7 +253,7 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 		}
 	}
 
-	return lastStatus, lastResp, lastErr
+	return lastStatus, lastResp, lastRespBody, lastErr
 }
 
 // ─── Builder ──────────────────────────────────────────────────────────────────

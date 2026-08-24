@@ -17,6 +17,8 @@ type Bill struct {
 	SMLOrderID              string             `json:"sml_order_id,omitempty"`
 	SMLPayload              json.RawMessage    `json:"sml_payload,omitempty"`
 	SMLResponse             json.RawMessage    `json:"sml_response,omitempty"`
+	CurrentSMLAttemptID     *string            `json:"current_sml_attempt_id,omitempty"`
+	SMLAttemptState         string             `json:"sml_attempt_state,omitempty"`
 	AIConfidence            *float64           `json:"-"` // retained in storage for historical audit only
 	Anomalies               json.RawMessage    `json:"anomalies"`
 	ErrorMsg                *string            `json:"error_msg,omitempty"`
@@ -39,6 +41,32 @@ type Bill struct {
 	// The UI uses this to hide destructive delete actions and direct users to
 	// the route-change flow instead.
 	ShopeeRealtimeLinked bool `json:"shopee_realtime_linked,omitempty"`
+}
+
+type BillSMLAttempt struct {
+	ID                       string          `json:"id"`
+	TenantKey                string          `json:"tenant_key"`
+	BillID                   string          `json:"bill_id"`
+	DocNo                    string          `json:"doc_no"`
+	State                    string          `json:"state"`
+	Route                    string          `json:"route"`
+	PayloadBytes             []byte          `json:"-"`
+	PayloadJSON              json.RawMessage `json:"payload_json,omitempty"`
+	PayloadHash              string          `json:"payload_hash"`
+	RouteSettings            json.RawMessage `json:"route_settings"`
+	MappingRevisions         json.RawMessage `json:"mapping_revisions"`
+	UnitCatalogGeneration    *string         `json:"unit_catalog_generation,omitempty"`
+	SetDefinitionHashes      json.RawMessage `json:"set_definition_hashes"`
+	LeaseOwner               string          `json:"-"`
+	LeaseUntil               *time.Time      `json:"lease_until,omitempty"`
+	ExternalRequestStartedAt *time.Time      `json:"external_request_started_at,omitempty"`
+	ExternalRequestEndedAt   *time.Time      `json:"external_request_finished_at,omitempty"`
+	ResponseBytes            []byte          `json:"-"`
+	ResponseHash             string          `json:"response_hash,omitempty"`
+	ErrorMessage             string          `json:"error_message,omitempty"`
+	CreatedBy                *string         `json:"created_by,omitempty"`
+	CreatedAt                time.Time       `json:"created_at"`
+	UpdatedAt                time.Time       `json:"updated_at"`
 }
 
 type BillEmailGroup struct {

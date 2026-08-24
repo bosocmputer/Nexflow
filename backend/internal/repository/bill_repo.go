@@ -183,7 +183,8 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		        sml_payload, sml_response, ai_confidence, anomalies,
 		        error_msg, created_by, created_at, sent_at, archived_at, archived_by,
 		        archive_reason, remark, amount_reviewed_at, amount_reviewed_by,
-		        amount_review_fingerprint,
+		        amount_review_fingerprint, current_sml_attempt_id::text,
+		        COALESCE(sml_attempt_state,'unattempted'),
 		        EXISTS (
 		          SELECT 1
 		            FROM shopee_order_snapshots sos
@@ -196,6 +197,7 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		&anomaliesRaw, &b.ErrorMsg, &b.CreatedBy, &b.CreatedAt, &b.SentAt,
 		&b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason, &b.Remark,
 		&b.AmountReviewedAt, &b.AmountReviewedBy, &b.AmountReviewFingerprint,
+		&b.CurrentSMLAttemptID, &b.SMLAttemptState,
 		&b.ShopeeRealtimeLinked,
 	)
 	if err == sql.ErrNoRows {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -1176,6 +1177,7 @@ type RetryRequest struct {
 
 type retrySendOptions struct {
 	Context           context.Context
+	LeaseOwner        string
 	UserID            string
 	TraceID           string
 	Via               string
@@ -1197,6 +1199,31 @@ type retrySendResult struct {
 	LeaseBusy      bool
 	Warnings       []hiddenItemCodeWarning
 	LogWarning     string
+}
+
+func effectiveSMLQuantity(item models.BillItem, conversionMode string) (float64, error) {
+	if strings.ToLower(strings.TrimSpace(conversionMode)) != "active" {
+		return item.Qty, nil
+	}
+	if item.SourceSKU == models.ShopeeShippingSourceSKU ||
+		item.SourceSKU == models.LazadaShippingSourceSKU ||
+		item.SourceSKU == models.TikTokShippingSourceSKU {
+		return item.Qty, nil
+	}
+	if issue := strings.TrimSpace(item.ConversionIssueCode); issue != "" {
+		return 0, fmt.Errorf("marketplace conversion is not ready: %s", issue)
+	}
+	if item.SMLQty == nil || *item.SMLQty <= 0 || math.IsNaN(*item.SMLQty) || math.IsInf(*item.SMLQty, 0) {
+		return 0, errors.New("marketplace conversion is not ready: sml_qty_snapshot_missing")
+	}
+	return *item.SMLQty, nil
+}
+
+func (h *BillHandler) conversionModeForBill(bill *models.Bill) string {
+	if h == nil || h.cfg == nil || bill == nil || bill.BillType != "sale" || !isMarketplaceSource(bill.Source) {
+		return "off"
+	}
+	return h.cfg.MarketplaceConversionMode
 }
 
 type hiddenItemCodeWarning struct {
@@ -1543,11 +1570,15 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	opts.Context = ctx
 	defer func() {
 		h.syncShopeeRealtimeFromSendResult(bill, result)
 	}()
 	if opts.Via == "" {
 		opts.Via = "retry"
+	}
+	if opts.LeaseOwner == "" {
+		opts.LeaseOwner = newSMLAttemptLeaseOwner()
 	}
 	if shopID, orderSN, ok := shopeeRealtimeBillIdentity(bill); ok && h.shopeeRealtimeRepo != nil {
 		requestRaw, _ := json.Marshal(gin.H{"bill_id": bill.ID, "via": opts.Via})
@@ -1600,6 +1631,28 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	if err := validateRemark2(req.Remark2); err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error()}
 	}
+	readiness := h.checkSMLReadiness(ctx, false)
+	if !readiness.Ready {
+		targetID := bill.ID
+		h.auditSMLReadinessBlocked("sml_readiness_blocked", &targetID, opts.UserID, opts.TraceID, opts.Via, readiness)
+		return retrySendResult{
+			HTTPStatus: http.StatusServiceUnavailable,
+			Error:      readiness.Message,
+		}
+	}
+	if bill.CurrentSMLAttemptID != nil && strings.TrimSpace(*bill.CurrentSMLAttemptID) != "" {
+		attempt, err := h.claimExistingSMLAttempt(ctx, bill, opts.LeaseOwner)
+		switch {
+		case errors.Is(err, repository.ErrSMLAttemptBusy):
+			return retrySendResult{HTTPStatus: http.StatusConflict, Error: "เอกสารนี้กำลังถูกส่งด้วย payload ที่บันทึกไว้ กรุณารอสักครู่", Skipped: true, LeaseBusy: true}
+		case errors.Is(err, repository.ErrSMLAttemptNotReplayable):
+			return retrySendResult{HTTPStatus: http.StatusConflict, Error: "ผลการส่งเดิมต้องตรวจสอบกับ SML ก่อน จึงยัง retry ไม่ได้", Skipped: true}
+		case err != nil:
+			return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "โหลด payload เดิมสำหรับ retry ไม่สำเร็จ: " + err.Error()}
+		case attempt != nil:
+			return h.executeSMLAttempt(ctx, bill, attempt, opts.LeaseOwner, opts)
+		}
+	}
 	if bill.BillType == "sale" && isMarketplaceSource(bill.Source) {
 		var source struct {
 			Required bool `json:"amount_review_required"`
@@ -1625,15 +1678,6 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 		if gross < 0 || item.DiscountAmount < 0 || item.DiscountAmount > gross+0.001 {
 			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity,
 				Error: "ยอดเต็มหรือส่วนลดของรายการสินค้าไม่ถูกต้อง กรุณาแก้ไขก่อนส่ง SML", Skipped: true}
-		}
-	}
-	readiness := h.checkSMLReadiness(ctx, false)
-	if !readiness.Ready {
-		targetID := bill.ID
-		h.auditSMLReadinessBlocked("sml_readiness_blocked", &targetID, opts.UserID, opts.TraceID, opts.Via, readiness)
-		return retrySendResult{
-			HTTPStatus: http.StatusServiceUnavailable,
-			Error:      readiness.Message,
 		}
 	}
 	if _, err := h.ensureShopeeShippingLineForSend(bill); err != nil {
@@ -1892,13 +1936,16 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 		return retrySendResult{HTTPStatus: http.StatusAccepted, Error: err.Error(), Message: err.Error(), Route: route, Skipped: true}
 	}
 
-	sentItemCodes := make([]string, 0, len(bill.Items))
 	items := make([]sml.SOItem, 0, len(bill.Items))
 	for _, it := range bill.Items {
 		if it.ItemCode == nil {
 			continue
 		}
-		sentItemCodes = append(sentItemCodes, *it.ItemCode)
+		qty, err := effectiveSMLQuantity(it, h.conversionModeForBill(bill))
+		if err != nil {
+			_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr(err.Error()))
+			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: err.Error(), Route: route, Skipped: true}
+		}
 		price := 0.0
 		if it.Price != nil {
 			price = *it.Price
@@ -1910,7 +1957,7 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 		items = append(items, sml.SOItem{
 			ItemCode:       *it.ItemCode,
 			ItemName:       h.resolveItemName(*it.ItemCode, it.RawName),
-			Qty:            it.Qty,
+			Qty:            qty,
 			Price:          price,
 			GrossAmount:    it.GrossAmount,
 			DiscountAmount: it.DiscountAmount,
@@ -1943,48 +1990,18 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: "เลขเอกสาร SML ไม่ถูกต้อง: " + err.Error(), Route: route}
 	}
-	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, req.Remark, sml.SaleOrderHeaderOptions{
 		Remark2:        req.Remark2,
 		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
-	reqJSON, _ := json.Marshal(payload)
-
-	start := time.Now()
-	statusCode, resp, err := h.saleOrderClient.CreateSaleOrder(payload, urlOverride)
-	if err != nil || resp == nil || !resp.IsSuccess() {
-		errMsg := smlSendErrorMessage(statusCode, resp, err)
-		storedErr := h.recordFailureForSend(id, bill.Source, reqJSON, fmt.Errorf("%s", errMsg), start, route, reqDocNo, opts)
-		if isSetProductFailure(errMsg) {
-			return retrySendResult{HTTPStatus: http.StatusAccepted, Message: storedErr, DocNoAttempted: reqDocNo, Route: route, Skipped: true}
-		}
-		return retrySendResult{
-			HTTPStatus:     http.StatusBadGateway,
-			Error:          "SML send failed: " + storedErr,
-			FailureClass:   classifySMLSendFailure(statusCode, err),
-			DocNoAttempted: reqDocNo,
-			Route:          route,
-		}
+	attempt, err := h.createSMLAttempt(opts.Context, bill, reqDocNo, route, payload, urlOverride, cfg, opts.LeaseOwner, opts)
+	if errors.Is(err, repository.ErrSMLAttemptExists) {
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "มีการเริ่มส่งเอกสารนี้แล้ว กรุณารอสักครู่", Route: route, Skipped: true, LeaseBusy: true}
 	}
-
-	respJSON, _ := json.Marshal(resp)
-	docNo := resp.GetDocNo()
-	if docNo == "" {
-		docNo = reqDocNo
+	if err != nil {
+		return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "บันทึก immutable SML payload ไม่สำเร็จ: " + err.Error(), Route: route}
 	}
-	_ = h.billRepo.UpdateStatus(id, "sent", &docNo, respJSON, nil)
-	_ = h.billRepo.UpdateSMLPayload(id, reqJSON)
-	h.recordSuccessForSend(id, bill.Source, respJSON, docNo, route, start, opts)
-	h.triggerStockRecalculation(id, docNo, route, opts.BulkJobID, sentItemCodes)
-	logWarning := extractSMLERPLogWarning(respJSON)
-	return retrySendResult{
-		HTTPStatus:     http.StatusOK,
-		Message:        "bill sent to SML (saleorder)",
-		DocNo:          docNo,
-		DocNoAttempted: reqDocNo,
-		Route:          route,
-		LogWarning:     logWarning,
-	}
+	return h.executeSMLAttempt(opts.Context, bill, attempt, opts.LeaseOwner, opts)
 }
 
 func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, urlOverride string, opts retrySendOptions) retrySendResult {
@@ -1998,13 +2015,16 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 		return retrySendResult{HTTPStatus: http.StatusAccepted, Error: err.Error(), Message: err.Error(), Route: route, Skipped: true}
 	}
 
-	sentItemCodesInv := make([]string, 0, len(bill.Items))
 	items := make([]sml.ShopeeOrderItem, 0, len(bill.Items))
 	for _, it := range bill.Items {
 		if it.ItemCode == nil {
 			continue
 		}
-		sentItemCodesInv = append(sentItemCodesInv, *it.ItemCode)
+		qty, err := effectiveSMLQuantity(it, h.conversionModeForBill(bill))
+		if err != nil {
+			_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr(err.Error()))
+			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: err.Error(), Route: route, Skipped: true}
+		}
 		price := 0.0
 		if it.Price != nil {
 			price = *it.Price
@@ -2013,7 +2033,7 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 			SKU:            *it.ItemCode,
 			ProductName:    h.resolveItemName(*it.ItemCode, it.RawName),
 			Price:          price,
-			Qty:            it.Qty,
+			Qty:            qty,
 			GrossAmount:    it.GrossAmount,
 			DiscountAmount: it.DiscountAmount,
 		})
@@ -2054,48 +2074,18 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: "เลขเอกสาร SML ไม่ถูกต้อง: " + err.Error(), Route: route}
 	}
-	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	payload := sml.BuildInvoicePayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, productCache, req.Remark, sml.InvoiceHeaderOptions{
 		Remark2:        req.Remark2,
 		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
-	reqJSON, _ := json.Marshal(payload)
-
-	start := time.Now()
-	statusCode, resp, err := h.invoiceClient.CreateInvoice(payload, urlOverride)
-	if err != nil || resp == nil || !resp.IsSuccess() {
-		errMsg := smlSendErrorMessage(statusCode, resp, err)
-		storedErr := h.recordFailureForSend(id, bill.Source, reqJSON, fmt.Errorf("%s", errMsg), start, route, reqDocNo, opts)
-		if isSetProductFailure(errMsg) {
-			return retrySendResult{HTTPStatus: http.StatusAccepted, Message: storedErr, DocNoAttempted: reqDocNo, Route: route, Skipped: true}
-		}
-		return retrySendResult{
-			HTTPStatus:     http.StatusBadGateway,
-			Error:          "SML send failed: " + storedErr,
-			FailureClass:   classifySMLSendFailure(statusCode, err),
-			DocNoAttempted: reqDocNo,
-			Route:          route,
-		}
+	attempt, err := h.createSMLAttempt(opts.Context, bill, reqDocNo, route, payload, urlOverride, cfg, opts.LeaseOwner, opts)
+	if errors.Is(err, repository.ErrSMLAttemptExists) {
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "มีการเริ่มส่งเอกสารนี้แล้ว กรุณารอสักครู่", Route: route, Skipped: true, LeaseBusy: true}
 	}
-
-	respJSON, _ := json.Marshal(resp)
-	docNo := resp.GetDocNo()
-	if docNo == "" {
-		docNo = reqDocNo
+	if err != nil {
+		return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "บันทึก immutable SML payload ไม่สำเร็จ: " + err.Error(), Route: route}
 	}
-	_ = h.billRepo.UpdateStatus(id, "sent", &docNo, respJSON, nil)
-	_ = h.billRepo.UpdateSMLPayload(id, reqJSON)
-	h.recordSuccessForSend(id, bill.Source, respJSON, docNo, route, start, opts)
-	h.triggerStockRecalculation(id, docNo, route, opts.BulkJobID, sentItemCodesInv)
-	logWarning := extractSMLERPLogWarning(respJSON)
-	return retrySendResult{
-		HTTPStatus:     http.StatusOK,
-		Message:        "bill sent to SML (saleinvoice)",
-		DocNo:          docNo,
-		DocNoAttempted: reqDocNo,
-		Route:          route,
-		LogWarning:     logWarning,
-	}
+	return h.executeSMLAttempt(opts.Context, bill, attempt, opts.LeaseOwner, opts)
 }
 
 func classifySMLSendFailure(statusCode int, err error) string {

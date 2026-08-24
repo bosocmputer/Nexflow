@@ -259,11 +259,22 @@ func (c *InvoiceClient) CreateInvoice(payload InvoicePayload, urlOverride string
 	if err != nil {
 		return 0, nil, err
 	}
+	status, response, _, err := c.CreateInvoiceBytes(body, urlOverride)
+	return status, response, err
+}
+
+// CreateInvoiceBytes sends a previously persisted wire payload without
+// rebuilding it. This is the only safe path for retrying an existing doc_no.
+func (c *InvoiceClient) CreateInvoiceBytes(body []byte, urlOverride string) (int, *InvoiceResponse, []byte, error) {
+	var payload InvoicePayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, nil, nil, fmt.Errorf("decode immutable saleinvoice payload: %w", err)
+	}
 
 	url := resolveSMLURL(c.cfg.BaseURL, "/api/v1/ic/sale-invoices", urlOverride)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	for k, v := range c.headers() {
 		req.Header.Set(k, v)
@@ -286,7 +297,7 @@ func (c *InvoiceClient) CreateInvoice(payload InvoicePayload, urlOverride string
 				zap.Error(err),
 			)
 		}
-		return 0, nil, fmt.Errorf("sml saleinvoice: %w", err)
+		return 0, nil, nil, fmt.Errorf("sml saleinvoice: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -311,7 +322,7 @@ func (c *InvoiceClient) CreateInvoice(payload InvoicePayload, urlOverride string
 		}
 	}
 
-	return resp.StatusCode, &r, nil
+	return resp.StatusCode, &r, respBody, nil
 }
 
 // ─── VAT Calculator ───────────────────────────────────────────────────────────
