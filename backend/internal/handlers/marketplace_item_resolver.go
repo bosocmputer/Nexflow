@@ -461,6 +461,7 @@ func marketplaceBillItemFromResolution(
 	}
 	bi.SourceItemID = strings.TrimSpace(item.SourceItemID)
 	bi.SourceVariantID = strings.TrimSpace(item.SourceVariantID)
+	bi.SourceLineID = strings.TrimSpace(item.OrderItemID)
 	if resolved.alias != nil {
 		id := resolved.alias.ID
 		bi.MarketplaceAliasID = &id
@@ -601,4 +602,11 @@ func marketplaceSourceAccountKey(source, shopID string) string {
 		return "shop:" + strings.TrimSpace(shopID)
 	}
 	return "default"
+}
+
+func marketplaceSourceLineID(orderID string, index int, item ShopeeExcelItem) string {
+	if value := strings.TrimSpace(item.OrderItemID); value != "" {
+		return value
+	}
+	return fmt.Sprintf("%s:%06d", strings.TrimSpace(orderID), index+1)
 }

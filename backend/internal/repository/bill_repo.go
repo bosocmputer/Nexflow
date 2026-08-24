@@ -184,7 +184,7 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		        error_msg, created_by, created_at, sent_at, archived_at, archived_by,
 		        archive_reason, remark, amount_reviewed_at, amount_reviewed_by,
 		        amount_review_fingerprint, current_sml_attempt_id::text,
-		        COALESCE(sml_attempt_state,'unattempted'),
+		        COALESCE(sml_attempt_state,'unattempted'), COALESCE(mutation_revision,0),
 		        EXISTS (
 		          SELECT 1
 		            FROM shopee_order_snapshots sos
@@ -197,7 +197,7 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		&anomaliesRaw, &b.ErrorMsg, &b.CreatedBy, &b.CreatedAt, &b.SentAt,
 		&b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason, &b.Remark,
 		&b.AmountReviewedAt, &b.AmountReviewedBy, &b.AmountReviewFingerprint,
-		&b.CurrentSMLAttemptID, &b.SMLAttemptState,
+		&b.CurrentSMLAttemptID, &b.SMLAttemptState, &b.MutationRevision,
 		&b.ShopeeRealtimeLinked,
 	)
 	if err == sql.ErrNoRows {
@@ -686,7 +686,7 @@ func (r *BillRepo) UpdateStatus(id, status string, smlDocNo *string, smlResponse
 
 func (r *BillRepo) findItems(billID string) ([]models.BillItem, error) {
 	rows, err := r.db.Query(
-		`SELECT id, bill_id, raw_name, COALESCE(source_sku, ''), COALESCE(source_item_id, ''), COALESCE(source_variant_id, ''),
+		`SELECT id, bill_id, raw_name, COALESCE(source_sku, ''), COALESCE(source_item_id, ''), COALESCE(source_variant_id, ''), COALESCE(source_line_id,''),
 		        marketplace_alias_id, COALESCE(source_image_url, ''), item_code, qty, unit_code, price,
 		        gross_amount, COALESCE(discount_amount, 0), mapped, mapping_id,
 		        COALESCE(candidates, '[]') as candidates,
@@ -707,7 +707,7 @@ func (r *BillRepo) findItems(billID string) ([]models.BillItem, error) {
 		var item models.BillItem
 		var candidatesRaw []byte
 		if err := rows.Scan(
-			&item.ID, &item.BillID, &item.RawName, &item.SourceSKU, &item.SourceItemID, &item.SourceVariantID,
+			&item.ID, &item.BillID, &item.RawName, &item.SourceSKU, &item.SourceItemID, &item.SourceVariantID, &item.SourceLineID,
 			&item.MarketplaceAliasID, &item.SourceImageURL,
 			&item.ItemCode, &item.Qty, &item.UnitCode, &item.Price, &item.GrossAmount, &item.DiscountAmount, &item.Mapped, &item.MappingID,
 			&candidatesRaw,
@@ -750,18 +750,52 @@ func billItemDisplayGroup(item models.BillItem) int {
 
 func (r *BillRepo) InsertItem(item *models.BillItem) error {
 	return r.db.QueryRow(
-		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id,
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, source_line_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id,
 		 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
 		 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-		 $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+		 $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		 RETURNING id`,
-		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.MarketplaceAliasID,
+		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.SourceLineID, item.MarketplaceAliasID,
 		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID,
 		item.SourceQty, item.SMLQty, item.QuantityMultiplierSnapshot, item.UnitStandValueSnapshot, item.UnitDivideValueSnapshot,
 		item.BaseQtySnapshot, item.MappingRevisionSnapshot, item.UnitCatalogGenerationSnapshot, item.SetDefinitionHashSnapshot,
 		jsonObjectOrEmpty(item.ConversionOverrideFields), item.ConversionIssueCode,
 	).Scan(&item.ID)
+}
+
+func (r *BillRepo) InsertManualItem(item *models.BillItem) error {
+	if item == nil {
+		return errors.New("bill item is required")
+	}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockBillForManualMutation(tx, item.BillID); err != nil {
+		return err
+	}
+	err = tx.QueryRow(
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, source_line_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id,
+		 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
+		 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+		 $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		 RETURNING id`,
+		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.SourceLineID, item.MarketplaceAliasID,
+		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID,
+		item.SourceQty, item.SMLQty, item.QuantityMultiplierSnapshot, item.UnitStandValueSnapshot, item.UnitDivideValueSnapshot,
+		item.BaseQtySnapshot, item.MappingRevisionSnapshot, item.UnitCatalogGenerationSnapshot, item.SetDefinitionHashSnapshot,
+		jsonObjectOrEmpty(item.ConversionOverrideFields), item.ConversionIssueCode,
+	).Scan(&item.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE bills SET mutation_revision=mutation_revision+1 WHERE id=$1`, item.BillID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DeleteItem removes a single bill_item row, scoped to the bill_id to prevent
@@ -774,6 +808,28 @@ func (r *BillRepo) DeleteItem(billID, itemID string) error {
 	return err
 }
 
+func (r *BillRepo) DeleteManualItem(billID, itemID string) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := lockBillForManualMutation(tx, billID); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM bill_items WHERE id=$1 AND bill_id=$2`, itemID, billID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrBillMutationConflict
+	}
+	if _, err := tx.Exec(`UPDATE bills SET mutation_revision=mutation_revision+1 WHERE id=$1`, billID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // UpdateBillItem updates item_code, unit_code, mapping_id, and mapped flag for a bill item
 func (r *BillRepo) UpdateBillItem(itemID, itemCode, unitCode, mappingID string, mapped bool) error {
 	_, err := r.db.Exec(
@@ -783,12 +839,14 @@ func (r *BillRepo) UpdateBillItem(itemID, itemCode, unitCode, mappingID string, 
 	return err
 }
 
-// UpdateBillItemFields applies a partial update to a bill_item row.
-// Each pointer is applied only when non-nil; setting item_code also marks the row mapped.
-func (r *BillRepo) UpdateBillItemFields(itemID string, itemCode, unitCode *string, qty, price, discountAmount *float64) error {
+// UpdateBillItemFields applies a manual partial update only while the bill has
+// never been attempted. The bill row lock plus mutation_revision closes the
+// race between an operator edit and SML payload creation.
+func (r *BillRepo) UpdateBillItemFields(billID, itemID string, itemCode, unitCode *string, qty, price, discountAmount *float64) error {
 	sets := []string{}
 	args := []interface{}{}
 	idx := 1
+	overrides := map[string]bool{}
 
 	if itemCode != nil {
 		sets = append(sets, fmt.Sprintf("item_code=$%d", idx))
@@ -797,16 +855,19 @@ func (r *BillRepo) UpdateBillItemFields(itemID string, itemCode, unitCode *strin
 		sets = append(sets, fmt.Sprintf("mapped=$%d", idx))
 		args = append(args, *itemCode != "")
 		idx++
+		overrides["item_code"] = true
 	}
 	if unitCode != nil {
 		sets = append(sets, fmt.Sprintf("unit_code=$%d", idx))
 		args = append(args, *unitCode)
 		idx++
+		overrides["unit_code"] = true
 	}
 	if qty != nil {
 		sets = append(sets, fmt.Sprintf("qty=$%d", idx))
 		args = append(args, *qty)
 		idx++
+		overrides["quantity"] = true
 	}
 	if price != nil {
 		sets = append(sets, fmt.Sprintf("price=$%d", idx))
@@ -821,31 +882,80 @@ func (r *BillRepo) UpdateBillItemFields(itemID string, itemCode, unitCode *strin
 	if len(sets) == 0 {
 		return nil
 	}
-	args = append(args, itemID)
-	query := fmt.Sprintf(`UPDATE bill_items SET %s WHERE id=$%d`, strings.Join(sets, ", "), idx)
+	overridesJSON, err := json.Marshal(overrides)
+	if err != nil {
+		return err
+	}
+	sets = append(sets, fmt.Sprintf(`conversion_override_fields=COALESCE(conversion_override_fields,'{}'::jsonb) || $%d::jsonb`, idx))
+	args = append(args, overridesJSON)
+	idx++
+	args = append(args, itemID, billID)
+	query := fmt.Sprintf(`UPDATE bill_items SET %s WHERE id=$%d AND bill_id=$%d`, strings.Join(sets, ", "), idx, idx+1)
 	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(query, args...); err != nil {
+	if err := lockBillForManualMutation(tx, billID); err != nil {
 		return err
+	}
+	result, err := tx.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrBillMutationConflict
 	}
 	if qty != nil || price != nil {
 		if _, err := tx.Exec(`UPDATE bill_items
-			SET gross_amount=ROUND(qty * COALESCE(price,0), 2)
-			WHERE id=$1`, itemID); err != nil {
+			SET gross_amount=ROUND(qty * COALESCE(price,0), 2),
+			    sml_qty=CASE WHEN quantity_multiplier_snapshot IS NOT NULL
+			                 THEN qty * quantity_multiplier_snapshot ELSE sml_qty END,
+			    base_qty_snapshot=CASE
+			      WHEN quantity_multiplier_snapshot IS NOT NULL
+			       AND unit_stand_value_snapshot IS NOT NULL
+			       AND unit_divide_value_snapshot > 0
+			      THEN qty * quantity_multiplier_snapshot * unit_stand_value_snapshot / unit_divide_value_snapshot
+			      ELSE base_qty_snapshot END
+			WHERE id=$1 AND bill_id=$2`, itemID, billID); err != nil {
 			return err
 		}
 	}
-	if qty != nil || price != nil || discountAmount != nil {
-		if _, err := tx.Exec(`UPDATE bills SET amount_reviewed_at=NULL, amount_reviewed_by=NULL,
-			amount_review_fingerprint=''
-			WHERE id=(SELECT bill_id FROM bill_items WHERE id=$1)`, itemID); err != nil {
+	conversionNeedsReview := itemCode != nil || unitCode != nil
+	amountChanged := qty != nil || price != nil || discountAmount != nil
+	if conversionNeedsReview {
+		if _, err := tx.Exec(`UPDATE bill_items SET conversion_issue_code='manual_conversion_review_required'
+			WHERE id=$1 AND bill_id=$2`, itemID, billID); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(`UPDATE bills SET mutation_revision=mutation_revision+1,
+		status=CASE WHEN $2 THEN 'needs_review' ELSE status END,
+		amount_reviewed_at=CASE WHEN $3 THEN NULL ELSE amount_reviewed_at END,
+		amount_reviewed_by=CASE WHEN $3 THEN NULL ELSE amount_reviewed_by END,
+		amount_review_fingerprint=CASE WHEN $3 THEN '' ELSE amount_review_fingerprint END
+		WHERE id=$1`, billID, conversionNeedsReview, amountChanged); err != nil {
+		return err
 	}
 	return tx.Commit()
+}
+
+func lockBillForManualMutation(tx *sql.Tx, billID string) error {
+	var status string
+	var archivedAt sql.NullTime
+	var attemptID sql.NullString
+	err := tx.QueryRow(`SELECT status, archived_at, current_sml_attempt_id::text
+		FROM bills WHERE id=$1 FOR UPDATE`, billID).Scan(&status, &archivedAt, &attemptID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrBillMutationConflict
+	}
+	if err != nil {
+		return err
+	}
+	if archivedAt.Valid || attemptID.Valid || (status != "pending" && status != "failed" && status != "needs_review") {
+		return ErrBillMutationConflict
+	}
+	return nil
 }
 
 // CreateWithItemsAndAudit is the atomic write boundary used by marketplace
@@ -876,14 +986,14 @@ func (r *BillRepo) CreateWithItemsAndAudit(b *models.Bill, items []models.BillIt
 	for i := range items {
 		items[i].BillID = b.ID
 		if err := tx.QueryRow(
-			`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id,
+			`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, source_line_id, marketplace_alias_id,
 			 source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates,
 			 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
 			 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'[]'::jsonb,
-			 $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'[]'::jsonb,
+			 $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 			 RETURNING id`,
-			items[i].BillID, items[i].RawName, items[i].SourceSKU, items[i].SourceItemID, items[i].SourceVariantID,
+			items[i].BillID, items[i].RawName, items[i].SourceSKU, items[i].SourceItemID, items[i].SourceVariantID, items[i].SourceLineID,
 			items[i].MarketplaceAliasID, items[i].SourceImageURL, items[i].ItemCode, items[i].Qty, items[i].UnitCode,
 			items[i].Price, items[i].GrossAmount, items[i].DiscountAmount, items[i].Mapped, items[i].MappingID,
 			items[i].SourceQty, items[i].SMLQty, items[i].QuantityMultiplierSnapshot,
@@ -893,6 +1003,9 @@ func (r *BillRepo) CreateWithItemsAndAudit(b *models.Bill, items []models.BillIt
 		).Scan(&items[i].ID); err != nil {
 			return fmt.Errorf("insert bill item %d: %w", i, err)
 		}
+	}
+	if err := insertMarketplaceReservationsTx(tx, b, items); err != nil {
+		return fmt.Errorf("insert marketplace stock reservations: %w", err)
 	}
 
 	audit.TargetID = &b.ID
@@ -919,11 +1032,36 @@ func (r *BillRepo) CreateWithItemsAndAudit(b *models.Bill, items []models.BillIt
 }
 
 func (r *BillRepo) ConfirmAmountReview(billID, userID, fingerprint string) error {
-	_, err := r.db.Exec(`UPDATE bills
+	result, err := r.db.Exec(`UPDATE bills
 		SET amount_reviewed_at=NOW(), amount_reviewed_by=NULLIF($2,'')::uuid,
-		    amount_review_fingerprint=$3
-		WHERE id=$1 AND status IN ('pending','needs_review','failed')`, billID, userID, fingerprint)
+		    amount_review_fingerprint=$3, mutation_revision=mutation_revision+1
+		WHERE id=$1 AND status IN ('pending','needs_review','failed')
+		  AND archived_at IS NULL AND current_sml_attempt_id IS NULL`, billID, userID, fingerprint)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrBillMutationConflict
+	}
+	return nil
+}
+
+func (r *BillRepo) PromoteReviewedBillPending(billID string) error {
+	_, err := r.db.Exec(`UPDATE bills SET status='pending', mutation_revision=mutation_revision+1
+		WHERE id=$1 AND status='needs_review' AND archived_at IS NULL AND current_sml_attempt_id IS NULL`, billID)
 	return err
+}
+
+func (r *BillRepo) UpdateDocNoIfUnattempted(billID, status, docNo string) error {
+	result, err := r.db.Exec(`UPDATE bills SET sml_doc_no=$2, mutation_revision=mutation_revision+1
+		WHERE id=$1 AND status=$3 AND archived_at IS NULL AND current_sml_attempt_id IS NULL`, billID, docNo, status)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrBillMutationConflict
+	}
+	return nil
 }
 
 func (r *BillRepo) ClearAmountReview(billID string) error {
@@ -1788,13 +1926,13 @@ func (r *BillRepo) MarkProcessedEmailKey(source, messageID, orderID string) erro
 // InsertItemWithCandidates inserts a bill item including top-5 catalog candidates
 func (r *BillRepo) InsertItemWithCandidates(item *models.BillItem, candidatesJSON []byte) error {
 	return r.db.QueryRow(
-		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates,
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, source_line_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates,
 		 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
 		 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-		 $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+		 $18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
 		 RETURNING id`,
-		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.MarketplaceAliasID,
+		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.SourceLineID, item.MarketplaceAliasID,
 		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID, candidatesJSON,
 		item.SourceQty, item.SMLQty, item.QuantityMultiplierSnapshot, item.UnitStandValueSnapshot, item.UnitDivideValueSnapshot,
 		item.BaseQtySnapshot, item.MappingRevisionSnapshot, item.UnitCatalogGenerationSnapshot, item.SetDefinitionHashSnapshot,

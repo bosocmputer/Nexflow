@@ -55,21 +55,46 @@ func TestUpdateBillItemFieldsRecalculatesGrossAndClearsAmountReview(t *testing.T
 	qty := 3.0
 	price := 33.333333
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE bill_items SET qty=\\$1, price=\\$2 WHERE id=\\$3").
-		WithArgs(qty, price, "item-1").
+	mock.ExpectQuery(`(?s)SELECT status, archived_at, current_sml_attempt_id::text.*FROM bills WHERE id=\$1 FOR UPDATE`).
+		WithArgs("bill-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("pending", nil, nil))
+	mock.ExpectExec(`(?s)UPDATE bill_items SET qty=\$1, price=\$2, conversion_override_fields=.*WHERE id=\$4 AND bill_id=\$5`).
+		WithArgs(qty, price, sqlmock.AnyArg(), "item-1", "bill-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("SET gross_amount=ROUND").
-		WithArgs("item-1").
+	mock.ExpectExec(`(?s)SET gross_amount=ROUND.*sml_qty=CASE`).
+		WithArgs("item-1", "bill-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("UPDATE bills SET amount_reviewed_at=NULL").
-		WithArgs("item-1").
+	mock.ExpectExec(`(?s)UPDATE bills SET mutation_revision=mutation_revision\+1.*amount_reviewed_at=CASE`).
+		WithArgs("bill-1", false, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := repo.UpdateBillItemFields("item-1", nil, nil, &qty, &price, nil); err != nil {
+	if err := repo.UpdateBillItemFields("bill-1", "item-1", nil, nil, &qty, &price, nil); err != nil {
 		t.Fatalf("UpdateBillItemFields: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
+func TestUpdateBillItemFieldsRejectsMutationAfterSMLAttempt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	qty := 2.0
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT status, archived_at, current_sml_attempt_id::text.*FROM bills WHERE id=\$1 FOR UPDATE`).
+		WithArgs("bill-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("failed", nil, "attempt-1"))
+	mock.ExpectRollback()
+
+	err = NewBillRepo(db).UpdateBillItemFields("bill-1", "item-1", nil, nil, &qty, nil, nil)
+	if err != ErrBillMutationConflict {
+		t.Fatalf("error = %v, want ErrBillMutationConflict", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

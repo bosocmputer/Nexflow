@@ -247,6 +247,7 @@ type PreviewLine struct {
 	CurrentStock       int64                      `json:"current_stock"`
 	ReservedStock      int64                      `json:"reserved_stock"`
 	PendingNexflowQty  float64                    `json:"pending_nexflow_qty"`
+	PendingBaseQty     float64                    `json:"pending_base_qty"`
 	TargetStock        int64                      `json:"target_stock"`
 	SharedPoolEnabled  bool                       `json:"shared_pool_enabled"`
 	PoolAllocationPct  float64                    `json:"pool_allocation_pct"`

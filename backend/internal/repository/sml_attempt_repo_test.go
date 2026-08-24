@@ -21,10 +21,10 @@ func TestCreateSMLAttemptPersistsImmutablePayloadBeforeExternalCall(t *testing.T
 	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 	payload := []byte(`{"doc_no":"BF-SO26080001","name":"\u0e44\u0e17\u0e22"}`)
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT status, archived_at, current_sml_attempt_id::text
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT status, archived_at, current_sml_attempt_id::text, COALESCE(mutation_revision,0)
 		   FROM bills WHERE id=$1 FOR UPDATE`)).
 		WithArgs("bill-1").
-		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("pending", nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id", "mutation_revision"}).AddRow("pending", nil, nil, 0))
 	mock.ExpectQuery(`(?s)INSERT INTO bill_sml_attempts.*payload_bytes.*RETURNING`).
 		WithArgs("tenant-a", "bill-1", "BF-SO26080001", "SaleOrder", payload, json.RawMessage(payload), "payload-hash",
 			json.RawMessage(`{"url_override":"/sale-orders"}`), json.RawMessage(`{"item-1":2}`), nil,
@@ -36,6 +36,9 @@ func TestCreateSMLAttemptPersistsImmutablePayloadBeforeExternalCall(t *testing.T
 		))
 	mock.ExpectExec(`(?s)UPDATE bills.*current_sml_attempt_id=\$1.*sml_attempt_state='sending'.*sml_payload=\$4`).
 		WithArgs("attempt-1", "BF-SO26080001", "bill-1", json.RawMessage(payload)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations.*state='sending_sml'.*bill_id=\$1`).
+		WithArgs("bill-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -65,10 +68,10 @@ func TestClaimExistingSMLAttemptRejectsLiveLease(t *testing.T) {
 
 	now := time.Now().UTC()
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT status, archived_at, current_sml_attempt_id::text
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT status, archived_at, current_sml_attempt_id::text, COALESCE(mutation_revision,0)
 		   FROM bills WHERE id=$1 FOR UPDATE`)).
 		WithArgs("bill-1").
-		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("failed", nil, "attempt-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id", "mutation_revision"}).AddRow("failed", nil, "attempt-1", 0))
 	mock.ExpectQuery(`(?s)SELECT.*FROM bill_sml_attempts.*WHERE id=\$1 FOR UPDATE`).
 		WithArgs("attempt-1").
 		WillReturnRows(sqlmock.NewRows(smlAttemptColumns()).AddRow(
@@ -100,6 +103,12 @@ func TestFinishSMLAttemptUsesLeaseOwnerAsFencingToken(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"bill_id", "doc_no"}).AddRow("bill-1", "BF-SO26080001"))
 	mock.ExpectExec(`(?s)UPDATE bills.*status=\$2.*sml_attempt_state=\$3.*current_sml_attempt_id=\$6`).
 		WithArgs("bill-1", "sent", "sent", "BF-SO26080001", json.RawMessage(response), "attempt-1", nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations.*state='awaiting_stock_recalc'.*bill_id=\$1`).
+		WithArgs("bill-1", "attempt-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_recalc_jobs.*ON CONFLICT`).
+		WithArgs("bill-1", "attempt-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

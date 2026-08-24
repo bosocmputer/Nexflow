@@ -20,11 +20,12 @@ import (
 )
 
 var (
-	ErrUnavailable      = errors.New("ระบบซิงก์สต๊อก Shopee ยังไม่พร้อมใช้งาน")
-	ErrGatewayOnly      = errors.New("ซิงก์สต๊อก v1 รองรับเฉพาะ Central Shopee Gateway")
-	ErrScopeRequired    = errors.New("กรุณาเลือก 1 คลังและ 1 พื้นที่เก็บ")
-	ErrSelectedLocation = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
-	ErrSyncInProgress   = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
+	ErrUnavailable         = errors.New("ระบบซิงก์สต๊อก Shopee ยังไม่พร้อมใช้งาน")
+	ErrGatewayOnly         = errors.New("ซิงก์สต๊อก v1 รองรับเฉพาะ Central Shopee Gateway")
+	ErrScopeRequired       = errors.New("กรุณาเลือก 1 คลังและ 1 พื้นที่เก็บ")
+	ErrSelectedLocation    = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
+	ErrSyncInProgress      = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
+	ErrBlockedReservations = errors.New("มีคำสั่งซื้อที่ยังพิสูจน์ mapping หรือ conversion ไม่ได้ ระบบหยุดส่ง stock เพื่อป้องกันขายเกิน")
 )
 
 type ValidationError struct{ Message string }
@@ -33,11 +34,12 @@ func (e *ValidationError) Error() string { return e.Message }
 func invalid(message string) error       { return &ValidationError{Message: message} }
 
 type Config struct {
-	Enabled         bool
-	GatewayMode     bool
-	SetStockEnabled bool
-	Environment     string
-	InstanceID      string
+	Enabled                  bool
+	GatewayMode              bool
+	SetStockEnabled          bool
+	ReservationLedgerEnabled bool
+	Environment              string
+	InstanceID               string
 }
 
 type Service struct {
@@ -524,7 +526,20 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if len(products) == 0 {
 		return fail(errors.New("ยังไม่มีรายการสินค้า Shopee กรุณากดอัปเดตรายการสินค้าก่อน"))
 	}
-	pendingReservations, err := s.store.PendingShopeeReservations(ctx, shopID)
+	var pendingReservations map[string]ReservationDemand
+	if s.cfg.ReservationLedgerEnabled {
+		pendingReservations, err = s.store.PendingShopeeReservationLedger(ctx, shopID)
+	} else {
+		pendingReservations, err = s.store.PendingShopeeReservationsLegacy(ctx, shopID)
+		factorByKey := make(map[string]float64, len(products))
+		for _, product := range products {
+			factorByKey[stockProductKey(product.ItemID, product.ModelID)] = product.UnitFactor
+		}
+		for key, demand := range pendingReservations {
+			demand.BaseQty = demand.SourceQty * factorByKey[key]
+			pendingReservations[key] = demand
+		}
+	}
 	if err != nil {
 		return fail(fmt.Errorf("load pending Shopee stock reservations: %w", err))
 	}
@@ -634,10 +649,11 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		result.TotalCount++
 		key := stockProductKey(product.ItemID, product.ModelID)
 		productByKey[key] = product
+		pendingDemand := pendingReservations[key]
 		line := PreviewLine{
 			ItemID: product.ItemID, ModelID: product.ModelID, SMLItemCode: product.SMLItemCode,
 			UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved,
-			PendingNexflowQty: pendingReservations[key], WarningCodes: append([]string(nil), product.WarningCodes...),
+			PendingNexflowQty: pendingDemand.SourceQty, PendingBaseQty: pendingDemand.BaseQty, WarningCodes: append([]string(nil), product.WarningCodes...),
 			ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash,
 			SharedPoolEnabled: product.SharedPoolEnabled, PoolAllocationPct: product.PoolAllocationPct,
 		}
@@ -660,7 +676,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				}
 				_, availableSets, components, setWarnings := CalculateSetTarget(definition, balanceMap, settings.StockPct, product.UnitFactor)
 				line.ScopeBalance = float64(availableSets)
-				pendingBase := line.PendingNexflowQty * line.UnitFactor
+				pendingBase := line.PendingBaseQty
 				if pendingBase > line.ScopeBalance {
 					line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
 				}
@@ -693,7 +709,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			line.ExcludedLocations = previewExcludedLocations(product.SMLItemCode, balance.ExcludedLocations)
 			line.MinQty = balance.MinQty
 			line.MaxQty = balance.MaxQty
-			pendingBase := line.PendingNexflowQty * line.UnitFactor
+			pendingBase := line.PendingBaseQty
 			if pendingBase > line.ScopeBalance {
 				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
 			}
@@ -715,7 +731,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 			line := result.Lines[index]
 			poolBalance = line.ScopeBalance
-			pendingBase += line.PendingNexflowQty * line.UnitFactor
+			pendingBase += line.PendingBaseQty
 			allocations = append(allocations, SharedPoolAllocation{
 				ItemID: member.ItemID, ModelID: member.ModelID, UnitFactor: member.UnitFactor, AllocationPct: member.PoolAllocationPct,
 			})

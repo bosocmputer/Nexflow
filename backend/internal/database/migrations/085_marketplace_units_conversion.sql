@@ -173,6 +173,7 @@ CREATE INDEX IF NOT EXISTS marketplace_alias_conversion_idx
   WHERE is_active = true;
 
 ALTER TABLE bill_items
+  ADD COLUMN IF NOT EXISTS source_line_id TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS source_qty NUMERIC,
   ADD COLUMN IF NOT EXISTS sml_qty NUMERIC,
   ADD COLUMN IF NOT EXISTS quantity_multiplier_snapshot BIGINT,
@@ -239,7 +240,8 @@ FOR EACH ROW EXECUTE FUNCTION prevent_bill_sml_attempt_payload_change();
 
 ALTER TABLE bills
   ADD COLUMN IF NOT EXISTS current_sml_attempt_id UUID REFERENCES bill_sml_attempts(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS sml_attempt_state TEXT NOT NULL DEFAULT 'unattempted';
+  ADD COLUMN IF NOT EXISTS sml_attempt_state TEXT NOT NULL DEFAULT 'unattempted',
+  ADD COLUMN IF NOT EXISTS mutation_revision BIGINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -884,7 +884,8 @@ func (h *ShopeeImportHandler) Confirm(c *gin.Context) {
 		var enriched []itemEnriched
 		allHigh := true
 
-		for _, it := range order.Items {
+		for itemIndex, it := range order.Items {
+			it.OrderItemID = marketplaceSourceLineID(order.OrderID, itemIndex, it)
 			rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
 			accountKey := marketplaceSourceAccountKey("shopee", shopID)
 			resolved := resolutionBatch.resolutionScoped(accountKey, it.SourceItemID, it.SourceVariantID, it.SKU, rawName)
@@ -1582,7 +1583,8 @@ func (h *ShopeeImportHandler) CreateBillFromShopeeOrder(ctx context.Context, ord
 	enriched := []itemEnriched{}
 	allHigh := true
 
-	for _, it := range order.Items {
+	for itemIndex, it := range order.Items {
+		it.OrderItemID = marketplaceSourceLineID(order.OrderID, itemIndex, it)
 		rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
 		accountKey := marketplaceSourceAccountKey("shopee", shopID)
 		resolved := resolutionBatch.resolutionScoped(accountKey, it.SourceItemID, it.SourceVariantID, it.SKU, rawName)

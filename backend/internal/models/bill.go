@@ -19,6 +19,7 @@ type Bill struct {
 	SMLResponse             json.RawMessage    `json:"sml_response,omitempty"`
 	CurrentSMLAttemptID     *string            `json:"current_sml_attempt_id,omitempty"`
 	SMLAttemptState         string             `json:"sml_attempt_state,omitempty"`
+	MutationRevision        int64              `json:"mutation_revision"`
 	AIConfidence            *float64           `json:"-"` // retained in storage for historical audit only
 	Anomalies               json.RawMessage    `json:"anomalies"`
 	ErrorMsg                *string            `json:"error_msg,omitempty"`
@@ -141,6 +142,7 @@ type BillItem struct {
 	SourceSKU                     string          `json:"source_sku,omitempty"`
 	SourceItemID                  string          `json:"source_item_id,omitempty"`
 	SourceVariantID               string          `json:"source_variant_id,omitempty"`
+	SourceLineID                  string          `json:"source_line_id,omitempty"`
 	MarketplaceAliasID            *string         `json:"marketplace_alias_id,omitempty"`
 	SourceImageURL                string          `json:"source_image_url,omitempty"`
 	ItemCode                      *string         `json:"item_code,omitempty"`

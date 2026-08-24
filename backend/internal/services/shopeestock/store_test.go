@@ -142,17 +142,21 @@ func TestPendingShopeeReservationsAggregatesByItemAndModel(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(`(?s)FROM shopee_order_snapshots snapshot.*snapshot\.erp_status NOT IN.*GROUP BY item_id,model_id`).
-		WithArgs(int64(264993963)).
-		WillReturnRows(sqlmock.NewRows([]string{"item_id", "model_id", "pending_qty"}).
-			AddRow(int64(1001), int64(2001), 3.0).
-			AddRow(int64(1002), int64(2002), 7.0))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM marketplace_stock_reservations r.*blocked_mapping.*NOT EXISTS`).
+		WithArgs("shop:264993963", int64(264993963)).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s)FROM marketplace_stock_reservations r.*JOIN LATERAL.*marketplace_alias_id.*GROUP BY mapped.item_id,mapped.model_id`).
+		WithArgs(int64(264993963), "shop:264993963").
+		WillReturnRows(sqlmock.NewRows([]string{"item_id", "model_id", "pending_qty", "pending_base_qty"}).
+			AddRow(int64(1001), int64(2001), 3.0, 36.0).
+			AddRow(int64(1002), int64(2002), 7.0, 7.0))
 
-	reservations, err := NewStore(db).PendingShopeeReservations(context.Background(), 264993963)
+	reservations, err := NewStore(db).PendingShopeeReservationLedger(context.Background(), 264993963)
 	if err != nil {
 		t.Fatalf("PendingShopeeReservations: %v", err)
 	}
-	if reservations[stockProductKey(1001, 2001)] != 3 || reservations[stockProductKey(1002, 2002)] != 7 {
+	if reservations[stockProductKey(1001, 2001)].SourceQty != 3 || reservations[stockProductKey(1001, 2001)].BaseQty != 36 ||
+		reservations[stockProductKey(1002, 2002)].BaseQty != 7 {
 		t.Fatalf("reservations=%v", reservations)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

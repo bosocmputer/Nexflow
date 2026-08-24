@@ -19,6 +19,7 @@ var (
 	ErrSMLAttemptLeaseLost     = errors.New("SML attempt lease was lost")
 	ErrSMLAttemptNotReplayable = errors.New("SML attempt requires reconciliation")
 	ErrBillNotSendable         = errors.New("bill is not sendable")
+	ErrBillMutationConflict    = errors.New("bill changed while preparing SML payload")
 )
 
 type SMLAttemptCreate struct {
@@ -36,6 +37,7 @@ type SMLAttemptCreate struct {
 	LeaseOwner            string
 	LeaseDuration         time.Duration
 	CreatedBy             *string
+	ExpectedBillRevision  int64
 }
 
 const smlAttemptSelectColumns = `id::text, tenant_key, bill_id::text, doc_no, state, route,
@@ -73,7 +75,7 @@ func (r *BillRepo) CreateSMLAttempt(ctx context.Context, in SMLAttemptCreate) (*
 		return nil, err
 	}
 	defer tx.Rollback()
-	status, archived, currentID, err := lockBillAttemptState(ctx, tx, in.BillID)
+	status, archived, currentID, mutationRevision, err := lockBillAttemptState(ctx, tx, in.BillID)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +84,9 @@ func (r *BillRepo) CreateSMLAttempt(ctx context.Context, in SMLAttemptCreate) (*
 	}
 	if currentID.Valid && currentID.String != "" {
 		return nil, ErrSMLAttemptExists
+	}
+	if mutationRevision != in.ExpectedBillRevision {
+		return nil, ErrBillMutationConflict
 	}
 
 	row := tx.QueryRowContext(ctx, `INSERT INTO bill_sml_attempts
@@ -107,6 +112,11 @@ func (r *BillRepo) CreateSMLAttempt(ctx context.Context, in SMLAttemptCreate) (*
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return nil, ErrSMLAttemptExists
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations
+		SET state='sending_sml',updated_at=NOW()
+		WHERE bill_id=$1 AND state='active'`, in.BillID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -125,7 +135,7 @@ func (r *BillRepo) ClaimExistingSMLAttempt(ctx context.Context, billID, leaseOwn
 		return nil, err
 	}
 	defer tx.Rollback()
-	_, _, currentID, err := lockBillAttemptState(ctx, tx, billID)
+	_, _, currentID, _, err := lockBillAttemptState(ctx, tx, billID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,19 +253,48 @@ func (r *BillRepo) FinishSMLAttempt(
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrSMLAttemptLeaseLost
 	}
+	switch attemptState {
+	case "sent":
+		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations r
+			SET state='awaiting_stock_recalc',
+			    warehouse_code=COALESCE(NULLIF(r.warehouse_code,''),a.route_settings#>>'{config,WHCode}',''),
+			    location_code=COALESCE(NULLIF(r.location_code,''),a.route_settings#>>'{config,ShelfCode}',''),
+			    updated_at=NOW()
+			FROM bill_sml_attempts a
+			WHERE r.bill_id=$1 AND a.id=$2 AND r.state IN ('active','sending_sml')`, billID, attemptID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_recalc_jobs(bill_id,sml_attempt_id,status)
+			VALUES($1,$2,'queued') ON CONFLICT (sml_attempt_id) DO NOTHING`, billID, attemptID); err != nil {
+			return err
+		}
+	case "failed_exact_retry":
+		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations
+			SET state='active',updated_at=NOW()
+			WHERE bill_id=$1 AND state='sending_sml'`, billID); err != nil {
+			return err
+		}
+	case "stale_requires_reconciliation":
+		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations
+			SET state='manual_reconciliation',state_reason='sml_attempt_stale',updated_at=NOW()
+			WHERE bill_id=$1 AND state NOT IN ('incorporated_in_sml','released_cancelled')`, billID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
-func lockBillAttemptState(ctx context.Context, tx *sql.Tx, billID string) (string, sql.NullTime, sql.NullString, error) {
+func lockBillAttemptState(ctx context.Context, tx *sql.Tx, billID string) (string, sql.NullTime, sql.NullString, int64, error) {
 	var status string
 	var archived sql.NullTime
 	var currentID sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT status, archived_at, current_sml_attempt_id::text
-		   FROM bills WHERE id=$1 FOR UPDATE`, billID).Scan(&status, &archived, &currentID)
+	var mutationRevision int64
+	err := tx.QueryRowContext(ctx, `SELECT status, archived_at, current_sml_attempt_id::text, COALESCE(mutation_revision,0)
+		   FROM bills WHERE id=$1 FOR UPDATE`, billID).Scan(&status, &archived, &currentID, &mutationRevision)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", archived, currentID, ErrBillNotSendable
+		return "", archived, currentID, 0, ErrBillNotSendable
 	}
-	return status, archived, currentID, err
+	return status, archived, currentID, mutationRevision, err
 }
 
 type smlAttemptScanner interface {

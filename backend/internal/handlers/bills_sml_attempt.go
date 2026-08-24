@@ -73,6 +73,7 @@ func (h *BillHandler) createSMLAttempt(
 		RouteSettings: routeSettings, MappingRevisions: mappingRevisions,
 		UnitCatalogGeneration: unitGeneration, SetDefinitionHashes: setHashes,
 		LeaseOwner: leaseOwner, LeaseDuration: smlAttemptLeaseDuration, CreatedBy: actor,
+		ExpectedBillRevision: bill.MutationRevision,
 	})
 }
 
@@ -200,7 +201,9 @@ func (h *BillHandler) executeSMLAttempt(
 			return retrySendResult{HTTPStatus: http.StatusConflict, Error: "SML รับเอกสารแล้วแต่บันทึกผลไม่ได้ กรุณาตรวจสอบเอกสารก่อน retry", Route: attempt.Route, DocNoAttempted: attempt.DocNo, Skipped: true}
 		}
 		h.recordSuccessForSend(bill.ID, bill.Source, responseBytes, responseDocNo, attempt.Route, start, opts)
-		h.triggerStockRecalculation(bill.ID, responseDocNo, attempt.Route, opts.BulkJobID, billItemCodes(bill))
+		if h.cfg == nil || !h.cfg.MarketplaceReservationLedgerEnabled {
+			h.triggerStockRecalculation(bill.ID, responseDocNo, attempt.Route, opts.BulkJobID, billItemCodes(bill))
+		}
 		return retrySendResult{HTTPStatus: http.StatusOK, Message: "bill sent to SML (immutable payload)", DocNo: responseDocNo, DocNoAttempted: attempt.DocNo, Route: attempt.Route, LogWarning: extractSMLERPLogWarning(responseBytes)}
 	}
 

@@ -1368,6 +1368,10 @@ func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
 	fingerprint := tikTokAmountFingerprint(bill.Items)
 	userID := c.GetString("user_id")
 	if err := h.billRepo.ConfirmAmountReview(bill.ID, userID, fingerprint); err != nil {
+		if errors.Is(err, repository.ErrBillMutationConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือถูกแก้โดยผู้ใช้อื่นแล้ว กรุณารีเฟรช"})
+			return
+		}
 		h.log.Error("confirm marketplace amount review", zap.String("bill_id", bill.ID), zap.String("source", bill.Source), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกการยืนยันยอดไม่สำเร็จ"})
 		return
@@ -1380,7 +1384,7 @@ func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
 		}
 	}
 	if allMapped && bill.Status == "needs_review" {
-		_ = h.billRepo.UpdateStatus(bill.ID, "pending", bill.SMLDocNo, nil, nil)
+		_ = h.billRepo.PromoteReviewedBillPending(bill.ID)
 	}
 	if h.auditRepo != nil {
 		var uid *string
@@ -1401,8 +1405,8 @@ func (h *BillHandler) RegenerateDocNo(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bill not found"})
 		return
 	}
-	if bill.Status == "sent" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "บิลที่ส่งเข้า SML แล้วไม่ควรออกเลขเอกสารใหม่"})
+	if bill.Status == "sent" || bill.CurrentSMLAttemptID != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "เอกสารที่สร้าง immutable payload แล้วห้ามเปลี่ยนเลขเอกสาร ต้องตรวจสอบ SML ก่อน"})
 		return
 	}
 	if h.blockIfSMLNotReady(c, "sml_readiness_blocked", &bill.ID, "regenerate_doc_no") {
@@ -1420,7 +1424,11 @@ func (h *BillHandler) RegenerateDocNo(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "ออกเลขเอกสารใหม่ไม่สำเร็จ: " + err.Error()})
 		return
 	}
-	if err := h.billRepo.UpdateStatus(bill.ID, bill.Status, &docNo, nil, nil); err != nil {
+	if err := h.billRepo.UpdateDocNoIfUnattempted(bill.ID, bill.Status, docNo); err != nil {
+		if errors.Is(err, repository.ErrBillMutationConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือถูกแก้ระหว่างออกเลข กรุณารีเฟรช"})
+			return
+		}
 		h.log.Error("regenerate doc_no update bill", zap.String("bill_id", bill.ID), zap.Error(err))
 		h.auditDocNoRegenerateFailed(c, bill, kind, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกเลขเอกสารใหม่ไม่สำเร็จ"})
@@ -1998,6 +2006,9 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	if errors.Is(err, repository.ErrSMLAttemptExists) {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "มีการเริ่มส่งเอกสารนี้แล้ว กรุณารอสักครู่", Route: route, Skipped: true, LeaseBusy: true}
 	}
+	if errors.Is(err, repository.ErrBillMutationConflict) {
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "ข้อมูลบิลถูกแก้ระหว่างเตรียมส่ง กรุณารีเฟรชและตรวจสอบก่อนส่งใหม่", Route: route, Skipped: true}
+	}
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "บันทึก immutable SML payload ไม่สำเร็จ: " + err.Error(), Route: route}
 	}
@@ -2081,6 +2092,9 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	attempt, err := h.createSMLAttempt(opts.Context, bill, reqDocNo, route, payload, urlOverride, cfg, opts.LeaseOwner, opts)
 	if errors.Is(err, repository.ErrSMLAttemptExists) {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "มีการเริ่มส่งเอกสารนี้แล้ว กรุณารอสักครู่", Route: route, Skipped: true, LeaseBusy: true}
+	}
+	if errors.Is(err, repository.ErrBillMutationConflict) {
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "ข้อมูลบิลถูกแก้ระหว่างเตรียมส่ง กรุณารีเฟรชและตรวจสอบก่อนส่งใหม่", Route: route, Skipped: true}
 	}
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "บันทึก immutable SML payload ไม่สำเร็จ: " + err.Error(), Route: route}
@@ -3744,8 +3758,8 @@ func (h *BillHandler) AddItem(c *gin.Context) {
 	if h.blockPurchaseFlow(c, bill.BillType) {
 		return
 	}
-	if bill.Status == "sent" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot add items to a bill already sent to SML"})
+	if bill.Status == "sent" || bill.CurrentSMLAttemptID != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot add items after SML payload creation"})
 		return
 	}
 
@@ -3771,7 +3785,15 @@ func (h *BillHandler) AddItem(c *gin.Context) {
 		Price:    req.Price,
 		Mapped:   mapped,
 	}
-	if err := h.billRepo.InsertItem(item); err != nil {
+	if req.Price != nil {
+		gross := req.Qty * *req.Price
+		item.GrossAmount = &gross
+	}
+	if err := h.billRepo.InsertManualItem(item); err != nil {
+		if errors.Is(err, repository.ErrBillMutationConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "บิลถูกส่ง เริ่มส่ง หรือถูกแก้โดยผู้ใช้อื่นแล้ว กรุณารีเฟรช"})
+			return
+		}
 		h.log.Error("AddItem", zap.String("bill", billID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "insert failed"})
 		return
@@ -3813,12 +3835,16 @@ func (h *BillHandler) DeleteItemRow(c *gin.Context) {
 	if h.blockPurchaseFlow(c, bill.BillType) {
 		return
 	}
-	if bill.Status == "sent" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot delete items from a bill already sent to SML"})
+	if bill.Status == "sent" || bill.CurrentSMLAttemptID != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot delete items after SML payload creation"})
 		return
 	}
 
-	if err := h.billRepo.DeleteItem(billID, itemID); err != nil {
+	if err := h.billRepo.DeleteManualItem(billID, itemID); err != nil {
+		if errors.Is(err, repository.ErrBillMutationConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "บิลถูกส่ง เริ่มส่ง หรือถูกแก้โดยผู้ใช้อื่นแล้ว กรุณารีเฟรช"})
+			return
+		}
 		h.log.Error("DeleteItem", zap.String("bill", billID), zap.String("item", itemID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
 		return
@@ -3866,8 +3892,8 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 	if h.blockPurchaseFlow(c, bill.BillType) {
 		return
 	}
-	if bill.Status == "sent" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot edit items on a bill already sent to SML"})
+	if bill.Status == "sent" || bill.CurrentSMLAttemptID != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "cannot edit items after SML payload creation"})
 		return
 	}
 
@@ -3984,7 +4010,11 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		}
 	}
 
-	if err := h.billRepo.UpdateBillItemFields(itemID, req.ItemCode, req.UnitCode, req.Qty, req.Price, req.DiscountAmount); err != nil {
+	if err := h.billRepo.UpdateBillItemFields(billID, itemID, req.ItemCode, req.UnitCode, req.Qty, req.Price, req.DiscountAmount); err != nil {
+		if errors.Is(err, repository.ErrBillMutationConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "บิลถูกส่ง เริ่มส่ง หรือถูกแก้โดยผู้ใช้อื่นแล้ว กรุณารีเฟรชก่อนแก้ไข"})
+			return
+		}
 		h.log.Error("UpdateItem", zap.String("bill", billID), zap.String("item", itemID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return

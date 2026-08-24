@@ -478,7 +478,8 @@ func (h *LazadaImportHandler) Confirm(c *gin.Context) {
 		allMapped := true
 		orderItemIDs := []string{}
 
-		for _, it := range order.Items {
+		for itemIndex, it := range order.Items {
+			it.OrderItemID = marketplaceSourceLineID(order.OrderID, itemIndex, it)
 			rawName := shopeeItemRawName(it.ProductName, it.OptionName, it.RawName)
 			if it.OrderItemID != "" {
 				orderItemIDs = append(orderItemIDs, it.OrderItemID)

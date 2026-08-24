@@ -212,7 +212,7 @@ func (h *ShopeeStockHandler) fail(c *gin.Context, err error) {
 	if errors.Is(err, shopeestock.ErrUnavailable) || errors.Is(err, shopeestock.ErrGatewayOnly) {
 		status = http.StatusServiceUnavailable
 	}
-	if errors.Is(err, shopeestock.ErrSyncInProgress) || errors.Is(err, shopeestock.ErrMappingConflict) {
+	if errors.Is(err, shopeestock.ErrSyncInProgress) || errors.Is(err, shopeestock.ErrMappingConflict) || errors.Is(err, shopeestock.ErrBlockedReservations) {
 		status = http.StatusConflict
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

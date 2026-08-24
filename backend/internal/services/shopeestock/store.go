@@ -697,7 +697,68 @@ func (s *Store) UpdateSharedPool(ctx context.Context, shopID int64, request Shar
 	return s.GetSharedPool(ctx, shopID, request.SMLItemCode)
 }
 
-func (s *Store) PendingShopeeReservations(ctx context.Context, shopID int64) (map[string]float64, error) {
+type ReservationDemand struct {
+	SourceQty float64
+	BaseQty   float64
+}
+
+func (s *Store) PendingShopeeReservationLedger(ctx context.Context, shopID int64) (map[string]ReservationDemand, error) {
+	accountKey := "shop:" + strconv.FormatInt(shopID, 10)
+	var blocked int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)
+		FROM marketplace_stock_reservations r
+		WHERE r.source='shopee' AND r.account_key=$1
+		  AND r.state NOT IN ('incorporated_in_sml','released_cancelled')
+		  AND (
+		    r.state IN ('blocked_mapping','manual_reconciliation')
+		    OR (r.state IN ('active','sending_sml','awaiting_stock_recalc') AND NOT EXISTS (
+		      SELECT 1 FROM shopee_stock_mappings m
+		       WHERE m.shop_id=$2 AND m.excluded=false
+		         AND ((r.marketplace_alias_id IS NOT NULL AND m.marketplace_alias_id=r.marketplace_alias_id)
+		           OR (r.external_item_id=m.item_id::text AND COALESCE(NULLIF(r.external_variant_id,''),'0')=m.model_id::text))
+		    ))
+		  )`, accountKey, shopID).Scan(&blocked)
+	if err != nil {
+		return nil, err
+	}
+	if blocked > 0 {
+		return nil, ErrBlockedReservations
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT mapped.item_id, mapped.model_id,
+		       SUM(r.source_qty)::float8 AS pending_qty,
+		       SUM(r.base_qty)::float8 AS pending_base_qty
+		  FROM marketplace_stock_reservations r
+		  JOIN LATERAL (
+		    SELECT m.item_id,m.model_id
+		      FROM shopee_stock_mappings m
+		     WHERE m.shop_id=$1 AND m.excluded=false
+		       AND ((r.marketplace_alias_id IS NOT NULL AND m.marketplace_alias_id=r.marketplace_alias_id)
+		         OR (r.external_item_id=m.item_id::text AND COALESCE(NULLIF(r.external_variant_id,''),'0')=m.model_id::text))
+		     ORDER BY CASE WHEN r.marketplace_alias_id IS NOT NULL AND m.marketplace_alias_id=r.marketplace_alias_id THEN 0 ELSE 1 END
+		     LIMIT 1
+		  ) mapped ON true
+		 WHERE r.source='shopee' AND r.account_key=$2
+		   AND r.state IN ('active','sending_sml','awaiting_stock_recalc')
+		   AND r.base_qty IS NOT NULL
+		 GROUP BY mapped.item_id,mapped.model_id`, shopID, accountKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reservations := map[string]ReservationDemand{}
+	for rows.Next() {
+		var itemID, modelID int64
+		var demand ReservationDemand
+		if err := rows.Scan(&itemID, &modelID, &demand.SourceQty, &demand.BaseQty); err != nil {
+			return nil, err
+		}
+		reservations[stockProductKey(itemID, modelID)] = demand
+	}
+	return reservations, rows.Err()
+}
+
+func (s *Store) PendingShopeeReservationsLegacy(ctx context.Context, shopID int64) (map[string]ReservationDemand, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT (item->>'item_id')::bigint AS item_id,
 		       COALESCE(NULLIF(item->>'model_id',''),'0')::bigint AS model_id,
@@ -716,14 +777,14 @@ func (s *Store) PendingShopeeReservations(ctx context.Context, shopID int64) (ma
 		return nil, err
 	}
 	defer rows.Close()
-	reservations := map[string]float64{}
+	reservations := map[string]ReservationDemand{}
 	for rows.Next() {
 		var itemID, modelID int64
-		var qty float64
-		if err := rows.Scan(&itemID, &modelID, &qty); err != nil {
+		var sourceQty float64
+		if err := rows.Scan(&itemID, &modelID, &sourceQty); err != nil {
 			return nil, err
 		}
-		reservations[stockProductKey(itemID, modelID)] = qty
+		reservations[stockProductKey(itemID, modelID)] = ReservationDemand{SourceQty: sourceQty}
 	}
 	return reservations, rows.Err()
 }

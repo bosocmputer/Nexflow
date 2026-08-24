@@ -482,7 +482,8 @@ func (h *TikTokImportHandler) Confirm(c *gin.Context) {
 		items := make([]models.BillItem, 0, len(order.Items)+1)
 		allMapped := true
 		orderItemIDs := make([]string, 0, len(order.Items))
-		for _, sourceItem := range order.Items {
+		for itemIndex, sourceItem := range order.Items {
+			sourceItem.OrderItemID = marketplaceSourceLineID(order.OrderID, itemIndex, sourceItem)
 			rawName := shopeeItemRawName(sourceItem.ProductName, sourceItem.OptionName, sourceItem.RawName)
 			if sourceItem.OrderItemID != "" {
 				orderItemIDs = append(orderItemIDs, sourceItem.OrderItemID)

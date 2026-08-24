@@ -34,6 +34,7 @@ import (
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/shopeestock"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/stockrecalc"
 	"nexflow/internal/worker"
 )
 
@@ -365,13 +366,15 @@ func main() {
 		})
 	}
 	stockService := shopeestock.NewService(shopeestock.NewStore(db), stockSMLClient, stockShopeeClient, shopeestock.Config{
-		Enabled:         cfg.ShopeeOpenAPIEnabled,
-		GatewayMode:     strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
-		SetStockEnabled: cfg.ShopeeSetStockEnabled,
-		Environment:     cfg.ShopeeOpenAPIEnv,
-		InstanceID:      cfg.ShopeeGatewayTenant,
+		Enabled:                  cfg.ShopeeOpenAPIEnabled,
+		GatewayMode:              strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
+		SetStockEnabled:          cfg.ShopeeSetStockEnabled,
+		ReservationLedgerEnabled: cfg.MarketplaceReservationLedgerEnabled,
+		Environment:              cfg.ShopeeOpenAPIEnv,
+		InstanceID:               cfg.ShopeeGatewayTenant,
 	}, logger)
 	shopeestock.NewWorker(stockService, logger).Start(appCtx)
+	stockrecalc.NewWorker(billRepo, appSettingsRepo, cfg, stockSMLClient, logger).Start(appCtx)
 	shopeeStockH := handlers.NewShopeeStockHandler(stockService, auditLogRepo, logger)
 
 	// Webhooks (no auth)
