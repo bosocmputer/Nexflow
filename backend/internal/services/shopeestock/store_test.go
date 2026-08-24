@@ -2,6 +2,7 @@ package shopeestock
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func TestUpdateSettingsPersistsStructuredScheduleAndNextRun(t *testing.T) {
 	nextRun := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Second)
 	mock.ExpectExec(`INSERT INTO shopee_stock_settings`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`(?s)SELECT c.shop_id.*st.schedule_mode.*WHERE c.shop_id = \$1`).WithArgs(int64(42)).WillReturnRows(stockSettingsRows(300, nextRun))
-	mock.ExpectExec(`(?s)UPDATE shopee_stock_settings.*schedule_mode = \$5.*next_run_at = \$10`).
+	mock.ExpectExec(`(?s)UPDATE shopee_stock_settings.*schedule_mode = \$5.*next_run_at = \$10.*config_version = config_version \+ 1`).
 		WithArgs(int64(42), true, 80.0, 600, "interval", 1, 1, "00:00", false, nextRun, "selected", sqlmock.AnyArg(), false, nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO shopee_stock_settings`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -210,6 +211,14 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM shopee_stock_run_lines WHERE run_id=\$1::uuid`).
+		WithArgs("00000000-0000-0000-0000-000000000001").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`(?s)INSERT INTO shopee_stock_run_lines.*detail.*VALUES`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM shopee_stock_attempts.*result IN \('changed','blocked'\)`).
+		WithArgs("00000000-0000-0000-0000-000000000001").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`(?s)UPDATE shopee_stock_mappings SET.*last_preview_excluded_locations=\$14::jsonb`).
 		WithArgs(
 			int64(42), int64(1001), int64(2001),
@@ -222,7 +231,7 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	result := &PreviewResult{Lines: []PreviewLine{{
+	result := &PreviewResult{RunID: "00000000-0000-0000-0000-000000000001", Lines: []PreviewLine{{
 		ItemID: 1001, ModelID: 2001, ScopeBalance: 7, ExcludedBalance: -2, TargetStock: 5,
 		ExcludedLocations: []ExcludedStockLocation{{
 			ItemCode: "AH-0006", WarehouseCode: "AB-2", WarehouseName: "คลังสำรอง",
@@ -234,5 +243,66 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}
+
+func TestQueuePreviewRunSnapshotsConfigCatalogAndDemandRevisions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)INSERT INTO shopee_stock_runs.*config_version.*catalog_generation_id.*demand_revision_snapshot.*SELECT.*st.config_version.*jsonb_object_agg.*RETURNING id::text`).
+		WithArgs(int64(42), "2026-08-24").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("run-1"))
+
+	runID, err := NewStore(db).QueuePreviewRun(context.Background(), 42, "2026-08-24")
+	if err != nil || runID != "run-1" {
+		t.Fatalf("runID=%q err=%v", runID, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaimQueuedPreviewUsesSkipLockedAndRenewableLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	mock.ExpectQuery(`(?s)WITH candidate AS.*FOR UPDATE SKIP LOCKED.*UPDATE shopee_stock_runs.*lease_owner=\$1.*lease_until=NOW\(\)\+make_interval.*RETURNING`).
+		WithArgs("worker-1", 300).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "shop_id", "as_of_date", "config_version", "catalog_generation_id", "demand_revision_snapshot", "attempt_count", "lease_owner", "lease_until"}).
+			AddRow("run-1", int64(42), "2026-08-24", int64(7), nil, []byte(`{"W/S/A":3}`), 1, "worker-1", now.Add(5*time.Minute)))
+
+	job, err := NewStore(db).ClaimQueuedPreview(context.Background(), "worker-1", 5*time.Minute)
+	if err != nil || job == nil || job.ID != "run-1" || job.ConfigVersion != 7 {
+		t.Fatalf("job=%#v err=%v", job, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSavePreviewLeasedRejectsStaleSnapshotBeforePersistingLines(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT r.lease_owner=\$2.*r.config_version=st.config_version.*demand_revision_snapshot.*FOR SHARE OF r,st`).
+		WithArgs("00000000-0000-0000-0000-000000000001", "worker-1").
+		WillReturnRows(sqlmock.NewRows([]string{"valid"}).AddRow(false))
+	mock.ExpectRollback()
+
+	err = NewStore(db).SavePreviewLeased(context.Background(), 42, &PreviewResult{RunID: "00000000-0000-0000-0000-000000000001"}, "worker-1")
+	if !errors.Is(err, ErrPreviewStale) {
+		t.Fatalf("err=%v want ErrPreviewStale", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

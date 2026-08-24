@@ -181,6 +181,9 @@ type SyncRun = {
   error_count: number
   started_at: string
   error_message?: string
+  processed_count?: number
+  progress_pct?: number
+  summary?: Omit<Preview, 'lines'>
 }
 type Overview = {
   available: boolean
@@ -247,6 +250,7 @@ type Preview = {
   }>
 }
 type ExcludedLocation = NonNullable<Preview['excluded_locations']>[number]
+type PreviewRunLine = { line_order: number; detail: Preview['lines'][number] }
 
 const STATUS_TABS = [
   { key: 'ready', label: 'พร้อมซิงก์' },
@@ -433,12 +437,14 @@ export default function ShopeeStock() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [preview, setPreview] = useState<Preview | null>(null)
+  const [previewRun, setPreviewRun] = useState<SyncRun | null>(null)
   const [mapping, setMapping] = useState<ProductRow | null>(null)
   const [sharedPoolItemCode, setSharedPoolItemCode] = useState('')
   const [catalogInfoOpen, setCatalogInfoOpen] = useState(false)
   const [locationsOpen, setLocationsOpen] = useState(false)
   const [warehouseCode, setWarehouseCode] = useState('')
   const sequence = useRef(0)
+  const previewPollToken = useRef(0)
   const autoSelectedShops = useRef(new Set<number>())
 
 	const load = useCallback(async (preferredShopID = shopID, preferredGroupCursor = groupCursor) => {
@@ -479,7 +485,13 @@ export default function ShopeeStock() {
     }
 	}, [groupCursor, groupedAvailable, page, search, shopID, tab])
 
-	useEffect(() => { void load() }, [load])
+  useEffect(() => { void load() }, [load])
+  useEffect(() => () => { previewPollToken.current += 1 }, [])
+  useEffect(() => {
+    previewPollToken.current += 1
+    setPreviewRun(null)
+    setPreview(null)
+  }, [shopID])
 
   const selectedSetting = data?.settings.find((item) => item.shop_id === shopID)
   const warehouses = useMemo(() => {
@@ -593,9 +605,40 @@ export default function ShopeeStock() {
       scope_mode: draft.scope_mode,
       locations: draft.locations,
     })
-    const response = await client.post<Preview>(`/api/settings/shopee-stock/${shopID}/preview`, { as_of_date: bangkokDate() }, { timeout: 60000 })
-    setPreview(response.data)
-    toast.success(response.data.blocked_count ? `ตรวจแล้ว พบ ${response.data.blocked_count} รายการที่ต้องแก้` : 'ตรวจผลกระทบแล้ว พร้อมเปิดซิงก์')
+    const queued = await client.post<{ run_id: string; status: string }>(`/api/settings/shopee-stock/${shopID}/preview`, { as_of_date: bangkokDate() })
+    const token = previewPollToken.current + 1
+    previewPollToken.current = token
+    setPreviewRun({ id: queued.data.run_id, run_type: 'preview', status: queued.data.status, total_count: 0, changed_count: 0, blocked_count: 0, error_count: 0, started_at: new Date().toISOString(), progress_pct: 0 })
+    let completed: SyncRun | null = null
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      if (previewPollToken.current !== token) return
+      const runResponse = await client.get<SyncRun>(`/api/settings/shopee-stock/${shopID}/runs/${queued.data.run_id}`)
+      setPreviewRun(runResponse.data)
+      if (['success', 'warning', 'failed', 'paused', 'cancelled'].includes(runResponse.data.status)) {
+        completed = runResponse.data
+        break
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    }
+    if (!completed) throw new Error('ตรวจสต๊อกใช้เวลานานเกิน 5 นาที กรุณาเปิดประวัติเพื่อตรวจผล')
+    if (completed.status !== 'success' && completed.status !== 'warning') {
+      throw new Error(completed.error_message || 'ตรวจสต๊อกไม่สำเร็จ กรุณาลองใหม่')
+    }
+    const [firstLines, blockedLines] = await Promise.all([
+      client.get<CursorPage<PreviewRunLine>>(`/api/settings/shopee-stock/${shopID}/runs/${queued.data.run_id}/lines`, { params: { limit: 100 } }),
+      completed.blocked_count > 0
+        ? client.get<CursorPage<PreviewRunLine>>(`/api/settings/shopee-stock/${shopID}/runs/${queued.data.run_id}/lines`, { params: { limit: 100, status: 'blocked' } })
+        : Promise.resolve({ data: { data: [], has_more: false, next_cursor: '' } }),
+    ])
+    const detailByKey = new Map<string, Preview['lines'][number]>()
+    for (const line of [...(firstLines.data.data ?? []), ...(blockedLines.data.data ?? [])]) {
+      detailByKey.set(`${line.detail.item_id}:${line.detail.model_id}`, line.detail)
+    }
+    const summary = completed.summary ?? { run_id: completed.id, total_count: completed.total_count, changed_count: completed.changed_count, skipped_count: 0, blocked_count: completed.blocked_count, excluded_balance: 0 }
+    const result = { ...summary, run_id: completed.id, lines: [...detailByKey.values()] } as Preview
+    setPreview(result)
+    setPreviewRun(null)
+    toast.success(result.blocked_count ? `ตรวจแล้ว พบ ${result.blocked_count} รายการที่ต้องแก้` : 'ตรวจผลกระทบแล้ว พร้อมเปิดซิงก์')
     await load(shopID)
   })
 
@@ -657,7 +700,9 @@ export default function ShopeeStock() {
           ? 'ต้องตรวจ Dry-run ก่อนเปิดซิงก์'
           : draft?.paused_reason
             ? 'ระบบหยุดชั่วคราว กรุณาตรวจสาเหตุ'
-            : ''
+      : ''
+  const previewProgress = Math.min(100, Math.max(0, Math.round(previewRun?.progress_pct ?? 0)))
+  const previewInProgress = previewRun?.status === 'queued' || previewRun?.status === 'running'
   const setupSteps = [
     {
       label: 'เลือกขอบเขตสต๊อก',
@@ -864,7 +909,10 @@ export default function ShopeeStock() {
                 <TooltipContent>อัปเดตรายการสินค้าจาก Shopee คืออะไร</TooltipContent>
               </Tooltip>
             </div>
-            <Button variant="outline" size="sm" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}><PackageCheck className="h-4 w-4" />{busy === 'preview' ? 'กำลังคำนวณ...' : 'บันทึกและตรวจสต๊อก'}</Button>
+            <Button variant="outline" size="sm" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}>
+              {previewInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+              {previewInProgress ? `กำลังตรวจ ${previewProgress}%` : 'บันทึกและตรวจสต๊อก'}
+            </Button>
             <Button size="sm" onClick={syncNow} disabled={!!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
           </div>
           <span className="min-w-0 text-xs text-muted-foreground sm:max-w-[48%] sm:text-right xl:max-w-none">สินค้า {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ตรวจ {formatDateTime(selectedSetting?.last_preview_at)}{draft?.dry_run_required && selectedSetting?.last_preview_at ? ' (ต้องตรวจใหม่)' : ''} · ซิงก์ {formatDateTime(selectedSetting?.last_success_at)}</span>
@@ -873,6 +921,28 @@ export default function ShopeeStock() {
         {nextActionMessage && <p className="hidden border-t px-3 py-1.5 text-xs text-amber-800 dark:text-amber-200 sm:block"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
       </section>
 
+      {previewInProgress && (
+        <Alert className="border-info/40 bg-info/5">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <AlertTitle>{previewRun?.status === 'queued' ? 'กำลังรอคิวตรวจสต๊อก' : 'กำลังตรวจสต๊อกจาก SML'}</AlertTitle>
+          <AlertDescription>
+            <div className="mt-1 flex items-center gap-3">
+              <div
+                className="h-2 flex-1 overflow-hidden rounded-full bg-muted"
+                role="progressbar"
+                aria-label="ความคืบหน้าการตรวจสต๊อก"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={previewProgress}
+              >
+                <div className="h-full rounded-full bg-info transition-[width] duration-300" style={{ width: `${previewProgress}%` }} />
+              </div>
+              <span className="w-12 text-right font-mono text-xs">{previewProgress}%</span>
+            </div>
+            <p className="mt-1 text-xs">ประมวลผลแล้ว {formatNumber(previewRun?.processed_count ?? 0)} รายการ หน้านี้จะอัปเดตผลให้อัตโนมัติ</p>
+          </AlertDescription>
+        </Alert>
+      )}
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ระบบหยุดร้านนี้เพื่อความปลอดภัย</AlertTitle><AlertDescription>{draft.paused_reason}{draft.last_error ? ` · ${draft.last_error}` : ''}</AlertDescription></Alert>}
       {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? 'ระบบหยุดทั้งร้านเพื่อความปลอดภัย' : preview.blocked_count ? `พร้อมเปิดซิงก์ โดยเว้น ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'Dry-run ผ่านแล้ว'}</AlertTitle><AlertDescription>ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)}{(preview.excluded_locations?.length ?? 0) > 0 ? ` · พบสต๊อกในคลัง/พื้นที่อื่น ${formatNumber(uniqueExcludedLocationCount(preview.excluded_locations ?? []))} ตำแหน่ง` : preview.excluded_balance !== 0 ? ` · พบยอดในคลัง/พื้นที่อื่น ${formatNumber(preview.excluded_balance)}` : ''}{preview.circuit_breaker && ` · ${preview.circuit_breaker}`}</AlertDescription></Alert>}
       <ExcludedStockLocations locations={preview?.excluded_locations ?? []} />

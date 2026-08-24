@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,8 @@ type ShopeeStockHandler struct {
 	audit   *repository.AuditLogRepo
 	log     *zap.Logger
 }
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
 func NewShopeeStockHandler(service *shopeestock.Service, audit *repository.AuditLogRepo, log *zap.Logger) *ShopeeStockHandler {
 	return &ShopeeStockHandler{service: service, audit: audit, log: log}
@@ -156,13 +159,63 @@ func (h *ShopeeStockHandler) Preview(c *gin.Context) {
 	if strings.TrimSpace(request.AsOfDate) == "" {
 		request.AsOfDate = shopeestock.TodayBangkok()
 	}
-	result, err := h.service.Preview(c.Request.Context(), shopID, request.AsOfDate)
+	runID, err := h.service.QueuePreview(c.Request.Context(), shopID, request.AsOfDate)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	h.auditChange(c, "shopee_stock_previewed", shopID, map[string]any{"run_id": result.RunID, "changed_count": result.ChangedCount, "blocked_count": result.BlockedCount})
-	c.JSON(http.StatusOK, result)
+	h.auditChange(c, "shopee_stock_preview_queued", shopID, map[string]any{"run_id": runID, "as_of_date": request.AsOfDate})
+	c.JSON(http.StatusAccepted, gin.H{"run_id": runID, "status": "queued"})
+}
+
+func (h *ShopeeStockHandler) PreviewRun(c *gin.Context) {
+	shopID, ok := h.shopID(c)
+	if !ok {
+		return
+	}
+	runID := strings.TrimSpace(c.Param("run_id"))
+	if !uuidPattern.MatchString(runID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run_id ไม่ถูกต้อง"})
+		return
+	}
+	run, err := h.service.GetRun(c.Request.Context(), shopID, runID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, run)
+}
+
+func (h *ShopeeStockHandler) PreviewRunLines(c *gin.Context) {
+	shopID, ok := h.shopID(c)
+	if !ok {
+		return
+	}
+	runID := strings.TrimSpace(c.Param("run_id"))
+	if !uuidPattern.MatchString(runID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run_id ไม่ถูกต้อง"})
+		return
+	}
+	status := strings.TrimSpace(c.Query("status"))
+	if status != "" && status != "changed" && status != "unchanged" && status != "blocked" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status ไม่ถูกต้อง"})
+		return
+	}
+	after, err := optionalInt64(c.Query("cursor"))
+	if err != nil || after < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cursor ไม่ถูกต้อง"})
+		return
+	}
+	lines, hasMore, err := h.service.RunLines(c.Request.Context(), shopID, runID, status, after, marketplacePageLimit(c.Query("limit"), 50, 100))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	next := ""
+	if hasMore && len(lines) > 0 {
+		next = strconv.FormatInt(lines[len(lines)-1].LineOrder, 10)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": lines, "has_more": hasMore, "next_cursor": next})
 }
 
 func (h *ShopeeStockHandler) Run(c *gin.Context) {
@@ -274,7 +327,7 @@ func (h *ShopeeStockHandler) fail(c *gin.Context, err error) {
 	if errors.Is(err, shopeestock.ErrUnavailable) || errors.Is(err, shopeestock.ErrGatewayOnly) {
 		status = http.StatusServiceUnavailable
 	}
-	if errors.Is(err, shopeestock.ErrSyncInProgress) || errors.Is(err, shopeestock.ErrMappingConflict) || errors.Is(err, shopeestock.ErrBlockedReservations) {
+	if errors.Is(err, shopeestock.ErrSyncInProgress) || errors.Is(err, shopeestock.ErrMappingConflict) || errors.Is(err, shopeestock.ErrBlockedReservations) || errors.Is(err, shopeestock.ErrPreviewStale) {
 		status = http.StatusConflict
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

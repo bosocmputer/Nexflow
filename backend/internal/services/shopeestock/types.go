@@ -1,6 +1,7 @@
 package shopeestock
 
 import (
+	"encoding/json"
 	"time"
 
 	"nexflow/internal/services/sml"
@@ -105,20 +106,37 @@ type ProductCounts struct {
 }
 
 type Run struct {
-	ID            string     `json:"id"`
-	ShopID        int64      `json:"shop_id"`
-	RunType       string     `json:"run_type"`
-	TriggerSource string     `json:"trigger_source"`
-	Status        string     `json:"status"`
-	AsOfDate      string     `json:"as_of_date,omitempty"`
-	TotalCount    int        `json:"total_count"`
-	ChangedCount  int        `json:"changed_count"`
-	SkippedCount  int        `json:"skipped_count"`
-	BlockedCount  int        `json:"blocked_count"`
-	ErrorCount    int        `json:"error_count"`
-	ErrorMessage  string     `json:"error_message,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	ID                  string          `json:"id"`
+	ShopID              int64           `json:"shop_id"`
+	RunType             string          `json:"run_type"`
+	TriggerSource       string          `json:"trigger_source"`
+	Status              string          `json:"status"`
+	AsOfDate            string          `json:"as_of_date,omitempty"`
+	TotalCount          int             `json:"total_count"`
+	ChangedCount        int             `json:"changed_count"`
+	SkippedCount        int             `json:"skipped_count"`
+	BlockedCount        int             `json:"blocked_count"`
+	ErrorCount          int             `json:"error_count"`
+	ErrorMessage        string          `json:"error_message,omitempty"`
+	ConfigVersion       *int64          `json:"config_version,omitempty"`
+	CatalogGenerationID string          `json:"catalog_generation_id,omitempty"`
+	ProcessedCount      int             `json:"processed_count"`
+	ProgressPct         float64         `json:"progress_pct"`
+	Summary             json.RawMessage `json:"summary"`
+	StartedAt           time.Time       `json:"started_at"`
+	FinishedAt          *time.Time      `json:"finished_at,omitempty"`
+}
+
+type QueuedPreviewJob struct {
+	ID                     string
+	ShopID                 int64
+	AsOfDate               string
+	ConfigVersion          int64
+	CatalogGenerationID    string
+	DemandRevisionSnapshot json.RawMessage
+	AttemptCount           int
+	LeaseOwner             string
+	LeaseUntil             time.Time
 }
 
 type Overview struct {
@@ -263,7 +281,10 @@ type SettingsUpdate struct {
 type PreviewLine struct {
 	ItemID             int64                      `json:"item_id"`
 	ModelID            int64                      `json:"model_id"`
+	ProductName        string                     `json:"product_name,omitempty"`
+	VariantName        string                     `json:"variant_name,omitempty"`
 	SMLItemCode        string                     `json:"sml_item_code"`
+	SMLUnitCode        string                     `json:"sml_unit_code,omitempty"`
 	ScopeBalance       float64                    `json:"scope_balance"`
 	ExcludedBalance    float64                    `json:"excluded_balance"`
 	ExcludedLocations  []ExcludedStockLocation    `json:"excluded_locations,omitempty"`
@@ -285,6 +306,26 @@ type PreviewLine struct {
 	SetDefinitionHash  string                     `json:"set_definition_hash,omitempty"`
 	SetComponents      []SetStockComponentPreview `json:"set_components,omitempty"`
 	BottleneckItemCode string                     `json:"bottleneck_item_code,omitempty"`
+}
+
+type RunLine struct {
+	ID               string          `json:"id"`
+	ItemID           int64           `json:"item_id"`
+	ModelID          int64           `json:"model_id"`
+	ParentKey        string          `json:"parent_key"`
+	ProductName      string          `json:"product_name"`
+	VariantName      string          `json:"variant_name"`
+	SMLItemCode      string          `json:"sml_item_code"`
+	SMLUnitCode      string          `json:"sml_unit_code"`
+	Status           string          `json:"status"`
+	PreviousStock    *int64          `json:"previous_stock,omitempty"`
+	TargetStock      *int64          `json:"target_stock,omitempty"`
+	AvailableBaseQty *float64        `json:"available_base_qty,omitempty"`
+	PendingBaseQty   *float64        `json:"pending_base_qty,omitempty"`
+	ReasonCode       string          `json:"reason_code"`
+	Message          string          `json:"message"`
+	LineOrder        int64           `json:"line_order"`
+	Detail           json.RawMessage `json:"detail"`
 }
 
 type ExcludedStockLocation struct {

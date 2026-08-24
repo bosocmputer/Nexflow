@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"nexflow/internal/services/shopeeapi"
@@ -26,6 +27,7 @@ var (
 	ErrSelectedLocation    = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
 	ErrSyncInProgress      = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
 	ErrBlockedReservations = errors.New("มีคำสั่งซื้อที่ยังพิสูจน์ mapping หรือ conversion ไม่ได้ ระบบหยุดส่ง stock เพื่อป้องกันขายเกิน")
+	ErrPreviewStale        = errors.New("ข้อมูลสินค้า สต๊อก หรือการตั้งค่าเปลี่ยนระหว่างคำนวณ กรุณาตรวจสต๊อกใหม่")
 )
 
 type ValidationError struct{ Message string }
@@ -57,6 +59,14 @@ func (s *Service) ProductGroupVariants(ctx context.Context, shopID int64, filter
 		return nil, false, ErrUnavailable
 	}
 	return s.store.ListProductGroupVariants(ctx, shopID, filter)
+}
+
+func (s *Service) GetRun(ctx context.Context, shopID int64, runID string) (*Run, error) {
+	return s.store.GetRun(ctx, shopID, runID)
+}
+
+func (s *Service) RunLines(ctx context.Context, shopID int64, runID, status string, afterOrder int64, limit int) ([]RunLine, bool, error) {
+	return s.store.ListRunLines(ctx, shopID, runID, status, afterOrder, limit)
 }
 
 type Service struct {
@@ -289,7 +299,50 @@ func (s *Service) syncCatalog(ctx context.Context, shopID int64, trigger string,
 }
 
 func (s *Service) Preview(ctx context.Context, shopID int64, asOfDate string) (*PreviewResult, error) {
-	return s.calculate(ctx, shopID, asOfDate, "preview", "manual", true)
+	return s.calculate(ctx, shopID, asOfDate, "preview", "manual", true, "", "")
+}
+
+func (s *Service) QueuePreview(ctx context.Context, shopID int64, asOfDate string) (string, error) {
+	if !s.Available() {
+		return "", ErrUnavailable
+	}
+	if _, err := time.Parse("2006-01-02", asOfDate); err != nil {
+		return "", invalid("วันที่ต้องเป็น YYYY-MM-DD")
+	}
+	settings, err := s.store.GetSettings(ctx, shopID)
+	if err != nil {
+		return "", err
+	}
+	if settings.CredentialMode != "gateway" {
+		return "", ErrGatewayOnly
+	}
+	if settings.ScopeMode != "selected" || len(settings.Locations) != 1 {
+		return "", ErrScopeRequired
+	}
+	runID, err := s.store.QueuePreviewRun(ctx, shopID, asOfDate)
+	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			return "", ErrSyncInProgress
+		}
+		return "", err
+	}
+	return runID, nil
+}
+
+func (s *Service) ExecuteQueuedPreview(ctx context.Context, job *QueuedPreviewJob) (*PreviewResult, error) {
+	if job == nil || job.ID == "" || job.LeaseOwner == "" {
+		return nil, errors.New("queued preview job is invalid")
+	}
+	valid, err := s.store.ValidatePreviewSnapshot(ctx, job.ID, job.LeaseOwner)
+	if err != nil {
+		return nil, err
+	}
+	if !valid {
+		_ = s.store.FinishLeasedPreviewRun(context.Background(), job.ID, job.LeaseOwner, "cancelled", nil, 0, "stale_configuration")
+		return nil, ErrPreviewStale
+	}
+	return s.calculate(ctx, job.ShopID, job.AsOfDate, "preview", "manual", true, job.ID, job.LeaseOwner)
 }
 
 func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*SyncResult, error) {
@@ -312,7 +365,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 		return nil, ErrSyncInProgress
 	}
 	defer func() { _ = s.store.ReleaseLease(context.Background(), shopID, owner) }()
-	preview, err := s.calculate(ctx, shopID, TodayBangkok(), "sync", trigger, false)
+	preview, err := s.calculate(ctx, shopID, TodayBangkok(), "sync", trigger, false, "", "")
 	if err != nil {
 		_ = s.store.RecordSyncChecked(context.Background(), shopID, userSafeError(err), nextScheduledRunAfter(*settings, time.Now()))
 		return nil, err
@@ -503,7 +556,7 @@ func (s *Service) SearchCatalog(ctx context.Context, query string) ([]CatalogOpt
 	return s.store.SearchSMLCatalog(ctx, query, 20)
 }
 
-func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType, trigger string, savePreview bool) (*PreviewResult, error) {
+func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType, trigger string, savePreview bool, existingRunID, runLeaseOwner string) (*PreviewResult, error) {
 	if !s.Available() {
 		return nil, ErrUnavailable
 	}
@@ -520,12 +573,19 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if settings.ScopeMode != "selected" || len(settings.Locations) != 1 {
 		return nil, ErrScopeRequired
 	}
-	runID, err := s.store.CreateRun(ctx, shopID, runType, trigger, asOfDate)
-	if err != nil {
-		return nil, err
+	runID := existingRunID
+	if runID == "" {
+		runID, err = s.store.CreateRun(ctx, shopID, runType, trigger, asOfDate)
+		if err != nil {
+			return nil, err
+		}
 	}
 	fail := func(cause error) (*PreviewResult, error) {
-		_ = s.store.FinishRun(context.Background(), runID, "failed", nil, 1, userSafeError(cause))
+		if runLeaseOwner != "" {
+			_ = s.store.FinishLeasedPreviewRun(context.Background(), runID, runLeaseOwner, "failed", nil, 1, userSafeError(cause))
+		} else {
+			_ = s.store.FinishRun(context.Background(), runID, "failed", nil, 1, userSafeError(cause))
+		}
 		return nil, cause
 	}
 	locations, _, err := s.cachedLocations(ctx, true)
@@ -542,6 +602,11 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	}
 	if len(products) == 0 {
 		return fail(errors.New("ยังไม่มีรายการสินค้า Shopee กรุณากดอัปเดตรายการสินค้าก่อน"))
+	}
+	if runLeaseOwner != "" {
+		if err := s.store.UpdatePreviewRunProgress(ctx, runID, runLeaseOwner, 0, 20); err != nil {
+			return fail(err)
+		}
 	}
 	var pendingReservations map[string]ReservationDemand
 	if s.cfg.ReservationLedgerEnabled {
@@ -630,24 +695,36 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	balanceMap := map[string]sml.StockBalanceItem{}
 	excludedLocations := []ExcludedStockLocation{}
 	if len(itemCodes) > 0 {
-		request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
-			ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes, ScopeMode: settings.ScopeMode,
-			IncludeItemExcludedLocations: true,
-		}}}
-		for _, pair := range settings.Locations {
-			request.Scopes[0].Locations = append(request.Scopes[0].Locations, sml.StockLocationPair{Warehouse: pair.Warehouse, Location: pair.Location})
+		for start := 0; start < len(itemCodes); start += 500 {
+			end := start + 500
+			if end > len(itemCodes) {
+				end = len(itemCodes)
+			}
+			request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
+				ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes[start:end], ScopeMode: settings.ScopeMode,
+				IncludeItemExcludedLocations: true,
+			}}}
+			for _, pair := range settings.Locations {
+				request.Scopes[0].Locations = append(request.Scopes[0].Locations, sml.StockLocationPair{Warehouse: pair.Warehouse, Location: pair.Location})
+			}
+			balances, balanceErr := s.sml.BalancesBatch(ctx, request)
+			if balanceErr != nil {
+				return fail(balanceErr)
+			}
+			if len(balances.Scopes) != 1 {
+				return fail(errors.New("SML stock response ไม่มี scope ที่ร้องขอ"))
+			}
+			for _, item := range balances.Scopes[0].Items {
+				balanceMap[item.ItemCode] = item
+			}
+			excludedLocations = append(excludedLocations, previewExcludedLocations("", balances.Scopes[0].ExcludedLocations)...)
+			if runLeaseOwner != "" {
+				progress := 20 + (float64(end)/float64(len(itemCodes)))*40
+				if err := s.store.UpdatePreviewRunProgress(ctx, runID, runLeaseOwner, end, progress); err != nil {
+					return fail(err)
+				}
+			}
 		}
-		balances, balanceErr := s.sml.BalancesBatch(ctx, request)
-		if balanceErr != nil {
-			return fail(balanceErr)
-		}
-		if len(balances.Scopes) != 1 {
-			return fail(errors.New("SML stock response ไม่มี scope ที่ร้องขอ"))
-		}
-		for _, item := range balances.Scopes[0].Items {
-			balanceMap[item.ItemCode] = item
-		}
-		excludedLocations = previewExcludedLocations("", balances.Scopes[0].ExcludedLocations)
 	}
 	result := &PreviewResult{
 		RunID: runID, ShopID: shopID, AsOfDate: asOfDate,
@@ -668,7 +745,8 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		productByKey[key] = product
 		pendingDemand := pendingReservations[key]
 		line := PreviewLine{
-			ItemID: product.ItemID, ModelID: product.ModelID, SMLItemCode: product.SMLItemCode,
+			ItemID: product.ItemID, ModelID: product.ModelID, ProductName: product.ItemName, VariantName: product.ModelName,
+			SMLItemCode: product.SMLItemCode, SMLUnitCode: product.SMLUnitCode,
 			UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved,
 			PendingNexflowQty: pendingDemand.SourceQty, PendingBaseQty: pendingDemand.BaseQty, WarningCodes: append([]string(nil), product.WarningCodes...),
 			ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash,
@@ -689,7 +767,6 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				line.SetDefinitionHash = definition.Hash
 				if product.MappingSetDefinitionHash != definition.Hash {
 					line.WarningCodes = appendUnique(line.WarningCodes, "set_definition_changed")
-					_ = s.store.SetDryRunRequired(context.Background(), shopID)
 				}
 				_, availableSets, components, setWarnings := CalculateSetTarget(definition, balanceMap, settings.StockPct, product.UnitFactor)
 				line.ScopeBalance = float64(availableSets)
@@ -799,19 +876,40 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 	}
 	result.CircuitBreaker = ZeroDropCircuit(previousTargets, nextTargets)
-	if result.CircuitBreaker != "" {
-		_ = s.store.SetPaused(context.Background(), shopID, result.CircuitBreaker, "SML stock เปลี่ยนเป็นศูนย์จำนวนมากผิดปกติ")
-	}
 	if savePreview {
-		if err := s.store.SavePreview(ctx, shopID, result); err != nil {
-			return fail(err)
+		if runLeaseOwner != "" {
+			valid, validateErr := s.store.ValidatePreviewSnapshot(ctx, runID, runLeaseOwner)
+			if validateErr != nil {
+				return fail(validateErr)
+			}
+			if !valid {
+				return fail(ErrPreviewStale)
+			}
+			if err := s.store.UpdatePreviewRunProgress(ctx, runID, runLeaseOwner, len(result.Lines), 85); err != nil {
+				return fail(err)
+			}
+		}
+		var saveErr error
+		if runLeaseOwner != "" {
+			saveErr = s.store.SavePreviewLeased(ctx, shopID, result, runLeaseOwner)
+		} else {
+			saveErr = s.store.SavePreview(ctx, shopID, result)
+		}
+		if saveErr != nil {
+			return fail(saveErr)
 		}
 		status := "success"
 		if result.BlockedCount > 0 || result.CircuitBreaker != "" {
 			status = "warning"
 		}
-		if err := s.store.FinishRun(ctx, runID, status, result, 0, result.CircuitBreaker); err != nil {
-			return nil, err
+		var finishErr error
+		if runLeaseOwner != "" {
+			finishErr = s.store.FinishLeasedPreviewRun(ctx, runID, runLeaseOwner, status, result, 0, result.CircuitBreaker)
+		} else {
+			finishErr = s.store.FinishRun(ctx, runID, status, result, 0, result.CircuitBreaker)
+		}
+		if finishErr != nil {
+			return nil, finishErr
 		}
 	}
 	return result, nil

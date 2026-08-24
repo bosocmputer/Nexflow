@@ -410,8 +410,19 @@ ALTER TABLE shopee_stock_runs
   ADD COLUMN IF NOT EXISTS catalog_generation_id UUID REFERENCES sml_catalog_sync_runs(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS demand_revision_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS lease_fencing_token BIGINT,
+	ADD COLUMN IF NOT EXISTS lease_owner TEXT NOT NULL DEFAULT '',
+	ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ,
+	ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ,
+	ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS processed_count INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS progress_pct NUMERIC(5,2) NOT NULL DEFAULT 0;
+
+CREATE UNIQUE INDEX IF NOT EXISTS shopee_stock_preview_active_unique
+  ON shopee_stock_runs(shop_id)
+  WHERE run_type='preview' AND status IN ('queued','running');
+CREATE INDEX IF NOT EXISTS shopee_stock_preview_claim_idx
+  ON shopee_stock_runs(status, lease_until, started_at)
+  WHERE run_type='preview' AND status IN ('queued','running');
 
 CREATE TABLE IF NOT EXISTS shopee_stock_run_lines (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -432,6 +443,7 @@ CREATE TABLE IF NOT EXISTS shopee_stock_run_lines (
   pending_base_qty NUMERIC,
   reason_code TEXT NOT NULL DEFAULT '',
   message TEXT NOT NULL DEFAULT '',
+	detail JSONB NOT NULL DEFAULT '{}'::jsonb,
   line_order BIGINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (run_id, item_id, model_id)

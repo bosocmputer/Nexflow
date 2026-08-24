@@ -149,6 +149,7 @@ func (s *Store) UpdateSettings(ctx context.Context, shopID int64, request Settin
 		       locations = $12,
 		       all_scope_warning_acknowledged = false,
 		       dry_run_required = CASE WHEN $13 THEN true ELSE dry_run_required END,
+		       config_version = config_version + 1,
 		       updated_by = $14::uuid,
 		       updated_at = NOW()
 		 WHERE shop_id = $1`, shopID, request.Enabled, request.StockPct, request.IntervalSeconds,
@@ -163,7 +164,7 @@ func (s *Store) UpdateSettings(ctx context.Context, shopID int64, request Settin
 
 func (s *Store) SetPaused(ctx context.Context, shopID int64, reason, message string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_settings
-		SET enabled = false, paused_reason = $2, last_error = $3, updated_at = NOW()
+		SET enabled = false, paused_reason = $2, last_error = $3, config_version=config_version+1, updated_at = NOW()
 		WHERE shop_id = $1`, shopID, reason, message)
 	return err
 }
@@ -241,7 +242,7 @@ func (s *Store) storeSMLCatalog(ctx context.Context, items []sml.StockCatalogIte
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings st
 		SET enabled=false,dry_run_required=true,paused_reason='set_definition_changed',
-		    last_error='ส่วนประกอบสินค้าชุดเปลี่ยน กรุณาตรวจ Dry-run ใหม่',updated_at=NOW()
+		    last_error='ส่วนประกอบสินค้าชุดเปลี่ยน กรุณาตรวจ Dry-run ใหม่',config_version=config_version+1,updated_at=NOW()
 		WHERE EXISTS (
 		  SELECT 1 FROM shopee_stock_mappings m
 		  JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code
@@ -315,7 +316,7 @@ func (s *Store) RefreshManualMappings(ctx context.Context, items []sml.StockCata
 		}
 		affected, _ := result.RowsAffected()
 		if affected > 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, value.shopID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, value.shopID); err != nil {
 				return err
 			}
 		}
@@ -502,6 +503,9 @@ func (s *Store) storeShopeeProducts(ctx context.Context, shopID int64, products 
 		)`, shopID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -683,7 +687,7 @@ func (s *Store) UpdateSharedPool(ctx context.Context, shopID int64, request Shar
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings
-		SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
+		SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 		return nil, err
 	}
 	detail := map[string]any{"shop_id": shopID, "sml_item_code": request.SMLItemCode, "member_count": len(request.Members), "allocations": request.Members}
@@ -1147,7 +1151,7 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 		if affected, _ := result.RowsAffected(); affected == 0 {
 			return nil, ErrMappingConflict
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 			return nil, err
 		}
 		if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, "", "", true); err != nil {
@@ -1256,7 +1260,7 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 	if affected == 0 {
 		return nil, ErrMappingConflict
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 		return nil, err
 	}
 	if err := insertStockMappingAuditTx(ctx, tx, userID, shopID, itemID, modelID, aliasID, item.ItemCode, request.Excluded); err != nil {
@@ -1438,7 +1442,7 @@ func nonEmptyStrings(values ...string) []string {
 }
 
 func (s *Store) SetDryRunRequired(ctx context.Context, shopID int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,updated_at=NOW() WHERE shop_id=$1`, shopID)
+	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID)
 	return err
 }
 
@@ -1449,22 +1453,257 @@ func (s *Store) CreateRun(ctx context.Context, shopID int64, runType, trigger, a
 	return id, err
 }
 
+func (s *Store) QueuePreviewRun(ctx context.Context, shopID int64, asOfDate string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `INSERT INTO shopee_stock_runs
+		(shop_id,run_type,trigger_source,status,as_of_date,config_version,catalog_generation_id,demand_revision_snapshot,progress_pct)
+		SELECT st.shop_id,'preview','manual','queued',$2::date,st.config_version,
+		       (SELECT id FROM sml_catalog_sync_runs WHERE status='active' ORDER BY activated_at DESC NULLS LAST,created_at DESC LIMIT 1),
+		       COALESCE((
+		         SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
+		         FROM marketplace_stock_demand_versions d
+		         JOIN LATERAL jsonb_array_elements(st.locations) location
+		           ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+		         WHERE d.item_code IN (
+		           SELECT m.sml_item_code FROM shopee_stock_mappings m
+		           WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
+		           UNION
+		           SELECT component->>'item_code'
+		           FROM shopee_stock_mappings m
+		           JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.item_type=3
+		           CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
+		           WHERE m.shop_id=st.shop_id AND m.excluded=false
+		         )
+		       ),'{}'::jsonb),0
+		FROM shopee_stock_settings st WHERE st.shop_id=$1
+		RETURNING id::text`, shopID, asOfDate).Scan(&id)
+	return id, err
+}
+
+func (s *Store) ClaimQueuedPreview(ctx context.Context, leaseOwner string, leaseDuration time.Duration) (*QueuedPreviewJob, error) {
+	var job QueuedPreviewJob
+	var generation sql.NullString
+	err := s.db.QueryRowContext(ctx, `WITH candidate AS (
+		SELECT id FROM shopee_stock_runs
+		WHERE run_type='preview'
+		  AND (status='queued' OR (status='running' AND lease_until<NOW()))
+		ORDER BY started_at,id
+		FOR UPDATE SKIP LOCKED
+		LIMIT 1
+	)
+	UPDATE shopee_stock_runs r
+	SET status='running',lease_owner=$1,lease_until=NOW()+make_interval(secs=>$2),heartbeat_at=NOW(),
+	    attempt_count=attempt_count+1,progress_pct=GREATEST(progress_pct,1),finished_at=NULL
+	FROM candidate WHERE r.id=candidate.id
+	RETURNING r.id::text,r.shop_id,COALESCE(r.as_of_date::text,''),COALESCE(r.config_version,0),
+	          r.catalog_generation_id::text,r.demand_revision_snapshot,r.attempt_count,r.lease_owner,r.lease_until`,
+		leaseOwner, int(leaseDuration.Seconds())).Scan(&job.ID, &job.ShopID, &job.AsOfDate, &job.ConfigVersion,
+		&generation, &job.DemandRevisionSnapshot, &job.AttemptCount, &job.LeaseOwner, &job.LeaseUntil)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	job.CatalogGenerationID = generation.String
+	return &job, nil
+}
+
 func (s *Store) FinishRun(ctx context.Context, runID, status string, result *PreviewResult, errorCount int, errorMessage string) error {
 	if result == nil {
 		result = &PreviewResult{}
 	}
+	summary := *result
+	summary.Lines = nil
+	summaryJSON, _ := json.Marshal(summary)
 	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_runs SET status=$2,total_count=$3,changed_count=$4,
-		skipped_count=$5,blocked_count=$6,error_count=$7,error_message=$8,finished_at=NOW() WHERE id=$1::uuid`,
-		runID, status, result.TotalCount, result.ChangedCount, result.SkippedCount, result.BlockedCount, errorCount, errorMessage)
+		skipped_count=$5,blocked_count=$6,error_count=$7,error_message=$8,summary=$9,
+		processed_count=$3,progress_pct=100,lease_owner='',lease_until=NULL,finished_at=NOW() WHERE id=$1::uuid`,
+		runID, status, result.TotalCount, result.ChangedCount, result.SkippedCount, result.BlockedCount, errorCount, errorMessage, summaryJSON)
 	return err
 }
 
+func (s *Store) FinishLeasedPreviewRun(ctx context.Context, runID, leaseOwner, status string, result *PreviewResult, errorCount int, errorMessage string) error {
+	if result == nil {
+		result = &PreviewResult{}
+	}
+	summary := *result
+	summary.Lines = nil
+	summaryJSON, _ := json.Marshal(summary)
+	res, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_runs SET status=$3,total_count=$4,changed_count=$5,
+		skipped_count=$6,blocked_count=$7,error_count=$8,error_message=$9,summary=$10,
+		processed_count=$4,progress_pct=100,lease_owner='',lease_until=NULL,finished_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, runID, leaseOwner, status,
+		result.TotalCount, result.ChangedCount, result.SkippedCount, result.BlockedCount, errorCount, errorMessage, summaryJSON)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected != 1 {
+		return ErrSyncInProgress
+	}
+	return nil
+}
+
+func (s *Store) UpdatePreviewRunProgress(ctx context.Context, runID, leaseOwner string, processed int, progress float64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_runs
+		SET processed_count=GREATEST(processed_count,$3),progress_pct=GREATEST(progress_pct,$4),heartbeat_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, runID, leaseOwner, processed, progress)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected != 1 {
+		return ErrSyncInProgress
+	}
+	return nil
+}
+
+func (s *Store) HeartbeatPreviewRun(ctx context.Context, runID, leaseOwner string, duration time.Duration) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_runs
+		SET lease_until=NOW()+make_interval(secs=>$3),heartbeat_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running' AND lease_until>NOW()`, runID, leaseOwner, int(duration.Seconds()))
+	if err != nil {
+		return false, err
+	}
+	affected, _ := res.RowsAffected()
+	return affected == 1, nil
+}
+
+func (s *Store) ReleasePreviewRun(ctx context.Context, runID, leaseOwner string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_runs SET status='queued',lease_owner='',lease_until=NULL,heartbeat_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, runID, leaseOwner)
+	return err
+}
+
+const previewSnapshotValidationSQL = `SELECT r.lease_owner=$2 AND r.lease_until>NOW()
+	AND r.config_version=st.config_version
+	AND r.catalog_generation_id IS NOT DISTINCT FROM (
+	  SELECT id FROM sml_catalog_sync_runs WHERE status='active' ORDER BY activated_at DESC NULLS LAST,created_at DESC LIMIT 1
+	)
+	AND r.demand_revision_snapshot=COALESCE((
+	  SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
+	  FROM marketplace_stock_demand_versions d
+	  JOIN LATERAL jsonb_array_elements(st.locations) location
+	    ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+	  WHERE d.item_code IN (
+	    SELECT m.sml_item_code FROM shopee_stock_mappings m WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
+	    UNION
+	    SELECT component->>'item_code' FROM shopee_stock_mappings m
+	    JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.item_type=3
+	    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
+	    WHERE m.shop_id=st.shop_id AND m.excluded=false
+	  )
+	),'{}'::jsonb)
+	FROM shopee_stock_runs r JOIN shopee_stock_settings st ON st.shop_id=r.shop_id
+	WHERE r.id=$1::uuid AND r.status='running'
+	FOR SHARE OF r,st`
+
+type previewSnapshotQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func validatePreviewSnapshot(ctx context.Context, queryer previewSnapshotQueryer, runID, leaseOwner string) (bool, error) {
+	var valid bool
+	err := queryer.QueryRowContext(ctx, previewSnapshotValidationSQL, runID, leaseOwner).Scan(&valid)
+	return valid, err
+}
+
+func (s *Store) ValidatePreviewSnapshot(ctx context.Context, runID, leaseOwner string) (bool, error) {
+	return validatePreviewSnapshot(ctx, s.db, runID, leaseOwner)
+}
+
+func (s *Store) GetRun(ctx context.Context, shopID int64, runID string) (*Run, error) {
+	var run Run
+	var generation sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id::text,shop_id,run_type,trigger_source,status,COALESCE(as_of_date::text,''),
+		total_count,changed_count,skipped_count,blocked_count,error_count,error_message,config_version,
+		catalog_generation_id::text,processed_count,progress_pct::float8,summary,started_at,finished_at
+		FROM shopee_stock_runs WHERE id=$1::uuid AND shop_id=$2`, runID, shopID).Scan(
+		&run.ID, &run.ShopID, &run.RunType, &run.TriggerSource, &run.Status, &run.AsOfDate,
+		&run.TotalCount, &run.ChangedCount, &run.SkippedCount, &run.BlockedCount, &run.ErrorCount, &run.ErrorMessage,
+		&run.ConfigVersion, &generation, &run.ProcessedCount, &run.ProgressPct, &run.Summary, &run.StartedAt, &run.FinishedAt)
+	if err != nil {
+		return nil, err
+	}
+	run.CatalogGenerationID = generation.String
+	return &run, nil
+}
+
+func (s *Store) ListRunLines(ctx context.Context, shopID int64, runID, status string, afterOrder int64, limit int) ([]RunLine, bool, error) {
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	args := []any{runID, shopID, afterOrder}
+	whereStatus := ""
+	if status = strings.TrimSpace(status); status != "" {
+		args = append(args, status)
+		whereStatus = fmt.Sprintf(" AND status=$%d", len(args))
+	}
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT id::text,item_id,model_id,parent_key,product_name,variant_name,sml_item_code,sml_unit_code,
+		status,previous_stock,target_stock,available_base_qty::float8,pending_base_qty::float8,reason_code,message,line_order,detail
+		FROM shopee_stock_run_lines WHERE run_id=$1::uuid AND shop_id=$2 AND line_order>$3`+whereStatus+`
+		ORDER BY line_order,id LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	lines := make([]RunLine, 0, limit+1)
+	for rows.Next() {
+		var line RunLine
+		if err := rows.Scan(&line.ID, &line.ItemID, &line.ModelID, &line.ParentKey, &line.ProductName, &line.VariantName,
+			&line.SMLItemCode, &line.SMLUnitCode, &line.Status, &line.PreviousStock, &line.TargetStock,
+			&line.AvailableBaseQty, &line.PendingBaseQty, &line.ReasonCode, &line.Message, &line.LineOrder, &line.Detail); err != nil {
+			return nil, false, err
+		}
+		lines = append(lines, line)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(lines) > limit
+	if hasMore {
+		lines = lines[:limit]
+	}
+	return lines, hasMore, nil
+}
+
 func (s *Store) SavePreview(ctx context.Context, shopID int64, result *PreviewResult) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	return s.savePreview(ctx, shopID, result, "")
+}
+
+func (s *Store) SavePreviewLeased(ctx context.Context, shopID int64, result *PreviewResult, leaseOwner string) error {
+	if strings.TrimSpace(leaseOwner) == "" {
+		return errors.New("stock preview lease owner is required")
+	}
+	return s.savePreview(ctx, shopID, result, leaseOwner)
+}
+
+func (s *Store) savePreview(ctx context.Context, shopID int64, result *PreviewResult, leaseOwner string) error {
+	options := &sql.TxOptions{}
+	if leaseOwner != "" {
+		options.Isolation = sql.LevelSerializable
+	}
+	tx, err := s.db.BeginTx(ctx, options)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if leaseOwner != "" {
+		valid, err := validatePreviewSnapshot(ctx, tx, result.RunID, leaseOwner)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return ErrPreviewStale
+		}
+	}
+	if err := saveStockRunLinesTx(ctx, tx, shopID, result); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM shopee_stock_attempts
+		WHERE run_id=$1::uuid AND result IN ('changed','blocked')`, result.RunID); err != nil {
+		return err
+	}
 	for _, line := range result.Lines {
 		excludedLocationsJSON, err := json.Marshal(line.ExcludedLocations)
 		if err != nil {
@@ -1511,6 +1750,55 @@ func (s *Store) SavePreview(ctx context.Context, shopID int64, result *PreviewRe
 	return tx.Commit()
 }
 
+func saveStockRunLinesTx(ctx context.Context, tx *sql.Tx, shopID int64, result *PreviewResult) error {
+	if result == nil || strings.TrimSpace(result.RunID) == "" {
+		return errors.New("stock preview run_id is required")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM shopee_stock_run_lines WHERE run_id=$1::uuid`, result.RunID); err != nil {
+		return err
+	}
+	const batchSize = 200
+	for start := 0; start < len(result.Lines); start += batchSize {
+		end := start + batchSize
+		if end > len(result.Lines) {
+			end = len(result.Lines)
+		}
+		args := make([]any, 0, (end-start)*18)
+		values := make([]string, 0, end-start)
+		for index := start; index < end; index++ {
+			line := result.Lines[index]
+			status := "unchanged"
+			if line.Blocked {
+				status = "blocked"
+			} else if line.Changed {
+				status = "changed"
+			}
+			detail, err := json.Marshal(line)
+			if err != nil {
+				return err
+			}
+			base := len(args)
+			placeholders := make([]string, 18)
+			for offset := range placeholders {
+				placeholders[offset] = "$" + strconv.Itoa(base+offset+1)
+			}
+			values = append(values, "("+strings.Join(placeholders, ",")+")")
+			args = append(args, result.RunID, shopID, line.ItemID, line.ModelID, strconv.FormatInt(line.ItemID, 10),
+				line.ProductName, line.VariantName, line.SMLItemCode, line.SMLUnitCode, status,
+				line.CurrentStock, line.TargetStock, line.ScopeBalance, line.PendingBaseQty,
+				firstWarning(line.WarningCodes), strings.Join(line.WarningCodes, ","), index+1, detail)
+		}
+		query := `INSERT INTO shopee_stock_run_lines
+			(run_id,shop_id,item_id,model_id,parent_key,product_name,variant_name,sml_item_code,sml_unit_code,status,
+			 previous_stock,target_stock,available_base_qty,pending_base_qty,reason_code,message,line_order,detail)
+			VALUES ` + strings.Join(values, ",")
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SaveSyncAttempt(ctx context.Context, runID string, shopID int64, line PreviewLine, result, reason, message, requestID string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO shopee_stock_attempts
 		(run_id,shop_id,item_id,model_id,sml_item_code,result,previous_stock,target_stock,reason_code,message,request_id)
@@ -1551,7 +1839,8 @@ func (s *Store) ListRuns(ctx context.Context, shopID int64, limit int) ([]Run, e
 		limit = 30
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id::text,shop_id,run_type,trigger_source,status,COALESCE(as_of_date::text,''),
-		total_count,changed_count,skipped_count,blocked_count,error_count,error_message,started_at,finished_at
+		total_count,changed_count,skipped_count,blocked_count,error_count,error_message,config_version,
+		catalog_generation_id::text,processed_count,progress_pct::float8,summary,started_at,finished_at
 		FROM shopee_stock_runs WHERE ($1=0 OR shop_id=$1) ORDER BY started_at DESC LIMIT $2`, shopID, limit)
 	if err != nil {
 		return nil, err
@@ -1560,9 +1849,13 @@ func (s *Store) ListRuns(ctx context.Context, shopID int64, limit int) ([]Run, e
 	runs := []Run{}
 	for rows.Next() {
 		var run Run
-		if err := rows.Scan(&run.ID, &run.ShopID, &run.RunType, &run.TriggerSource, &run.Status, &run.AsOfDate, &run.TotalCount, &run.ChangedCount, &run.SkippedCount, &run.BlockedCount, &run.ErrorCount, &run.ErrorMessage, &run.StartedAt, &run.FinishedAt); err != nil {
+		var generation sql.NullString
+		if err := rows.Scan(&run.ID, &run.ShopID, &run.RunType, &run.TriggerSource, &run.Status, &run.AsOfDate,
+			&run.TotalCount, &run.ChangedCount, &run.SkippedCount, &run.BlockedCount, &run.ErrorCount, &run.ErrorMessage,
+			&run.ConfigVersion, &generation, &run.ProcessedCount, &run.ProgressPct, &run.Summary, &run.StartedAt, &run.FinishedAt); err != nil {
 			return nil, err
 		}
+		run.CatalogGenerationID = generation.String
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
@@ -1578,6 +1871,47 @@ func (s *Store) AcquireLease(ctx context.Context, shopID int64, owner string, du
 	}
 	affected, _ := result.RowsAffected()
 	return affected > 0, nil
+}
+
+func (s *Store) AcquireFencedLease(ctx context.Context, shopID int64, owner string, duration time.Duration) (int64, bool, error) {
+	var token int64
+	err := s.db.QueryRowContext(ctx, `INSERT INTO shopee_stock_leases(shop_id,owner_id,lease_until,fencing_token,heartbeat_at)
+		VALUES($1,$2,NOW()+make_interval(secs=>$3),1,NOW())
+		ON CONFLICT(shop_id) DO UPDATE
+		SET owner_id=EXCLUDED.owner_id,lease_until=EXCLUDED.lease_until,
+		    fencing_token=shopee_stock_leases.fencing_token+1,heartbeat_at=NOW(),updated_at=NOW()
+		WHERE shopee_stock_leases.lease_until<NOW()
+		RETURNING fencing_token`, shopID, owner, int(duration.Seconds())).Scan(&token)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return token, true, nil
+}
+
+func (s *Store) AttachPreviewFencingToken(ctx context.Context, runID, leaseOwner string, token int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_runs SET lease_fencing_token=$3
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, runID, leaseOwner, token)
+	if err != nil {
+		return err
+	}
+	if affected, _ := res.RowsAffected(); affected != 1 {
+		return ErrSyncInProgress
+	}
+	return nil
+}
+
+func (s *Store) HeartbeatFencedLease(ctx context.Context, shopID int64, owner string, token int64, duration time.Duration) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_leases
+		SET lease_until=NOW()+make_interval(secs=>$4),heartbeat_at=NOW(),updated_at=NOW()
+		WHERE shop_id=$1 AND owner_id=$2 AND fencing_token=$3 AND lease_until>NOW()`, shopID, owner, token, int(duration.Seconds()))
+	if err != nil {
+		return false, err
+	}
+	affected, _ := res.RowsAffected()
+	return affected == 1, nil
 }
 
 func (s *Store) ReleaseLease(ctx context.Context, shopID int64, owner string) error {

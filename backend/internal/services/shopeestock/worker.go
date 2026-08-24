@@ -2,6 +2,7 @@ package shopeestock
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"time"
 
@@ -9,13 +10,14 @@ import (
 )
 
 type Worker struct {
-	service   *Service
-	log       *zap.Logger
-	syncSlots chan struct{}
+	service      *Service
+	log          *zap.Logger
+	syncSlots    chan struct{}
+	previewSlots chan struct{}
 }
 
 func NewWorker(service *Service, log *zap.Logger) *Worker {
-	return &Worker{service: service, log: log, syncSlots: make(chan struct{}, 5)}
+	return &Worker{service: service, log: log, syncSlots: make(chan struct{}, 5), previewSlots: make(chan struct{}, 2)}
 }
 
 func (w *Worker) Start(ctx context.Context) {
@@ -32,6 +34,78 @@ func (w *Worker) Start(ctx context.Context) {
 			case now := <-ticker.C:
 				w.tick(ctx, now)
 			}
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				w.previewTick(ctx)
+			}
+		}
+	}()
+}
+
+func (w *Worker) previewTick(ctx context.Context) {
+	select {
+	case w.previewSlots <- struct{}{}:
+	default:
+		return
+	}
+	owner := w.service.leaseOwner("preview", time.Now().UnixNano())
+	job, err := w.service.store.ClaimQueuedPreview(ctx, owner, 5*time.Minute)
+	if err != nil || job == nil {
+		<-w.previewSlots
+		if err != nil {
+			w.log.Warn("shopee stock preview claim", zap.Error(err))
+		}
+		return
+	}
+	go func() {
+		defer func() { <-w.previewSlots }()
+		token, acquired, err := w.service.store.AcquireFencedLease(ctx, job.ShopID, owner, 5*time.Minute)
+		if err != nil || !acquired {
+			_ = w.service.store.ReleasePreviewRun(context.Background(), job.ID, owner)
+			if err != nil {
+				w.log.Warn("shopee stock preview lease", zap.Int64("shop_id", job.ShopID), zap.Error(err))
+			}
+			return
+		}
+		defer func() { _ = w.service.store.ReleaseLease(context.Background(), job.ShopID, owner) }()
+		if err := w.service.store.AttachPreviewFencingToken(ctx, job.ID, owner, token); err != nil {
+			_ = w.service.store.ReleasePreviewRun(context.Background(), job.ID, owner)
+			return
+		}
+		runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case <-ticker.C:
+					runOK, runErr := w.service.store.HeartbeatPreviewRun(runCtx, job.ID, owner, 5*time.Minute)
+					leaseOK, leaseErr := w.service.store.HeartbeatFencedLease(runCtx, job.ShopID, owner, token, 5*time.Minute)
+					if runErr != nil || leaseErr != nil || !runOK || !leaseOK {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+		_, err = w.service.ExecuteQueuedPreview(runCtx, job)
+		cancel()
+		<-heartbeatDone
+		if err != nil && !errors.Is(err, ErrPreviewStale) {
+			w.log.Warn("shopee stock preview", zap.Int64("shop_id", job.ShopID), zap.String("run_id", job.ID), zap.Error(err))
 		}
 	}()
 }
