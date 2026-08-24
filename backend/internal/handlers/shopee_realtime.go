@@ -321,14 +321,19 @@ func shopeeRealtimeRouteMissingFields(cfg ShopeeConfigRequest, def *models.Chann
 	if strings.TrimSpace(cfg.ShelfCode) == "" {
 		missing = append(missing, "พื้นที่เก็บ")
 	}
-	if strings.TrimSpace(cfg.DocTime) == "" {
-		missing = append(missing, "เวลาเอกสาร")
-	}
 	if cfg.VATType < 0 {
 		missing = append(missing, "ประเภทภาษี")
 	}
 	if cfg.VATRate < 0 {
 		missing = append(missing, "อัตราภาษี")
+	}
+	if def != nil && def.ShippingItemEnabled {
+		if strings.TrimSpace(def.ShippingItemCode) == "" {
+			missing = append(missing, "สินค้าค่าจัดส่ง")
+		}
+		if strings.TrimSpace(def.ShippingItemUnitCode) == "" {
+			missing = append(missing, "หน่วยค่าจัดส่ง")
+		}
 	}
 	return missing
 }
@@ -1197,7 +1202,6 @@ func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDe
 		strings.TrimSpace(cfg.UnitCode),
 		strconv.Itoa(cfg.VATType),
 		fmt.Sprintf("%.4f", cfg.VATRate),
-		strings.TrimSpace(cfg.DocTime),
 	}
 	if def != nil {
 		parts = append(parts,
@@ -1209,7 +1213,6 @@ func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDe
 			strings.TrimSpace(def.BranchCode),
 			strings.TrimSpace(def.SaleCode),
 			strings.TrimSpace(def.UnitCode),
-			strings.TrimSpace(def.DocTime),
 			strconv.FormatBool(def.ShippingItemEnabled),
 			strings.TrimSpace(def.ShippingItemCode),
 			strings.TrimSpace(def.ShippingItemUnitCode),

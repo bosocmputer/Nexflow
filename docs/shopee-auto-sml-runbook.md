@@ -21,6 +21,8 @@ signature, so existing orders are never treated as backlog.
 
 - Only orders with Shopee `create_time` at or after `eligible_after` are queued.
 - Every attempt reconciles Shopee again and reloads the bill before writing SML.
+- `doc_time` is the current Asia/Bangkok time immediately before the first SML
+  write. The durable job persists and reuses it for uncertain-result retries.
 - Manual, bulk and automatic sends share the `erp_send:<shop_id>:<order_sn>`
   lease in `shopee_action_outbox`.
 - Mapping, amount, shipping, catalog, set-product or route problems stop at
@@ -36,5 +38,5 @@ signature, so existing orders are never treated as backlog.
 
 Turn off the shop switch first. For an instance-wide stop, set
 `SHOPEE_AUTO_SML_ENABLED=false` and rebuild the backend. Do not roll back
-migration 082 and do not delete successful job rows; they are idempotency
+migrations 082–083 and do not delete successful job rows; they are idempotency
 records. Disabling does not reverse documents already created in SML.

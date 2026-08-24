@@ -94,6 +94,7 @@ Key recent migrations:
 | 080 | Safe shared SML stock allocation across multiple active Shopee listings |
 | 081 | Persist excluded SML warehouse/location details per Shopee stock mapping |
 | 082 | Durable per-shop Shopee READY_TO_SHIP Auto SML queue, cutoff, leases, retries and circuit breaker |
+| 083 | Stable Asia/Bangkok document time persisted immediately before the first Auto SML write |
 
 ---
 

@@ -265,7 +265,7 @@ func (r *ShopeeAutoSMLRepo) LeaseJobs(ctx context.Context, limit int, lease time
 		  FROM picked WHERE j.id=picked.id
 		RETURNING j.id::text,j.shop_id,j.order_sn,j.bill_id::text,j.sml_doc_no,j.status,
 		          j.attempts,j.next_run_at,j.lease_until,j.order_create_time,j.order_update_time,
-		          j.bill_fingerprint,j.route_signature,j.last_error_code,j.last_error_message,
+		          j.bill_fingerprint,j.route_signature,j.document_time,j.last_error_code,j.last_error_message,
 		          j.started_at,j.completed_at,j.created_at,j.updated_at`, limit, int64(lease.Seconds()))
 	if err != nil {
 		return nil, err
@@ -292,7 +292,7 @@ func scanShopeeAutoSMLJob(s autoSMLJobScanner) (models.ShopeeAutoSMLJob, error) 
 	var leaseUntil, orderUpdate, startedAt, completedAt sql.NullTime
 	err := s.Scan(&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SMLDocNo, &out.Status,
 		&out.Attempts, &out.NextRunAt, &leaseUntil, &out.OrderCreateTime, &orderUpdate,
-		&out.BillFingerprint, &out.RouteSignature, &out.LastErrorCode, &out.LastErrorMessage,
+		&out.BillFingerprint, &out.RouteSignature, &out.DocumentTime, &out.LastErrorCode, &out.LastErrorMessage,
 		&startedAt, &completedAt, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		return out, err
@@ -319,13 +319,24 @@ func (r *ShopeeAutoSMLRepo) GetJob(ctx context.Context, shopID int64, orderSN st
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id::text,shop_id,order_sn,bill_id::text,sml_doc_no,status,attempts,next_run_at,
 		       lease_until,order_create_time,order_update_time,bill_fingerprint,route_signature,
-		       last_error_code,last_error_message,started_at,completed_at,created_at,updated_at
+		       document_time,last_error_code,last_error_message,started_at,completed_at,created_at,updated_at
 		  FROM shopee_auto_sml_jobs WHERE shop_id=$1 AND order_sn=$2`, shopID, strings.TrimSpace(orderSN))
 	job, err := scanShopeeAutoSMLJob(row)
 	if err != nil {
 		return nil, err
 	}
 	return &job, nil
+}
+
+func (r *ShopeeAutoSMLRepo) GetOrSetDocumentTime(ctx context.Context, id, documentTime string) (string, error) {
+	var persisted string
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE shopee_auto_sml_jobs
+		   SET document_time=CASE WHEN document_time='' THEN $2 ELSE document_time END,
+		       updated_at=NOW()
+		 WHERE id=$1::uuid
+		 RETURNING document_time`, strings.TrimSpace(id), strings.TrimSpace(documentTime)).Scan(&persisted)
+	return persisted, err
 }
 
 func (r *ShopeeAutoSMLRepo) LinkBill(ctx context.Context, id, billID, fingerprint string) error {

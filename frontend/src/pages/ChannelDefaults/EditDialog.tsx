@@ -219,8 +219,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const showPartyPicker =
     (row.channel === 'shopee_shipped' && row.bill_type === 'purchase') ||
     (row.channel === 'shopee' && row.bill_type === 'sale') ||
+    (row.channel === 'shopee_realtime' && row.bill_type === 'sale') ||
     (row.channel === 'lazada' && row.bill_type === 'sale') ||
     (row.channel === 'tiktok' && row.bill_type === 'sale')
+  const isShopeeRealtimeAutoRoute = row.channel === 'shopee_realtime' && row.bill_type === 'sale'
   const channelLabel = isShopeePurchase
     ? 'Email บิลซื้อ Shopee'
     : CHANNEL_LABELS[row.channel as ChannelKey] ?? row.channel
@@ -257,6 +259,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
       return 'เลือกรูปแบบเอกสารที่มีเลขรันให้ครบก่อน'
     }
     if (!isSettlement && docWarning) return docWarning
+    if (isShopeeRealtimeAutoRoute && !party?.code) return 'เลือกลูกค้า SML สำหรับ Auto SML ก่อน'
+    if (isShopeeRealtimeAutoRoute && !whCodeTrimmed) return 'เลือกคลังสำหรับ Auto SML ก่อน'
+    if (isShopeeRealtimeAutoRoute && !shelfCodeTrimmed) return 'เลือกพื้นที่เก็บสำหรับ Auto SML ก่อน'
+    if (isShopeeRealtimeAutoRoute && (vatTypeStr === '' || vatRateValue < 0)) return 'ตั้งค่า VAT สำหรับ Auto SML ก่อน'
     if (supportsShippingItem && shippingEnabled && !shippingItemCodeTrimmed) {
       return 'เลือกสินค้า SML สำหรับค่าขนส่งก่อนเปิดใช้งาน'
     }
@@ -550,10 +556,12 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
               <div>
                 <div className="text-xs font-semibold text-foreground">
-                  ค่าเริ่มต้นตอนส่ง SML
+                  {isShopeeRealtimeAutoRoute ? 'ค่าคงที่สำหรับ Auto SML' : 'ค่าเริ่มต้นตอนส่ง SML'}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  ค่าชุดนี้จะถูกเติมใน dialog ส่งบิลให้ user เห็นก่อนกดยืนยัน ถ้าเว้นว่าง ระบบจะให้ user เลือกเองก่อนส่ง
+                  {isShopeeRealtimeAutoRoute
+                    ? 'ระบบใช้ค่าชุดนี้ส่งเข้า SML โดยไม่เปิด dialog ยืนยัน เวลาเอกสารใช้เวลาปัจจุบัน ณ ตอนส่ง (Asia/Bangkok)'
+                    : 'ค่าชุดนี้จะถูกเติมใน dialog ส่งบิลให้ user เห็นก่อนกดยืนยัน ถ้าเว้นว่าง ระบบจะให้ user เลือกเองก่อนส่ง'}
                 </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -698,9 +706,11 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   />
                 </div>
               </div>
-              {(!whCodeTrimmed || !shelfCodeTrimmed || vatTypeStr === '' || vatRateValue < 0) && (
+              {(!whCodeTrimmed || !shelfCodeTrimmed || vatTypeStr === '' || vatRateValue < 0 || (isShopeeRealtimeAutoRoute && !party?.code)) && (
                 <div className="rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-2 text-xs text-warning">
-                  ยังตั้งค่า default สำหรับส่ง SML ไม่ครบ บันทึกได้ แต่ตอนส่งบิล user ต้องเลือกค่าที่ขาดก่อนยืนยัน
+                  {isShopeeRealtimeAutoRoute
+                    ? 'ยังตั้งค่าคงที่สำหรับ Auto SML ไม่ครบ ระบบจะไม่อนุญาตให้บันทึกหรือเปิดใช้งานอัตโนมัติ'
+                    : 'ยังตั้งค่า default สำหรับส่ง SML ไม่ครบ บันทึกได้ แต่ตอนส่งบิล user ต้องเลือกค่าที่ขาดก่อนยืนยัน'}
                 </div>
               )}
             </div>

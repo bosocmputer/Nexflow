@@ -47,6 +47,7 @@ type ShopeeAutoSMLJob struct {
 	OrderUpdateTime  *time.Time `json:"order_update_time,omitempty"`
 	BillFingerprint  string     `json:"-"`
 	RouteSignature   string     `json:"-"`
+	DocumentTime     string     `json:"document_time,omitempty"`
 	LastErrorCode    string     `json:"last_error_code,omitempty"`
 	LastErrorMessage string     `json:"last_error_message,omitempty"`
 	StartedAt        *time.Time `json:"started_at,omitempty"`

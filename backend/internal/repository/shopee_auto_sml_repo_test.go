@@ -118,3 +118,27 @@ func TestMarkContentionRetryDoesNotConsumeAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGetOrSetDocumentTimePersistsFirstValue(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeAutoSMLRepo(db)
+
+	mock.ExpectQuery("UPDATE shopee_auto_sml_jobs.*document_time=CASE").
+		WithArgs("job-1", "14:25").
+		WillReturnRows(sqlmock.NewRows([]string{"document_time"}).AddRow("14:25"))
+
+	got, err := repo.GetOrSetDocumentTime(t.Context(), "job-1", "14:25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "14:25" {
+		t.Fatalf("document time = %q, want 14:25", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -50,9 +50,8 @@ Current AOY UAT scope:
    have no cutoff, and the durable queue is empty. Do not enable a shop without
    a controlled new order and the checklist in
    `docs/shopee-auto-sml-runbook.md`.
-8. AOY `shopee_realtime / sale` still has an empty `doc_time`. Auto SML
-   preflight must remain blocked until an admin saves the intended document time
-   in `/settings/channels`; do not guess or silently seed this accounting value.
+8. Auto SML persists `doc_time` immediately before its first SML write using
+   Asia/Bangkok and reuses it across retries. It is not a fixed channel setting.
 
 Known deferred or incomplete validation:
 
@@ -125,7 +124,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–082** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–083** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 

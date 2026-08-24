@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -135,23 +136,28 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		})
 		return
 	}
+	if err := validateShopeeRealtimeAutoDefaults(in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	userID := c.GetString("user_id")
 	d := &models.ChannelDefault{
-		Channel:              in.Channel,
-		BillType:             in.BillType,
-		PartyCode:            in.PartyCode,
-		PartyName:            in.PartyName,
-		PartyPhone:           in.PartyPhone,
-		PartyAddress:         in.PartyAddress,
-		PartyTaxID:           in.PartyTaxID,
-		DocFormatCode:        in.DocFormatCode,
-		Endpoint:             in.Endpoint,
-		DocPrefix:            in.DocPrefix,
-		DocRunningFormat:     in.DocRunningFormat,
-		BranchCode:           in.BranchCode,
-		SaleCode:             in.SaleCode,
-		UnitCode:             "",
+		Channel:          in.Channel,
+		BillType:         in.BillType,
+		PartyCode:        in.PartyCode,
+		PartyName:        in.PartyName,
+		PartyPhone:       in.PartyPhone,
+		PartyAddress:     in.PartyAddress,
+		PartyTaxID:       in.PartyTaxID,
+		DocFormatCode:    in.DocFormatCode,
+		Endpoint:         in.Endpoint,
+		DocPrefix:        in.DocPrefix,
+		DocRunningFormat: in.DocRunningFormat,
+		BranchCode:       in.BranchCode,
+		SaleCode:         in.SaleCode,
+		UnitCode:         "",
+		// Auto SML persists doc_time immediately before its first SML write.
 		DocTime:              "",
 		ShippingItemEnabled:  in.ShippingItemEnabled,
 		ShippingItemCode:     in.ShippingItemCode,
@@ -187,6 +193,36 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		"expense_code":          in.ExpenseCode,
 	})
 	c.JSON(http.StatusOK, d)
+}
+
+func validateShopeeRealtimeAutoDefaults(in models.ChannelDefaultUpsert) error {
+	if in.Channel != "shopee_realtime" || in.BillType != "sale" {
+		return nil
+	}
+	required := []struct {
+		value string
+		label string
+	}{
+		{in.Endpoint, "ปลายทาง SML"},
+		{in.DocFormatCode, "รูปแบบเอกสาร"},
+		{in.DocPrefix, "คำนำหน้าเลขเอกสาร"},
+		{in.DocRunningFormat, "รูปแบบเลขรัน"},
+		{in.PartyCode, "ลูกค้า SML"},
+		{in.WHCode, "คลัง"},
+		{in.ShelfCode, "พื้นที่เก็บ"},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("กรุณาตั้งค่า%sสำหรับ Auto SML", field.label)
+		}
+	}
+	if in.VATType < 0 {
+		return fmt.Errorf("กรุณาตั้งค่าประเภทภาษีสำหรับ Auto SML")
+	}
+	if in.VATRate < 0 {
+		return fmt.Errorf("กรุณาตั้งค่าอัตราภาษีสำหรับ Auto SML")
+	}
+	return nil
 }
 
 // supportsConfiguredShippingItem is intentionally narrow. Marketplace sale

@@ -291,7 +291,13 @@ export default function ChannelDefaults() {
     if (r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt') {
       return !r.endpoint || !r.doc_format_code || !r.passbook_code
     }
-    return !r.endpoint || !r.doc_format_code || !r.doc_prefix || !r.doc_running_format
+    const baseUnset = !r.endpoint || !r.doc_format_code || !r.doc_prefix || !r.doc_running_format
+    if (baseUnset) return true
+    if (r.channel === 'shopee_realtime' && r.bill_type === 'sale') {
+      return !r.party_code || !r.wh_code || !r.shelf_code || (r.vat_type ?? -1) < 0 || (r.vat_rate ?? -1) < 0 ||
+        (Boolean(r.shipping_item_enabled) && (!r.shipping_item_code || !r.shipping_item_unit_code))
+    }
+    return false
   }
 
   const unsetRoutes = tableRows.filter(isRouteUnset)
@@ -312,6 +318,14 @@ export default function ChannelDefaults() {
           <div className={r.expense_code ? 'text-muted-foreground' : 'text-muted-foreground'}>
             ส่วนต่าง Shopee: {r.expense_code ? `${r.expense_code}${r.expense_name ? ` · ${r.expense_name}` : ''}` : 'ยังไม่ตั้งค่า'}
           </div>
+        </div>
+      )
+    }
+    if (r.channel === 'shopee_realtime' && r.bill_type === 'sale') {
+      return (
+        <div className="space-y-0.5 text-xs text-muted-foreground">
+          <div>ลูกค้า {r.party_code || 'ยังไม่ตั้ง'} · คลัง {r.wh_code || '-'}/{r.shelf_code || '-'}</div>
+          <div>VAT {(r.vat_rate ?? -1) >= 0 ? `${r.vat_rate}%` : 'ยังไม่ตั้ง'} · เวลาเอกสาร: เวลาปัจจุบัน</div>
         </div>
       )
     }

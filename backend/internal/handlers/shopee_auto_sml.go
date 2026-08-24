@@ -25,6 +25,8 @@ const (
 	shopeeAutoSMLBatchSize   = 2
 )
 
+var shopeeAutoSMLBangkokTimeZone = time.FixedZone("Asia/Bangkok", 7*60*60)
+
 func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail shopeeapi.OrderDetail, snap *models.ShopeeOrderSnapshot) {
 	if h == nil || h.cfg == nil || !h.cfg.ShopeeAutoSMLEnabled || h.autoSMLRepo == nil || snap == nil {
 		return
@@ -229,7 +231,12 @@ func (h *ShopeeRealtimeHandler) processAutoSMLJob(ctx context.Context, job model
 		h.markAutoSMLNeedsReview(ctx, job, "bill_changed", "ข้อมูลบิลเปลี่ยนระหว่างทำงาน กรุณาตรวจสอบแล้วลองใหม่", snap)
 		return
 	}
-	result := h.billH.sendBillToSML(bill, RetryRequest{}, retrySendOptions{
+	documentTime, err := h.autoSMLRepo.GetOrSetDocumentTime(ctx, job.ID, autoSMLDocumentTime(time.Now()))
+	if err != nil {
+		h.handleAutoSMLTransient(ctx, job, "document_time_persist_failed", "บันทึกเวลาเอกสารก่อนส่ง SML ไม่สำเร็จ", snap)
+		return
+	}
+	result := h.billH.sendBillToSML(bill, RetryRequest{DocTime: documentTime}, retrySendOptions{
 		Context: ctx, TraceID: "auto-sml-" + job.ID, Via: "shopee_auto_sml", SuppressLineAlert: true,
 	})
 	switch {
@@ -247,6 +254,10 @@ func (h *ShopeeRealtimeHandler) processAutoSMLJob(ctx context.Context, job model
 	default:
 		h.handleAutoSMLTransient(ctx, job, "sml_send_failed", firstNonEmpty(result.Error, result.Message, "ส่ง SML ไม่สำเร็จ"), snap)
 	}
+}
+
+func autoSMLDocumentTime(startedAt time.Time) string {
+	return startedAt.In(shopeeAutoSMLBangkokTimeZone).Format("15:04")
 }
 
 func (h *ShopeeRealtimeHandler) completeAutoSMLSuccess(ctx context.Context, job models.ShopeeAutoSMLJob, bill *models.Bill, snap *models.ShopeeOrderSnapshot) {
@@ -408,6 +419,7 @@ func (h *ShopeeRealtimeHandler) AutoSMLSettings(c *gin.Context) {
 		"route":             routeReadiness["route"],
 		"document_route":    routeReadiness["document_route"],
 		"doc_format_code":   routeReadiness["doc_format_code"],
+		"missing_fields":    routeReadiness["missing_fields"],
 		"message":           routeReadiness["message"],
 	}
 	for i := range settings {

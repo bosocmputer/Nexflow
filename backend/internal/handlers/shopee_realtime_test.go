@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,13 @@ func TestShopeeRealtimeRouteSignatureChangesForDocumentRoutingFields(t *testing.
 	if got := shopeeRealtimeRouteSignature(cfg, &changed); got == want {
 		t.Fatal("route signature must change when shipping configuration changes")
 	}
+
+	changed = *base
+	changed.DocTime = "23:59"
+	cfg.DocTime = "12:00"
+	if got := shopeeRealtimeRouteSignature(cfg, &changed); got != want {
+		t.Fatal("dynamic document time must not change route signature")
+	}
 }
 
 func TestShopeeRealtimeRouteMissingFields(t *testing.T) {
@@ -92,14 +100,40 @@ func TestShopeeRealtimeRouteMissingFields(t *testing.T) {
 		WHCode: "AB-1", ShelfCode: "001", VATType: 1, VATRate: 7,
 	}
 	def := &models.ChannelDefault{DocPrefix: "BF-INV", DocRunningFormat: "YYMM####"}
-	missing := shopeeRealtimeRouteMissingFields(cfg, def)
-	if len(missing) != 1 || missing[0] != "เวลาเอกสาร" {
-		t.Fatalf("missing = %v, want [เวลาเอกสาร]", missing)
-	}
-
-	cfg.DocTime = "14:30"
 	if missing := shopeeRealtimeRouteMissingFields(cfg, def); len(missing) != 0 {
 		t.Fatalf("ready route missing = %v", missing)
+	}
+
+	def.ShippingItemEnabled = true
+	if missing := shopeeRealtimeRouteMissingFields(cfg, def); !slices.Equal(missing, []string{"สินค้าค่าจัดส่ง", "หน่วยค่าจัดส่ง"}) {
+		t.Fatalf("shipping route missing = %v", missing)
+	}
+	def.ShippingItemCode = "AH-0061"
+	def.ShippingItemUnitCode = "ชิ้น"
+	if missing := shopeeRealtimeRouteMissingFields(cfg, def); len(missing) != 0 {
+		t.Fatalf("complete shipping route missing = %v", missing)
+	}
+}
+
+func TestAutoSMLDocumentTimeUsesBangkok(t *testing.T) {
+	startedAt := time.Date(2026, 8, 24, 4, 35, 42, 0, time.UTC)
+	if got := autoSMLDocumentTime(startedAt); got != "11:35" {
+		t.Fatalf("autoSMLDocumentTime() = %q, want 11:35", got)
+	}
+}
+
+func TestValidateShopeeRealtimeAutoDefaults(t *testing.T) {
+	base := models.ChannelDefaultUpsert{
+		Channel: "shopee_realtime", BillType: "sale", Endpoint: "/api/v1/ic/sale-invoices",
+		DocFormatCode: "BF-INV", DocPrefix: "BF-INV", DocRunningFormat: "YYMM####",
+		PartyCode: "AR-001", WHCode: "AB-2", ShelfCode: "002", VATType: 0, VATRate: 7,
+	}
+	if err := validateShopeeRealtimeAutoDefaults(base); err != nil {
+		t.Fatalf("complete defaults rejected: %v", err)
+	}
+	base.PartyCode = ""
+	if err := validateShopeeRealtimeAutoDefaults(base); err == nil || !strings.Contains(err.Error(), "ลูกค้า SML") {
+		t.Fatalf("missing party error = %v", err)
 	}
 }
 
