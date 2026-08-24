@@ -42,6 +42,63 @@ func TestInsertPushEventNormalizesEmptyJSONHeaders(t *testing.T) {
 	}
 }
 
+func TestOrderStatusTransitionAtReturnsFirstReadyToShipEvidence(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+
+	readyAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
+	mock.ExpectQuery("WITH requested\\(shop_id,order_sn\\) AS").
+		WithArgs(int64(264993963), "2608247BT82QQM", "READY_TO_SHIP").
+		WillReturnRows(sqlmock.NewRows([]string{"shop_id", "order_sn", "transition_at"}).
+			AddRow(int64(264993963), "2608247BT82QQM", readyAt))
+
+	got, err := repo.OrderStatusTransitionAt(context.Background(), 264993963, "2608247BT82QQM", "READY_TO_SHIP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || !got.Equal(readyAt) {
+		t.Fatalf("transition = %v, want %v", got, readyAt)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOrderStatusTransitionTimesBatchesOrders(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+
+	firstAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
+	secondAt := firstAt.Add(time.Minute)
+	mock.ExpectQuery("WITH requested\\(shop_id,order_sn\\) AS").
+		WithArgs(int64(1), "ORDER-1", int64(1), "ORDER-2", "READY_TO_SHIP").
+		WillReturnRows(sqlmock.NewRows([]string{"shop_id", "order_sn", "transition_at"}).
+			AddRow(int64(1), "ORDER-1", firstAt).
+			AddRow(int64(1), "ORDER-2", secondAt))
+
+	got, err := repo.OrderStatusTransitionTimes(context.Background(), []ShopeeSnapshotRef{
+		{ShopID: 1, OrderSN: "ORDER-1"},
+		{ShopID: 1, OrderSN: "ORDER-2"},
+	}, "READY_TO_SHIP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[ShopeeSnapshotRef{ShopID: 1, OrderSN: "ORDER-1"}].Equal(firstAt) {
+		t.Fatalf("transitions = %#v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestShopeeSnapshotStatusGroupWhere(t *testing.T) {
 	tests := []struct {
 		name  string

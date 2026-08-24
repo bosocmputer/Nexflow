@@ -230,6 +230,7 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     input_channel: selectedInputChannel,
     bill_type: config.billType,
     document_route: config.documentRoute,
+    sort: mode === 'sale-invoice' ? 'document_date_desc' : undefined,
     shopee_shop_id: showShopeeShopFilter && shopeeShopId !== ALL ? shopeeShopId : '',
     search: debouncedSearch,
     archived: archiveMode === 'active' ? '' : archiveMode,

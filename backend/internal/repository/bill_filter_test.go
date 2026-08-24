@@ -15,6 +15,16 @@ func TestBillWhereDefaultsToActiveDocuments(t *testing.T) {
 	}
 }
 
+func TestBillOrderByDocumentDateDesc(t *testing.T) {
+	got := billOrderBy(models.BillListFilter{Sort: "document_date_desc"}, false)
+	if !strings.Contains(got, "raw_data->>'doc_date'") || !strings.Contains(got, "b.created_at DESC") {
+		t.Fatalf("document order = %q", got)
+	}
+	if got := billOrderBy(models.BillListFilter{Sort: "document_date_desc"}, true); got != "b.created_at DESC, b.id DESC" {
+		t.Fatalf("cursor order = %q", got)
+	}
+}
+
 func TestBillWhereArchivedModes(t *testing.T) {
 	where, _, _ := billWhere(models.BillListFilter{Archived: "include"})
 	if strings.Contains(where, "archived_at") {

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"regexp"
 	"testing"
 	"time"
@@ -9,6 +10,62 @@ import (
 
 	"nexflow/internal/models"
 )
+
+func TestAutoSMLListSettingsExcludesDisabledConnections(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeAutoSMLRepo(db)
+
+	mock.ExpectExec("INSERT INTO shopee_auto_sml_settings").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("JOIN shopee_api_connections c ON c.shop_id = st.shop_id AND c.disabled_at IS NULL").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"shop_id", "shop_label", "enabled", "eligible_after", "route_signature", "enabled_by",
+			"enabled_at", "paused_reason", "paused_at", "consecutive_system_failures", "last_success_at",
+			"last_failure_at", "queued_count", "needs_review_count", "failed_count", "oldest_queued_at", "updated_at",
+		}))
+
+	settings, err := repo.ListSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(settings) != 0 {
+		t.Fatalf("settings = %d, want 0", len(settings))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutoSMLEnqueueUsesReadyToShipTransitionCutoff(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeAutoSMLRepo(db)
+
+	createdAt := time.Date(2026, 8, 24, 6, 46, 0, 0, time.UTC)
+	updatedAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
+	readyAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
+	mock.ExpectExec("AND st.eligible_after IS NOT NULL AND \\$5 >= st.eligible_after").
+		WithArgs(int64(264993963), "2608247BT82QQM", createdAt, &updatedAt, readyAt, "route-signature").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	inserted, err := repo.Enqueue(context.Background(), 264993963, "2608247BT82QQM", createdAt, &updatedAt, readyAt, "route-signature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("expected job to be inserted")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestAutoSMLRetryDelay(t *testing.T) {
 	tests := []struct {

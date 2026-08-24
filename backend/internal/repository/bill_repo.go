@@ -290,9 +290,9 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 	          FROM bills b
 	          LEFT JOIN bill_items bi ON bi.bill_id = b.id
 	          ` + where + `
-	          GROUP BY b.id, b.bill_type, b.source, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
-	                   b.anomalies, b.error_msg, b.created_at, b.sent_at, b.archived_at, b.archived_by, b.archive_reason
-	          ORDER BY b.created_at DESC, b.id DESC` +
+		          GROUP BY b.id, b.bill_type, b.source, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
+		                   b.anomalies, b.error_msg, b.created_at, b.sent_at, b.archived_at, b.archived_by, b.archive_reason
+		          ORDER BY ` + billOrderBy(f, useCursor) +
 		fmt.Sprintf(" LIMIT $%d", argN)
 	args = append(args, queryLimit)
 	if !useCursor {
@@ -348,6 +348,19 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 		Page:       f.Page,
 		PageSize:   limit,
 	}, nil
+}
+
+func billOrderBy(f models.BillListFilter, useCursor bool) string {
+	if f.Sort == "document_date_desc" && !useCursor {
+		// Marketplace importers persist doc_date as YYYY-MM-DD. Keep malformed or
+		// legacy rows deterministic by falling back to the local creation date.
+		return `CASE
+		          WHEN COALESCE(b.raw_data->>'doc_date', '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+		          THEN b.raw_data->>'doc_date'
+		          ELSE to_char(b.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD')
+		        END DESC, b.created_at DESC, b.id DESC`
+	}
+	return "b.created_at DESC, b.id DESC"
 }
 
 func billWhere(f models.BillListFilter) (string, []interface{}, int) {

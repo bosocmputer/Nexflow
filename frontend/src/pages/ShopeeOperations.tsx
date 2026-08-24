@@ -2326,9 +2326,10 @@ function AutoSMLStatusBadge({ job }: { job?: AutoSMLJobView }) {
 
 function autoSMLAllShopsStatus(enabled: number, total: number) {
   if (total === 0) return 'ไม่มีร้าน'
+  if (total === 1) return enabled === 1 ? 'เปิด' : 'ปิด'
   if (enabled === 0) return 'ปิดทุกร้าน'
   if (enabled === total) return `เปิด ${total} ร้าน`
-  return `เปิด ${enabled} จาก ${total}`
+  return `เปิด ${enabled} จาก ${total} ร้าน`
 }
 
 function autoSMLCompactStatus(data: AutoSMLSettingsResponse | null, setting?: AutoSMLSetting) {

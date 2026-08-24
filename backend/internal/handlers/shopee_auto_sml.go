@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"nexflow/internal/models"
+	"nexflow/internal/repository"
 	"nexflow/internal/services/shopeeapi"
 )
 
@@ -27,7 +28,7 @@ const (
 
 var shopeeAutoSMLBangkokTimeZone = time.FixedZone("Asia/Bangkok", 7*60*60)
 
-func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail shopeeapi.OrderDetail, snap *models.ShopeeOrderSnapshot) {
+func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail shopeeapi.OrderDetail, before, snap *models.ShopeeOrderSnapshot) {
 	if h == nil || h.cfg == nil || !h.cfg.ShopeeAutoSMLEnabled || h.autoSMLRepo == nil || snap == nil {
 		return
 	}
@@ -40,7 +41,15 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail 
 		value := time.Unix(detail.UpdateTime, 0)
 		updateTime = &value
 	}
-	inserted, err := h.autoSMLRepo.Enqueue(ctx, snap.ShopID, snap.OrderSN, createTime, updateTime, h.realtimeRouteSignature(ctx))
+	readyToShipAt, err := h.autoSMLReadyToShipAt(ctx, detail, before, snap)
+	if err != nil {
+		h.logger.Warn("shopee_auto_sml: load ready transition failed", zap.Int64("shop_id", snap.ShopID), zap.String("order_sn", snap.OrderSN), zap.Error(err))
+		return
+	}
+	if readyToShipAt == nil {
+		return
+	}
+	inserted, err := h.autoSMLRepo.Enqueue(ctx, snap.ShopID, snap.OrderSN, createTime, updateTime, *readyToShipAt, h.realtimeRouteSignature(ctx))
 	if err != nil {
 		h.logger.Warn("shopee_auto_sml: enqueue failed", zap.Int64("shop_id", snap.ShopID), zap.String("order_sn", snap.OrderSN), zap.Error(err))
 		return
@@ -50,8 +59,23 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail 
 	}
 }
 
+func (h *ShopeeRealtimeHandler) autoSMLReadyToShipAt(ctx context.Context, detail shopeeapi.OrderDetail, before, snap *models.ShopeeOrderSnapshot) (*time.Time, error) {
+	if h == nil || h.repo == nil || snap == nil {
+		return nil, nil
+	}
+	transition, err := h.repo.OrderStatusTransitionAt(ctx, snap.ShopID, snap.OrderSN, "READY_TO_SHIP")
+	if err != nil || transition != nil {
+		return transition, err
+	}
+	if before == nil || models.NormalizeShopeeOrderStatus(before.OrderStatus) == "READY_TO_SHIP" || detail.UpdateTime <= 0 {
+		return nil, nil
+	}
+	value := time.Unix(detail.UpdateTime, 0)
+	return &value, nil
+}
+
 func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context, snapshots []models.ShopeeOrderSnapshot) {
-	if h == nil || h.cfg == nil || !h.cfg.ShopeeAutoSMLEnabled || h.autoSMLRepo == nil || len(snapshots) == 0 {
+	if h == nil || h.cfg == nil || !h.cfg.ShopeeAutoSMLEnabled || h.autoSMLRepo == nil || h.repo == nil || len(snapshots) == 0 {
 		return
 	}
 	settings, err := h.autoSMLRepo.ListSettings(ctx)
@@ -61,6 +85,19 @@ func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context
 	byShop := make(map[int64]models.ShopeeAutoSMLSetting, len(settings))
 	for _, setting := range settings {
 		byShop[setting.ShopID] = setting
+	}
+	refs := make([]repository.ShopeeSnapshotRef, 0, len(snapshots))
+	for i := range snapshots {
+		snap := &snapshots[i]
+		setting, ok := byShop[snap.ShopID]
+		if snap.AutoSML.Status == "" && models.NormalizeShopeeOrderStatus(snap.OrderStatus) == "READY_TO_SHIP" &&
+			ok && setting.Enabled && setting.PausedReason == "" && setting.EligibleAfter != nil {
+			refs = append(refs, repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN})
+		}
+	}
+	transitions, err := h.repo.OrderStatusTransitionTimes(ctx, refs, "READY_TO_SHIP")
+	if err != nil {
+		return
 	}
 	for i := range snapshots {
 		snap := &snapshots[i]
@@ -76,8 +113,13 @@ func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context
 			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "missing_create_time", ErrorMessage: "Shopee ไม่มี create_time จึงต้องสร้างและส่ง SML ด้วยมือ"}
 			continue
 		}
-		if time.Unix(detail.CreateTime, 0).Before(*setting.EligibleAfter) {
-			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "before_eligible_after", ErrorMessage: "ออเดอร์นี้สร้างก่อนเปิด Auto SML จึงไม่ประมวลผลย้อนหลัง"}
+		readyToShipAt, found := transitions[repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN}]
+		if !found {
+			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "missing_ready_transition", ErrorMessage: "ไม่พบเวลาเข้า READY_TO_SHIP จึงต้องสร้างและส่ง SML ด้วยมือ"}
+			continue
+		}
+		if readyToShipAt.Before(*setting.EligibleAfter) {
+			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "before_eligible_after", ErrorMessage: "ออเดอร์นี้เข้า READY_TO_SHIP ก่อนเปิด Auto SML จึงไม่ประมวลผลย้อนหลัง"}
 		}
 	}
 }

@@ -682,6 +682,15 @@ func validateBillInputChannel(c *gin.Context, f *models.BillListFilter) bool {
 	}
 }
 
+func validateBillSort(c *gin.Context, f *models.BillListFilter) bool {
+	f.Sort = strings.TrimSpace(f.Sort)
+	if f.Sort == "" || f.Sort == "document_date_desc" {
+		return true
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": "sort ไม่ถูกต้อง"})
+	return false
+}
+
 // GET /api/bills
 func (h *BillHandler) List(c *gin.Context) {
 	var f models.BillListFilter
@@ -690,6 +699,9 @@ func (h *BillHandler) List(c *gin.Context) {
 		return
 	}
 	if !validateBillInputChannel(c, &f) {
+		return
+	}
+	if !validateBillSort(c, &f) {
 		return
 	}
 	if h.blockPurchaseFlow(c, f.BillType) {

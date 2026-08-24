@@ -21,7 +21,7 @@ func NewShopeeAutoSMLRepo(db *sql.DB) *ShopeeAutoSMLRepo {
 func (r *ShopeeAutoSMLRepo) EnsureSettings(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO shopee_auto_sml_settings (shop_id)
-		SELECT shop_id FROM shopee_api_connections
+		SELECT shop_id FROM shopee_api_connections WHERE disabled_at IS NULL
 		ON CONFLICT (shop_id) DO NOTHING`)
 	return err
 }
@@ -42,7 +42,7 @@ func (r *ShopeeAutoSMLRepo) ListSettings(ctx context.Context) ([]models.ShopeeAu
 		       MIN(j.created_at) FILTER (WHERE j.status IN ('queued','running','retry_wait')),
 		       st.updated_at
 		  FROM shopee_auto_sml_settings st
-		  JOIN shopee_api_connections c ON c.shop_id = st.shop_id
+		  JOIN shopee_api_connections c ON c.shop_id = st.shop_id AND c.disabled_at IS NULL
 		  LEFT JOIN shopee_auto_sml_jobs j ON j.shop_id = st.shop_id
 		 GROUP BY st.shop_id, c.label, c.shop_name
 		 ORDER BY 2`)
@@ -67,7 +67,7 @@ func (r *ShopeeAutoSMLRepo) GetSetting(ctx context.Context, shopID int64) (*mode
 	}
 	if _, err := r.db.ExecContext(ctx, `
 		INSERT INTO shopee_auto_sml_settings (shop_id)
-		SELECT shop_id FROM shopee_api_connections WHERE shop_id=$1
+		SELECT shop_id FROM shopee_api_connections WHERE shop_id=$1 AND disabled_at IS NULL
 		ON CONFLICT (shop_id) DO NOTHING`, shopID); err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (r *ShopeeAutoSMLRepo) GetSetting(ctx context.Context, shopID int64) (*mode
 		       MIN(j.created_at) FILTER (WHERE j.status IN ('queued','running','retry_wait')),
 		       st.updated_at
 		  FROM shopee_auto_sml_settings st
-		  JOIN shopee_api_connections c ON c.shop_id = st.shop_id
+		  JOIN shopee_api_connections c ON c.shop_id = st.shop_id AND c.disabled_at IS NULL
 		  LEFT JOIN shopee_auto_sml_jobs j ON j.shop_id = st.shop_id
 		 WHERE st.shop_id=$1
 		 GROUP BY st.shop_id, c.label, c.shop_name`, shopID)
@@ -159,7 +159,7 @@ func (r *ShopeeAutoSMLRepo) SetEnabled(ctx context.Context, shopID int64, enable
 			  (shop_id,enabled,eligible_after,route_signature,enabled_by,enabled_at,
 			   paused_reason,paused_at,consecutive_system_failures,updated_at)
 			SELECT shop_id,true,NOW(),$2,NULLIF($3,'')::uuid,NOW(),'',NULL,0,NOW()
-			  FROM shopee_api_connections WHERE shop_id=$1
+			  FROM shopee_api_connections WHERE shop_id=$1 AND disabled_at IS NULL
 			ON CONFLICT (shop_id) DO UPDATE
 			  SET enabled=true,eligible_after=NOW(),route_signature=EXCLUDED.route_signature,
 			      enabled_by=EXCLUDED.enabled_by,enabled_at=NOW(),paused_reason='',paused_at=NULL,
@@ -173,7 +173,7 @@ func (r *ShopeeAutoSMLRepo) SetEnabled(ctx context.Context, shopID int64, enable
 	} else {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO shopee_auto_sml_settings (shop_id,enabled,updated_at)
-			SELECT shop_id,false,NOW() FROM shopee_api_connections WHERE shop_id=$1
+			SELECT shop_id,false,NOW() FROM shopee_api_connections WHERE shop_id=$1 AND disabled_at IS NULL
 			ON CONFLICT (shop_id) DO UPDATE SET enabled=false,updated_at=NOW()`, shopID); err != nil {
 			return nil, err
 		}
@@ -192,9 +192,9 @@ func (r *ShopeeAutoSMLRepo) SetEnabled(ctx context.Context, shopID int64, enable
 	return r.GetSetting(ctx, shopID)
 }
 
-func (r *ShopeeAutoSMLRepo) Enqueue(ctx context.Context, shopID int64, orderSN string, createTime time.Time, updateTime *time.Time, routeSignature string) (bool, error) {
+func (r *ShopeeAutoSMLRepo) Enqueue(ctx context.Context, shopID int64, orderSN string, createTime time.Time, updateTime *time.Time, readyToShipAt time.Time, routeSignature string) (bool, error) {
 	orderSN = strings.TrimSpace(orderSN)
-	if shopID <= 0 || orderSN == "" || createTime.IsZero() {
+	if shopID <= 0 || orderSN == "" || createTime.IsZero() || readyToShipAt.IsZero() {
 		return false, nil
 	}
 	res, err := r.db.ExecContext(ctx, `
@@ -202,11 +202,12 @@ func (r *ShopeeAutoSMLRepo) Enqueue(ctx context.Context, shopID int64, orderSN s
 		  (shop_id,order_sn,order_create_time,order_update_time,route_signature)
 		SELECT st.shop_id,$2,$3,$4,st.route_signature
 		  FROM shopee_auto_sml_settings st
+		  JOIN shopee_api_connections c ON c.shop_id=st.shop_id AND c.disabled_at IS NULL
 		 WHERE st.shop_id=$1 AND st.enabled=true AND st.paused_reason=''
-		   AND st.eligible_after IS NOT NULL AND $3 >= st.eligible_after
-		   AND st.route_signature=$5
+		   AND st.eligible_after IS NOT NULL AND $5 >= st.eligible_after
+		   AND st.route_signature=$6
 		ON CONFLICT (shop_id,order_sn) DO NOTHING`,
-		shopID, orderSN, createTime, updateTime, strings.TrimSpace(routeSignature))
+		shopID, orderSN, createTime, updateTime, readyToShipAt, strings.TrimSpace(routeSignature))
 	if err != nil {
 		return false, err
 	}

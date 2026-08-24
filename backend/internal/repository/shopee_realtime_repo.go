@@ -1331,6 +1331,84 @@ func (r *ShopeeRealtimeRepo) orderStatusEvidence(ctx context.Context, shopID int
 	return out, rows.Err()
 }
 
+// OrderStatusTransitionAt returns the earliest confirmed timestamp for the
+// requested Shopee lifecycle status. Auto SML uses READY_TO_SHIP evidence as
+// its activation cutoff so orders created before the switch was enabled can
+// still be processed when they become ready afterwards, without replaying old
+// READY_TO_SHIP backlog.
+func (r *ShopeeRealtimeRepo) OrderStatusTransitionAt(ctx context.Context, shopID int64, orderSN, status string) (*time.Time, error) {
+	ref := ShopeeSnapshotRef{ShopID: shopID, OrderSN: strings.TrimSpace(orderSN)}
+	transitions, err := r.OrderStatusTransitionTimes(ctx, []ShopeeSnapshotRef{ref}, status)
+	if err != nil {
+		return nil, err
+	}
+	transition, ok := transitions[ref]
+	if !ok {
+		return nil, nil
+	}
+	return &transition, nil
+}
+
+func (r *ShopeeRealtimeRepo) OrderStatusTransitionTimes(ctx context.Context, refs []ShopeeSnapshotRef, status string) (map[ShopeeSnapshotRef]time.Time, error) {
+	status = models.NormalizeShopeeOrderStatus(status)
+	out := make(map[ShopeeSnapshotRef]time.Time)
+	if status == "" || len(refs) == 0 {
+		return out, nil
+	}
+	unique := make([]ShopeeSnapshotRef, 0, len(refs))
+	seen := make(map[ShopeeSnapshotRef]struct{}, len(refs))
+	for _, ref := range refs {
+		ref.OrderSN = strings.TrimSpace(ref.OrderSN)
+		if ref.ShopID <= 0 || ref.OrderSN == "" {
+			continue
+		}
+		if _, exists := seen[ref]; exists {
+			continue
+		}
+		seen[ref] = struct{}{}
+		unique = append(unique, ref)
+	}
+	if len(unique) == 0 {
+		return out, nil
+	}
+	if len(unique) > 200 {
+		return nil, fmt.Errorf("too many Shopee order refs: %d", len(unique))
+	}
+	args := make([]any, 0, len(unique)*2+1)
+	values := make([]string, 0, len(unique))
+	for i, ref := range unique {
+		base := i*2 + 1
+		values = append(values, fmt.Sprintf("($%d::bigint,$%d::text)", base, base+1))
+		args = append(args, ref.ShopID, ref.OrderSN)
+	}
+	args = append(args, status)
+	statusArg := len(args)
+	query := fmt.Sprintf(`
+		WITH requested(shop_id,order_sn) AS (VALUES %s)
+		SELECT DISTINCT ON (e.shop_id,e.order_sn)
+		       e.shop_id,e.order_sn,COALESCE(e.event_update_time,e.event_timestamp,e.received_at)
+		  FROM shopee_push_events e
+		  JOIN requested r ON r.shop_id=e.shop_id AND r.order_sn=e.order_sn
+		 WHERE UPPER(TRIM(e.event_status))=$%d
+		 ORDER BY e.shop_id,e.order_sn,
+		          COALESCE(e.event_update_time,e.event_timestamp,e.received_at) ASC,
+		          e.received_at ASC`, strings.Join(values, ","), statusArg)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ref ShopeeSnapshotRef
+		var transition time.Time
+		if err := rows.Scan(&ref.ShopID, &ref.OrderSN, &transition); err != nil {
+			return nil, err
+		}
+		out[ref] = transition
+	}
+	return out, rows.Err()
+}
+
 func (r *ShopeeRealtimeRepo) orderERPMilestones(ctx context.Context, snap *models.ShopeeOrderSnapshot) ([]models.ShopeeOrderERPMilestone, error) {
 	var createdAt, sentAt sql.NullTime
 	var billStatus, billDocNo string

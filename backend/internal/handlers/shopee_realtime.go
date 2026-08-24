@@ -2983,7 +2983,7 @@ func (h *ShopeeRealtimeHandler) syncConnection(ctx context.Context, conn *Shopee
 			}
 			h.queuePaymentBreakdownIfEligible(ctx, d, after)
 			h.notifySnapshotChange(ctx, before, after, nil, suppressNewOrderNotifications)
-			h.maybeEnqueueAutoSML(ctx, d, after)
+			h.maybeEnqueueAutoSML(ctx, d, before, after)
 			synced++
 		}
 	}
@@ -3036,7 +3036,7 @@ func (h *ShopeeRealtimeHandler) reconcileOrder(ctx context.Context, shopID int64
 		}
 		payment := h.paymentBreakdownForNewOrderNotification(ctx, conn, d, before, after, suppressNewOrderNotifications)
 		h.notifySnapshotChange(ctx, before, after, payment, suppressNewOrderNotifications)
-		h.maybeEnqueueAutoSML(ctx, d, after)
+		h.maybeEnqueueAutoSML(ctx, d, before, after)
 		latest = after
 	}
 	if latest == nil {
