@@ -33,6 +33,17 @@ percentage and parent unit factor. Components are never mapped manually.
 ## Safety Model
 
 - Every shop starts disabled with `stock_pct=80` and a 5-minute interval.
+- Admins can select 5, 10, 20, or 30 minutes, 1 hour, or a custom interval up
+  to 12 weeks. Calendar schedules support every 1-12 months on days 1-28 at a
+  Bangkok time. Daily-or-longer schedules require an explicit risk
+  acknowledgement because Shopee can lag behind SML for the entire interval.
+- The scheduler stores `next_run_at`, runs at most one missed cycle after
+  downtime, and keeps the calendar anchor for monthly schedules. A manual stock
+  sync starts the next fixed interval from the time it completes; monthly
+  schedules keep their configured day and time.
+- At most five shops enter scheduled stock sync concurrently per Nexflow
+  instance. Per-shop leases and changed-stock checks still prevent overlapping
+  writes and unnecessary Shopee updates.
 - Stock writes require Central Shopee Gateway mode.
 - Selecting or changing a warehouse scope, percentage, or mapping disables the
   shop and requires a new dry-run.

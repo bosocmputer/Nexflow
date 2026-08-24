@@ -9,11 +9,14 @@ import (
 )
 
 type Worker struct {
-	service *Service
-	log     *zap.Logger
+	service   *Service
+	log       *zap.Logger
+	syncSlots chan struct{}
 }
 
-func NewWorker(service *Service, log *zap.Logger) *Worker { return &Worker{service: service, log: log} }
+func NewWorker(service *Service, log *zap.Logger) *Worker {
+	return &Worker{service: service, log: log, syncSlots: make(chan struct{}, 5)}
+}
 
 func (w *Worker) Start(ctx context.Context) {
 	if w == nil || w.service == nil || !w.service.Available() {
@@ -63,8 +66,14 @@ func (w *Worker) tick(ctx context.Context, now time.Time) {
 		if int64(now.Second()) < schedulerJitter(shopID) {
 			continue
 		}
+		select {
+		case w.syncSlots <- struct{}{}:
+		default:
+			continue
+		}
 		shopID := shopID
 		go func() {
+			defer func() { <-w.syncSlots }()
 			runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer cancel()
 			if _, err := w.service.RunSync(runCtx, shopID, "scheduler"); err != nil {

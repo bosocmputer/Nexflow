@@ -19,6 +19,12 @@ type Settings struct {
 	Enabled                     bool           `json:"enabled"`
 	StockPct                    float64        `json:"stock_pct"`
 	IntervalSeconds             int            `json:"interval_seconds"`
+	ScheduleMode                string         `json:"schedule_mode"`
+	MonthlyInterval             int            `json:"monthly_interval"`
+	MonthlyDay                  int            `json:"monthly_day"`
+	MonthlyTime                 string         `json:"monthly_time"`
+	ScheduleRiskAcknowledged    bool           `json:"schedule_risk_acknowledged"`
+	NextRunAt                   *time.Time     `json:"next_run_at,omitempty"`
 	ScopeMode                   string         `json:"scope_mode"`
 	Locations                   []LocationPair `json:"locations"`
 	AllScopeWarningAcknowledged bool           `json:"all_scope_warning_acknowledged"`
@@ -217,6 +223,12 @@ type SettingsUpdate struct {
 	Enabled                     bool           `json:"enabled"`
 	StockPct                    float64        `json:"stock_pct"`
 	IntervalSeconds             int            `json:"interval_seconds"`
+	ScheduleMode                string         `json:"schedule_mode"`
+	MonthlyInterval             int            `json:"monthly_interval"`
+	MonthlyDay                  int            `json:"monthly_day"`
+	MonthlyTime                 string         `json:"monthly_time"`
+	ScheduleRiskAcknowledged    bool           `json:"schedule_risk_acknowledged"`
+	NextRunAt                   *time.Time     `json:"-"`
 	ScopeMode                   string         `json:"scope_mode"`
 	Locations                   []LocationPair `json:"locations"`
 	AcknowledgeAllScopeWarnings bool           `json:"acknowledge_all_scope_warnings"`

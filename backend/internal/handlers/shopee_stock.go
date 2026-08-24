@@ -58,7 +58,13 @@ func (h *ShopeeStockHandler) UpdateSettings(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	h.auditChange(c, "shopee_stock_settings_updated", shopID, map[string]any{"enabled": result.Enabled, "stock_pct": result.StockPct, "scope_mode": result.ScopeMode, "location_count": len(result.Locations)})
+	h.auditChange(c, "shopee_stock_settings_updated", shopID, map[string]any{
+		"enabled": result.Enabled, "stock_pct": result.StockPct,
+		"scope_mode": result.ScopeMode, "location_count": len(result.Locations),
+		"schedule_mode": result.ScheduleMode, "interval_seconds": result.IntervalSeconds,
+		"monthly_interval": result.MonthlyInterval, "monthly_day": result.MonthlyDay,
+		"monthly_time": result.MonthlyTime, "schedule_risk_acknowledged": result.ScheduleRiskAcknowledged,
+	})
 	c.JSON(http.StatusOK, result)
 }
 

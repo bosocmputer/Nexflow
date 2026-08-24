@@ -27,6 +27,7 @@ import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SetProductDetailsDialog } from '@/components/catalog/SetProductDetailsDialog'
 import { MarketplaceMappingDrawer } from '@/components/marketplace/MarketplaceMappingDrawer'
+import { StockSchedulePicker, formatStockSchedule, type StockScheduleValue } from '@/components/shopee-stock/StockSchedulePicker'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -66,7 +67,7 @@ type StockCatalogOption = {
   set_components?: CatalogSetComponent[]
   units: StockCatalogUnit[]
 }
-type StockSetting = {
+type StockSetting = StockScheduleValue & {
   shop_id: number
   shop_name: string
   credential_mode: string
@@ -83,6 +84,7 @@ type StockSetting = {
   last_sync_at?: string
   last_success_at?: string
   last_error?: string
+  next_run_at?: string
 }
 type ProductRow = {
   shop_id: number
@@ -285,13 +287,6 @@ function formatDateTime(value?: string) {
   return new Intl.DateTimeFormat('th-TH', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
-function formatInterval(seconds?: number) {
-  const value = seconds ?? 300
-  if (value < 3600) return `${Math.max(1, Math.round(value / 60))} นาที`
-  if (value % 3600 === 0) return `${value / 3600} ชั่วโมง`
-  return `${Math.round(value / 60)} นาที`
-}
-
 function formatUnitLabel(code?: string, name?: string) {
   const unitCode = code?.trim() ?? ''
   const unitName = name?.trim() ?? ''
@@ -385,6 +380,11 @@ function sameSettings(left: StockSetting | null, right?: StockSetting) {
   return left.enabled === right.enabled &&
     left.stock_pct === right.stock_pct &&
     left.interval_seconds === right.interval_seconds &&
+    left.schedule_mode === right.schedule_mode &&
+    left.monthly_interval === right.monthly_interval &&
+    left.monthly_day === right.monthly_day &&
+    left.monthly_time === right.monthly_time &&
+    left.schedule_risk_acknowledged === right.schedule_risk_acknowledged &&
     left.scope_mode === right.scope_mode &&
     sameLocations(left.locations, right.locations)
 }
@@ -393,6 +393,12 @@ function normalizeStockSetting(setting: StockSetting): StockSetting {
   const locations = setting.scope_mode === 'selected' && setting.locations.length === 1 ? [setting.locations[0]] : []
   return {
     ...setting,
+    schedule_mode: setting.schedule_mode || 'interval',
+    interval_seconds: setting.interval_seconds || 300,
+    monthly_interval: setting.monthly_interval || 1,
+    monthly_day: setting.monthly_day || 1,
+    monthly_time: setting.monthly_time || '00:00',
+    schedule_risk_acknowledged: setting.schedule_risk_acknowledged ?? false,
     enabled: locations.length > 0 ? setting.enabled : false,
     scope_mode: locations.length > 0 ? 'selected' : 'unconfigured',
     locations,
@@ -464,6 +470,14 @@ export default function ShopeeStock() {
   const selectedPair = draft?.locations[0]
   const scopeSummary = scopeReady && selectedPair ? `${selectedPair.warehouse} · ${selectedPair.location}` : ''
   const settingsDirty = !sameSettings(draft, selectedSetting)
+  const scheduleDirty = !!draft && !!selectedSetting && (
+    draft.schedule_mode !== selectedSetting.schedule_mode ||
+    draft.interval_seconds !== selectedSetting.interval_seconds ||
+    draft.monthly_interval !== selectedSetting.monthly_interval ||
+    draft.monthly_day !== selectedSetting.monthly_day ||
+    draft.monthly_time !== selectedSetting.monthly_time ||
+    draft.schedule_risk_acknowledged !== selectedSetting.schedule_risk_acknowledged
+  )
 
   useEffect(() => {
     if (!shopID || tab !== 'ready' || search || productCounts.ready > 0 || productCounts.fix === 0 || autoSelectedShops.current.has(shopID)) return
@@ -484,6 +498,11 @@ export default function ShopeeStock() {
       enabled: draft.enabled,
       stock_pct: draft.stock_pct,
       interval_seconds: draft.interval_seconds,
+      schedule_mode: draft.schedule_mode,
+      monthly_interval: draft.monthly_interval,
+      monthly_day: draft.monthly_day,
+      monthly_time: draft.monthly_time,
+      schedule_risk_acknowledged: draft.schedule_risk_acknowledged,
       scope_mode: draft.scope_mode,
       locations: draft.locations,
     })
@@ -506,6 +525,11 @@ export default function ShopeeStock() {
       enabled: false,
       stock_pct: draft.stock_pct,
       interval_seconds: draft.interval_seconds,
+      schedule_mode: draft.schedule_mode,
+      monthly_interval: draft.monthly_interval,
+      monthly_day: draft.monthly_day,
+      monthly_time: draft.monthly_time,
+      schedule_risk_acknowledged: draft.schedule_risk_acknowledged,
       scope_mode: draft.scope_mode,
       locations: draft.locations,
     })
@@ -563,6 +587,17 @@ export default function ShopeeStock() {
     : draft.dry_run_required
       ? 'ตรวจผลกระทบ Dry-run ใหม่ก่อนซิงก์'
       : draft.paused_reason || ''
+  const scheduleDisabledReason = !data?.available
+    ? (data?.availability_text || 'ระบบซิงก์สต๊อกยังไม่พร้อมใช้งาน')
+    : !stockPctValid
+      ? 'กำหนดสัดส่วนส่ง Shopee ระหว่าง 1-100%'
+      : !scopeReady
+        ? 'เลือกคลังและพื้นที่เก็บก่อน'
+        : draft?.dry_run_required
+          ? 'ต้องตรวจ Dry-run ก่อนเปิดซิงก์'
+          : draft?.paused_reason
+            ? 'ระบบหยุดชั่วคราว กรุณาตรวจสาเหตุ'
+            : ''
   const setupSteps = [
     {
       label: 'เลือกขอบเขตสต๊อก',
@@ -587,7 +622,7 @@ export default function ShopeeStock() {
     },
     {
       label: 'เปิดซิงก์สต๊อก',
-      detail: draft?.enabled ? `ทำงานทุก ${formatInterval(draft.interval_seconds)}` : 'ยังปิดเพื่อความปลอดภัย',
+      detail: draft?.enabled ? formatStockSchedule(draft) : 'ยังปิดเพื่อความปลอดภัย',
       done: !!draft?.enabled,
     },
   ]
@@ -725,7 +760,19 @@ export default function ShopeeStock() {
               </PopoverContent>
             </Popover>
           </div>
-          <div className="flex h-10 items-center justify-between gap-3 rounded-md border px-3"><div className="min-w-0"><p className="truncate text-sm font-medium">ซิงก์ทุก {formatInterval(draft?.interval_seconds)}</p><p className="truncate text-[11px] text-muted-foreground">{draft?.dry_run_required ? 'ต้องตรวจสต๊อกก่อนเปิด' : 'ปิดแล้วไม่เปลี่ยนยอด Shopee'}</p></div><Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={draft?.enabled ?? false} disabled={!data?.available || !stockPctValid || !scopeReady || !!draft?.dry_run_required || !!draft?.paused_reason} onCheckedChange={(checked) => draft && setDraft({ ...draft, enabled: checked })} /></div>
+          {draft && (
+            <StockSchedulePicker
+              value={draft}
+              enabled={draft.enabled}
+              disabled={!data?.available}
+              switchDisabled={!data?.available || !stockPctValid || !scopeReady || !!draft.dry_run_required || !!draft.paused_reason}
+              disabledReason={scheduleDisabledReason}
+              nextRunAt={selectedSetting?.next_run_at}
+              scheduleDirty={scheduleDirty}
+              onChange={(schedule) => setDraft({ ...draft, ...schedule })}
+              onEnabledChange={(checked) => setDraft({ ...draft, enabled: checked })}
+            />
+          )}
           <Button className="w-full sm:col-span-2 sm:w-auto sm:justify-self-end xl:col-span-1" onClick={saveSettings} disabled={!draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
         </div>
 

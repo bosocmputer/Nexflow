@@ -128,22 +128,30 @@ func (s *Service) UpdateSettings(ctx context.Context, shopID int64, request Sett
 	if request.StockPct < 1 || request.StockPct > 100 {
 		return nil, invalid("เปอร์เซ็นต์สต๊อกต้องอยู่ระหว่าง 1-100")
 	}
-	if request.IntervalSeconds < 300 || request.IntervalSeconds > 86400 {
-		return nil, invalid("รอบซิงก์ต้องอยู่ระหว่าง 5 นาทีถึง 24 ชั่วโมง")
+	settings, err := s.store.GetSettings(ctx, shopID)
+	if err != nil {
+		return nil, err
 	}
-	request, err := normalizeSelectedScope(request)
+	request = preserveScheduleForLegacyRequest(request, settings)
+	request, err = normalizeSchedule(request)
+	if err != nil {
+		return nil, err
+	}
+	request, err = normalizeSelectedScope(request)
 	if err != nil {
 		return nil, ErrScopeRequired
 	}
 	if request.Enabled && !s.Available() {
 		return nil, ErrUnavailable
 	}
-	settings, err := s.store.GetSettings(ctx, shopID)
-	if err != nil {
-		return nil, err
-	}
 	if request.Enabled && settings.CredentialMode != "gateway" {
 		return nil, ErrGatewayOnly
+	}
+	if scheduleChanged(settings, request) || (request.Enabled && !settings.Enabled) || settings.NextRunAt == nil {
+		next := nextScheduledRun(settingsFromUpdate(request), time.Now())
+		request.NextRunAt = &next
+	} else {
+		request.NextRunAt = settings.NextRunAt
 	}
 	return s.store.UpdateSettings(ctx, shopID, request, userID)
 }
@@ -287,7 +295,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	defer func() { _ = s.store.ReleaseLease(context.Background(), shopID, owner) }()
 	preview, err := s.calculate(ctx, shopID, TodayBangkok(), "sync", trigger, false)
 	if err != nil {
-		_ = s.store.RecordSyncChecked(context.Background(), shopID, userSafeError(err))
+		_ = s.store.RecordSyncChecked(context.Background(), shopID, userSafeError(err), nextScheduledRunAfter(*settings, time.Now()))
 		return nil, err
 	}
 	result := &SyncResult{RunID: preview.RunID, ShopID: shopID, BlockedCount: preview.BlockedCount}
@@ -306,6 +314,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	groups := groupLinesByItem(changed)
 	locationID, multipleWarehouses, err := s.sellerLocationID(ctx, shopID)
 	if err != nil {
+		_ = s.store.RecordSyncChecked(context.Background(), shopID, userSafeError(err), nextScheduledRunAfter(*settings, time.Now()))
 		_ = s.store.FinishRun(ctx, preview.RunID, "failed", preview, 1, userSafeError(err))
 		return result, err
 	}
@@ -359,7 +368,7 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	if result.ErrorCount > 0 || result.UnknownCount > 0 {
 		errorMessage = "มีรายการอัปเดตไม่สำเร็จหรือยังไม่ทราบผล กรุณาตรวจประวัติ"
 	}
-	_ = s.store.RecordSyncChecked(context.Background(), shopID, errorMessage)
+	_ = s.store.RecordSyncChecked(context.Background(), shopID, errorMessage, nextScheduledRunAfter(*settings, time.Now()))
 	if err := s.store.FinishRun(ctx, preview.RunID, status, preview, result.ErrorCount+result.UnknownCount, ""); err != nil {
 		return nil, err
 	}

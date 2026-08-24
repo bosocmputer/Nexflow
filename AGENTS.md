@@ -124,7 +124,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–083** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–084** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 

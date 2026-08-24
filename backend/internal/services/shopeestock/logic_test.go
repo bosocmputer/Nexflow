@@ -101,6 +101,124 @@ func TestNormalizeSelectedScopeRequiresWarehouseAndLocation(t *testing.T) {
 	}
 }
 
+func TestNormalizeScheduleSupportsIntervalsAndCalendarMonths(t *testing.T) {
+	tests := []struct {
+		name      string
+		request   SettingsUpdate
+		wantMode  string
+		wantError bool
+	}{
+		{name: "legacy five minutes", request: SettingsUpdate{IntervalSeconds: 300}, wantMode: "interval"},
+		{name: "twelve weeks", request: SettingsUpdate{ScheduleMode: "interval", IntervalSeconds: 12 * 7 * 24 * 60 * 60, ScheduleRiskAcknowledged: true}, wantMode: "interval"},
+		{name: "monthly", request: SettingsUpdate{ScheduleMode: "monthly", MonthlyInterval: 2, MonthlyDay: 15, MonthlyTime: "09:30", ScheduleRiskAcknowledged: true}, wantMode: "monthly"},
+		{name: "too frequent", request: SettingsUpdate{ScheduleMode: "interval", IntervalSeconds: 299}, wantError: true},
+		{name: "too many weeks", request: SettingsUpdate{ScheduleMode: "interval", IntervalSeconds: 13 * 7 * 24 * 60 * 60}, wantError: true},
+		{name: "daily without acknowledgement", request: SettingsUpdate{ScheduleMode: "interval", IntervalSeconds: 24 * 60 * 60}, wantError: true},
+		{name: "invalid monthly day", request: SettingsUpdate{ScheduleMode: "monthly", MonthlyInterval: 1, MonthlyDay: 29, MonthlyTime: "09:30"}, wantError: true},
+		{name: "invalid monthly time", request: SettingsUpdate{ScheduleMode: "monthly", MonthlyInterval: 1, MonthlyDay: 1, MonthlyTime: "25:00"}, wantError: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := normalizeSchedule(test.request)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("normalizeSchedule(%+v) expected error", test.request)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeSchedule: %v", err)
+			}
+			if got.ScheduleMode != test.wantMode {
+				t.Fatalf("mode=%q want=%q", got.ScheduleMode, test.wantMode)
+			}
+		})
+	}
+}
+
+func TestNextScheduledRunUsesBangkokCalendarForMonthlySchedules(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, time.August, 24, 12, 0, 0, 0, location)
+	settings := Settings{ScheduleMode: "monthly", MonthlyInterval: 1, MonthlyDay: 5, MonthlyTime: "09:30"}
+	got := nextScheduledRun(settings, from)
+	want := time.Date(2026, time.September, 5, 9, 30, 0, 0, location)
+	if !got.Equal(want) {
+		t.Fatalf("next=%s want=%s", got, want)
+	}
+
+	settings = Settings{ScheduleMode: "monthly", MonthlyInterval: 2, MonthlyDay: 25, MonthlyTime: "09:30"}
+	got = nextScheduledRun(settings, from)
+	want = time.Date(2026, time.August, 25, 9, 30, 0, 0, location)
+	if !got.Equal(want) {
+		t.Fatalf("first future monthly occurrence=%s want=%s", got, want)
+	}
+}
+
+func TestNextScheduledRunUsesFixedIntervalWithoutCatchUp(t *testing.T) {
+	from := time.Date(2026, time.August, 24, 5, 0, 0, 0, time.UTC)
+	got := nextScheduledRun(Settings{ScheduleMode: "interval", IntervalSeconds: 20 * 60}, from)
+	want := from.Add(20 * time.Minute)
+	if !got.Equal(want) {
+		t.Fatalf("next=%s want=%s", got, want)
+	}
+}
+
+func TestNextScheduledRunAfterDowntimeKeepsMonthlyAnchor(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := time.Date(2026, time.August, 25, 9, 30, 0, 0, location)
+	recoveredAt := time.Date(2026, time.September, 2, 10, 0, 0, 0, location)
+	settings := Settings{ScheduleMode: "monthly", MonthlyInterval: 2, MonthlyDay: 25, MonthlyTime: "09:30", NextRunAt: &previous}
+	got := nextScheduledRunAfter(settings, recoveredAt)
+	want := time.Date(2026, time.October, 25, 9, 30, 0, 0, location)
+	if !got.Equal(want) {
+		t.Fatalf("next=%s want=%s", got, want)
+	}
+}
+
+func TestPreserveScheduleForLegacyRequestKeepsExistingMonthlySchedule(t *testing.T) {
+	current := &Settings{
+		ScheduleMode: "monthly", IntervalSeconds: 30 * 86400,
+		MonthlyInterval: 1, MonthlyDay: 15, MonthlyTime: "09:30",
+	}
+	got := preserveScheduleForLegacyRequest(SettingsUpdate{IntervalSeconds: 300}, current)
+	if got.ScheduleMode != "monthly" || got.MonthlyDay != 15 || got.MonthlyTime != "09:30" {
+		t.Fatalf("legacy request replaced monthly schedule: %+v", got)
+	}
+}
+
+func TestPreserveScheduleForLegacyRequestAllowsUnchangedDailyInterval(t *testing.T) {
+	current := &Settings{ScheduleMode: "interval", IntervalSeconds: 24 * 60 * 60}
+	got := preserveScheduleForLegacyRequest(SettingsUpdate{IntervalSeconds: 24 * 60 * 60}, current)
+	if !got.ScheduleRiskAcknowledged {
+		t.Fatalf("legacy request did not preserve daily schedule acknowledgement: %+v", got)
+	}
+	if _, err := normalizeSchedule(got); err != nil {
+		t.Fatalf("unchanged legacy daily schedule must remain saveable: %v", err)
+	}
+}
+
+func TestScheduleAcknowledgementDoesNotMoveNextRun(t *testing.T) {
+	current := &Settings{
+		ScheduleMode: "interval", IntervalSeconds: 24 * 60 * 60,
+		MonthlyInterval: 1, MonthlyDay: 1, MonthlyTime: "00:00",
+	}
+	request := SettingsUpdate{
+		ScheduleMode: "interval", IntervalSeconds: 24 * 60 * 60,
+		MonthlyInterval: 1, MonthlyDay: 1, MonthlyTime: "00:00",
+		ScheduleRiskAcknowledged: true,
+	}
+	if scheduleChanged(current, request) {
+		t.Fatal("acknowledgement metadata must not move the next scheduled run")
+	}
+}
+
 func TestWriteErrorClassification(t *testing.T) {
 	rateLimit := &shopeeapi.GatewayError{Code: "rate_limited", Retryable: true}
 	if !isRetryableWrite(rateLimit) || isUnknownWrite(rateLimit) {

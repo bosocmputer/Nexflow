@@ -3,9 +3,75 @@ package shopeestock
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func stockSettingsRows(interval int, nextRun time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"shop_id", "shop_name", "connection_id", "credential_mode", "enabled", "stock_pct", "interval_seconds",
+		"schedule_mode", "monthly_interval", "monthly_day", "monthly_time", "schedule_risk_acknowledged", "next_run_at", "scope_mode", "locations",
+		"all_scope_warning_acknowledged", "dry_run_required", "paused_reason", "last_catalog_sync_at", "last_full_catalog_sync_at",
+		"last_catalog_attempt_at", "last_preview_at", "last_sync_at", "last_success_at", "last_error", "updated_at",
+	}).AddRow(
+		int64(42), "Test shop", "connection-id", "gateway", true, 80.0, interval,
+		"interval", 1, 1, "00:00", false, nextRun, "selected", []byte(`[{"warehouse":"W1","location":"S1"}]`),
+		false, false, "", nil, nil, nil, nil, nil, nil, "", time.Now(),
+	)
+}
+
+func TestUpdateSettingsPersistsStructuredScheduleAndNextRun(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	nextRun := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Second)
+	mock.ExpectExec(`INSERT INTO shopee_stock_settings`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`(?s)SELECT c.shop_id.*st.schedule_mode.*WHERE c.shop_id = \$1`).WithArgs(int64(42)).WillReturnRows(stockSettingsRows(300, nextRun))
+	mock.ExpectExec(`(?s)UPDATE shopee_stock_settings.*schedule_mode = \$5.*next_run_at = \$10`).
+		WithArgs(int64(42), true, 80.0, 600, "interval", 1, 1, "00:00", false, nextRun, "selected", sqlmock.AnyArg(), false, nil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO shopee_stock_settings`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`(?s)SELECT c.shop_id.*st.schedule_mode.*WHERE c.shop_id = \$1`).WithArgs(int64(42)).WillReturnRows(stockSettingsRows(600, nextRun))
+
+	result, err := NewStore(db).UpdateSettings(context.Background(), 42, SettingsUpdate{
+		Enabled: true, StockPct: 80, IntervalSeconds: 600, ScheduleMode: "interval",
+		MonthlyInterval: 1, MonthlyDay: 1, MonthlyTime: "00:00", NextRunAt: &nextRun,
+		ScopeMode: "selected", Locations: []LocationPair{{Warehouse: "W1", Location: "S1"}},
+	}, "")
+	if err != nil {
+		t.Fatalf("UpdateSettings: %v", err)
+	}
+	if result.IntervalSeconds != 600 || result.NextRunAt == nil || !result.NextRunAt.Equal(nextRun) {
+		t.Fatalf("result=%+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}
+
+func TestEnabledDueShopsUsesPersistedNextRun(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)COALESCE\(st.next_run_at.*ORDER BY st.next_run_at NULLS FIRST.*LIMIT 20`).
+		WillReturnRows(sqlmock.NewRows([]string{"shop_id"}).AddRow(int64(42)).AddRow(int64(43)))
+
+	got, err := NewStore(db).EnabledDueShops(context.Background())
+	if err != nil {
+		t.Fatalf("EnabledDueShops: %v", err)
+	}
+	if len(got) != 2 || got[0] != 42 || got[1] != 43 {
+		t.Fatalf("shops=%v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}
 
 func TestCountProductsByStatus(t *testing.T) {
 	db, mock, err := sqlmock.New()

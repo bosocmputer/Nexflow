@@ -62,7 +62,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–082** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–084** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -95,6 +95,7 @@ Key recent migrations:
 | 081 | Persist excluded SML warehouse/location details per Shopee stock mapping |
 | 082 | Durable per-shop Shopee READY_TO_SHIP Auto SML queue, cutoff, leases, retries and circuit breaker |
 | 083 | Stable Asia/Bangkok document time persisted immediately before the first Auto SML write |
+| 084 | Configurable Shopee stock schedules with persisted next run and calendar-month support |
 
 ---
 

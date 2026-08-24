@@ -37,7 +37,10 @@ func (s *Store) ListSettings(ctx context.Context, environment string) ([]Setting
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.shop_id, COALESCE(NULLIF(c.label, ''), NULLIF(c.shop_name, ''), 'Shop ' || c.shop_id::text),
 		       c.id::text, c.credential_mode,
-		       st.enabled, st.stock_pct::float8, st.interval_seconds, st.scope_mode, st.locations,
+		       st.enabled, st.stock_pct::float8, st.interval_seconds,
+		       st.schedule_mode, st.monthly_interval, st.monthly_day, st.monthly_time,
+		       st.schedule_risk_acknowledged, st.next_run_at,
+		       st.scope_mode, st.locations,
 		       st.all_scope_warning_acknowledged, st.dry_run_required, st.paused_reason,
 		       st.last_catalog_sync_at, st.last_full_catalog_sync_at, st.last_catalog_attempt_at,
 		       st.last_preview_at, st.last_sync_at, st.last_success_at,
@@ -56,7 +59,10 @@ func (s *Store) ListSettings(ctx context.Context, environment string) ([]Setting
 		var locations []byte
 		if err := rows.Scan(
 			&item.ShopID, &item.ShopName, &item.ConnectionID, &item.CredentialMode,
-			&item.Enabled, &item.StockPct, &item.IntervalSeconds, &item.ScopeMode, &locations,
+			&item.Enabled, &item.StockPct, &item.IntervalSeconds,
+			&item.ScheduleMode, &item.MonthlyInterval, &item.MonthlyDay, &item.MonthlyTime,
+			&item.ScheduleRiskAcknowledged, &item.NextRunAt,
+			&item.ScopeMode, &locations,
 			&item.AllScopeWarningAcknowledged, &item.DryRunRequired, &item.PausedReason,
 			&item.LastCatalogSyncAt, &item.LastFullCatalogSyncAt, &item.LastCatalogAttemptAt,
 			&item.LastPreviewAt, &item.LastSyncAt, &item.LastSuccessAt,
@@ -81,7 +87,10 @@ func (s *Store) GetSettings(ctx context.Context, shopID int64) (*Settings, error
 	err := s.db.QueryRowContext(ctx, `
 		SELECT c.shop_id, COALESCE(NULLIF(c.label, ''), NULLIF(c.shop_name, ''), 'Shop ' || c.shop_id::text),
 		       c.id::text, c.credential_mode,
-		       st.enabled, st.stock_pct::float8, st.interval_seconds, st.scope_mode, st.locations,
+		       st.enabled, st.stock_pct::float8, st.interval_seconds,
+		       st.schedule_mode, st.monthly_interval, st.monthly_day, st.monthly_time,
+		       st.schedule_risk_acknowledged, st.next_run_at,
+		       st.scope_mode, st.locations,
 		       st.all_scope_warning_acknowledged, st.dry_run_required, st.paused_reason,
 		       st.last_catalog_sync_at, st.last_full_catalog_sync_at, st.last_catalog_attempt_at,
 		       st.last_preview_at, st.last_sync_at, st.last_success_at,
@@ -90,7 +99,10 @@ func (s *Store) GetSettings(ctx context.Context, shopID int64) (*Settings, error
 		  JOIN shopee_stock_settings st ON st.shop_id = c.shop_id
 		 WHERE c.shop_id = $1 AND c.disabled_at IS NULL`, shopID).Scan(
 		&item.ShopID, &item.ShopName, &item.ConnectionID, &item.CredentialMode,
-		&item.Enabled, &item.StockPct, &item.IntervalSeconds, &item.ScopeMode, &locations,
+		&item.Enabled, &item.StockPct, &item.IntervalSeconds,
+		&item.ScheduleMode, &item.MonthlyInterval, &item.MonthlyDay, &item.MonthlyTime,
+		&item.ScheduleRiskAcknowledged, &item.NextRunAt,
+		&item.ScopeMode, &locations,
 		&item.AllScopeWarningAcknowledged, &item.DryRunRequired, &item.PausedReason,
 		&item.LastCatalogSyncAt, &item.LastFullCatalogSyncAt, &item.LastCatalogAttemptAt,
 		&item.LastPreviewAt, &item.LastSyncAt, &item.LastSuccessAt,
@@ -127,13 +139,21 @@ func (s *Store) UpdateSettings(ctx context.Context, shopID int64, request Settin
 		   SET enabled = $2,
 		       stock_pct = $3,
 		       interval_seconds = $4,
-		       scope_mode = $5,
-		       locations = $6,
+		       schedule_mode = $5,
+		       monthly_interval = $6,
+		       monthly_day = $7,
+		       monthly_time = $8,
+		       schedule_risk_acknowledged = $9,
+		       next_run_at = $10,
+		       scope_mode = $11,
+		       locations = $12,
 		       all_scope_warning_acknowledged = false,
-		       dry_run_required = CASE WHEN $7 THEN true ELSE dry_run_required END,
-		       updated_by = $8::uuid,
+		       dry_run_required = CASE WHEN $13 THEN true ELSE dry_run_required END,
+		       updated_by = $14::uuid,
 		       updated_at = NOW()
 		 WHERE shop_id = $1`, shopID, request.Enabled, request.StockPct, request.IntervalSeconds,
+		request.ScheduleMode, request.MonthlyInterval, request.MonthlyDay, request.MonthlyTime,
+		request.ScheduleRiskAcknowledged, request.NextRunAt,
 		request.ScopeMode, locations, changedCalculation, updatedBy)
 	if err != nil {
 		return nil, err
@@ -1295,8 +1315,10 @@ func (s *Store) MarkSyncSuccess(ctx context.Context, shopID int64, lines []Previ
 	return tx.Commit()
 }
 
-func (s *Store) RecordSyncChecked(ctx context.Context, shopID int64, errorMessage string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_settings SET last_sync_at=NOW(),last_error=$2,updated_at=NOW() WHERE shop_id=$1`, shopID, errorMessage)
+func (s *Store) RecordSyncChecked(ctx context.Context, shopID int64, errorMessage string, nextRunAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE shopee_stock_settings
+		SET last_sync_at=NOW(),last_error=$2,next_run_at=$3,updated_at=NOW()
+		WHERE shop_id=$1`, shopID, errorMessage, nextRunAt)
 	return err
 }
 
@@ -1384,8 +1406,9 @@ func (s *Store) EnabledDueShops(ctx context.Context) ([]int64, error) {
 		JOIN shopee_api_connections c ON c.shop_id=st.shop_id
 		WHERE st.enabled=true AND st.dry_run_required=false AND st.paused_reason=''
 		AND c.disabled_at IS NULL AND c.credential_mode='gateway'
-		AND (st.last_sync_at IS NULL OR st.last_sync_at + make_interval(secs=>st.interval_seconds) <= NOW())
-		ORDER BY st.shop_id`)
+		AND COALESCE(st.next_run_at, st.last_sync_at + make_interval(secs=>st.interval_seconds), NOW()) <= NOW()
+		ORDER BY st.next_run_at NULLS FIRST, st.shop_id
+		LIMIT 20`)
 	if err != nil {
 		return nil, err
 	}
