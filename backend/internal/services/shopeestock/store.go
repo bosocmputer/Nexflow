@@ -840,6 +840,142 @@ func (s *Store) ListProductsPage(ctx context.Context, shopID int64, filter Produ
 	return s.listProducts(ctx, shopID, filter)
 }
 
+func stockProductStatusSQL(status, prefix string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ready":
+		return prefix + "excluded=false AND " + prefix + "sml_item_code<>'' AND jsonb_array_length(" + prefix + "warning_codes)=0"
+	case "fix":
+		return prefix + "excluded=false AND (" + prefix + "sml_item_code='' OR jsonb_array_length(" + prefix + "warning_codes)>0)"
+	case "excluded":
+		return prefix + "excluded=true"
+	default:
+		return "true"
+	}
+}
+
+func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter ProductGroupFilter) ([]ProductGroup, bool, error) {
+	if shopID <= 0 {
+		return nil, false, invalid("shop_id ไม่ถูกต้อง")
+	}
+	if filter.Limit < 1 || filter.Limit > 50 {
+		filter.Limit = 30
+	}
+	args := []any{shopID}
+	matched := []string{stockProductStatusSQL(filter.Status, "")}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		args = append(args, "%"+query+"%")
+		n := len(args)
+		matched = append(matched, fmt.Sprintf("(item_name ILIKE $%d OR model_name ILIKE $%d OR item_sku ILIKE $%d OR model_sku ILIKE $%d OR sml_item_code ILIKE $%d)", n, n, n, n, n))
+	}
+	if filter.AfterItemID > 0 {
+		args = append(args, filter.AfterItemID)
+		matched = append(matched, fmt.Sprintf("item_id>$%d", len(args)))
+	}
+	args = append(args, filter.Limit+1)
+	querySQL := fmt.Sprintf(`WITH all_rows AS (
+		SELECT p.item_id,p.item_name,p.model_name,p.item_sku,p.model_sku,p.updated_at,
+		       m.sml_item_code,m.excluded,m.warning_codes
+		FROM shopee_stock_products p
+		JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
+		WHERE p.shop_id=$1 AND p.is_active=true
+	), matched_items AS (
+		SELECT item_id FROM all_rows
+		WHERE %s
+		GROUP BY item_id
+		ORDER BY item_id
+		LIMIT $%d
+	)
+	SELECT a.item_id,MAX(a.item_name),MAX(a.item_sku),COUNT(*)::int,
+	       COUNT(*) FILTER (WHERE a.excluded=false AND a.sml_item_code<>'' AND jsonb_array_length(a.warning_codes)=0)::int,
+	       COUNT(*) FILTER (WHERE a.excluded=false AND (a.sml_item_code='' OR jsonb_array_length(a.warning_codes)>0))::int,
+	       COUNT(*) FILTER (WHERE a.excluded=true)::int,MAX(a.updated_at)
+	FROM matched_items k JOIN all_rows a USING(item_id)
+	GROUP BY a.item_id
+	ORDER BY a.item_id`, strings.Join(matched, " AND "), len(args))
+	rows, err := s.db.QueryContext(ctx, querySQL, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	groups := make([]ProductGroup, 0, filter.Limit+1)
+	for rows.Next() {
+		var group ProductGroup
+		if err := rows.Scan(&group.ItemID, &group.ItemName, &group.ItemSKU, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.ExcludedCount, &group.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		groups = append(groups, group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(groups) > filter.Limit
+	if hasMore {
+		groups = groups[:filter.Limit]
+	}
+	return groups, hasMore, nil
+}
+
+func (s *Store) ListProductGroupVariants(ctx context.Context, shopID int64, filter ProductVariantFilter) ([]ProductRow, bool, error) {
+	if shopID <= 0 || filter.ItemID <= 0 {
+		return nil, false, invalid("shop_id/item_id ไม่ถูกต้อง")
+	}
+	if filter.Limit < 1 || filter.Limit > 100 {
+		filter.Limit = 50
+	}
+	args := []any{shopID, filter.ItemID}
+	where := []string{"p.shop_id=$1", "p.item_id=$2", "p.is_active=true", stockProductStatusSQL(filter.Status, "m.")}
+	if filter.AfterModelID > 0 {
+		args = append(args, filter.AfterModelID)
+		where = append(where, fmt.Sprintf("p.model_id>$%d", len(args)))
+	}
+	if query := strings.TrimSpace(filter.Query); query != "" {
+		args = append(args, "%"+query+"%")
+		n := len(args)
+		where = append(where, fmt.Sprintf("(p.item_name ILIKE $%d OR p.model_name ILIKE $%d OR p.item_sku ILIKE $%d OR p.model_sku ILIKE $%d OR m.sml_item_code ILIKE $%d)", n, n, n, n, n))
+	}
+	args = append(args, filter.Limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
+	       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
+	       COALESCE(c.units,'[]'::jsonb),m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
+	       COALESCE(a.id::text,''),a.updated_at,m.excluded,m.warning_codes,
+	       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,COALESCE(m.last_preview_excluded_locations,'[]'::jsonb),
+	       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,m.last_success_target,m.updated_at,
+	       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
+	       COALESCE(c.set_document_valid,true),COALESCE(c.set_stock_valid,true),COALESCE(c.set_components,'[]'::jsonb)
+	FROM shopee_stock_products p
+	JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
+	LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
+	LEFT JOIN LATERAL (
+	  SELECT master.id,master.updated_at FROM marketplace_item_aliases master
+	  WHERE master.is_active=true AND master.source='shopee'
+	    AND ((master.id=m.marketplace_alias_id) OR (master.account_key='shop:'||p.shop_id::text AND master.external_item_id=p.item_id::text AND master.external_variant_id=p.model_id::text))
+	  ORDER BY (master.id=m.marketplace_alias_id) DESC LIMIT 1
+	) a ON true
+	WHERE `+strings.Join(where, " AND ")+`
+	ORDER BY p.model_id
+	LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	products := make([]ProductRow, 0, filter.Limit+1)
+	for rows.Next() {
+		item, err := scanStockProductRow(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		products = append(products, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(products) > filter.Limit
+	if hasMore {
+		products = products[:filter.Limit]
+	}
+	return products, hasMore, nil
+}
+
 func (s *Store) countProductsByStatus(ctx context.Context, shopID int64, query string) (ProductCounts, error) {
 	query = strings.TrimSpace(query)
 	queryFilter := ""
@@ -959,6 +1095,33 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		products = append(products, item)
 	}
 	return products, total, counts, rows.Err()
+}
+
+type stockProductScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanStockProductRow(row stockProductScanner) (ProductRow, error) {
+	var item ProductRow
+	var warnings, unitsJSON, componentsJSON, excludedLocationsJSON []byte
+	if err := row.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
+		&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
+		&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt, &item.Excluded, &warnings,
+		&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &excludedLocationsJSON, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
+		&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
+		&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
+		&item.SetDocumentValid, &item.SetStockValid, &componentsJSON); err != nil {
+		return ProductRow{}, err
+	}
+	_ = json.Unmarshal(warnings, &item.WarningCodes)
+	_ = json.Unmarshal(excludedLocationsJSON, &item.LastPreviewExcludedLocations)
+	var units []sml.StockCatalogUnit
+	if err := json.Unmarshal(unitsJSON, &units); err != nil {
+		return ProductRow{}, fmt.Errorf("decode SML units for %s: %w", item.SMLItemCode, err)
+	}
+	_ = json.Unmarshal(componentsJSON, &item.SetComponents)
+	populateProductUnitNames(&item, units)
+	return item, nil
 }
 
 func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64, request MappingUpdate, userID string) (*ProductRow, error) {

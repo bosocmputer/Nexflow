@@ -135,6 +135,44 @@ func TestProductCountsTotalForStatus(t *testing.T) {
 	}
 }
 
+func TestListProductGroupsUsesShopeeItemKeyset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)WITH all_rows AS.*matched_items AS.*item_id>\$3.*GROUP BY item_id.*LIMIT \$4.*COUNT\(\*\) FILTER`).
+		WithArgs(int64(42), "%milk%", int64(1000), 51).
+		WillReturnRows(sqlmock.NewRows([]string{"item_id", "item_name", "item_sku", "variant_count", "ready_count", "fix_count", "excluded_count", "updated_at"}))
+
+	groups, more, err := NewStore(db).ListProductGroups(context.Background(), 42, ProductGroupFilter{Query: "milk", AfterItemID: 1000, Limit: 50})
+	if err != nil || more || len(groups) != 0 {
+		t.Fatalf("groups=%#v more=%v err=%v", groups, more, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListProductGroupVariantsUsesModelKeysetWithoutOffset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)FROM shopee_stock_products p.*p.shop_id=\$1.*p.item_id=\$2.*p.model_id>\$3.*ORDER BY p.model_id.*LIMIT \$4`).
+		WithArgs(int64(42), int64(1000), int64(2000), 101).
+		WillReturnRows(sqlmock.NewRows([]string{"shop_id"}))
+
+	variants, more, err := NewStore(db).ListProductGroupVariants(context.Background(), 42, ProductVariantFilter{ItemID: 1000, AfterModelID: 2000, Limit: 100})
+	if err != nil || more || len(variants) != 0 {
+		t.Fatalf("variants=%#v more=%v err=%v", variants, more, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPendingShopeeReservationsAggregatesByItemAndModel(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

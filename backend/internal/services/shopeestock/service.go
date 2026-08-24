@@ -38,8 +38,25 @@ type Config struct {
 	GatewayMode              bool
 	SetStockEnabled          bool
 	ReservationLedgerEnabled bool
+	GroupedUIEnabled         bool
 	Environment              string
 	InstanceID               string
+}
+
+func (s *Service) GroupedUIEnabled() bool { return s != nil && s.cfg.GroupedUIEnabled }
+
+func (s *Service) ProductGroups(ctx context.Context, shopID int64, filter ProductGroupFilter) ([]ProductGroup, bool, error) {
+	if s == nil || s.store == nil {
+		return nil, false, ErrUnavailable
+	}
+	return s.store.ListProductGroups(ctx, shopID, filter)
+}
+
+func (s *Service) ProductGroupVariants(ctx context.Context, shopID int64, filter ProductVariantFilter) ([]ProductRow, bool, error) {
+	if s == nil || s.store == nil {
+		return nil, false, ErrUnavailable
+	}
+	return s.store.ListProductGroupVariants(ctx, shopID, filter)
 }
 
 type Service struct {

@@ -43,6 +43,68 @@ func (h *ShopeeStockHandler) Overview(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *ShopeeStockHandler) ProductGroups(c *gin.Context) {
+	if !h.service.GroupedUIEnabled() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "grouped_ui_disabled"})
+		return
+	}
+	shopID, ok := h.shopID(c)
+	if !ok {
+		return
+	}
+	limit := marketplacePageLimit(c.Query("limit"), 30, 50)
+	after, err := optionalInt64(c.Query("cursor"))
+	if err != nil || after < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cursor ไม่ถูกต้อง กรุณาโหลดหน้าแรกใหม่"})
+		return
+	}
+	groups, hasMore, err := h.service.ProductGroups(c.Request.Context(), shopID, shopeestock.ProductGroupFilter{
+		Status: c.Query("status"), Query: c.Query("q"), Limit: limit, AfterItemID: after,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	next := ""
+	if hasMore && len(groups) > 0 {
+		next = strconv.FormatInt(groups[len(groups)-1].ItemID, 10)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": groups, "has_more": hasMore, "next_cursor": next})
+}
+
+func (h *ShopeeStockHandler) ProductGroupVariants(c *gin.Context) {
+	if !h.service.GroupedUIEnabled() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "grouped_ui_disabled"})
+		return
+	}
+	shopID, ok := h.shopID(c)
+	if !ok {
+		return
+	}
+	itemID, err := strconv.ParseInt(c.Param("item_id"), 10, 64)
+	if err != nil || itemID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id ไม่ถูกต้อง"})
+		return
+	}
+	after, err := optionalInt64(c.Query("cursor"))
+	if err != nil || after < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cursor ไม่ถูกต้อง กรุณาเปิดกลุ่มใหม่"})
+		return
+	}
+	variants, hasMore, err := h.service.ProductGroupVariants(c.Request.Context(), shopID, shopeestock.ProductVariantFilter{
+		ItemID: itemID, Status: c.Query("status"), Query: c.Query("q"), Limit: marketplacePageLimit(c.Query("limit"), 50, 100), AfterModelID: after,
+	})
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	next := ""
+	if hasMore && len(variants) > 0 {
+		next = strconv.FormatInt(variants[len(variants)-1].ModelID, 10)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": variants, "has_more": hasMore, "next_cursor": next})
+}
+
 func (h *ShopeeStockHandler) UpdateSettings(c *gin.Context) {
 	shopID, ok := h.shopID(c)
 	if !ok {

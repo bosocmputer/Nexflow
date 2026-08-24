@@ -370,6 +370,7 @@ func main() {
 		GatewayMode:              strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
 		SetStockEnabled:          cfg.ShopeeSetStockEnabled,
 		ReservationLedgerEnabled: cfg.MarketplaceReservationLedgerEnabled,
+		GroupedUIEnabled:         cfg.MarketplaceGroupedUIEnabled,
 		Environment:              cfg.ShopeeOpenAPIEnv,
 		InstanceID:               cfg.ShopeeGatewayTenant,
 	}, logger)
@@ -520,6 +521,8 @@ func main() {
 		api.GET("/settings/shopee-api/status", middleware.RequireRole("admin", "staff"), shopeeH.GetAPIStatus)
 		api.GET("/settings/shopee-stock", middleware.RequireRole("admin"), shopeeStockH.Overview)
 		api.GET("/settings/shopee-stock/catalog-search", middleware.RequireRole("admin"), shopeeStockH.SearchCatalog)
+		api.GET("/settings/shopee-stock/:shop_id/product-groups", middleware.RequireRole("admin"), shopeeStockH.ProductGroups)
+		api.GET("/settings/shopee-stock/:shop_id/product-groups/:item_id/variants", middleware.RequireRole("admin"), shopeeStockH.ProductGroupVariants)
 		api.PUT("/settings/shopee-stock/:shop_id", middleware.RequireRole("admin"), shopeeStockH.UpdateSettings)
 		api.POST("/settings/shopee-stock/:shop_id/catalog-sync", middleware.RequireRole("admin"), shopeeStockH.SyncCatalog)
 		api.POST("/settings/shopee-stock/:shop_id/preview", middleware.RequireRole("admin"), shopeeStockH.Preview)

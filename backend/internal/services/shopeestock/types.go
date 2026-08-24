@@ -145,6 +145,32 @@ type ProductFilter struct {
 	Size   int
 }
 
+type ProductGroup struct {
+	ItemID        int64     `json:"item_id"`
+	ItemName      string    `json:"item_name"`
+	ItemSKU       string    `json:"item_sku"`
+	VariantCount  int       `json:"variant_count"`
+	ReadyCount    int       `json:"ready_count"`
+	FixCount      int       `json:"fix_count"`
+	ExcludedCount int       `json:"excluded_count"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type ProductGroupFilter struct {
+	Status      string
+	Query       string
+	Limit       int
+	AfterItemID int64
+}
+
+type ProductVariantFilter struct {
+	ItemID       int64
+	Status       string
+	Query        string
+	Limit        int
+	AfterModelID int64
+}
+
 type MappingUpdate struct {
 	SMLItemCode               string     `json:"sml_item_code"`
 	SMLUnitCode               string     `json:"sml_unit_code"`

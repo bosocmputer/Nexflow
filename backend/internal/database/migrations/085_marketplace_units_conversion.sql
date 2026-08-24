@@ -183,6 +183,20 @@ CREATE INDEX IF NOT EXISTS marketplace_alias_product_name_trgm_idx
 CREATE INDEX IF NOT EXISTS marketplace_alias_variant_name_trgm_idx
   ON marketplace_item_aliases USING GIN (source_variant_name gin_trgm_ops)
   WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS shopee_stock_product_item_name_trgm_idx
+  ON shopee_stock_products USING GIN (item_name gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS shopee_stock_product_model_name_trgm_idx
+  ON shopee_stock_products USING GIN (model_name gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS shopee_stock_product_item_sku_trgm_idx
+  ON shopee_stock_products USING GIN (item_sku gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS shopee_stock_product_model_sku_trgm_idx
+  ON shopee_stock_products USING GIN (model_sku gin_trgm_ops)
+  WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS shopee_stock_mapping_sml_code_trgm_idx
+  ON shopee_stock_mappings USING GIN (sml_item_code gin_trgm_ops);
 
 ALTER TABLE bill_items
   ADD COLUMN IF NOT EXISTS source_line_id TEXT NOT NULL DEFAULT '',

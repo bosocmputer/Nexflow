@@ -129,6 +129,17 @@ type ProductRow = {
   last_success_target?: number
   updated_at: string
 }
+type ProductGroup = {
+	item_id: number
+	item_name: string
+	item_sku: string
+	variant_count: number
+	ready_count: number
+	fix_count: number
+	excluded_count: number
+	updated_at: string
+}
+type CursorPage<T> = { data: T[]; has_more: boolean; next_cursor: string }
 type SharedPoolMember = {
   item_id: number
   model_id: number
@@ -411,6 +422,11 @@ export default function ShopeeStock() {
   const [shopID, setShopID] = useState(0)
   const [tab, setTab] = useState<(typeof STATUS_TABS)[number]['key']>('ready')
   const [page, setPage] = useState(1)
+	const [productGroups, setProductGroups] = useState<ProductGroup[]>([])
+	const [groupedAvailable, setGroupedAvailable] = useState<boolean | null>(null)
+	const [groupCursor, setGroupCursor] = useState('')
+	const [groupCursorHistory, setGroupCursorHistory] = useState<string[]>([])
+	const [nextGroupCursor, setNextGroupCursor] = useState('')
   const [query, setQuery] = useState('')
   const [search, setSearch] = useState('')
   const [draft, setDraft] = useState<StockSetting | null>(null)
@@ -425,7 +441,7 @@ export default function ShopeeStock() {
   const sequence = useRef(0)
   const autoSelectedShops = useRef(new Set<number>())
 
-  const load = useCallback(async (preferredShopID = shopID) => {
+	const load = useCallback(async (preferredShopID = shopID, preferredGroupCursor = groupCursor) => {
     const current = sequence.current + 1
     sequence.current = current
     setLoading(true)
@@ -438,6 +454,20 @@ export default function ShopeeStock() {
       setData(normalizedData)
       const selected = preferredShopID || normalizedData.settings[0]?.shop_id || 0
       setShopID(selected)
+	  if (selected > 0 && tab !== 'history' && groupedAvailable !== false) {
+		try {
+		  const grouped = await client.get<CursorPage<ProductGroup>>(`/api/settings/shopee-stock/${selected}/product-groups`, {
+			params: { status: tab, q: search || undefined, cursor: preferredGroupCursor || undefined, limit: 30 },
+		  })
+		  if (sequence.current !== current) return
+		  setProductGroups(grouped.data.data ?? [])
+		  setNextGroupCursor(grouped.data.next_cursor ?? '')
+		  setGroupedAvailable(true)
+		} catch (error) {
+		  if ((error as { response?: { status?: number } }).response?.status !== 404) throw error
+		  setGroupedAvailable(false)
+		}
+	  }
       const setting = normalizedData.settings.find((item) => item.shop_id === selected) ?? null
       setDraft(setting)
       setWarehouseCode(setting?.locations[0]?.warehouse ?? '')
@@ -447,9 +477,9 @@ export default function ShopeeStock() {
     } finally {
       if (sequence.current === current) setLoading(false)
     }
-  }, [page, search, shopID, tab])
+	}, [groupCursor, groupedAvailable, page, search, shopID, tab])
 
-  useEffect(() => { void load() }, [page, search, tab])
+	useEffect(() => { void load() }, [load])
 
   const selectedSetting = data?.settings.find((item) => item.shop_id === shopID)
   const warehouses = useMemo(() => {
@@ -461,7 +491,9 @@ export default function ShopeeStock() {
     }
     return [...rows.values()]
   }, [data?.locations])
-  const pageCount = Math.max(1, Math.ceil((data?.products_total ?? 0) / (data?.products_size || 50)))
+	const groupedProducts = tab !== 'history' && groupedAvailable === true
+	const pageCount = groupedProducts ? groupCursorHistory.length + 1 + (nextGroupCursor ? 1 : 0) : Math.max(1, Math.ceil((data?.products_total ?? 0) / (data?.products_size || 50)))
+	const currentProductPage = groupedProducts ? groupCursorHistory.length + 1 : page
   const productNames = useMemo(() => new Map((data?.products ?? []).map((product) => [`${product.item_id}:${product.model_id}`, productDisplayName(product)])), [data?.products])
   const productCounts = data?.product_counts ?? { ready: 0, fix: 0, excluded: 0 }
   const stockPctValid = !!draft && Number.isFinite(draft.stock_pct) && draft.stock_pct >= 1 && draft.stock_pct <= 100
@@ -483,8 +515,36 @@ export default function ShopeeStock() {
     if (!shopID || tab !== 'ready' || search || productCounts.ready > 0 || productCounts.fix === 0 || autoSelectedShops.current.has(shopID)) return
     autoSelectedShops.current.add(shopID)
     setPage(1)
+	setGroupCursor('')
+	setGroupCursorHistory([])
     setTab('fix')
   }, [productCounts.fix, productCounts.ready, search, shopID, tab])
+
+	const resetProductPagination = () => {
+	  setPage(1)
+	  setGroupCursor('')
+	  setGroupCursorHistory([])
+	}
+
+	const previousProductPage = () => {
+	  if (!groupedProducts) {
+		setPage((value) => Math.max(1, value - 1))
+		return
+	  }
+	  const previous = groupCursorHistory[groupCursorHistory.length - 1] ?? ''
+	  setGroupCursorHistory((value) => value.slice(0, -1))
+	  setGroupCursor(previous)
+	}
+
+	const nextProductPage = () => {
+	  if (!groupedProducts) {
+		setPage((value) => value + 1)
+		return
+	  }
+	  if (!nextGroupCursor) return
+	  setGroupCursorHistory((value) => [...value, groupCursor])
+	  setGroupCursor(nextGroupCursor)
+	}
 
   const runAction = async (name: string, action: () => Promise<void>) => {
     if (busy) return
@@ -683,11 +743,10 @@ export default function ShopeeStock() {
               onValueChange={(value) => {
                 const id = Number(value)
                 setShopID(id)
-                setPage(1)
+				resetProductPagination()
                 setPreview(null)
                 setSharedPoolItemCode('')
                 setLocationsOpen(false)
-                void load(id)
               }}
             >
               <SelectTrigger id="shopee-stock-shop" className="h-10">
@@ -786,7 +845,7 @@ export default function ShopeeStock() {
             </span>
           ))}
           {productCounts.fix > 0 && (
-            <Button type="button" variant="link" size="sm" className="ml-auto h-auto px-0 text-xs" onClick={() => { setTab('fix'); setPage(1) }}>
+			<Button type="button" variant="link" size="sm" className="ml-auto h-auto px-0 text-xs" onClick={() => { setTab('fix'); resetProductPagination() }}>
               เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})
             </Button>
           )}
@@ -822,7 +881,7 @@ export default function ShopeeStock() {
 
       <section className="overflow-hidden rounded-md border bg-card">
         <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
-          <Tabs value={tab} onValueChange={(value) => { setTab(value as typeof tab); setPage(1) }}>
+		  <Tabs value={tab} onValueChange={(value) => { setTab(value as typeof tab); resetProductPagination() }}>
             <TabsList className="h-auto max-w-full justify-start overflow-x-auto">
               {STATUS_TABS.map((item) => {
                 const count = item.key === 'history' ? null : productCounts[item.key]
@@ -835,12 +894,12 @@ export default function ShopeeStock() {
               })}
             </TabsList>
           </Tabs>
-          {tab !== 'history' && <form className="relative w-full sm:w-72" onSubmit={(event) => { event.preventDefault(); setPage(1); setSearch(query.trim()) }}><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหา SKU หรือสินค้า" className="pl-9" /></form>}
+		  {tab !== 'history' && <form className="relative w-full sm:w-72" onSubmit={(event) => { event.preventDefault(); resetProductPagination(); setSearch(query.trim()) }}><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ค้นหา SKU หรือสินค้า" className="pl-9" /></form>}
         </div>
 
         {tab === 'history' ? <HistoryList runs={data?.runs ?? []} /> : (
           <>
-            <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
+			{!groupedProducts && <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
               <span>สินค้า Shopee</span>
               <span>สินค้าที่จับคู่ใน SML</span>
               <div className="grid grid-cols-3 gap-3 text-right">
@@ -849,23 +908,31 @@ export default function ShopeeStock() {
                 <span>จะส่ง Shopee</span>
               </div>
               <span />
-            </div>
-            <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} onPool={() => setSharedPoolItemCode(product.sml_item_code)} />)}</div>
-            {!data?.products.length && (
+			</div>}
+			{groupedProducts ? <GroupedShopeeProducts
+			  key={`${shopID}:${tab}:${search}:${groupCursor}`}
+			  shopID={shopID}
+			  status={tab}
+			  query={search}
+			  groups={productGroups}
+			  onMap={setMapping}
+			  onPool={(product) => setSharedPoolItemCode(product.sml_item_code)}
+			/> : <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} onPool={() => setSharedPoolItemCode(product.sml_item_code)} />)}</div>}
+			{!(groupedProducts ? productGroups.length : data?.products.length) && (
               <div className="flex flex-col items-center px-4 py-10 text-center">
                 <PackageCheck className="mb-3 h-7 w-7 text-muted-foreground" aria-hidden="true" />
                 <p className="text-sm font-medium text-foreground">{emptyState.title}</p>
                 <p className="mt-1 max-w-md text-sm text-muted-foreground">{emptyState.description}</p>
                 {search ? (
-                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setQuery(''); setSearch(''); setPage(1) }}>ล้างคำค้นหา</Button>
+				  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setQuery(''); setSearch(''); resetProductPagination() }}>ล้างคำค้นหา</Button>
                 ) : tab === 'ready' && productCounts.fix > 0 ? (
-                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setTab('fix'); setPage(1) }}>เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})</Button>
+				  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setTab('fix'); resetProductPagination() }}>เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})</Button>
                 ) : !selectedSetting?.last_catalog_sync_at ? (
                   <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดตรายการสินค้าจาก Shopee</Button>
                 ) : null}
               </div>
             )}
-            <div className="flex items-center justify-between border-t px-3 py-2"><span className="text-xs text-muted-foreground">ทั้งหมด {formatNumber(data?.products_total)} รายการ</span><div className="flex items-center gap-2"><Button variant="outline" size="icon" title="หน้าก่อนหน้า" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-4 w-4" /></Button><span className="text-sm">{page} / {pageCount}</span><Button variant="outline" size="icon" title="หน้าถัดไป" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}><ChevronRight className="h-4 w-4" /></Button></div></div>
+			<div className="flex items-center justify-between border-t px-3 py-2"><span className="text-xs text-muted-foreground">{groupedProducts ? `${formatNumber(productGroups.length)} สินค้าหลักในหน้านี้` : `ทั้งหมด ${formatNumber(data?.products_total)} รายการ`}</span><div className="flex items-center gap-2"><Button variant="outline" size="icon" title="หน้าก่อนหน้า" disabled={groupedProducts ? groupCursorHistory.length === 0 : page <= 1} onClick={previousProductPage}><ChevronLeft className="h-4 w-4" /></Button><span className="text-sm">{currentProductPage} / {pageCount}</span><Button variant="outline" size="icon" title="หน้าถัดไป" disabled={groupedProducts ? !nextGroupCursor : page >= pageCount} onClick={nextProductPage}><ChevronRight className="h-4 w-4" /></Button></div></div>
           </>
         )}
       </section>
@@ -931,7 +998,81 @@ function ProductExcludedLocations({
   )
 }
 
-function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: () => void; onPool: () => void }) {
+type GroupProductState = { rows: ProductRow[]; nextCursor: string; loading: boolean; error: string }
+
+function GroupedShopeeProducts({ shopID, status, query, groups, onMap, onPool }: {
+	shopID: number
+	status: string
+	query: string
+	groups: ProductGroup[]
+	onMap: (product: ProductRow) => void
+	onPool: (product: ProductRow) => void
+}) {
+	const [expanded, setExpanded] = useState<Set<number>>(new Set())
+	const [children, setChildren] = useState<Record<number, GroupProductState>>({})
+
+	useEffect(() => {
+		setExpanded(new Set())
+		setChildren({})
+	}, [groups])
+
+	const loadChildren = async (group: ProductGroup, append = false) => {
+		const current = children[group.item_id]
+		setChildren((value) => ({ ...value, [group.item_id]: { rows: append ? current?.rows ?? [] : [], nextCursor: current?.nextCursor ?? '', loading: true, error: '' } }))
+		try {
+			const response = await client.get<CursorPage<ProductRow>>(`/api/settings/shopee-stock/${shopID}/product-groups/${group.item_id}/variants`, {
+				params: { status, q: query || undefined, cursor: append ? current?.nextCursor || undefined : undefined, limit: 100 },
+			})
+			setChildren((value) => ({ ...value, [group.item_id]: {
+				rows: append ? [...(current?.rows ?? []), ...(response.data.data ?? [])] : response.data.data ?? [],
+				nextCursor: response.data.next_cursor ?? '',
+				loading: false,
+				error: '',
+			} }))
+		} catch (error) {
+			setChildren((value) => ({ ...value, [group.item_id]: { rows: current?.rows ?? [], nextCursor: current?.nextCursor ?? '', loading: false, error: errorText(error) } }))
+		}
+	}
+
+	const toggle = (group: ProductGroup) => {
+		setExpanded((value) => {
+			const next = new Set(value)
+			if (next.has(group.item_id)) next.delete(group.item_id)
+			else next.add(group.item_id)
+			return next
+		})
+		if (!children[group.item_id]) void loadChildren(group)
+	}
+
+	return <div>{groups.map((group) => {
+		const open = expanded.has(group.item_id)
+		const state = children[group.item_id]
+		return <div key={group.item_id} className="border-b last:border-b-0">
+			<div className={cn('grid min-h-16 grid-cols-[minmax(0,1fr)_40px] items-center gap-3 px-3 py-2 sm:grid-cols-[minmax(280px,1fr)_minmax(220px,auto)_40px]', open && 'bg-muted/25')}>
+				<button type="button" className="min-w-0 text-left" onClick={() => toggle(group)} aria-expanded={open}>
+					<p className="line-clamp-2 text-sm font-semibold">{group.item_name || 'ไม่ระบุชื่อสินค้า'}</p>
+					<p className="mt-1 truncate text-xs text-muted-foreground">SKU: <span className="font-mono text-foreground">{group.item_sku || '-'}</span> · Item <span className="font-mono">{group.item_id}</span></p>
+				</button>
+				<div className="col-span-2 row-start-2 flex flex-wrap justify-start gap-1 sm:col-span-1 sm:row-start-auto sm:justify-end">
+					<Badge variant="outline">{formatNumber(group.variant_count)} ตัวเลือก</Badge>
+					{group.ready_count > 0 && <Badge variant="outline" className="border-success/30 bg-success/10 text-success">พร้อม {formatNumber(group.ready_count)}</Badge>}
+					{group.fix_count > 0 && <Badge variant="outline" className="border-warning/30 bg-warning/10 text-amber-800 dark:text-amber-200">ต้องแก้ {formatNumber(group.fix_count)}</Badge>}
+					{group.excluded_count > 0 && <Badge variant="secondary">ไม่นับ {formatNumber(group.excluded_count)}</Badge>}
+				</div>
+				<Button type="button" variant="ghost" size="icon" className="col-start-2 row-start-1 h-8 w-8 justify-self-end sm:col-start-auto sm:row-start-auto" onClick={() => toggle(group)} aria-label={open ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={open}><ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></Button>
+			</div>
+			{open && <div className="border-t bg-muted/10">
+				{state?.loading && state.rows.length === 0 && <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
+				{state?.error && <div className="flex items-center justify-between gap-3 px-4 py-4 text-sm text-destructive"><span>{state.error}</span><Button variant="outline" size="sm" onClick={() => void loadChildren(group)}>ลองใหม่</Button></div>}
+				{state && !state.loading && !state.error && state.rows.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">ไม่พบตัวเลือกที่ตรงกับตัวกรอง</div>}
+				<div className="divide-y">{state?.rows.map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} nested onMap={() => onMap(product)} onPool={() => onPool(product)} />)}</div>
+				{state?.nextCursor && <div className="flex justify-center border-t py-2"><Button variant="outline" size="sm" disabled={state.loading} onClick={() => void loadChildren(group, true)}>{state.loading && <Loader2 className="h-4 w-4 animate-spin" />}โหลดตัวเลือกเพิ่ม</Button></div>}
+			</div>}
+		</div>
+	})}</div>
+}
+
+function ProductLine({ product, onMap, onPool, nested = false }: { product: ProductRow; onMap: () => void; onPool: () => void; nested?: boolean }) {
   const [setDetailsOpen, setSetDetailsOpen] = useState(false)
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
   const itemName = productItemName(product)
@@ -948,11 +1089,11 @@ function ProductLine({ product, onMap, onPool }: { product: ProductRow; onMap: (
   const excludedLocations = product.last_preview_excluded_locations ?? []
   return (
     <>
-    <div className="grid gap-x-3 gap-y-2 px-3 py-2 lg:grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] lg:items-center">
+	<div className={cn('grid gap-x-3 gap-y-2 px-3 py-2 lg:grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] lg:items-center', nested && 'pl-8')}>
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium leading-5" title={itemName}>{itemName}</p>
+		<p className="truncate text-sm font-medium leading-5" title={nested ? optionName || itemName : itemName}>{nested ? optionName || 'ตัวเลือกหลัก' : itemName}</p>
         <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs">
-          {optionName && (
+		  {!nested && optionName && (
             <span className="max-w-[58%] shrink-0 truncate font-semibold text-foreground" title={`ตัวเลือกสินค้า: ${optionName}`}>
               <span className="font-normal text-muted-foreground">ตัวเลือก:</span> {optionName}
             </span>
