@@ -444,6 +444,23 @@ export interface MarketplaceStockPolicyJob {
   finished_at?: string | null
 }
 
+export interface MarketplaceConversionReadiness {
+  catalog_generation_ready: boolean
+  mapping_backfill_ready: boolean
+  reservation_ledger_ready: boolean
+  reconciliation_summary: Record<string, number>
+  updated_at?: string
+  jobs: Array<{
+    id: string
+    job_type: 'alias_conversion' | 'bill_snapshots' | 'reservation_ledger'
+    status: 'queued' | 'running' | 'completed' | 'failed'
+    processed_count: number
+    failed_count: number
+    attempt_count: number
+    error_message?: string
+  }>
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 export interface DashboardStats {
   total_bills: number

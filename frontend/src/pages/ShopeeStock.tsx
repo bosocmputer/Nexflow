@@ -43,7 +43,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -1382,9 +1381,13 @@ function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved
   const allocationValid = !!pool && pool.members.length >= 2 && allocationValues.every((value) => Number.isFinite(value) && value > 0 && value <= 100) && Math.abs(allocationTotal - 100) < 0.001
   const dirty = !!pool && (!pool.configured || pool.members.some((member) => Math.abs(Number(allocations[sharedPoolMemberKey(member)] ?? 0) - member.pool_allocation_pct) > 0.001))
   const scopeBalance = pool?.members.find((member) => member.last_preview_balance != null)?.last_preview_balance
-  const pendingBase = pool?.members.reduce((total, member) => total + (member.last_preview_pending_qty ?? 0) * member.unit_factor, 0) ?? 0
+  // last_preview_pending_qty is a legacy column name. New previews persist the
+  // tenant-wide base demand in it, so every member of the same pool carries the
+  // same aggregate and it must be counted once.
+  const pendingBase = pool?.members.reduce((total, member) => Math.max(total, member.last_preview_pending_qty ?? 0), 0) ?? 0
   const stockPct = pool?.stock_pct ?? fallbackStockPct
-  const poolBaseTarget = scopeBalance == null ? null : Math.floor(Math.max(scopeBalance - pendingBase, 0) * stockPct / 100)
+  const persistedPoolBaseTarget = pool?.members.find((member) => member.last_preview_pool_base_target != null)?.last_preview_pool_base_target
+  const poolBaseTarget = persistedPoolBaseTarget ?? (scopeBalance == null ? null : Math.floor(Math.max(scopeBalance - pendingBase, 0) * stockPct / 100))
   const baseUnit = pool?.members[0] ? formatUnitLabel(pool.members[0].sml_base_unit_code, pool.members[0].sml_base_unit_name) : ''
 
   const save = async () => {

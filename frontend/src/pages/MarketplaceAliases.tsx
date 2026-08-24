@@ -18,7 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
-import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
+import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceConversionReadiness, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -69,6 +69,7 @@ export default function MarketplaceAliases() {
   const [previewing, setPreviewing] = useState(false)
   const [activeJob, setActiveJob] = useState<MarketplaceMappingJob | null>(null)
   const [activePolicyJob, setActivePolicyJob] = useState<MarketplaceStockPolicyJob | null>(null)
+  const [readiness, setReadiness] = useState<MarketplaceConversionReadiness | null>(null)
   const jobPollToken = useRef(0)
 
 	const groupedSaved = tab === 'saved' && groupedAvailable === true
@@ -122,6 +123,25 @@ export default function MarketplaceAliases() {
 
   useEffect(() => { void load() }, [load])
   useEffect(() => () => { jobPollToken.current += 1 }, [])
+  useEffect(() => {
+    let active = true
+    let timer = 0
+    const refresh = async () => {
+      try {
+        const response = await client.get<MarketplaceConversionReadiness>('/api/marketplace-aliases/readiness')
+        if (!active) return
+        setReadiness(response.data)
+        if (!response.data.catalog_generation_ready || !response.data.mapping_backfill_ready || !response.data.reservation_ledger_ready) {
+          timer = window.setTimeout(() => void refresh(), 5000)
+        }
+      } catch {
+        // The page itself remains usable in off/shadow mode; mutation APIs
+        // still fail closed when readiness is required.
+      }
+    }
+    void refresh()
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [])
 
   const previewImpact = async (
     identity: Pick<MarketplaceAliasReviewGroup, 'source' | 'account_key' | 'external_item_id' | 'external_variant_id' | 'source_sku' | 'raw_name' | 'normalized_key'>,
@@ -179,9 +199,22 @@ export default function MarketplaceAliases() {
     const token = jobPollToken.current + 1
     jobPollToken.current = token
     setActiveJob(initial)
+    let consecutivePollFailures = 0
     for (let attempt = 0; attempt < 300; attempt += 1) {
       if (jobPollToken.current !== token) return
-      const response = await client.get<MarketplaceMappingJob>(`/api/marketplace-aliases/jobs/${initial.id}`)
+      let response
+      try {
+        response = await client.get<MarketplaceMappingJob>(`/api/marketplace-aliases/jobs/${initial.id}`)
+        consecutivePollFailures = 0
+      } catch (error) {
+        consecutivePollFailures += 1
+        if (consecutivePollFailures >= 5) {
+          toast.error(errorMessage(error, 'ติดตามงาน Product Master ไม่สำเร็จ งานยังทำต่อในระบบและสามารถกดรีเฟรชเพื่อตรวจใหม่'))
+          return
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, consecutivePollFailures * 1000))
+        continue
+      }
       setActiveJob(response.data)
       if (response.data.status === 'completed') {
         toast.success(`ปรับ Product Master สำเร็จ ${response.data.processed_count.toLocaleString()} รายการ`)
@@ -212,8 +245,21 @@ export default function MarketplaceAliases() {
 
   const monitorPolicyJob = async (initial: MarketplaceStockPolicyJob) => {
     setActivePolicyJob(initial)
+    let consecutivePollFailures = 0
     for (let attempt = 0; attempt < 600; attempt += 1) {
-      const response = await client.get<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/policy-jobs/${initial.id}`)
+      let response
+      try {
+        response = await client.get<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/policy-jobs/${initial.id}`)
+        consecutivePollFailures = 0
+      } catch (error) {
+        consecutivePollFailures += 1
+        if (consecutivePollFailures >= 5) {
+          toast.error(errorMessage(error, 'ติดตามงานตั้ง stock 0 ไม่สำเร็จ งานยังทำต่อในระบบและสามารถกดรีเฟรชเพื่อตรวจใหม่'))
+          return
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, consecutivePollFailures * 1000))
+        continue
+      }
       setActivePolicyJob(response.data)
       if (response.data.status === 'completed') {
         toast.success('ตั้ง stock Shopee เป็น 0 และปิดการจัดการรายการนี้แล้ว')
@@ -227,6 +273,7 @@ export default function MarketplaceAliases() {
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1000))
     }
+    toast.warning('งานตั้ง stock 0 ยังทำอยู่ ระบบจะคงรายการนี้เป็น blocked จนกว่าจะอ่านกลับจาก Shopee สำเร็จ')
   }
 
   const retryPolicyJob = async () => {
@@ -336,6 +383,15 @@ export default function MarketplaceAliases() {
           </Button>
         )}
       />
+
+      {readiness && (!readiness.catalog_generation_ready || !readiness.mapping_backfill_ready || !readiness.reservation_ledger_ready) && (
+        <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+          <p className="font-medium">กำลังเตรียมข้อมูล conversion สำหรับ tenant นี้</p>
+          <p className="mt-1 text-xs text-muted-foreground">ยังไม่เปิด active mode จนกว่า Catalog, bill snapshots และ reservation ledger จะครบ ระหว่างนี้รายการกำกวมจะถูกบล็อกไว้</p>
+          <div className="mt-2 flex flex-wrap gap-2">{readiness.jobs.map((job) => <Badge key={job.id} variant="outline">{job.job_type} · {job.status} · {job.processed_count.toLocaleString()}</Badge>)}</div>
+          {readiness.jobs.find((job) => job.status === 'failed' && job.attempt_count >= 10)?.error_message && <p className="mt-2 text-xs text-destructive">{readiness.jobs.find((job) => job.status === 'failed' && job.attempt_count >= 10)?.error_message}</p>}
+        </div>
+      )}
 
       <Tabs value={tab} onValueChange={changeTab}>
         <TabsList>
@@ -514,7 +570,10 @@ function ConversionConfigDialog({ value, onClose, onContinue }: { value: Convers
   const stand = selectedUnit?.stand_value_exact || selectedUnit?.stand_value
   const divide = selectedUnit?.divide_value_exact || selectedUnit?.divide_value
   const baseFactor = stand && divide && Number(divide) > 0 ? multiplierValue * Number(stand) / Number(divide) : null
-  const canSubmit = Boolean(product && unitCode && multiplierValid && !loadingUnits && !submitting)
+  const canSubmit = Boolean(product && selectedUnit && multiplierValid && !unitError && !loadingUnits && !submitting)
+  const submitDisabledReason = loadingUnits
+    ? 'กำลังโหลดหน่วยนับ'
+    : unitError || (!selectedUnit ? 'ต้องเลือกหน่วยที่มี conversion จาก Catalog' : !multiplierValid ? 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000' : '')
 
   const submit = async () => {
     if (!canSubmit) return
@@ -578,6 +637,7 @@ function ConversionConfigDialog({ value, onClose, onContinue }: { value: Convers
           <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>ยกเลิก</Button>
           <Button type="button" onClick={() => void submit()} disabled={!canSubmit}>{submitting && <Loader2 className="h-4 w-4 animate-spin" />}ตรวจผลกระทบ</Button>
         </DialogFooter>
+        {!canSubmit && !submitting && submitDisabledReason && <p className="text-right text-xs text-muted-foreground">ยังดำเนินการไม่ได้: {submitDisabledReason}</p>}
       </DialogContent>
     </Dialog>
   )

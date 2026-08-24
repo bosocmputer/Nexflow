@@ -2,34 +2,36 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import NextStepMarketplace from './pages/NextStepMarketplace'
-import Bills from './pages/Bills'
-import BillDetail from './pages/BillDetail'
-import ShopeeImport from './pages/ShopeeImport'
-import ShopeeConnections from './pages/ShopeeConnections'
-import ShopeeOperations from './pages/ShopeeOperations'
-import ShopeeSettlement from './pages/ShopeeSettlement'
-import LazadaImport from './pages/LazadaImport'
-import TikTokImport from './pages/TikTokImport'
-import MarketplaceAliases from './pages/MarketplaceAliases'
-import OldDataSettings from './pages/OldDataSettings'
-import Logs from './pages/Logs'
-import BulkSendJobs from './pages/BulkSendJobs'
-import CatalogSettings from './pages/CatalogSettings'
-import ChannelDefaults from './pages/ChannelDefaults'
-import InstanceSettings from './pages/InstanceSettings'
-import UserSettings from './pages/UserSettings'
-import MenuPermissions from './pages/MenuPermissions'
-import LineNotifications from './pages/LineNotifications'
-import LineMyShopSettings from './pages/LineMyShopSettings'
-import Showcase from './pages/Showcase'
 import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
-import SetupCenter from './pages/SetupCenter'
 import { canViewMenu, firstVisibleNavPath } from './lib/navigation'
 
+const Login = lazy(() => import('./pages/Login'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const NextStepMarketplace = lazy(() => import('./pages/NextStepMarketplace'))
+const Bills = lazy(() => import('./pages/Bills'))
+const BillDetail = lazy(() => import('./pages/BillDetail'))
+const ShopeeImport = lazy(() => import('./pages/ShopeeImport'))
+const ShopeeConnections = lazy(() => import('./pages/ShopeeConnections'))
+const ShopeeOperations = lazy(() => import('./pages/ShopeeOperations'))
+const ShopeeSettlement = lazy(() => import('./pages/ShopeeSettlement'))
+const LazadaImport = lazy(() => import('./pages/LazadaImport'))
+const TikTokImport = lazy(() => import('./pages/TikTokImport'))
+const OldDataSettings = lazy(() => import('./pages/OldDataSettings'))
+const Logs = lazy(() => import('./pages/Logs'))
+const BulkSendJobs = lazy(() => import('./pages/BulkSendJobs'))
+const CatalogSettings = lazy(() => import('./pages/CatalogSettings'))
+const ChannelDefaults = lazy(() => import('./pages/ChannelDefaults'))
+const InstanceSettings = lazy(() => import('./pages/InstanceSettings'))
+const UserSettings = lazy(() => import('./pages/UserSettings'))
+const MenuPermissions = lazy(() => import('./pages/MenuPermissions'))
+const LineNotifications = lazy(() => import('./pages/LineNotifications'))
+const LineMyShopSettings = lazy(() => import('./pages/LineMyShopSettings'))
+const Showcase = lazy(() => import('./pages/Showcase'))
+const SetupCenter = lazy(() => import('./pages/SetupCenter'))
 const ShopeeStock = lazy(() => import('./pages/ShopeeStock'))
+const MarketplaceAliases = lazy(() => import('./pages/MarketplaceAliases'))
+
+const routeFallback = <div className="p-6 text-sm text-muted-foreground">กำลังโหลด...</div>
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -72,8 +74,9 @@ function NoMenuAccess() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <Suspense fallback={routeFallback}>
+        <Routes>
         {import.meta.env.DEV && (
           <Route path="/dev/showcase" element={<Showcase />} />
         )}
@@ -112,7 +115,7 @@ export default function App() {
           <Route path="settings/catalog" element={<RequireMenu menuKey="catalog"><CatalogSettings /></RequireMenu>} />
           <Route path="settings/email" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><RequireMenu menuKey="shopee_connections"><ShopeeConnections /></RequireMenu></RequireAdmin>} />
-          <Route path="settings/shopee-stock" element={<RequireAdmin><RequireMenu menuKey="shopee_stock"><Suspense fallback={<div className="p-6 text-sm text-muted-foreground">กำลังโหลด...</div>}><ShopeeStock /></Suspense></RequireMenu></RequireAdmin>} />
+          <Route path="settings/shopee-stock" element={<RequireAdmin><RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu></RequireAdmin>} />
           <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><RequireMenu menuKey="line_myshop"><LineMyShopSettings /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/channels" element={<RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu>} />
           <Route path="settings/instance" element={<RequireAdmin><RequireMenu menuKey="instance_settings"><InstanceSettings /></RequireMenu></RequireAdmin>} />
@@ -124,7 +127,8 @@ export default function App() {
           <Route path="settings/quick-replies" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/chat-tags" element={<Navigate to="/dashboard" replace />} />
         </Route>
-      </Routes>
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }
