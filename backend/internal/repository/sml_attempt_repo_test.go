@@ -107,6 +107,12 @@ func TestFinishSMLAttemptUsesLeaseOwnerAsFencingToken(t *testing.T) {
 	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations.*state='awaiting_stock_recalc'.*bill_id=\$1`).
 		WithArgs("bill-1", "attempt-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservation_components c.*warehouse_code=r.warehouse_code.*location_code=r.location_code.*r.bill_id=\$1`).
+		WithArgs("bill-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservation_components c.*r.bill_id=\$1`).
+		WithArgs("bill-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_recalc_jobs.*ON CONFLICT`).
 		WithArgs("bill-1", "attempt-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

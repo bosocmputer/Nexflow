@@ -52,6 +52,55 @@ func TestBuildMarketplaceReservationSkipsShipping(t *testing.T) {
 	}
 }
 
+func TestInsertMarketplaceReservationsAggregatesDuplicateSetComponents(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	aliasID := "alias-1"
+	itemCode := "SET-A"
+	unit := "PACK"
+	sourceQty := 2.0
+	multiplier := int64(1)
+	revision := int64(7)
+	stand, divide, base := "1", "1", "2"
+	bill := &models.Bill{ID: "bill-1", Source: "shopee", SourceAccountKey: "shop:99", SMLOrderID: "ORDER-1"}
+	items := []models.BillItem{{
+		ID: "line-db-1", SourceLineID: "line-1", SourceItemID: "100", SourceVariantID: "200",
+		MarketplaceAliasID: &aliasID, ItemCode: &itemCode, UnitCode: &unit, Qty: 2, SourceQty: &sourceQty,
+		QuantityMultiplierSnapshot: &multiplier, MappingRevisionSnapshot: &revision,
+		UnitStandValueSnapshot: &stand, UnitDivideValueSnapshot: &divide, BaseQtySnapshot: &base,
+		SetDefinitionHashSnapshot: "set-hash",
+	}}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)INSERT INTO marketplace_stock_reservations.*RETURNING id::text,state`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "state"}).AddRow("reservation-1", "active"))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_reservation_components.*SUM\(\$2::numeric \* qty \* unit_factor\).*GROUP BY component_item_code`).
+		WithArgs("reservation-1", "2", "set-hash", "SET-A").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservation_components`).
+		WithArgs("reservation-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertMarketplaceReservationsTx(tx, bill, items); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClaimStockRecalcJobUsesSkipLockedLease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -95,6 +144,55 @@ func TestCompleteStockRecalcReleasesReservationOnlyAfterVerification(t *testing.
 	mock.ExpectCommit()
 
 	if err := NewBillRepo(db).CompleteStockRecalcJob(context.Background(), "job-1", "worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileMarketplaceReservationCancelledKeepsUncertainSMLDemand(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservations r.*state IN \('active','blocked_mapping'\)`).
+		WithArgs("shopee", "shop:99", "ORDER-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservation_components c.*state IN \('active','blocked_mapping'\)`).
+		WithArgs("shopee", "shop:99", "ORDER-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations.*state=CASE.*active.*blocked_mapping.*released_cancelled.*sending_sml.*awaiting_stock_recalc.*manual_reconciliation`).
+		WithArgs("shopee", "shop:99", "ORDER-1").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectCommit()
+
+	if err := NewBillRepo(db).ReconcileMarketplaceReservationCancelled(context.Background(), "shopee", "shop:99", "ORDER-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailStockRecalcJobMovesTerminalReservationsInSameTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)UPDATE marketplace_stock_recalc_jobs.*RETURNING status,bill_id::text`).
+		WithArgs("job-1", "worker-1", "balance unavailable").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "bill_id"}).AddRow("manual_reconciliation", "bill-1"))
+	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations.*state='manual_reconciliation'.*bill_id=\$1`).
+		WithArgs("bill-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	if err := NewBillRepo(db).FailStockRecalcJob(context.Background(), "job-1", "worker-1", "balance unavailable"); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

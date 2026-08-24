@@ -187,12 +187,13 @@ func (h *BillHandler) executeSMLAttempt(
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "สิทธิ์ส่ง SML หมดอายุระหว่างทำงาน ระบบหยุดบันทึกผลเพื่อป้องกันข้อมูลซ้ำ", Route: attempt.Route, Skipped: true}
 	}
 
-	if sendErr == nil && responseSuccess && responseDocNo != "" && responseDocNo != attempt.DocNo {
+	httpSuccess := statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+	if sendErr == nil && httpSuccess && responseSuccess && responseDocNo != "" && responseDocNo != attempt.DocNo {
 		errMessage := "doc_no_payload_mismatch"
 		_ = h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, "stale_requires_reconciliation", "needs_review", responseBytes, errMessage)
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "SML ตอบเลขเอกสารไม่ตรงกับ payload ต้องตรวจสอบก่อน retry", Route: attempt.Route, DocNoAttempted: attempt.DocNo, Skipped: true}
 	}
-	if sendErr == nil && responseSuccess {
+	if sendErr == nil && httpSuccess && responseSuccess {
 		responseDocNo = strings.TrimSpace(responseDocNo)
 		if responseDocNo == "" {
 			responseDocNo = attempt.DocNo

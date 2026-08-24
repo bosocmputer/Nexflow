@@ -3172,6 +3172,21 @@ func (h *ShopeeRealtimeHandler) notifySnapshotChange(ctx context.Context, before
 	if after == nil {
 		return
 	}
+	if h.cfg != nil && h.cfg.MarketplaceReservationLedgerEnabled && h.billH != nil && h.billH.billRepo != nil &&
+		strings.EqualFold(strings.TrimSpace(after.OrderStatus), "CANCELLED") {
+		if err := h.billH.billRepo.ReconcileMarketplaceReservationCancelled(
+			ctx,
+			"shopee",
+			"shop:"+strconv.FormatInt(after.ShopID, 10),
+			after.OrderSN,
+		); err != nil && h.logger != nil {
+			h.logger.Error("shopee_realtime: reconcile cancelled stock reservation failed",
+				zap.Int64("shop_id", after.ShopID),
+				zap.String("order_sn", after.OrderSN),
+				zap.Error(err),
+			)
+		}
+	}
 	statusChanged := before == nil || before.OrderStatus != after.OrderStatus || before.ERPStatus != after.ERPStatus || before.SMLDocNo != after.SMLDocNo
 	if statusChanged {
 		h.publishShopeeRealtimeChanged(ctx, after.ShopID, after.OrderSN, "snapshot_changed")

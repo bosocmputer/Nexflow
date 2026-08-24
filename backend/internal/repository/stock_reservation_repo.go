@@ -161,9 +161,10 @@ func insertMarketplaceReservationsTx(tx *sql.Tx, bill *models.Bill, items []mode
 		}
 		result, err := tx.Exec(`INSERT INTO marketplace_stock_reservation_components
 			(reservation_id,component_item_code,warehouse_code,location_code,component_base_qty,set_definition_hash)
-			SELECT $1,component_item_code,'','',($2::numeric * qty * unit_factor),$3
+			SELECT $1,component_item_code,'','',SUM($2::numeric * qty * unit_factor),$3
 			  FROM sml_catalog_set_components
 			 WHERE parent_item_code=$4 AND definition_hash=$3 AND is_active=true AND unit_valid=true
+			 GROUP BY component_item_code
 			ON CONFLICT (reservation_id,component_item_code,warehouse_code,location_code) DO NOTHING`,
 			reservationID, snapshot.BaseQty, snapshot.SetDefinitionHash, snapshot.SMLItemCode)
 		if err != nil {
@@ -194,6 +195,62 @@ func bumpDemandVersionTx(tx *sql.Tx, warehouse, location, itemCode string) error
 		ON CONFLICT (warehouse_code,location_code,item_code)
 		DO UPDATE SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, warehouse, location, itemCode)
 	return err
+}
+
+// ReconcileMarketplaceReservationCancelled releases only demand that has never
+// reached SML. A reservation whose write is in flight or awaiting stock
+// recalculation remains a circuit breaker until an operator reconciles it.
+func (r *BillRepo) ReconcileMarketplaceReservationCancelled(ctx context.Context, source, accountKey, orderID string) error {
+	source = strings.TrimSpace(strings.ToLower(source))
+	accountKey = strings.TrimSpace(accountKey)
+	orderID = strings.TrimSpace(orderID)
+	if source == "" || accountKey == "" || orderID == "" {
+		return errors.New("marketplace reservation identity is required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
+		SELECT DISTINCT r.warehouse_code,r.location_code,r.sml_item_code,1
+		FROM marketplace_stock_reservations r
+		WHERE r.source=$1 AND r.account_key=$2 AND r.order_id=$3
+		  AND r.state IN ('active','blocked_mapping') AND r.sml_item_code<>''
+		  AND NOT EXISTS (SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
+		ON CONFLICT (warehouse_code,location_code,item_code)
+		DO UPDATE SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, source, accountKey, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
+		SELECT DISTINCT c.warehouse_code,c.location_code,c.component_item_code,1
+		FROM marketplace_stock_reservations r
+		JOIN marketplace_stock_reservation_components c ON c.reservation_id=r.id
+		WHERE r.source=$1 AND r.account_key=$2 AND r.order_id=$3
+		  AND r.state IN ('active','blocked_mapping')
+		ON CONFLICT (warehouse_code,location_code,item_code)
+		DO UPDATE SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, source, accountKey, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations
+		SET state=CASE
+		      WHEN state IN ('active','blocked_mapping') THEN 'released_cancelled'
+		      WHEN state IN ('sending_sml','awaiting_stock_recalc') THEN 'manual_reconciliation'
+		      ELSE state
+		    END,
+		    state_reason=CASE
+		      WHEN state IN ('active','blocked_mapping') THEN 'marketplace_cancelled'
+		      WHEN state IN ('sending_sml','awaiting_stock_recalc') THEN 'cancelled_during_sml_reconciliation'
+		      ELSE state_reason
+		    END,
+		    released_at=CASE WHEN state IN ('active','blocked_mapping') THEN NOW() ELSE released_at END,
+		    updated_at=NOW()
+		WHERE source=$1 AND account_key=$2 AND order_id=$3
+		  AND state IN ('active','blocked_mapping','sending_sml','awaiting_stock_recalc')`, source, accountKey, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func marketplaceOrderUnpaid(rawData json.RawMessage) bool {
@@ -377,9 +434,14 @@ func (r *BillRepo) CompleteStockRecalcJob(ctx context.Context, jobID, leaseOwner
 }
 
 func (r *BillRepo) FailStockRecalcJob(ctx context.Context, jobID, leaseOwner, message string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var status string
 	var billID sql.NullString
-	err := r.db.QueryRowContext(ctx, `UPDATE marketplace_stock_recalc_jobs
+	err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_recalc_jobs
 		SET status=CASE WHEN attempt_count>=10 THEN 'manual_reconciliation' ELSE 'failed' END,
 		    next_attempt_at=NOW()+(LEAST(3600,power(2,LEAST(attempt_count,8))::int*15) * INTERVAL '1 second'),
 		    lease_owner='',lease_until=NULL,error_message=$3,updated_at=NOW()
@@ -392,9 +454,12 @@ func (r *BillRepo) FailStockRecalcJob(ctx context.Context, jobID, leaseOwner, me
 		return err
 	}
 	if status == "manual_reconciliation" && billID.Valid {
-		_, err = r.db.ExecContext(ctx, `UPDATE marketplace_stock_reservations
+		_, err = tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations
 			SET state='manual_reconciliation',state_reason='stock_recalc_verification_failed',updated_at=NOW()
 			WHERE bill_id=$1 AND state='awaiting_stock_recalc'`, billID.String)
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return tx.Commit()
 }

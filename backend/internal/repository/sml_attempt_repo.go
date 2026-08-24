@@ -264,6 +264,22 @@ func (r *BillRepo) FinishSMLAttempt(
 			WHERE r.bill_id=$1 AND a.id=$2 AND r.state IN ('active','sending_sml')`, billID, attemptID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservation_components c
+			SET warehouse_code=r.warehouse_code,
+			    location_code=r.location_code
+			FROM marketplace_stock_reservations r
+			WHERE c.reservation_id=r.id AND r.bill_id=$1`, billID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
+			SELECT DISTINCT c.warehouse_code,c.location_code,c.component_item_code,1
+			FROM marketplace_stock_reservation_components c
+			JOIN marketplace_stock_reservations r ON r.id=c.reservation_id
+			WHERE r.bill_id=$1
+			ON CONFLICT (warehouse_code,location_code,item_code)
+			DO UPDATE SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, billID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_recalc_jobs(bill_id,sml_attempt_id,status)
 			VALUES($1,$2,'queued') ON CONFLICT (sml_attempt_id) DO NOTHING`, billID, attemptID); err != nil {
 			return err
