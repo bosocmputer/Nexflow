@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Search,
   Truck,
+  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -572,6 +573,11 @@ export default function ShopeeOperations() {
     || ''
   const selectedAutoSMLSetting = autoSML?.settings.find((setting) => String(setting.shop_id) === shopID)
   const enabledAutoSMLShopCount = autoSML?.settings.filter((setting) => setting.enabled && !setting.paused_reason).length ?? 0
+  const autoSMLShopCount = autoSML?.settings.length ?? 0
+  const autoSMLControlActive = shopID === ALL
+    ? enabledAutoSMLShopCount > 0
+    : Boolean(selectedAutoSMLSetting?.enabled && !selectedAutoSMLSetting.paused_reason)
+  const autoSMLControlPaused = shopID !== ALL && Boolean(selectedAutoSMLSetting?.paused_reason)
   const pickupAddresses = shippingParams?.pickup?.address_list ?? []
   const dropoffBranches = shippingParams?.dropoff?.branch_list ?? []
   const selectedPickupAddress = pickupAddresses.find((address) => logisticsIDKey(address.address_id) === selectedPickupAddressID)
@@ -1335,26 +1341,49 @@ export default function ShopeeOperations() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="flex h-8 min-w-[184px] items-center justify-between gap-3 rounded-md border border-border bg-background px-2.5">
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-medium">สร้างบิล SML อัตโนมัติ</div>
-                  <div className="truncate text-[10px] text-muted-foreground">
-                    {shopID === ALL
-                      ? `เปิด ${enabledAutoSMLShopCount}/${autoSML?.settings.length ?? 0} ร้าน`
-                      : autoSMLStatusSummary(autoSML, selectedAutoSMLSetting)}
-                  </div>
+              <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
                 </div>
-                {shopID !== ALL && (
-                  <Switch
-                    aria-label="เปิดสร้างบิล SML อัตโนมัติ"
-                    checked={Boolean(selectedAutoSMLSetting?.enabled && !selectedAutoSMLSetting.paused_reason)}
-                    disabled={!isAdmin || autoSMLSaving || !autoSML?.global_enabled || !selectedAutoSMLSetting}
-                    onCheckedChange={(checked) => {
-                      if (checked) setAutoSMLDialogOpen(true)
-                      else void updateAutoSML(false)
-                    }}
-                  />
-                )}
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
+                      autoSMLControlPaused && 'border-warning/40 bg-warning/10 text-warning',
+                      autoSMLControlActive && !autoSMLControlPaused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+                    )}
+                  >
+                    {shopID === ALL
+                      ? autoSMLAllShopsStatus(enabledAutoSMLShopCount, autoSMLShopCount)
+                      : autoSMLCompactStatus(autoSML, selectedAutoSMLSetting)}
+                  </Badge>
+                  {shopID === ALL ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>เลือกร้าน Shopee หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Switch
+                      aria-label="เปิดสร้างบิล SML อัตโนมัติ"
+                      checked={Boolean(selectedAutoSMLSetting?.enabled && !selectedAutoSMLSetting.paused_reason)}
+                      disabled={!isAdmin || autoSMLSaving || !autoSML?.global_enabled || !selectedAutoSMLSetting}
+                      onCheckedChange={(checked) => {
+                        if (checked) setAutoSMLDialogOpen(true)
+                        else void updateAutoSML(false)
+                      }}
+                    />
+                  )}
+                </div>
               </div>
               <Button variant="outline" size="sm" className="h-8 gap-2 bg-background" onClick={() => { setDiagnosticsOpen((v) => !v); if (!diagnosticsOpen) void loadDiagnostics() }}>
                 <Eye className="h-4 w-4" />
@@ -2295,21 +2324,21 @@ function AutoSMLStatusBadge({ job }: { job?: AutoSMLJobView }) {
   )
 }
 
-function autoSMLStatusSummary(data: AutoSMLSettingsResponse | null, setting?: AutoSMLSetting) {
-  if (!data) return 'ตรวจสอบสถานะไม่ได้'
-  if (!data.global_enabled) return 'ยังไม่เปิดใช้ในระบบนี้'
-  if (!setting) return 'ไม่พบการตั้งค่าร้าน'
-  if (setting.paused_reason) return `หยุดชั่วคราว · ${autoSMLPausedReason(setting.paused_reason)}`
-  if (!setting.enabled) return 'ปิดอยู่'
-  if (setting.operational_warning) return setting.operational_warning
-  if (setting.queued_count > 0) return `เปิดอยู่ · รอ ${setting.queued_count.toLocaleString()}`
-  return 'เปิดอยู่ · พร้อมรับออเดอร์ใหม่'
+function autoSMLAllShopsStatus(enabled: number, total: number) {
+  if (total === 0) return 'ไม่มีร้าน'
+  if (enabled === 0) return 'ปิดทุกร้าน'
+  if (enabled === total) return `เปิด ${total} ร้าน`
+  return `เปิด ${enabled} จาก ${total}`
 }
 
-function autoSMLPausedReason(reason: string) {
-  if (reason === 'route_changed') return 'เส้นทาง SML เปลี่ยน'
-  if (reason === 'system_failures') return 'SML ล้มเหลวต่อเนื่อง'
-  return 'ต้องตรวจระบบ'
+function autoSMLCompactStatus(data: AutoSMLSettingsResponse | null, setting?: AutoSMLSetting) {
+  if (!data) return 'ตรวจสอบสถานะไม่ได้'
+  if (!data.global_enabled) return 'ปิดในระบบ'
+  if (!setting) return 'ไม่พบการตั้งค่าร้าน'
+  if (setting.paused_reason) return 'หยุดชั่วคราว'
+  if (!setting.enabled) return 'ปิด'
+  if (setting.queued_count > 0) return `เปิด · รอ ${setting.queued_count.toLocaleString()}`
+  return 'เปิด'
 }
 
 function AutoSMLFact({ label, value }: { label: string; value: string }) {
