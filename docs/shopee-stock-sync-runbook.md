@@ -4,17 +4,19 @@
 
 Nexflow publishes a configurable percentage of usable SML stock to Shopee. SML
 is the stock source of truth and returns balances in the smallest unit. Nexflow
-does not subtract sales orders again.
+subtracts only normalized Marketplace reservations that have not yet been
+proven incorporated in a successful SML stock recalculation.
 
 Target stock:
 
 ```text
-floor(max(SML scope balance, 0) * stock percentage / 100 / unit factor)
+floor(max(SML scope balance - pending base demand, 0) * stock percentage / 100 / unit factor)
 ```
 
 When multiple active Shopee listings intentionally use the same SML item,
 Nexflow requires an admin-defined shared-stock allocation totaling exactly
-100%. Pending Shopee orders that have not reached SML are reserved first:
+100%. Pending orders from Shopee, Lazada, and TikTok that have not reached a
+verified SML recalculation are reserved first:
 
 ```text
 pool = floor(max(SML scope balance - pending order base units, 0) * stock percentage / 100)
@@ -53,6 +55,13 @@ percentage and parent unit factor. Components are never mapped manually.
 - Paid/active Shopee orders without an SML document reserve stock before the
   target is calculated, preventing a later sync from restoring stock that an
   incoming order has already consumed.
+- `UNPAID` does not reserve. `IN_CANCEL` continues to reserve until Shopee
+  reports a completed cancellation. A sent reservation remains reserved in
+  `awaiting_stock_recalc` until `processstockrequest` succeeds and a later SML
+  balance read is verified; uncertainty pauses outbound stock fail-closed.
+- Pending demand is aggregated by physical SML item/component across every
+  Marketplace channel and shop in the tenant. An unproved reservation blocks
+  outbound stock rather than falling back to zero demand.
 - SML errors or malformed responses never become zero-stock updates.
 - Minimum and maximum SML quantities are shown for the selected scope as
   reference values only; they never change the target-stock formula.
@@ -101,8 +110,11 @@ percentage and parent unit factor. Components are never mapped manually.
 
 ## Rollback
 
-Turn off the shop toggle. This stops future updates and does not alter the stock
-already stored in Shopee. For an instance-wide stop, set
+Turn off the shop toggle to stop future shop runs. For a single listing, choose
+either the durable **set stock to zero then disable** flow (with Shopee read-back)
+or explicitly acknowledge **keep current stock and manage manually**. The latter
+cannot share an SML pool with managed listings without a proven allocation. For
+an instance-wide stop, set
 `SHOPEE_OPEN_API_ENABLED=false` and restart only that Nexflow instance. Database
 migrations do not need to be rolled back.
 
@@ -118,3 +130,6 @@ migrations do not need to be rolled back.
    calculation before enabling set stock.
 5. Turning either flag off is the immediate rollback; no migration rollback or
    SML data change is required.
+
+AOY must keep `SHOPEE_SET_STOCK_ENABLED=false` until a real mapped set product
+passes the controlled Seller Centre and SML component-balance checklist above.

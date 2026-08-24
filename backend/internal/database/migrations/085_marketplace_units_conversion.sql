@@ -314,6 +314,32 @@ ALTER TABLE marketplace_mapping_jobs
 CREATE UNIQUE INDEX IF NOT EXISTS marketplace_mapping_jobs_idempotency_uidx
   ON marketplace_mapping_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS marketplace_backfill_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_key TEXT NOT NULL DEFAULT '',
+  job_type TEXT NOT NULL CHECK (job_type IN ('alias_conversion','bill_snapshots','reservation_ledger')),
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','completed','failed')),
+  cursor_id UUID,
+  processed_count BIGINT NOT NULL DEFAULT 0,
+  failed_count BIGINT NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  lease_owner TEXT NOT NULL DEFAULT '',
+  lease_until TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  error_message TEXT NOT NULL DEFAULT '',
+  idempotency_key TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ
+);
+
+ALTER TABLE marketplace_backfill_jobs
+  ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS marketplace_backfill_jobs_claim_idx
+  ON marketplace_backfill_jobs(status, next_attempt_at, lease_until, created_at);
+
 CREATE TABLE IF NOT EXISTS marketplace_stock_reservations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_key TEXT NOT NULL DEFAULT '',
@@ -353,6 +379,13 @@ CREATE INDEX IF NOT EXISTS marketplace_stock_reservations_demand_idx
   WHERE state IN ('active','sending_sml','awaiting_stock_recalc');
 CREATE INDEX IF NOT EXISTS marketplace_stock_reservations_alias_idx
   ON marketplace_stock_reservations(marketplace_alias_id, mapping_revision, state);
+CREATE INDEX IF NOT EXISTS marketplace_stock_reservations_pending_item_idx
+  ON marketplace_stock_reservations(sml_item_code, id)
+  INCLUDE (base_qty, source_qty, source, account_key, marketplace_alias_id, external_item_id, external_variant_id)
+  WHERE state IN ('active','sending_sml','awaiting_stock_recalc');
+CREATE INDEX IF NOT EXISTS marketplace_stock_reservations_blocked_state_idx
+  ON marketplace_stock_reservations(state, id)
+  WHERE state IN ('blocked_mapping','manual_reconciliation');
 
 CREATE TABLE IF NOT EXISTS marketplace_stock_reservation_components (
   reservation_id UUID NOT NULL REFERENCES marketplace_stock_reservations(id) ON DELETE CASCADE,

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"nexflow/internal/models"
@@ -20,6 +21,7 @@ var (
 	ErrSMLAttemptNotReplayable = errors.New("SML attempt requires reconciliation")
 	ErrBillNotSendable         = errors.New("bill is not sendable")
 	ErrBillMutationConflict    = errors.New("bill changed while preparing SML payload")
+	ErrBillDependencyStale     = errors.New("bill conversion dependencies changed before SML attempt")
 )
 
 type SMLAttemptCreate struct {
@@ -88,6 +90,9 @@ func (r *BillRepo) CreateSMLAttempt(ctx context.Context, in SMLAttemptCreate) (*
 	if mutationRevision != in.ExpectedBillRevision {
 		return nil, ErrBillMutationConflict
 	}
+	if err := validateSMLAttemptDependencies(ctx, tx, in.BillID, in.UnitCatalogGeneration); err != nil {
+		return nil, err
+	}
 
 	row := tx.QueryRowContext(ctx, `INSERT INTO bill_sml_attempts
 		(tenant_key,bill_id,doc_no,state,route,payload_bytes,payload_json,payload_hash,
@@ -121,6 +126,57 @@ func (r *BillRepo) CreateSMLAttempt(ctx context.Context, in SMLAttemptCreate) (*
 		return nil, err
 	}
 	return attempt, nil
+}
+
+func validateSMLAttemptDependencies(ctx context.Context, tx *sql.Tx, billID string, expectedGeneration *string) error {
+	if expectedGeneration == nil || strings.TrimSpace(*expectedGeneration) == "" {
+		return nil
+	}
+	expected := strings.TrimSpace(*expectedGeneration)
+	var activeGeneration string
+	err := tx.QueryRowContext(ctx, `SELECT id::text FROM sml_catalog_sync_runs WHERE status='active'
+		ORDER BY activated_at DESC NULLS LAST,created_at DESC LIMIT 1 FOR SHARE`).Scan(&activeGeneration)
+	if err != nil || activeGeneration != expected {
+		return ErrBillDependencyStale
+	}
+	var catalogReady, mappingReady, reservationReady bool
+	if err := tx.QueryRowContext(ctx, `SELECT catalog_generation_ready,mapping_backfill_ready,reservation_ledger_ready
+		FROM marketplace_conversion_readiness WHERE singleton=true FOR SHARE`).Scan(
+		&catalogReady, &mappingReady, &reservationReady); err != nil {
+		return ErrBillDependencyStale
+	}
+	if !catalogReady || !mappingReady || !reservationReady {
+		return ErrBillDependencyStale
+	}
+	var expectedLines, lockedLines int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bill_items
+		WHERE bill_id=$1 AND COALESCE(source_sku,'') NOT IN ($2,$3,$4)`, billID,
+		models.ShopeeShippingSourceSKU, models.LazadaShippingSourceSKU, models.TikTokShippingSourceSKU).Scan(&expectedLines); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT bi.id::text FROM bill_items bi
+		JOIN marketplace_item_aliases a ON a.id=bi.marketplace_alias_id
+		JOIN sml_catalog c ON c.item_code=a.item_code
+		WHERE bi.bill_id=$1 AND COALESCE(bi.source_sku,'') NOT IN ($2,$3,$4)
+		  AND bi.mapping_revision_snapshot=a.mapping_revision
+		  AND bi.unit_catalog_generation_snapshot=$5::uuid
+		  AND a.unit_catalog_generation=$5::uuid AND a.conversion_status='ready' AND a.sales_enabled=true
+		  AND COALESCE(bi.set_definition_hash_snapshot,'')=CASE WHEN COALESCE(c.item_type,0)=3 THEN COALESCE(c.set_definition_hash,'') ELSE '' END
+		ORDER BY a.id,bi.id FOR SHARE OF a,c`, billID,
+		models.ShopeeShippingSourceSKU, models.LazadaShippingSourceSKU, models.TikTokShippingSourceSKU, expected)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		lockedLines++
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if lockedLines != expectedLines {
+		return ErrBillDependencyStale
+	}
+	return nil
 }
 
 func (r *BillRepo) ClaimExistingSMLAttempt(ctx context.Context, billID, leaseOwner string, leaseDuration time.Duration) (*models.BillSMLAttempt, error) {
@@ -255,6 +311,19 @@ func (r *BillRepo) FinishSMLAttempt(
 	}
 	switch attemptState {
 	case "sent":
+		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
+			SELECT demand.warehouse_code,demand.location_code,demand.item_code,1 FROM (
+			  SELECT r.warehouse_code,r.location_code,r.sml_item_code AS item_code
+			  FROM marketplace_stock_reservations r WHERE r.bill_id=$1 AND r.sml_item_code<>''
+			    AND NOT EXISTS(SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
+			  UNION SELECT c.warehouse_code,c.location_code,c.component_item_code
+			  FROM marketplace_stock_reservations r JOIN marketplace_stock_reservation_components c ON c.reservation_id=r.id
+			  WHERE r.bill_id=$1
+			) demand GROUP BY demand.warehouse_code,demand.location_code,demand.item_code
+			ON CONFLICT (warehouse_code,location_code,item_code)
+			DO UPDATE SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, billID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations r
 			SET state='awaiting_stock_recalc',
 			    warehouse_code=COALESCE(NULLIF(r.warehouse_code,''),a.route_settings#>>'{config,WHCode}',''),
@@ -272,16 +341,21 @@ func (r *BillRepo) FinishSMLAttempt(
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
-			SELECT DISTINCT c.warehouse_code,c.location_code,c.component_item_code,1
-			FROM marketplace_stock_reservation_components c
-			JOIN marketplace_stock_reservations r ON r.id=c.reservation_id
-			WHERE r.bill_id=$1
+			SELECT demand.warehouse_code,demand.location_code,demand.item_code,1 FROM (
+			  SELECT r.warehouse_code,r.location_code,r.sml_item_code AS item_code
+			  FROM marketplace_stock_reservations r WHERE r.bill_id=$1 AND r.sml_item_code<>''
+			    AND NOT EXISTS(SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
+			  UNION SELECT c.warehouse_code,c.location_code,c.component_item_code
+			  FROM marketplace_stock_reservations r JOIN marketplace_stock_reservation_components c ON c.reservation_id=r.id
+			  WHERE r.bill_id=$1
+			) demand GROUP BY demand.warehouse_code,demand.location_code,demand.item_code
 			ON CONFLICT (warehouse_code,location_code,item_code)
 			DO UPDATE SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, billID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_recalc_jobs(bill_id,sml_attempt_id,status)
-			VALUES($1,$2,'queued') ON CONFLICT (sml_attempt_id) DO NOTHING`, billID, attemptID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_recalc_jobs(tenant_key,bill_id,sml_attempt_id,status)
+			SELECT tenant_key,$1,$2,'queued' FROM bill_sml_attempts WHERE id=$2
+			ON CONFLICT (sml_attempt_id) DO NOTHING`, billID, attemptID); err != nil {
 			return err
 		}
 	case "failed_exact_retry":

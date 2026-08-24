@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -15,11 +16,17 @@ import (
 
 // SMLCatalogRepo handles DB operations for sml_catalog
 type SMLCatalogRepo struct {
-	db *sql.DB
+	db        *sql.DB
+	tenantKey string
 }
 
 func NewSMLCatalogRepo(db *sql.DB) *SMLCatalogRepo {
 	return &SMLCatalogRepo{db: db}
+}
+
+func (r *SMLCatalogRepo) WithTenantKey(tenantKey string) *SMLCatalogRepo {
+	r.tenantKey = strings.TrimSpace(tenantKey)
+	return r
 }
 
 // DB returns the underlying database connection (for cross-table ops in handlers)
@@ -64,7 +71,7 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 		INSERT INTO sml_catalog
 		  (item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		   group_code, balance_qty, image_count, primary_image_roworder,
-		   primary_image_guid, primary_image_bytes, image_synced_at, synced_at,
+		   primary_image_guid, primary_image_bytes, image_synced_at, synced_at, metadata_updated_at,
 		   item_type, set_component_count, set_definition_hash,
 		   set_document_valid, set_stock_valid, set_warning_codes, last_seen_at)
 		VALUES (
@@ -74,16 +81,16 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 		  CASE WHEN $13::boolean THEN $11::text ELSE '' END,
 		  CASE WHEN $13::boolean THEN $12::bigint ELSE NULL::bigint END,
 		  CASE WHEN $13::boolean THEN NOW() ELSE NULL END,
-		  NOW(),$14,$15,$16,$17,$18,$19,$20
+		  NOW(),NOW(),$14,$15,$16,$17,$18,$19,$20
 		)
 		ON CONFLICT (item_code) DO UPDATE SET
-		  item_name   = EXCLUDED.item_name,
-		  item_name2  = EXCLUDED.item_name2,
-		  unit_code   = EXCLUDED.unit_code,
-		  wh_code     = EXCLUDED.wh_code,
-		  shelf_code  = EXCLUDED.shelf_code,
-		  group_code  = EXCLUDED.group_code,
-		  balance_qty = EXCLUDED.balance_qty,
+		  item_name   = CASE WHEN EXCLUDED.item_name<>'' THEN EXCLUDED.item_name ELSE sml_catalog.item_name END,
+		  item_name2  = CASE WHEN EXCLUDED.item_name2<>'' THEN EXCLUDED.item_name2 ELSE sml_catalog.item_name2 END,
+		  unit_code   = CASE WHEN EXCLUDED.unit_code<>'' THEN EXCLUDED.unit_code ELSE sml_catalog.unit_code END,
+		  wh_code     = CASE WHEN EXCLUDED.wh_code<>'' THEN EXCLUDED.wh_code ELSE sml_catalog.wh_code END,
+		  shelf_code  = CASE WHEN EXCLUDED.shelf_code<>'' THEN EXCLUDED.shelf_code ELSE sml_catalog.shelf_code END,
+		  group_code  = CASE WHEN EXCLUDED.group_code<>'' THEN EXCLUDED.group_code ELSE sml_catalog.group_code END,
+		  balance_qty = COALESCE(EXCLUDED.balance_qty,sml_catalog.balance_qty),
 		  item_type = EXCLUDED.item_type,
 		  set_component_count = EXCLUDED.set_component_count,
 		  set_definition_hash = EXCLUDED.set_definition_hash,
@@ -119,6 +126,7 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 		    ELSE sml_catalog.image_synced_at
 		  END,
 		  synced_at   = NOW(),
+		  metadata_updated_at = NOW(),
 		  embedding_status = 'disabled',
 		  embedded_at = NULL,
 		  embedding_model = NULL,
@@ -156,7 +164,8 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 			SET status='needs_review', error_msg='สินค้าชุดใน SML ไม่พร้อมใช้งาน กรุณาแก้ Master และอัปเดตรายการสินค้า'
 			FROM bill_items bi
 			WHERE bi.bill_id=b.id AND bi.item_code=$1
-			  AND b.archived_at IS NULL AND b.status IN ('pending','needs_review')`, item.ItemCode); err != nil {
+			  AND b.archived_at IS NULL AND b.current_sml_attempt_id IS NULL
+			  AND b.status IN ('pending','needs_review')`, item.ItemCode); err != nil {
 			return err
 		}
 	}

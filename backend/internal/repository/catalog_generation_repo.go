@@ -16,6 +16,36 @@ var (
 	ErrCatalogGenerationInvalid   = errors.New("catalog generation validation failed")
 )
 
+// BeginCatalogReconciliation closes outbound stock before the metadata feed
+// starts mutating canonical product/set rows. Unit activation happens later,
+// but set definitions are also stock dependencies and therefore cannot remain
+// writable during the merge window. A failed/partial sync deliberately leaves
+// the tenant paused with the previous unit generation still active.
+func (r *SMLCatalogRepo) BeginCatalogReconciliation(ctx context.Context) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_conversion_readiness(singleton,catalog_generation_ready)
+		VALUES(true,false) ON CONFLICT(singleton) DO UPDATE
+		SET catalog_generation_ready=false,updated_at=NOW()`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings
+		SET enabled=false,dry_run_required=true,paused_reason='catalog_sync_in_progress',
+		    config_version=config_version+1,updated_at=NOW()`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,source,level,tenant_key,before_state,after_state,detail)
+		VALUES('sml_catalog_reconciliation_started','sml_catalog','info',$1,
+		  jsonb_build_object('catalog_generation_ready',true),jsonb_build_object('catalog_generation_ready',false),
+		  jsonb_build_object('stock_paused',true))`, r.tenantKey); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 type CatalogGenerationPage struct {
 	Products      []CatalogGenerationProduct
 	Units         []CatalogGenerationUnit
@@ -202,9 +232,54 @@ func (r *SMLCatalogRepo) ActivateCatalogGeneration(ctx context.Context, generati
 	if stagedProducts != productCount || stagedUnits != unitCount {
 		return ErrCatalogGenerationInvalid
 	}
+	// Both SML feeds describe set definitions. Refuse to activate a unit
+	// generation when their hashes disagree; otherwise a bill and a stock run
+	// could expand the same parent with different component demand.
+	var setHashMismatches int64
+	if err := tx.QueryRowContext(ctx, `WITH staged_sets AS (
+		SELECT parent_item_code,MIN(definition_hash) AS definition_hash,COUNT(DISTINCT definition_hash) AS hash_count
+		FROM sml_catalog_set_component_staging WHERE generation_id=$1::uuid
+		GROUP BY parent_item_code
+	)
+	SELECT COUNT(*) FROM staged_sets s LEFT JOIN sml_catalog c ON c.item_code=s.parent_item_code
+	WHERE s.hash_count<>1 OR (c.item_type=3 AND c.set_definition_hash<>'' AND s.definition_hash<>''
+	  AND c.set_definition_hash IS DISTINCT FROM s.definition_hash)`, generationID).Scan(&setHashMismatches); err != nil {
+		return err
+	}
+	if setHashMismatches != 0 {
+		return ErrCatalogGenerationInvalid
+	}
+	// Merge the two feeds without letting an absent/blank stock-catalog field
+	// erase richer product metadata. Products found only in the stock feed are
+	// retained, but a set remains fail-closed until the metadata feed provides
+	// its validated document definition.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sml_catalog(
+		item_code,item_name,unit_code,item_type,is_active,missing_at,last_seen_at,synced_at,
+		catalog_generation_id,metadata_updated_at,set_document_valid,set_stock_valid,set_warning_codes
+	)
+	SELECT s.item_code,s.item_name,s.unit_code,s.item_type,true,NULL,$2,$2,$1::uuid,
+	       COALESCE(s.source_updated_at,$2),s.item_type<>3,s.item_type<>3,
+	       CASE WHEN s.item_type=3 THEN '["set_metadata_missing"]'::jsonb ELSE '[]'::jsonb END
+	FROM sml_catalog_product_staging s WHERE s.generation_id=$1::uuid
+	ON CONFLICT(item_code) DO UPDATE SET
+	  item_name=CASE WHEN sml_catalog.item_name='' AND EXCLUDED.item_name<>'' THEN EXCLUDED.item_name ELSE sml_catalog.item_name END,
+	  unit_code=CASE WHEN sml_catalog.unit_code='' AND EXCLUDED.unit_code<>'' THEN EXCLUDED.unit_code ELSE sml_catalog.unit_code END,
+	  item_type=CASE WHEN sml_catalog.item_type=0 THEN EXCLUDED.item_type ELSE sml_catalog.item_type END,
+	  is_active=true,missing_at=NULL,last_seen_at=GREATEST(sml_catalog.last_seen_at,EXCLUDED.last_seen_at),
+	  catalog_generation_id=EXCLUDED.catalog_generation_id,
+	  metadata_updated_at=COALESCE(sml_catalog.metadata_updated_at,EXCLUDED.metadata_updated_at),synced_at=NOW()`,
+		generationID, productSyncStartedAt.UTC()); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sml_catalog
 		SET is_active=false, missing_at=COALESCE(missing_at,NOW()), synced_at=NOW()
 		WHERE is_active=true AND (last_seen_at IS NULL OR last_seen_at < $1)`, productSyncStartedAt.UTC()); err != nil {
+		return err
+	}
+	var previousGeneration sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT id::text FROM sml_catalog_sync_runs
+		WHERE status='active' AND id<>$1::uuid ORDER BY activated_at DESC NULLS LAST,created_at DESC
+		LIMIT 1 FOR UPDATE`, generationID).Scan(&previousGeneration); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 
@@ -221,14 +296,26 @@ func (r *SMLCatalogRepo) ActivateCatalogGeneration(ctx context.Context, generati
 	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_conversion_readiness(
 		singleton, catalog_generation_ready, mapping_backfill_ready, reservation_ledger_ready, updated_at
 	) VALUES (true,true,false,false,NOW())
-	ON CONFLICT (singleton) DO UPDATE SET catalog_generation_ready=true, updated_at=NOW()`); err != nil {
+	ON CONFLICT (singleton) DO UPDATE SET catalog_generation_ready=true,mapping_backfill_ready=false,
+	  reservation_ledger_ready=false,updated_at=NOW()`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_mapping_jobs(
-		tenant_key,idempotency_key,target_revision,job_type,status,dependency_snapshot
-	) VALUES ('',$1,$2,'unit_stale_reconcile','queued',jsonb_build_object('catalog_generation_id',$3))
-	ON CONFLICT (idempotency_key) DO NOTHING`,
-		"unit-generation:"+generationID, generation, generationID); err != nil {
+	for _, jobType := range []string{"alias_conversion", "bill_snapshots", "reservation_ledger"} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_backfill_jobs(tenant_key,job_type,idempotency_key)
+			VALUES($1,$2,$3) ON CONFLICT(idempotency_key) DO NOTHING`, r.tenantKey, jobType, "unit-generation:"+generationID+":"+jobType); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings SET enabled=false,dry_run_required=true,
+		paused_reason='catalog_generation_reconcile',config_version=config_version+1,updated_at=NOW()`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs
+		(action,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
+		VALUES('sml_catalog_generation_activated','sml_catalog','info',$1::uuid,$2,$3,$1::uuid,
+		  jsonb_build_object('generation_id',$4),jsonb_build_object('generation_id',$1,'status','active'),
+		  jsonb_build_object('product_count',$5,'unit_count',$6,'product_hash',$7,'unit_hash',$8))`,
+		generationID, r.tenantKey, generation, previousGeneration.String, productCount, unitCount, productHash, unitHash); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -17,10 +17,16 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	tenantKey string
 }
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
+
+func (s *Store) WithTenantKey(tenantKey string) *Store {
+	s.tenantKey = strings.TrimSpace(tenantKey)
+	return s
+}
 
 func (s *Store) EnsureSettings(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
@@ -715,17 +721,9 @@ func (s *Store) PendingShopeeReservationLedger(ctx context.Context, shopID int64
 	var blocked int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)
 		FROM marketplace_stock_reservations r
-		WHERE r.source='shopee' AND r.account_key=$1
-		  AND r.state NOT IN ('incorporated_in_sml','released_cancelled')
-		  AND (
-		    r.state IN ('blocked_mapping','manual_reconciliation')
-		    OR (r.state IN ('active','sending_sml','awaiting_stock_recalc') AND NOT EXISTS (
-		      SELECT 1 FROM shopee_stock_mappings m
-		       WHERE m.shop_id=$2 AND m.excluded=false
-		         AND ((r.marketplace_alias_id IS NOT NULL AND m.marketplace_alias_id=r.marketplace_alias_id)
-		           OR (r.external_item_id=m.item_id::text AND COALESCE(NULLIF(r.external_variant_id,''),'0')=m.model_id::text))
-		    ))
-		  )`, accountKey, shopID).Scan(&blocked)
+		WHERE r.state IN ('blocked_mapping','manual_reconciliation')
+		   OR (r.state IN ('active','sending_sml','awaiting_stock_recalc')
+		       AND (r.base_qty IS NULL OR r.base_qty<=0 OR r.sml_item_code=''))`).Scan(&blocked)
 	if err != nil {
 		return nil, err
 	}
@@ -733,23 +731,17 @@ func (s *Store) PendingShopeeReservationLedger(ctx context.Context, shopID int64
 		return nil, ErrBlockedReservations
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT mapped.item_id, mapped.model_id,
-		       SUM(r.source_qty)::float8 AS pending_qty,
+		SELECT m.item_id,m.model_id,
+		       COALESCE(SUM(r.source_qty) FILTER (WHERE r.source='shopee' AND r.account_key=$2
+		         AND ((r.marketplace_alias_id IS NOT NULL AND r.marketplace_alias_id=m.marketplace_alias_id)
+		           OR (r.external_item_id=m.item_id::text AND COALESCE(NULLIF(r.external_variant_id,''),'0')=m.model_id::text))),0)::float8 AS pending_qty,
 		       SUM(r.base_qty)::float8 AS pending_base_qty
-		  FROM marketplace_stock_reservations r
-		  JOIN LATERAL (
-		    SELECT m.item_id,m.model_id
-		      FROM shopee_stock_mappings m
-		     WHERE m.shop_id=$1 AND m.excluded=false
-		       AND ((r.marketplace_alias_id IS NOT NULL AND m.marketplace_alias_id=r.marketplace_alias_id)
-		         OR (r.external_item_id=m.item_id::text AND COALESCE(NULLIF(r.external_variant_id,''),'0')=m.model_id::text))
-		     ORDER BY CASE WHEN r.marketplace_alias_id IS NOT NULL AND m.marketplace_alias_id=r.marketplace_alias_id THEN 0 ELSE 1 END
-		     LIMIT 1
-		  ) mapped ON true
-		 WHERE r.source='shopee' AND r.account_key=$2
-		   AND r.state IN ('active','sending_sml','awaiting_stock_recalc')
-		   AND r.base_qty IS NOT NULL
-		 GROUP BY mapped.item_id,mapped.model_id`, shopID, accountKey)
+		  FROM shopee_stock_mappings m
+		  JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
+		  JOIN marketplace_stock_reservations r ON r.sml_item_code=m.sml_item_code
+		   AND r.state IN ('active','sending_sml','awaiting_stock_recalc') AND r.base_qty>0
+		 WHERE m.shop_id=$1 AND m.excluded=false AND p.is_active=true AND m.sml_item_code<>''
+		 GROUP BY m.item_id,m.model_id`, shopID, accountKey)
 	if err != nil {
 		return nil, err
 	}
@@ -764,6 +756,38 @@ func (s *Store) PendingShopeeReservationLedger(ctx context.Context, shopID int64
 		reservations[stockProductKey(itemID, modelID)] = demand
 	}
 	return reservations, rows.Err()
+}
+
+// PendingReservationBaseDemand aggregates unsent demand by the physical SML
+// item/component it consumes. It intentionally spans every Marketplace source
+// and shop in the tenant DB; the SML balance is shared even when sales entered
+// through different channels.
+func (s *Store) PendingReservationBaseDemand(ctx context.Context) (map[string]float64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT demand.item_code,SUM(demand.base_qty)::float8 FROM (
+		SELECT r.sml_item_code AS item_code,r.base_qty
+		FROM marketplace_stock_reservations r
+		WHERE r.state IN ('active','sending_sml','awaiting_stock_recalc') AND r.base_qty>0 AND r.sml_item_code<>''
+		  AND NOT EXISTS(SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
+		UNION ALL
+		SELECT c.component_item_code,c.component_base_qty
+		FROM marketplace_stock_reservation_components c
+		JOIN marketplace_stock_reservations r ON r.id=c.reservation_id
+		WHERE r.state IN ('active','sending_sml','awaiting_stock_recalc') AND c.component_base_qty>0
+	) demand WHERE demand.item_code<>'' GROUP BY demand.item_code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string]float64{}
+	for rows.Next() {
+		var itemCode string
+		var baseQty float64
+		if err := rows.Scan(&itemCode, &baseQty); err != nil {
+			return nil, err
+		}
+		result[itemCode] = baseQty
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) PendingShopeeReservationsLegacy(ctx context.Context, shopID int64) (map[string]ReservationDemand, error) {
@@ -808,7 +832,7 @@ func (s *Store) EnabledSMLItemsOtherShops(ctx context.Context, shopID int64) (ma
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT consumed.item_code
 		FROM shopee_stock_mappings m
 		JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
-		JOIN shopee_stock_settings st USING(shop_id)
+		LEFT JOIN marketplace_item_aliases a ON a.id=m.marketplace_alias_id AND a.is_active=true
 		LEFT JOIN shopee_stock_sml_catalog c ON c.item_code=m.sml_item_code AND c.is_active=true
 		CROSS JOIN LATERAL (
 		  SELECT m.sml_item_code AS item_code WHERE COALESCE(c.item_type,0)<>3
@@ -816,7 +840,8 @@ func (s *Store) EnabledSMLItemsOtherShops(ctx context.Context, shopID int64) (ma
 		  SELECT component->>'item_code' FROM jsonb_array_elements(COALESCE(c.set_components,'[]'::jsonb)) component
 		  WHERE c.item_type=3
 		) consumed
-		WHERE m.shop_id<>$1 AND st.enabled=true AND p.is_active=true AND m.excluded=false
+		WHERE m.shop_id<>$1 AND p.is_active=true AND m.excluded=false
+		  AND COALESCE(a.stock_policy,'blocked') IN ('managed','zeroing','manual_unmanaged')
 		  AND COALESCE(consumed.item_code,'')<>''`, shopID)
 	if err != nil {
 		return nil, err
@@ -1380,7 +1405,8 @@ func (s *Store) QueuePreviewRun(ctx context.Context, shopID int64, asOfDate stri
 		         SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
 		         FROM marketplace_stock_demand_versions d
 		         JOIN LATERAL jsonb_array_elements(st.locations) location
-		           ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+		           ON (d.warehouse_code='' AND d.location_code='')
+		             OR (d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location')
 		         WHERE d.item_code IN (
 		           SELECT m.sml_item_code FROM shopee_stock_mappings m
 		           WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
@@ -1411,7 +1437,8 @@ func (s *Store) CreateSyncRun(ctx context.Context, shopID int64, trigger, asOfDa
 		         SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
 		         FROM marketplace_stock_demand_versions d
 		         JOIN LATERAL jsonb_array_elements(st.locations) location
-		           ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+		           ON (d.warehouse_code='' AND d.location_code='')
+		             OR (d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location')
 		         WHERE d.item_code IN (
 		           SELECT m.sml_item_code FROM shopee_stock_mappings m
 		           WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
@@ -1531,7 +1558,8 @@ const previewSnapshotValidationSQL = `SELECT r.lease_owner=$2 AND r.lease_until>
 	  SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
 	  FROM marketplace_stock_demand_versions d
 	  JOIN LATERAL jsonb_array_elements(st.locations) location
-	    ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+	    ON (d.warehouse_code='' AND d.location_code='')
+	      OR (d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location')
 	  WHERE d.item_code IN (
 	    SELECT m.sml_item_code FROM shopee_stock_mappings m WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
 	    UNION
@@ -1585,7 +1613,8 @@ func (s *Store) RenewAndValidateLiveWrite(ctx context.Context, runID string, sho
 	    SELECT jsonb_object_agg(d.warehouse_code||chr(31)||d.location_code||chr(31)||d.item_code,d.revision)
 	    FROM marketplace_stock_demand_versions d
 	    JOIN LATERAL jsonb_array_elements(st.locations) location
-	      ON d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location'
+	      ON (d.warehouse_code='' AND d.location_code='')
+	        OR (d.warehouse_code=location->>'warehouse' AND d.location_code=location->>'location')
 	    WHERE d.item_code IN (
 	      SELECT m.sml_item_code FROM shopee_stock_mappings m WHERE m.shop_id=st.shop_id AND m.excluded=false AND m.sml_item_code<>''
 	      UNION
@@ -1709,7 +1738,7 @@ func (s *Store) savePreview(ctx context.Context, shopID int64, result *PreviewRe
 			updated_at=updated_at
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3`, shopID, line.ItemID, line.ModelID,
 			line.ScopeBalance, line.ExcludedBalance, line.MinQty, line.MaxQty, line.TargetStock,
-			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingNexflowQty, line.PoolBaseTarget, excludedLocationsJSON); err != nil {
+			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingBaseQty, line.PoolBaseTarget, excludedLocationsJSON); err != nil {
 			return err
 		}
 		if !line.Changed && !line.Blocked {
@@ -2022,11 +2051,11 @@ func (s *Store) CompletePolicyZeroing(ctx context.Context, job *PolicyJob, token
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrSyncInProgress
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,target_id,revision,job_id,before_state,after_state,detail)
-		VALUES('shopee_stock_zero_confirmed',NULLIF($1,'')::uuid,'shopee_stock','info',$2::uuid,$3,$4::uuid,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
+		VALUES('shopee_stock_zero_confirmed',NULLIF($1,'')::uuid,'shopee_stock','info',$2::uuid,$3,$4,$5::uuid,
 		jsonb_build_object('stock_policy','zeroing'),jsonb_build_object('stock_policy','disabled_zero'),
-		jsonb_build_object('shop_id',$5,'item_id',$6,'model_id',$7,'read_back_confirmed',true))`,
-		job.RequestedBy, job.MarketplaceAlias, job.TargetRevision, job.ID, job.ShopID, job.ItemID, job.ModelID); err != nil {
+		jsonb_build_object('shop_id',$6,'item_id',$7,'model_id',$8,'read_back_confirmed',true))`,
+		job.RequestedBy, job.MarketplaceAlias, s.tenantKey, job.TargetRevision, job.ID, job.ShopID, job.ItemID, job.ModelID); err != nil {
 		return err
 	}
 	return tx.Commit()

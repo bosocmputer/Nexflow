@@ -62,7 +62,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–084** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–085** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -96,6 +96,7 @@ Key recent migrations:
 | 082 | Durable per-shop Shopee READY_TO_SHIP Auto SML queue, cutoff, leases, retries and circuit breaker |
 | 083 | Stable Asia/Bangkok document time persisted immediately before the first Auto SML write |
 | 084 | Configurable Shopee stock schedules with persisted next run and calendar-month support |
+| 085 | Versioned SML units, Marketplace conversion snapshots, immutable SML attempts, reservation ledger, fenced stock jobs, and grouped/async stock APIs |
 
 ---
 
@@ -119,6 +120,11 @@ ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 ENABLE_LINE_MYSHOP=true
 SHOPEE_AUTO_SML_ENABLED=false
+MARKETPLACE_GROUPED_UI_ENABLED=false
+MARKETPLACE_UNIT_CATALOG_ENABLED=false
+MARKETPLACE_CONVERSION_MODE=off
+MARKETPLACE_RESERVATION_LEDGER_ENABLED=false
+SHOPEE_SET_STOCK_ENABLED=false
 ```
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX`, `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS`, and
@@ -132,6 +138,11 @@ either to `false` to hide or disable the LINE MyShop integration during rollback
 `SHOPEE_AUTO_SML_ENABLED` defaults to `false`. A tenant-level value of `true`
 only starts the durable worker; each shop remains disabled until an admin passes
 the readiness check and confirms activation in `/shopee-operations`.
+
+Marketplace conversion flags default to disabled. `MARKETPLACE_CONVERSION_MODE`
+accepts `off`, `shadow`, or `active`; `active` fails backend startup unless the
+unit generation, mapping backfill, and reservation ledger are ready. Set-stock
+remains a separate per-tenant release gate.
 
 ---
 

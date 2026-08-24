@@ -17,7 +17,8 @@ import (
 )
 
 type BillRepo struct {
-	db *sql.DB
+	db        *sql.DB
+	tenantKey string
 }
 
 type BillListResult struct {
@@ -109,6 +110,11 @@ var ErrInvalidDashboardDateRange = errors.New("invalid dashboard date range")
 
 func NewBillRepo(db *sql.DB) *BillRepo {
 	return &BillRepo{db: db}
+}
+
+func (r *BillRepo) WithTenantKey(tenantKey string) *BillRepo {
+	r.tenantKey = strings.TrimSpace(tenantKey)
+	return r
 }
 
 // DB exposes the underlying *sql.DB for one-off queries.
@@ -1069,7 +1075,7 @@ func (r *BillRepo) CreateWithItemsAndAudit(b *models.Bill, items []models.BillIt
 			return fmt.Errorf("insert bill item %d: %w", i, err)
 		}
 	}
-	if err := insertMarketplaceReservationsTx(tx, b, items); err != nil {
+	if err := insertMarketplaceReservationsTx(tx, r.tenantKey, b, items); err != nil {
 		return fmt.Errorf("insert marketplace stock reservations: %w", err)
 	}
 

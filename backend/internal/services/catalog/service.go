@@ -156,6 +156,11 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 	page := 1
 	runStartedAt := time.Now().UTC()
 	upsertErrors := 0
+	if s.unitCatalogEnabled {
+		if err := s.repo.BeginCatalogReconciliation(context.Background()); err != nil {
+			return 0, fmt.Errorf("pause marketplace stock for catalog reconciliation: %w", err)
+		}
+	}
 
 	for {
 		pageURL := fmt.Sprintf("%s?page=%d&size=200", url, page)

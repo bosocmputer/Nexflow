@@ -90,7 +90,7 @@ func TestInsertMarketplaceReservationsAggregatesDuplicateSetComponents(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := insertMarketplaceReservationsTx(tx, bill, items); err != nil {
+	if err := insertMarketplaceReservationsTx(tx, "", bill, items); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

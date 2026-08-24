@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -59,6 +60,65 @@ func TestCreateSMLAttemptPersistsImmutablePayloadBeforeExternalCall(t *testing.T
 	}
 }
 
+func TestCreateSMLAttemptRejectsStaleCatalogGenerationBeforePersistingPayload(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT status, archived_at, current_sml_attempt_id::text, COALESCE(mutation_revision,0)
+		   FROM bills WHERE id=$1 FOR UPDATE`)).
+		WithArgs("bill-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id", "mutation_revision"}).AddRow("pending", nil, nil, 4))
+	mock.ExpectQuery(`(?s)SELECT id::text FROM sml_catalog_sync_runs WHERE status='active'.*FOR SHARE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("00000000-0000-0000-0000-000000000099"))
+	mock.ExpectRollback()
+
+	generation := "00000000-0000-0000-0000-000000000100"
+	_, err = NewBillRepo(db).CreateSMLAttempt(context.Background(), SMLAttemptCreate{
+		BillID: "bill-1", DocNo: "BF-SO26080001", Route: "SaleOrder", PayloadBytes: []byte(`{}`),
+		LeaseOwner: "lease-1", ExpectedBillRevision: 4, UnitCatalogGeneration: &generation,
+	})
+	if !errors.Is(err, ErrBillDependencyStale) {
+		t.Fatalf("err=%v want ErrBillDependencyStale", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateSMLAttemptRejectsCatalogReconciliationWindow(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	generation := "00000000-0000-0000-0000-000000000100"
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT status, archived_at, current_sml_attempt_id::text, COALESCE(mutation_revision,0)
+		   FROM bills WHERE id=$1 FOR UPDATE`)).
+		WithArgs("bill-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id", "mutation_revision"}).AddRow("pending", nil, nil, 4))
+	mock.ExpectQuery(`(?s)SELECT id::text FROM sml_catalog_sync_runs WHERE status='active'.*FOR SHARE`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(generation))
+	mock.ExpectQuery(`(?s)SELECT catalog_generation_ready,mapping_backfill_ready,reservation_ledger_ready.*FOR SHARE`).
+		WillReturnRows(sqlmock.NewRows([]string{"catalog_generation_ready", "mapping_backfill_ready", "reservation_ledger_ready"}).
+			AddRow(false, true, true))
+	mock.ExpectRollback()
+
+	_, err = NewBillRepo(db).CreateSMLAttempt(context.Background(), SMLAttemptCreate{
+		BillID: "bill-1", DocNo: "BF-SO26080001", Route: "SaleOrder", PayloadBytes: []byte(`{}`),
+		LeaseOwner: "lease-1", ExpectedBillRevision: 4, UnitCatalogGeneration: &generation,
+	})
+	if !errors.Is(err, ErrBillDependencyStale) {
+		t.Fatalf("err=%v want ErrBillDependencyStale", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClaimExistingSMLAttemptRejectsLiveLease(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -104,13 +164,16 @@ func TestFinishSMLAttemptUsesLeaseOwnerAsFencingToken(t *testing.T) {
 	mock.ExpectExec(`(?s)UPDATE bills.*status=\$2.*sml_attempt_state=\$3.*current_sml_attempt_id=\$6`).
 		WithArgs("bill-1", "sent", "sent", "BF-SO26080001", json.RawMessage(response), "attempt-1", nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservations r.*r.bill_id=\$1.*marketplace_stock_reservation_components`).
+		WithArgs("bill-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations.*state='awaiting_stock_recalc'.*bill_id=\$1`).
 		WithArgs("bill-1", "attempt-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservation_components c.*warehouse_code=r.warehouse_code.*location_code=r.location_code.*r.bill_id=\$1`).
 		WithArgs("bill-1").
 		WillReturnResult(sqlmock.NewResult(0, 2))
-	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservation_components c.*r.bill_id=\$1`).
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservations r.*r.bill_id=\$1.*marketplace_stock_reservation_components`).
 		WithArgs("bill-1").
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_recalc_jobs.*ON CONFLICT`).

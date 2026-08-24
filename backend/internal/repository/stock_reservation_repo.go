@@ -101,7 +101,7 @@ func firstNonEmptyRepository(values ...string) string {
 	return ""
 }
 
-func insertMarketplaceReservationsTx(tx *sql.Tx, bill *models.Bill, items []models.BillItem) error {
+func insertMarketplaceReservationsTx(tx *sql.Tx, tenantKey string, bill *models.Bill, items []models.BillItem) error {
 	if bill == nil || (bill.Source != "shopee" && bill.Source != "lazada" && bill.Source != "tiktok") {
 		return nil
 	}
@@ -131,17 +131,17 @@ func insertMarketplaceReservationsTx(tx *sql.Tx, bill *models.Bill, items []mode
 			baseQty = snapshot.BaseQty
 		}
 		err := tx.QueryRow(`INSERT INTO marketplace_stock_reservations
-			(source,account_key,order_id,source_line_id,external_item_id,external_variant_id,bill_id,
+			(tenant_key,source,account_key,order_id,source_line_id,external_item_id,external_variant_id,bill_id,
 			 marketplace_alias_id,mapping_revision,source_qty,quantity_multiplier,unit_code,
 			 unit_stand_value,unit_divide_value,base_qty,sml_item_code,set_definition_hash,
 			 source_event_version,state,state_reason)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 			ON CONFLICT (source,account_key,order_id,source_line_id,external_item_id,external_variant_id)
 			DO UPDATE SET bill_id=COALESCE(marketplace_stock_reservations.bill_id,EXCLUDED.bill_id),
 			              source_event_version=CASE WHEN EXCLUDED.source_event_version<>'' THEN EXCLUDED.source_event_version ELSE marketplace_stock_reservations.source_event_version END,
 			              updated_at=NOW()
 			RETURNING id::text,state`,
-			snapshot.Source, snapshot.AccountKey, snapshot.OrderID, snapshot.SourceLineID,
+			strings.TrimSpace(tenantKey), snapshot.Source, snapshot.AccountKey, snapshot.OrderID, snapshot.SourceLineID,
 			snapshot.ExternalItemID, snapshot.ExternalVariantID, bill.ID, snapshot.MarketplaceAliasID,
 			snapshot.MappingRevision, snapshot.SourceQty, snapshot.QuantityMultiplier, snapshot.UnitCode,
 			snapshot.UnitStandValue, snapshot.UnitDivideValue, baseQty, snapshot.SMLItemCode,

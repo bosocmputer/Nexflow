@@ -450,6 +450,16 @@ func (h *MarketplaceAliasHandler) RetryPolicyJob(c *gin.Context) {
 	c.JSON(http.StatusAccepted, job)
 }
 
+func (h *MarketplaceAliasHandler) Readiness(c *gin.Context) {
+	readiness, err := h.aliasRepo.ConversionReadiness(c.Request.Context())
+	if err != nil {
+		h.logger.Error("get marketplace conversion readiness", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดสถานะเตรียมข้อมูลไม่สำเร็จ"})
+		return
+	}
+	c.JSON(http.StatusOK, readiness)
+}
+
 func (h *MarketplaceAliasHandler) audit(c *gin.Context, action string, alias *models.MarketplaceItemAlias, detail gin.H) {
 	if h.auditRepo == nil || alias == nil {
 		return

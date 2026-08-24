@@ -63,6 +63,7 @@ func TestMigration085IsAdditiveAndSchemaOnly(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS sml_catalog_sync_lease",
 		"CREATE TABLE IF NOT EXISTS sml_catalog_units",
 		"CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs",
+		"CREATE TABLE IF NOT EXISTS marketplace_backfill_jobs",
 		"CREATE TABLE IF NOT EXISTS marketplace_stock_reservations",
 		"CREATE TABLE IF NOT EXISTS marketplace_stock_reservation_components",
 		"CREATE TABLE IF NOT EXISTS marketplace_stock_demand_versions",
@@ -78,6 +79,10 @@ func TestMigration085IsAdditiveAndSchemaOnly(t *testing.T) {
 		if strings.HasPrefix(trimmed, "UPDATE ") || strings.HasPrefix(trimmed, "DELETE ") {
 			t.Errorf("migration 085 must not perform startup backfill: %q", line)
 		}
+	}
+
+	if count := strings.Count(sqlText, "external_request_started_at TIMESTAMPTZ"); count != 1 {
+		t.Fatalf("migration 085 declares bill_sml_attempts.external_request_started_at %d times, want exactly once", count)
 	}
 }
 

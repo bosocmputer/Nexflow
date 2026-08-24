@@ -2009,6 +2009,10 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	if errors.Is(err, repository.ErrBillMutationConflict) {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "ข้อมูลบิลถูกแก้ระหว่างเตรียมส่ง กรุณารีเฟรชและตรวจสอบก่อนส่งใหม่", Route: route, Skipped: true}
 	}
+	if errors.Is(err, repository.ErrBillDependencyStale) {
+		_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr("conversion_dependency_stale"))
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "Product Master, หน่วย หรือสินค้าชุดเปลี่ยนก่อนส่ง กรุณารอ reconciliation และตรวจบิลใหม่", Route: route, Skipped: true}
+	}
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "บันทึก immutable SML payload ไม่สำเร็จ: " + err.Error(), Route: route}
 	}
@@ -2095,6 +2099,10 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	}
 	if errors.Is(err, repository.ErrBillMutationConflict) {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "ข้อมูลบิลถูกแก้ระหว่างเตรียมส่ง กรุณารีเฟรชและตรวจสอบก่อนส่งใหม่", Route: route, Skipped: true}
+	}
+	if errors.Is(err, repository.ErrBillDependencyStale) {
+		_ = h.billRepo.UpdateStatus(id, "needs_review", nil, nil, strPtr("conversion_dependency_stale"))
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "Product Master, หน่วย หรือสินค้าชุดเปลี่ยนก่อนส่ง กรุณารอ reconciliation และตรวจบิลใหม่", Route: route, Skipped: true}
 	}
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusInternalServerError, Error: "บันทึก immutable SML payload ไม่สำเร็จ: " + err.Error(), Route: route}

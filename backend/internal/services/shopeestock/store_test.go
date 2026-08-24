@@ -174,17 +174,16 @@ func TestListProductGroupVariantsUsesModelKeysetWithoutOffset(t *testing.T) {
 	}
 }
 
-func TestPendingShopeeReservationsAggregatesByItemAndModel(t *testing.T) {
+func TestPendingShopeeReservationsAggregatesTenantDemandBySMLItem(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM marketplace_stock_reservations r.*blocked_mapping.*NOT EXISTS`).
-		WithArgs("shop:264993963", int64(264993963)).
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM marketplace_stock_reservations r.*blocked_mapping.*manual_reconciliation`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectQuery(`(?s)FROM marketplace_stock_reservations r.*JOIN LATERAL.*marketplace_alias_id.*GROUP BY mapped.item_id,mapped.model_id`).
+	mock.ExpectQuery(`(?s)FROM shopee_stock_mappings m.*JOIN marketplace_stock_reservations r ON r.sml_item_code=m.sml_item_code.*GROUP BY m.item_id,m.model_id`).
 		WithArgs(int64(264993963), "shop:264993963").
 		WillReturnRows(sqlmock.NewRows([]string{"item_id", "model_id", "pending_qty", "pending_base_qty"}).
 			AddRow(int64(1001), int64(2001), 3.0, 36.0).
@@ -200,6 +199,29 @@ func TestPendingShopeeReservationsAggregatesByItemAndModel(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}
+
+func TestPendingReservationBaseDemandExpandsSetsOnceAcrossChannels(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)SELECT demand.item_code,SUM\(demand.base_qty\).*marketplace_stock_reservations r.*NOT EXISTS.*UNION ALL.*marketplace_stock_reservation_components c`).
+		WillReturnRows(sqlmock.NewRows([]string{"item_code", "base_qty"}).
+			AddRow("NORMAL-1", 8.0).
+			AddRow("COMPONENT-1", 24.0))
+
+	demand, err := NewStore(db).PendingReservationBaseDemand(context.Background())
+	if err != nil {
+		t.Fatalf("PendingReservationBaseDemand: %v", err)
+	}
+	if demand["NORMAL-1"] != 8 || demand["COMPONENT-1"] != 24 {
+		t.Fatalf("demand=%v", demand)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -223,7 +245,7 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 		WithArgs(
 			int64(42), int64(1001), int64(2001),
 			7.0, -2.0, 0.0, 0.0, int64(5),
-			0, false, "", 0.0, int64(0), sqlmock.AnyArg(),
+			0, false, "", 24.0, int64(0), sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE shopee_stock_settings SET dry_run_required=false`).
@@ -233,6 +255,7 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 
 	result := &PreviewResult{RunID: "00000000-0000-0000-0000-000000000001", Lines: []PreviewLine{{
 		ItemID: 1001, ModelID: 2001, ScopeBalance: 7, ExcludedBalance: -2, TargetStock: 5,
+		PendingNexflowQty: 2, PendingBaseQty: 24,
 		ExcludedLocations: []ExcludedStockLocation{{
 			ItemCode: "AH-0006", WarehouseCode: "AB-2", WarehouseName: "คลังสำรอง",
 			LocationCode: "002", LocationName: "หลังร้าน", UnitCode: "กล่อง", BalanceQty: -2,

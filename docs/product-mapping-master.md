@@ -21,22 +21,59 @@ Shopee scope is `shop:<shop_id>`. An unscoped Shopee Excel import may be correct
 
 Logs contain aggregate resolution counts only. They must not include marketplace SKU, product names, or buyer data.
 
+## Quantity conversion
+
+Each scoped variant owns a versioned conversion policy. `ic_unit_use`, received
+through the SML stock-catalog feed, is the authority for `stand_value` and
+`divide_value`. Product metadata does not supply a price or unit factor.
+
+```text
+SML quantity = Marketplace quantity × quantity multiplier
+base demand  = Marketplace quantity × quantity multiplier × stand / divide
+```
+
+Calculations use exact rational arithmetic. Ambiguous, inactive, or stale units
+remain `needs_review`; the system never silently substitutes a factor of 1.
+Marketplace gross, discount, shipping, VAT, and net amounts remain fixed from
+the imported Marketplace snapshot. SML receives an effective unit price plus
+the exact line amount, so increasing quantity does not increase document value.
+
 ## Change safety
 
 - Master writes are admin-only.
-- Every change previews open bills, linked stock mappings, and duplicate stock conflicts.
-- Only `pending` and `needs_review` bill items may change.
-- Sent and archived documents never change.
-- Changing or disabling a Master linked to Shopee stock pauses that shop and requires a new Dry-run.
-- Stock unit and conversion factor remain in `shopee_stock_mappings`; they are not copied into the sales Master.
+- Every change previews open bills, reservations, linked stock mappings, shared
+  pools, and duplicate stock conflicts. Commit requires the same mapping
+  revision and impact digest or returns `409`.
+- The short commit transaction creates a new revision, pauses affected shops,
+  and enqueues an idempotent reconciliation job. Bill and reservation updates
+  run in batches of 200 with restartable leases.
+- Only never-attempted, non-archived bill items may change. Manual overrides are
+  preserved by field. Sent, attempted, and archived documents never change.
+- The first SML attempt persists the exact wire payload before the network call.
+  Retry replays those bytes and never rebuilds a payload for the same `doc_no`.
+- Changing or disabling a Master linked to Shopee stock pauses every affected
+  shop and requires reconciliation plus a new Dry-run.
+- Unit, multiplier, sales policy, and stock policy live on the canonical scoped
+  variant. `shopee_stock_mappings` mirrors the resulting factor for stock runs.
 
 ## Rollout
 
-1. Back up the instance database and record alias, legacy mapping, and stock mapping counts.
-2. Deploy migration 077 with `PRODUCT_MAPPING_MASTER_MODE=shadow`.
-3. Run real import previews and inspect aggregate `shadow_mismatch` logs.
-4. Confirm that unmatched real orders appear in the `รอจับคู่` tab. Legacy name
+1. Back up the instance database and record alias, legacy mapping, stock mapping,
+   bill snapshot, and reservation counts.
+2. Deploy migration 085 with all new flags disabled. Migration 085 is additive
+   and contains no startup backfill or destructive price cleanup.
+3. Enable `MARKETPLACE_UNIT_CATALOG_ENABLED=true` and
+   `MARKETPLACE_GROUPED_UI_ENABLED=true` in Demo, then run a full catalog sync.
+4. Wait until `/api/marketplace-aliases/readiness` reports catalog, mapping
+   backfill, and reservation ledger ready for the enabled feature set.
+5. Run real import previews in `MARKETPLACE_CONVERSION_MODE=shadow` and inspect
+   aggregate mismatch/reconciliation counts.
+6. Confirm that unmatched real orders appear in the `รอจับคู่` tab. Legacy name
    hints remain in storage and must never appear as an unresolved admin queue by
    themselves.
-5. Switch to `active`, rebuild the backend, and repeat sales and stock Dry-run smoke tests.
-6. Roll back code if required; migration 077 is additive and can remain in place.
+7. Enable `MARKETPLACE_RESERVATION_LEDGER_ENABLED=true`, reconcile counts, then
+   switch conversion to `active`. Startup fails closed if readiness is incomplete.
+8. Repeat controlled sales, SML recalculation, stock Dry-run, and one live normal
+   product write. Keep AOY set stock disabled until its real set-product UAT passes.
+9. Roll back with conversion `shadow/off` and paused shops. Migration 085 and its
+   ledger remain in place; do not delete reconciliation evidence.

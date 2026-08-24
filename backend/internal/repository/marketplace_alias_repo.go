@@ -17,11 +17,17 @@ import (
 )
 
 type MarketplaceAliasRepo struct {
-	db *sql.DB
+	db        *sql.DB
+	tenantKey string
 }
 
 func NewMarketplaceAliasRepo(db *sql.DB) *MarketplaceAliasRepo {
 	return &MarketplaceAliasRepo{db: db}
+}
+
+func (r *MarketplaceAliasRepo) WithTenantKey(tenantKey string) *MarketplaceAliasRepo {
+	r.tenantKey = strings.TrimSpace(tenantKey)
+	return r
 }
 
 const aliasSelectColumns = `a.id, a.source, a.account_key, a.external_item_id, a.external_variant_id,

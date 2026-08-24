@@ -59,6 +59,18 @@ func TestMarketplaceMappingCompletionWarningsFailClosed(t *testing.T) {
 	}
 }
 
+func TestMarketplaceStockPolicyTransitionsRequireDurableConfirmation(t *testing.T) {
+	if err := validateMarketplaceStockPolicyTransition("managed", "disabled_zero"); err == nil {
+		t.Fatal("public mutation must not assert disabled_zero without Shopee read-back")
+	}
+	if err := validateMarketplaceStockPolicyTransition("zeroing", "manual_unmanaged"); err == nil {
+		t.Fatal("zeroing must not be bypassed while the durable write is in flight")
+	}
+	if err := validateMarketplaceStockPolicyTransition("disabled_zero", "managed"); err != nil {
+		t.Fatalf("a confirmed zero listing may be enabled through the normal guarded flow: %v", err)
+	}
+}
+
 func TestResolveMarketplaceMutationPreservesOmittedExistingConversionFields(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

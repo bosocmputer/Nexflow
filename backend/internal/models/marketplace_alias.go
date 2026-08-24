@@ -126,6 +126,27 @@ type MarketplaceStockPolicyJob struct {
 	FinishedAt       *time.Time `json:"finished_at,omitempty"`
 }
 
+type MarketplaceBackfillJobStatus struct {
+	ID             string     `json:"id"`
+	JobType        string     `json:"job_type"`
+	Status         string     `json:"status"`
+	ProcessedCount int64      `json:"processed_count"`
+	FailedCount    int64      `json:"failed_count"`
+	AttemptCount   int        `json:"attempt_count"`
+	ErrorMessage   string     `json:"error_message,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+}
+
+type MarketplaceConversionReadiness struct {
+	CatalogGenerationReady bool                           `json:"catalog_generation_ready"`
+	MappingBackfillReady   bool                           `json:"mapping_backfill_ready"`
+	ReservationLedgerReady bool                           `json:"reservation_ledger_ready"`
+	ReconciliationSummary  map[string]any                 `json:"reconciliation_summary"`
+	UpdatedAt              time.Time                      `json:"updated_at"`
+	Jobs                   []MarketplaceBackfillJobStatus `json:"jobs"`
+}
+
 // MarketplaceAliasReviewFilter controls pagination + filtering for ReviewGroupsPaged.
 type MarketplaceAliasReviewFilter struct {
 	BillType string

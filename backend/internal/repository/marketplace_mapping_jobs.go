@@ -260,6 +260,9 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 			proposal.StockPolicy = "blocked"
 		}
 	}
+	if err := validateMarketplaceStockPolicyTransition(current.StockPolicy, proposal.StockPolicy); err != nil {
+		return proposal, current, marketplaceMutationTarget{}, err
+	}
 	if targetSource := firstNonEmptyRepository(proposal.Identity.Source, current.Identity.Source); targetSource != "shopee" && proposal.StockPolicy != "blocked" {
 		return proposal, marketplaceAliasCurrent{}, marketplaceMutationTarget{}, fmt.Errorf("stock policy is only available for Shopee")
 	}
@@ -287,7 +290,7 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 	var defaultUnit, setHash string
 	var itemType int
 	err := q.QueryRowContext(ctx, `SELECT is_active,unit_code,item_type,set_document_valid,set_definition_hash
-		FROM sml_catalog WHERE item_code=$1`, target.ItemCode).Scan(&productActive, &defaultUnit, &itemType, &setDocumentValid, &setHash)
+		FROM sml_catalog WHERE item_code=$1 FOR SHARE`, target.ItemCode).Scan(&productActive, &defaultUnit, &itemType, &setDocumentValid, &setHash)
 	if errors.Is(err, sql.ErrNoRows) && proposal.Deactivate {
 		err = nil
 	}
@@ -306,7 +309,7 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 	err = q.QueryRowContext(ctx, `SELECT r.id::text,u.stand_value::text,u.divide_value::text
 		FROM sml_catalog_sync_runs r JOIN sml_catalog_units u ON u.generation_id=r.id
 		WHERE r.status='active' AND u.item_code=$1 AND u.unit_code=$2 AND u.is_active=true
-		ORDER BY r.activated_at DESC NULLS LAST LIMIT 1`, target.ItemCode, target.UnitCode).Scan(&generation, &stand, &divide)
+		ORDER BY r.activated_at DESC NULLS LAST LIMIT 1 FOR SHARE OF r,u`, target.ItemCode, target.UnitCode).Scan(&generation, &stand, &divide)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return proposal, current, target, err
 	}
@@ -460,10 +463,10 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 	jobID := ""
 	idempotencyKey := fmt.Sprintf("%s:%d", aliasID, targetRevision)
 	err = tx.QueryRowContext(ctx, `INSERT INTO marketplace_mapping_jobs
-		(alias_id,target_revision,job_type,status,impact_digest,dependency_snapshot,requested_by,idempotency_key)
-		VALUES($1::uuid,$2,'mapping_reconcile','queued',$3,$4,NULLIF($5,'')::uuid,$6)
+		(tenant_key,alias_id,target_revision,job_type,status,impact_digest,dependency_snapshot,requested_by,idempotency_key)
+		VALUES($1,$2::uuid,$3,'mapping_reconcile','queued',$4,$5,NULLIF($6,'')::uuid,$7)
 		ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO UPDATE SET updated_at=NOW()
-		RETURNING id::text`, aliasID, targetRevision, currentImpact.ImpactDigest, snapshotJSON, proposal.ConfirmedBy, idempotencyKey).Scan(&jobID)
+		RETURNING id::text`, r.tenantKey, aliasID, targetRevision, currentImpact.ImpactDigest, snapshotJSON, proposal.ConfirmedBy, idempotencyKey).Scan(&jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -476,10 +479,10 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 		policyJobID := ""
 		policyKey := fmt.Sprintf("%s:%d:zero_then_disable", aliasID, targetRevision)
 		err := tx.QueryRowContext(ctx, `INSERT INTO shopee_stock_policy_jobs
-			(shop_id,marketplace_alias_id,target_revision,item_id,model_id,policy_action,status,idempotency_key,request_hash,requested_by)
-			VALUES($1,$2::uuid,$3,$4,$5,'zero_then_disable','queued',$6,$7,NULLIF($8,'')::uuid)
+			(tenant_key,shop_id,marketplace_alias_id,target_revision,item_id,model_id,policy_action,status,idempotency_key,request_hash,requested_by)
+			VALUES($1,$2,$3::uuid,$4,$5,$6,'zero_then_disable','queued',$7,$8,NULLIF($9,'')::uuid)
 			ON CONFLICT(idempotency_key) DO UPDATE SET updated_at=NOW()
-			RETURNING id::text`, shopID, aliasID, targetRevision, itemID, modelID, policyKey, currentImpact.ImpactDigest, proposal.ConfirmedBy).Scan(&policyJobID)
+			RETURNING id::text`, r.tenantKey, shopID, aliasID, targetRevision, itemID, modelID, policyKey, currentImpact.ImpactDigest, proposal.ConfirmedBy).Scan(&policyJobID)
 		if err != nil {
 			return nil, err
 		}
@@ -513,10 +516,10 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 		action = "marketplace_alias_deactivated"
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs
-		(action,user_id,source,level,target_id,revision,job_id,before_state,after_state,detail)
-		VALUES($1,NULLIF($2,'')::uuid,$3,'info',$4::uuid,$5,$6::uuid,$7,$8,
-		  jsonb_build_object('impact_digest',$9,'affected_shop_ids',$10::jsonb))`, action, proposal.ConfirmedBy,
-		target.Identity.Source, aliasID, targetRevision, jobID, beforeJSON, afterJSON, currentImpact.ImpactDigest, mustJSON(currentImpact.AffectedShopIDs)); err != nil {
+		(action,user_id,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
+		VALUES($1,NULLIF($2,'')::uuid,$3,'info',$4::uuid,$5,$6,$7::uuid,$8,$9,
+		  jsonb_build_object('impact_digest',$10,'affected_shop_ids',$11::jsonb))`, action, proposal.ConfirmedBy,
+		target.Identity.Source, aliasID, r.tenantKey, targetRevision, jobID, beforeJSON, afterJSON, currentImpact.ImpactDigest, mustJSON(currentImpact.AffectedShopIDs)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -599,6 +602,21 @@ func validMarketplaceStockPolicy(value string) bool {
 	}
 }
 
+func validateMarketplaceStockPolicyTransition(current, next string) error {
+	// disabled_zero is a read-back-confirmed terminal state. Only the durable
+	// policy worker may enter it after Shopee returns zero; accepting it from a
+	// public mutation would turn a user choice into an unverified assertion.
+	if next == "disabled_zero" && current != "disabled_zero" {
+		return fmt.Errorf("disabled_zero requires confirmed Shopee zero read-back")
+	}
+	// While zeroing is in flight, the retry endpoint is the only safe mutation.
+	// Otherwise a late successful write could race a newly managed listing.
+	if current == "zeroing" && next != "zeroing" {
+		return fmt.Errorf("stock zeroing is still in progress")
+	}
+	return nil
+}
+
 func nonEmptyUnique(values ...string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(values))
@@ -670,7 +688,7 @@ func (r *MarketplaceAliasRepo) ClaimMappingJob(ctx context.Context, leaseOwner s
 	var snapshot json.RawMessage
 	err := r.db.QueryRowContext(ctx, `WITH candidate AS (
 		SELECT id FROM marketplace_mapping_jobs
-		WHERE status='queued' OR (status='running' AND lease_until<NOW())
+		WHERE job_type='mapping_reconcile' AND (status='queued' OR (status='running' AND lease_until<NOW()))
 		ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 	)
 	UPDATE marketplace_mapping_jobs j SET status='running',lease_owner=$1,
@@ -983,9 +1001,9 @@ func (r *MarketplaceAliasRepo) RetryMappingJob(ctx context.Context, id, userID s
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return nil, ErrMarketplaceImpactChanged
 	}
-	_, _ = r.db.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,job_id,detail)
-		VALUES('marketplace_mapping_job_retried',NULLIF($1,'')::uuid,'marketplace','info',$2::uuid,
-		jsonb_build_object('job_id',$2,'requested_at',NOW()))`, userID, id)
+	_, _ = r.db.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,tenant_key,job_id,detail)
+		VALUES('marketplace_mapping_job_retried',NULLIF($1,'')::uuid,'marketplace','info',$2,$3::uuid,
+		jsonb_build_object('job_id',$3,'requested_at',NOW()))`, userID, r.tenantKey, id)
 	return r.GetMappingJob(ctx, id)
 }
 
@@ -1014,9 +1032,9 @@ func (r *MarketplaceAliasRepo) RetryStockPolicyJob(ctx context.Context, id, user
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return nil, ErrMarketplaceImpactChanged
 	}
-	_, _ = r.db.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,job_id,detail)
-		VALUES('shopee_stock_policy_job_retried',NULLIF($1,'')::uuid,'shopee_stock','info',$2::uuid,
-		jsonb_build_object('job_id',$2,'requested_at',NOW()))`, userID, id)
+	_, _ = r.db.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,tenant_key,job_id,detail)
+		VALUES('shopee_stock_policy_job_retried',NULLIF($1,'')::uuid,'shopee_stock','info',$2,$3::uuid,
+		jsonb_build_object('job_id',$3,'requested_at',NOW()))`, userID, r.tenantKey, id)
 	return r.GetStockPolicyJob(ctx, id)
 }
 

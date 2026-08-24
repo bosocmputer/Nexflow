@@ -64,34 +64,39 @@ func main() {
 		cfg.MarketplaceUnitCatalogEnabled, cfg.MarketplaceReservationLedgerEnabled); err != nil {
 		logger.Fatal("marketplace conversion readiness", zap.Error(err))
 	}
+	appSettingsRepo := repository.NewAppSettingsRepo(db)
+	if err := appSettingsRepo.ApplyToConfig(cfg); err != nil {
+		logger.Warn("apply DB instance settings", zap.Error(err))
+	}
 	appCtx, stopBackgroundJobs := context.WithCancel(context.Background())
 	defer stopBackgroundJobs()
 
 	seedAdminUser(db, logger)
 
+	tenantKey := strings.TrimSpace(cfg.ShopeeGatewayTenant)
+	if tenantKey == "" {
+		tenantKey = strings.TrimSpace(cfg.ShopeeSMLDatabase)
+	}
 	// Repositories
 	userRepo := repository.NewUserRepo(db)
-	billRepo := repository.NewBillRepo(db)
+	billRepo := repository.NewBillRepo(db).WithTenantKey(tenantKey)
 	mappingRepo := repository.NewMappingRepo(db)
 	platformRepo := repository.NewPlatformMappingRepo(db)
 	auditLogRepo := repository.NewAuditLogRepo(db)
-	catalogRepo := repository.NewSMLCatalogRepo(db)
-	aliasRepo := repository.NewMarketplaceAliasRepo(db)
+	catalogRepo := repository.NewSMLCatalogRepo(db).WithTenantKey(tenantKey)
+	aliasRepo := repository.NewMarketplaceAliasRepo(db).WithTenantKey(tenantKey)
 	repository.NewMarketplaceMappingWorker(aliasRepo, cfg.MarketplaceConversionMode, cfg.MarketplaceReservationLedgerEnabled, logger).Start(appCtx)
+	repository.NewMarketplaceBackfillWorker(aliasRepo, cfg.MarketplaceUnitCatalogEnabled, cfg.MarketplaceReservationLedgerEnabled, logger).Start(appCtx)
 	artifactRepo := repository.NewBillArtifactRepo(db)
 	channelDefaultRepo := repository.NewChannelDefaultRepo(db)
 	docCounterRepo := repository.NewDocCounterRepo(db)
 	lineOARepo := repository.NewLineOAAccountRepo(db)
 	lineNotificationRepo := repository.NewLineNotificationRepo(db)
 	lineMyShopRepo := repository.NewLineMyShopRepo(db)
-	appSettingsRepo := repository.NewAppSettingsRepo(db)
 	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db)
 	shopeeAutoSMLRepo := repository.NewShopeeAutoSMLRepo(db)
 	notificationRepo := repository.NewNotificationRepo(db)
 	nextStepNotificationRepo := repository.NewNextStepMarketplaceNotificationRepo(db)
-	if err := appSettingsRepo.ApplyToConfig(cfg); err != nil {
-		logger.Warn("apply DB instance settings", zap.Error(err))
-	}
 	smlReadiness := sml.NewReadinessChecker(sml.PartyConfig{
 		BaseURL:    cfg.ShopeeSMLURL,
 		GUID:       cfg.ShopeeSMLGUID,
@@ -366,7 +371,7 @@ func main() {
 			BaseURL: cfg.ShopeeGatewayBaseURL, Tenant: cfg.ShopeeGatewayTenant, SharedSecret: cfg.ShopeeGatewayInternalSecret,
 		})
 	}
-	stockService := shopeestock.NewService(shopeestock.NewStore(db), stockSMLClient, stockShopeeClient, shopeestock.Config{
+	stockService := shopeestock.NewService(shopeestock.NewStore(db).WithTenantKey(tenantKey), stockSMLClient, stockShopeeClient, shopeestock.Config{
 		Enabled:                  cfg.ShopeeOpenAPIEnabled,
 		GatewayMode:              strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway"),
 		SetStockEnabled:          cfg.ShopeeSetStockEnabled,
@@ -378,7 +383,7 @@ func main() {
 	}, logger)
 	shopeestock.NewWorker(stockService, logger).Start(appCtx)
 	stockrecalc.NewWorker(billRepo, appSettingsRepo, cfg, stockSMLClient, logger).Start(appCtx)
-	shopeeStockH := handlers.NewShopeeStockHandler(stockService, marketplaceAliasRepo, auditLogRepo, logger)
+	shopeeStockH := handlers.NewShopeeStockHandler(stockService, aliasRepo, auditLogRepo, logger)
 
 	// Webhooks (no auth)
 	// Webhook routes:
@@ -593,6 +598,7 @@ func main() {
 		api.GET("/marketplace-aliases/product-groups", middleware.RequireRole("admin", "staff"), aliasH.ProductGroups)
 		api.GET("/marketplace-aliases/product-groups/:parent_key/variants", middleware.RequireRole("admin", "staff"), aliasH.ProductGroupVariants)
 		api.GET("/marketplace-aliases", middleware.RequireRole("admin", "staff"), aliasH.List)
+		api.GET("/marketplace-aliases/readiness", middleware.RequireRole("admin", "staff"), aliasH.Readiness)
 		api.GET("/marketplace-aliases/jobs/:id", middleware.RequireRole("admin", "staff"), aliasH.Job)
 		api.POST("/marketplace-aliases/jobs/:id/retry", middleware.RequireRole("admin"), aliasH.RetryJob)
 		api.GET("/marketplace-aliases/policy-jobs/:id", middleware.RequireRole("admin", "staff"), aliasH.PolicyJob)

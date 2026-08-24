@@ -710,8 +710,12 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 	}
 	var pendingReservations map[string]ReservationDemand
+	pendingBaseByItem := map[string]float64{}
 	if s.cfg.ReservationLedgerEnabled {
 		pendingReservations, err = s.store.PendingShopeeReservationLedger(ctx, shopID)
+		if err == nil {
+			pendingBaseByItem, err = s.store.PendingReservationBaseDemand(ctx)
+		}
 	} else {
 		pendingReservations, err = s.store.PendingShopeeReservationsLegacy(ctx, shopID)
 		factorByKey := make(map[string]float64, len(products))
@@ -811,6 +815,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	}
 	sort.Strings(itemCodes)
 	balanceMap := map[string]sml.StockBalanceItem{}
+	pendingExceedsBalance := map[string]bool{}
 	excludedLocations := []ExcludedStockLocation{}
 	if len(itemCodes) > 0 {
 		for start := 0; start < len(itemCodes); start += 500 {
@@ -844,6 +849,19 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 		}
 	}
+	if s.cfg.ReservationLedgerEnabled {
+		for itemCode, pendingBase := range pendingBaseByItem {
+			balance, exists := balanceMap[itemCode]
+			if !exists {
+				continue
+			}
+			if pendingBase > balance.BalanceQty {
+				pendingExceedsBalance[itemCode] = true
+			}
+			balance.BalanceQty = math.Max(balance.BalanceQty-math.Max(pendingBase, 0), 0)
+			balanceMap[itemCode] = balance
+		}
+	}
 	result := &PreviewResult{
 		RunID: runID, ShopID: shopID, AsOfDate: asOfDate,
 		ExcludedLocations: excludedLocations, Lines: make([]PreviewLine, 0, len(products)),
@@ -870,11 +888,20 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash,
 			SharedPoolEnabled: product.SharedPoolEnabled, PoolAllocationPct: product.PoolAllocationPct,
 		}
+		if s.cfg.ReservationLedgerEnabled && product.SMLItemType != 3 {
+			line.PendingBaseQty = pendingBaseByItem[product.SMLItemCode]
+		}
 		if _, pooled := sharedPools[product.SMLItemCode]; pooled {
 			line.WarningCodes = removeWarning(line.WarningCodes, "duplicate_sml_item")
 		}
 		if hasSharedComponentStock(consumedByProduct[key], componentOwners, otherShopItems) {
 			line.WarningCodes = appendUnique(line.WarningCodes, "shared_component_stock")
+		}
+		for _, itemCode := range consumedByProduct[key] {
+			if pendingExceedsBalance[itemCode] {
+				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
+				break
+			}
 		}
 		if product.SMLItemType == 3 {
 			if !s.cfg.SetStockEnabled {
@@ -889,10 +916,14 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				_, availableSets, components, setWarnings := CalculateSetTarget(definition, balanceMap, settings.StockPct, product.UnitFactor)
 				line.ScopeBalance = float64(availableSets)
 				pendingBase := line.PendingBaseQty
-				if pendingBase > line.ScopeBalance {
+				if !s.cfg.ReservationLedgerEnabled && pendingBase > line.ScopeBalance {
 					line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
 				}
-				line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-pendingBase, 0), settings.StockPct, line.UnitFactor)
+				calculationPending := pendingBase
+				if s.cfg.ReservationLedgerEnabled {
+					calculationPending = 0
+				}
+				line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-calculationPending, 0), settings.StockPct, line.UnitFactor)
 				line.SetComponents = components
 				componentLocations := make([][]ExcludedStockLocation, 0, len(components))
 				for _, component := range components {
@@ -922,10 +953,14 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			line.MinQty = balance.MinQty
 			line.MaxQty = balance.MaxQty
 			pendingBase := line.PendingBaseQty
-			if pendingBase > line.ScopeBalance {
+			if !s.cfg.ReservationLedgerEnabled && pendingBase > line.ScopeBalance {
 				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
 			}
-			line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-pendingBase, 0), settings.StockPct, line.UnitFactor)
+			calculationPending := pendingBase
+			if s.cfg.ReservationLedgerEnabled {
+				calculationPending = 0
+			}
+			line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-calculationPending, 0), settings.StockPct, line.UnitFactor)
 		}
 		lineIndex[key] = len(result.Lines)
 		result.Lines = append(result.Lines, line)
@@ -943,12 +978,19 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 			line := result.Lines[index]
 			poolBalance = line.ScopeBalance
-			pendingBase += line.PendingBaseQty
+			// Every member of a proven shared pool points at the same SML base
+			// item and therefore receives the same tenant-wide demand aggregate.
+			// Count that aggregate once; summing members would reserve it twice.
+			pendingBase = math.Max(pendingBase, line.PendingBaseQty)
 			allocations = append(allocations, SharedPoolAllocation{
 				ItemID: member.ItemID, ModelID: member.ModelID, UnitFactor: member.UnitFactor, AllocationPct: member.PoolAllocationPct,
 			})
 		}
-		targets, poolBaseTarget, warnings := CalculateSharedPoolTargets(poolBalance, pendingBase, settings.StockPct, allocations)
+		calculationPending := pendingBase
+		if s.cfg.ReservationLedgerEnabled {
+			calculationPending = 0
+		}
+		targets, poolBaseTarget, warnings := CalculateSharedPoolTargets(poolBalance, calculationPending, settings.StockPct, allocations)
 		for _, member := range members {
 			key := stockProductKey(member.ItemID, member.ModelID)
 			index, ok := lineIndex[key]
@@ -957,7 +999,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 			line := &result.Lines[index]
 			line.PoolBaseTarget = poolBaseTarget
-			if pendingBase > poolBalance {
+			if !s.cfg.ReservationLedgerEnabled && pendingBase > poolBalance {
 				line.WarningCodes = appendUnique(line.WarningCodes, "pending_orders_exceed_sml_stock")
 			}
 			for _, warning := range warnings {
