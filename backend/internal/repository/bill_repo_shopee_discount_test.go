@@ -24,9 +24,11 @@ func TestApplyShopeePurchaseDiscountsToBillUsesCoinEffectiveDiscount(t *testing.
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "bill_id", "raw_name", "source_sku", "source_item_id", "source_variant_id", "marketplace_alias_id", "source_image_url", "item_code", "qty", "unit_code", "price",
 			"gross_amount", "discount_amount", "mapped", "mapping_id", "candidates",
+			"source_qty", "sml_qty", "quantity_multiplier_snapshot", "unit_stand_value_snapshot", "unit_divide_value_snapshot", "base_qty_snapshot",
+			"mapping_revision_snapshot", "unit_catalog_generation_snapshot", "set_definition_hash_snapshot", "conversion_override_fields", "conversion_issue_code",
 		}).
-			AddRow("item-1", billID, "สินค้า A", "", "", "", nil, "", "SKU-A", 1.0, "ชิ้น", 100.0, nil, 0.0, true, nil, []byte("[]")).
-			AddRow("item-2", billID, "สินค้า B", "", "", "", nil, "", "SKU-B", 1.0, "ชิ้น", 200.0, nil, 0.0, true, nil, []byte("[]")))
+			AddRow("item-1", billID, "สินค้า A", "", "", "", nil, "", "SKU-A", 1.0, "ชิ้น", 100.0, nil, 0.0, true, nil, []byte("[]"), nil, nil, nil, nil, nil, nil, nil, nil, "", []byte("{}"), "").
+			AddRow("item-2", billID, "สินค้า B", "", "", "", nil, "", "SKU-B", 1.0, "ชิ้น", 200.0, nil, 0.0, true, nil, []byte("[]"), nil, nil, nil, nil, nil, nil, nil, nil, "", []byte("{}"), ""))
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE bills").
 		WithArgs(sqlmock.AnyArg(), billID).

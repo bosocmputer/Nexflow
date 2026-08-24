@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +32,12 @@ type matchResolution struct {
 }
 
 type marketplaceResolutionBatch struct {
-	catalog      map[string]*models.CatalogItem
-	resolutions  map[string]matchResolution
-	exactMasters map[string]*models.MarketplaceItemAlias
-	aliasUsage   map[string]int
-	mode         string
+	catalog        map[string]*models.CatalogItem
+	resolutions    map[string]matchResolution
+	exactMasters   map[string]*models.MarketplaceItemAlias
+	aliasUsage     map[string]int
+	mode           string
+	conversionMode string
 }
 
 func marketplaceResolutionKey(sourceSKU, rawName string) string {
@@ -333,7 +335,11 @@ func prepareMarketplaceResolution(
 	if mode != "shadow" {
 		mode = "active"
 	}
-	return &marketplaceResolutionBatch{catalog: catalogItems, resolutions: resolutions, exactMasters: map[string]*models.MarketplaceItemAlias{}, aliasUsage: map[string]int{}, mode: mode}, nil
+	conversionMode := strings.ToLower(strings.TrimSpace(os.Getenv("MARKETPLACE_CONVERSION_MODE")))
+	if conversionMode != "shadow" && conversionMode != "active" {
+		conversionMode = "off"
+	}
+	return &marketplaceResolutionBatch{catalog: catalogItems, resolutions: resolutions, exactMasters: map[string]*models.MarketplaceItemAlias{}, aliasUsage: map[string]int{}, mode: mode, conversionMode: conversionMode}, nil
 }
 
 func recordMarketplaceResolutionUsage(batch *marketplaceResolutionBatch, resolved matchResolution, exactSKU bool) {
@@ -403,24 +409,21 @@ func marketplaceBillItemFromMatch(
 		Price:     price,
 	}
 
-	if sourceSKU != "" && lookup != nil {
-		if cat := lookup(sourceSKU); catalogItemDocumentReady(cat) {
-			code := cat.ItemCode
-			unit := cat.UnitCode
-			if unit == "" {
-				unit = defaultUnit
-			}
-			bi.ItemCode = &code
-			bi.UnitCode = &unit
-			bi.Mapped = true
-			return bi, true
-		}
-	}
-
 	switch {
 	case alias != nil && alias.IsActive && lookup != nil && catalogItemDocumentReady(lookup(alias.ItemCode)):
 		bi.ItemCode = &alias.ItemCode
 		bi.UnitCode = &alias.UnitCode
+		bi.Mapped = true
+		return bi, true
+	case sourceSKU != "" && lookup != nil && catalogItemDocumentReady(lookup(sourceSKU)):
+		cat := lookup(sourceSKU)
+		code := cat.ItemCode
+		unit := cat.UnitCode
+		if unit == "" {
+			unit = defaultUnit
+		}
+		bi.ItemCode = &code
+		bi.UnitCode = &unit
 		bi.Mapped = true
 		return bi, true
 	case sourceSKU == "" && learned != nil:
@@ -447,10 +450,8 @@ func marketplaceBillItemFromResolution(
 	price := item.Price
 	exactSKU := normalizeMarketplaceSKU(item.SKU) != "" && batch.catalogLookup(item.SKU) != nil
 	bi, mapped := marketplaceBillItemFromMatch(rawName, item.SKU, item.Qty, &price, defaultUnit, resolved.alias, resolved.learned, nil, batch.catalogLookup, 1)
-	if item.GrossAmount > 0 {
-		gross := item.GrossAmount
-		bi.GrossAmount = &gross
-	}
+	gross := item.GrossAmount
+	bi.GrossAmount = &gross
 	bi.DiscountAmount = item.DiscountAmount
 	if batch.mode == "shadow" && !mapped && normalizeMarketplaceSKU(item.SKU) == "" && resolved.learned != nil {
 		bi.ItemCode = &resolved.learned.ItemCode
@@ -464,7 +465,22 @@ func marketplaceBillItemFromResolution(
 		id := resolved.alias.ID
 		bi.MarketplaceAliasID = &id
 	}
+	targetCode := ""
+	if bi.ItemCode != nil {
+		targetCode = *bi.ItemCode
+	}
+	conversionReady, err := applyMarketplaceConversionSnapshot(&bi, resolved.alias, batch.catalogLookup(targetCode), batch.conversionMode)
+	if err != nil {
+		return bi, false, err
+	}
+	if batch.conversionMode == "active" && !conversionReady {
+		bi.Mapped = false
+		mapped = false
+	}
 	if !exactSKU || aliasRepo == nil {
+		return bi, mapped, nil
+	}
+	if batch.conversionMode != "off" {
 		return bi, mapped, nil
 	}
 	// Shopee Excel without a selected shop may resolve exact SKU for this bill,
@@ -512,6 +528,72 @@ func marketplaceBillItemFromResolution(
 		batch.aliasUsage[result.Alias.ID]++
 	}
 	return bi, mapped, nil
+}
+
+func applyMarketplaceConversionSnapshot(item *models.BillItem, alias *models.MarketplaceItemAlias, target *models.CatalogItem, mode string) (bool, error) {
+	if item == nil {
+		return false, fmt.Errorf("bill item is required")
+	}
+	sourceQty := item.Qty
+	item.SourceQty = &sourceQty
+	if mode != "shadow" && mode != "active" {
+		return true, nil
+	}
+	if alias == nil {
+		item.ConversionIssueCode = "conversion_policy_missing"
+		return false, nil
+	}
+	if !alias.SalesEnabled {
+		item.ConversionIssueCode = "sales_disabled"
+		return false, nil
+	}
+	if alias.ConversionStatus != "ready" {
+		item.ConversionIssueCode = "conversion_" + alias.ConversionStatus
+		return false, nil
+	}
+	if alias.UnitStandValue == nil || alias.UnitDivideValue == nil {
+		item.ConversionIssueCode = "unit_factor_missing"
+		return false, nil
+	}
+	if alias.UnitCatalogGeneration == nil || strings.TrimSpace(*alias.UnitCatalogGeneration) == "" {
+		item.ConversionIssueCode = "unit_generation_missing"
+		return false, nil
+	}
+
+	conversion, err := marketplace.CalculateQuantityConversion(marketplace.QuantityConversionInput{
+		MarketplaceQty: strconv.FormatFloat(item.Qty, 'f', -1, 64),
+		Multiplier:     alias.QuantityMultiplier, StandValue: *alias.UnitStandValue, DivideValue: *alias.UnitDivideValue,
+	})
+	if err != nil {
+		item.ConversionIssueCode = "conversion_invalid"
+		return false, nil
+	}
+	smlQtyText, err := marketplace.RatFiniteDecimal(conversion.SMLQty)
+	if err != nil {
+		item.ConversionIssueCode = "sml_quantity_precision_unsupported"
+		return false, nil
+	}
+	smlQty, err := strconv.ParseFloat(smlQtyText, 64)
+	if err != nil {
+		return false, fmt.Errorf("parse exact SML quantity: %w", err)
+	}
+	item.SMLQty = &smlQty
+	multiplier := alias.QuantityMultiplier
+	item.QuantityMultiplierSnapshot = &multiplier
+	stand, divide := *alias.UnitStandValue, *alias.UnitDivideValue
+	item.UnitStandValueSnapshot = &stand
+	item.UnitDivideValueSnapshot = &divide
+	baseQty := marketplace.RatCeilDecimal(conversion.BaseQty, 12)
+	item.BaseQtySnapshot = &baseQty
+	revision := alias.MappingRevision
+	item.MappingRevisionSnapshot = &revision
+	generation := *alias.UnitCatalogGeneration
+	item.UnitCatalogGenerationSnapshot = &generation
+	if target != nil {
+		item.SetDefinitionHashSnapshot = target.SetDefinitionHash
+	}
+	item.ConversionIssueCode = ""
+	return true, nil
 }
 
 func marketplaceSourceAccountKey(source, shopID string) string {

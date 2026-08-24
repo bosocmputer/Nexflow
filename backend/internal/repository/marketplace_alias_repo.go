@@ -26,7 +26,11 @@ func NewMarketplaceAliasRepo(db *sql.DB) *MarketplaceAliasRepo {
 const aliasSelectColumns = `a.id, a.source, a.account_key, a.external_item_id, a.external_variant_id,
 	a.source_sku, a.raw_name, a.normalized_key, a.item_code, a.unit_code,
 	a.confidence, a.confirmed_by, a.usage_count, a.last_used_at, a.created_at, a.updated_at,
-	a.is_active, a.match_method, a.scope_confirmed`
+	a.is_active, a.match_method, a.scope_confirmed,
+	a.external_parent_id, a.parent_key, a.parent_key_kind, a.source_product_name, a.source_variant_name,
+	a.mapping_revision, a.metadata_updated_at, a.quantity_multiplier,
+	a.unit_stand_value::text, a.unit_divide_value::text, a.unit_catalog_generation::text,
+	a.conversion_status, a.sales_enabled, a.stock_policy`
 
 type MarketplaceAliasMutation struct {
 	ID             string
@@ -166,6 +170,10 @@ func scanAlias(row aliasScanner) (*models.MarketplaceItemAlias, error) {
 		&a.SourceSKU, &a.RawName, &a.NormalizedKey, &a.ItemCode, &a.UnitCode,
 		&a.Confidence, &a.ConfirmedBy, &a.UsageCount, &a.LastUsedAt, &a.CreatedAt, &a.UpdatedAt,
 		&a.IsActive, &a.MatchMethod, &a.ScopeConfirmed,
+		&a.ExternalParentID, &a.ParentKey, &a.ParentKeyKind, &a.SourceProductName, &a.SourceVariantName,
+		&a.MappingRevision, &a.MetadataUpdatedAt, &a.QuantityMultiplier,
+		&a.UnitStandValue, &a.UnitDivideValue, &a.UnitCatalogGeneration,
+		&a.ConversionStatus, &a.SalesEnabled, &a.StockPolicy,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -312,6 +320,10 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 		       a.item_code, a.unit_code, a.confidence, a.confirmed_by,
 		       a.usage_count, a.last_used_at, a.created_at, a.updated_at,
 		       a.is_active, a.match_method, a.scope_confirmed,
+		       a.external_parent_id, a.parent_key, a.parent_key_kind, a.source_product_name, a.source_variant_name,
+		       a.mapping_revision, a.metadata_updated_at, a.quantity_multiplier,
+		       a.unit_stand_value::text, a.unit_divide_value::text, a.unit_catalog_generation::text,
+		       a.conversion_status, a.sales_enabled, a.stock_policy,
 		       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),''),
 		       COALESCE(c.item_name, ''), COALESCE(u.email, ''),
 		       COALESCE(c.is_active, FALSE),
@@ -356,6 +368,10 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 			&alias.Confidence, &alias.ConfirmedBy, &alias.UsageCount,
 			&alias.LastUsedAt, &alias.CreatedAt, &alias.UpdatedAt,
 			&alias.IsActive, &alias.MatchMethod, &alias.ScopeConfirmed,
+			&alias.ExternalParentID, &alias.ParentKey, &alias.ParentKeyKind, &alias.SourceProductName, &alias.SourceVariantName,
+			&alias.MappingRevision, &alias.MetadataUpdatedAt, &alias.QuantityMultiplier,
+			&alias.UnitStandValue, &alias.UnitDivideValue, &alias.UnitCatalogGeneration,
+			&alias.ConversionStatus, &alias.SalesEnabled, &alias.StockPolicy,
 			&alias.AccountName,
 			&alias.ItemName, &alias.ConfirmedName, &alias.ProductActive,
 			&alias.OpenItemCount, &alias.StockMappingCount,

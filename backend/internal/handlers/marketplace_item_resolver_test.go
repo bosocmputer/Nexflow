@@ -117,7 +117,7 @@ func TestBlockIfCatalogNotReadyReturnsActionableConflict(t *testing.T) {
 	}
 }
 
-func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
+func TestMarketplaceBillItemUsesScopedAliasBeforeExactSKUFallback(t *testing.T) {
 	price := 120.0
 	learned := &models.Mapping{
 		ID:       "map-1",
@@ -146,10 +146,15 @@ func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 		learned,
 		matches,
 		func(code string) *models.CatalogItem {
-			if code != "SKU-001" {
-				t.Fatalf("lookup code = %q, want normalized SKU-001", code)
+			switch code {
+			case "ALIAS-OLD":
+				return &models.CatalogItem{ItemCode: "ALIAS-OLD", UnitCode: "ชิ้น"}
+			case "SKU-001":
+				return &models.CatalogItem{ItemCode: "SKU-001", UnitCode: "แพ็ค"}
+			default:
+				t.Fatalf("unexpected lookup code = %q", code)
+				return nil
 			}
-			return &models.CatalogItem{ItemCode: "SKU-001", UnitCode: "แพ็ค"}
 		},
 		0.85,
 	)
@@ -160,14 +165,50 @@ func TestMarketplaceBillItemUsesCatalogSKUBeforeNameMapping(t *testing.T) {
 	if item.SourceSKU != "SKU-001" {
 		t.Fatalf("SourceSKU = %q, want SKU-001", item.SourceSKU)
 	}
-	if item.ItemCode == nil || *item.ItemCode != "SKU-001" {
-		t.Fatalf("ItemCode = %v, want SKU-001", item.ItemCode)
+	if item.ItemCode == nil || *item.ItemCode != "ALIAS-OLD" {
+		t.Fatalf("ItemCode = %v, want ALIAS-OLD", item.ItemCode)
 	}
-	if item.UnitCode == nil || *item.UnitCode != "แพ็ค" {
-		t.Fatalf("UnitCode = %v, want แพ็ค", item.UnitCode)
+	if item.UnitCode == nil || *item.UnitCode != "ชิ้น" {
+		t.Fatalf("UnitCode = %v, want ชิ้น", item.UnitCode)
 	}
 	if item.MappingID != nil {
 		t.Fatalf("MappingID = %v, want nil because SKU match wins", item.MappingID)
+	}
+}
+
+func TestApplyMarketplaceConversionSnapshotUsesAliasRevision(t *testing.T) {
+	stand, divide, generation := "12", "1", "gen-1"
+	alias := &models.MarketplaceItemAlias{
+		ID: "alias-1", MappingRevision: 4, QuantityMultiplier: 2,
+		UnitStandValue: &stand, UnitDivideValue: &divide, UnitCatalogGeneration: &generation,
+		ConversionStatus: "ready", SalesEnabled: true,
+	}
+	item := models.BillItem{Qty: 3}
+	ready, err := applyMarketplaceConversionSnapshot(&item, alias, &models.CatalogItem{SetDefinitionHash: "set-hash"}, "active")
+	if err != nil {
+		t.Fatalf("applyMarketplaceConversionSnapshot: %v", err)
+	}
+	if !ready || item.SMLQty == nil || *item.SMLQty != 6 || item.BaseQtySnapshot == nil || *item.BaseQtySnapshot != "72" {
+		t.Fatalf("item = %#v", item)
+	}
+	if item.MappingRevisionSnapshot == nil || *item.MappingRevisionSnapshot != 4 || item.SetDefinitionHashSnapshot != "set-hash" {
+		t.Fatalf("revision snapshot = %#v", item)
+	}
+}
+
+func TestApplyMarketplaceConversionSnapshotFailsClosedWhenUnitGenerationIsMissing(t *testing.T) {
+	stand, divide := "12", "1"
+	alias := &models.MarketplaceItemAlias{
+		QuantityMultiplier: 2, UnitStandValue: &stand, UnitDivideValue: &divide,
+		ConversionStatus: "ready", SalesEnabled: true,
+	}
+	item := models.BillItem{Qty: 1}
+	ready, err := applyMarketplaceConversionSnapshot(&item, alias, &models.CatalogItem{}, "active")
+	if err != nil {
+		t.Fatalf("applyMarketplaceConversionSnapshot: %v", err)
+	}
+	if ready || item.ConversionIssueCode != "unit_generation_missing" {
+		t.Fatalf("ready=%v issue=%q", ready, item.ConversionIssueCode)
 	}
 }
 

@@ -118,6 +118,10 @@ func TestMarketplaceAliasSaveAndApplyRejectsStaleVersionAndRollsBack(t *testing.
 			"source_sku", "raw_name", "normalized_key", "item_code", "unit_code",
 			"confidence", "confirmed_by", "usage_count", "last_used_at", "created_at", "updated_at",
 			"is_active", "match_method", "scope_confirmed",
+			"external_parent_id", "parent_key", "parent_key_kind", "source_product_name", "source_variant_name",
+			"mapping_revision", "metadata_updated_at", "quantity_multiplier",
+			"unit_stand_value", "unit_divide_value", "unit_catalog_generation",
+			"conversion_status", "sales_enabled", "stock_policy",
 		}))
 	mock.ExpectRollback()
 
@@ -190,7 +194,12 @@ func TestMarketplaceAliasNoSKUUpsertUsesContiguousPostgresParameters(t *testing.
 			"source_sku", "raw_name", "normalized_key", "item_code", "unit_code",
 			"confidence", "confirmed_by", "usage_count", "last_used_at", "created_at", "updated_at",
 			"is_active", "match_method", "scope_confirmed",
-		}).AddRow("alias-1", "shopee", "default", "", "", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", 1.0, "user-1", 0, now, now, now, true, "manual_name", true))
+			"external_parent_id", "parent_key", "parent_key_kind", "source_product_name", "source_variant_name",
+			"mapping_revision", "metadata_updated_at", "quantity_multiplier",
+			"unit_stand_value", "unit_divide_value", "unit_catalog_generation",
+			"conversion_status", "sales_enabled", "stock_policy",
+		}).AddRow("alias-1", "shopee", "default", "", "", "", "ชื่อ สินค้า", "ชื่อ สินค้า", "SKU-1", "PCS", 1.0, "user-1", 0, now, now, now, true, "manual_name", true,
+			"", "", "derived", "", "", 1, nil, 1, nil, nil, nil, "needs_review", true, "blocked"))
 	mock.ExpectCommit()
 
 	alias, err := NewMarketplaceAliasRepo(db).Upsert("shopee", "", "  ชื่อ   สินค้า  ", "SKU-1", "PCS", "user-1")

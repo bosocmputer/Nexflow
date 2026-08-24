@@ -687,7 +687,12 @@ func (r *BillRepo) findItems(billID string) ([]models.BillItem, error) {
 		`SELECT id, bill_id, raw_name, COALESCE(source_sku, ''), COALESCE(source_item_id, ''), COALESCE(source_variant_id, ''),
 		        marketplace_alias_id, COALESCE(source_image_url, ''), item_code, qty, unit_code, price,
 		        gross_amount, COALESCE(discount_amount, 0), mapped, mapping_id,
-		        COALESCE(candidates, '[]') as candidates
+		        COALESCE(candidates, '[]') as candidates,
+		        source_qty, sml_qty, quantity_multiplier_snapshot,
+		        unit_stand_value_snapshot::text, unit_divide_value_snapshot::text, base_qty_snapshot::text,
+		        mapping_revision_snapshot, unit_catalog_generation_snapshot::text,
+		        COALESCE(set_definition_hash_snapshot,''), COALESCE(conversion_override_fields,'{}'::jsonb),
+		        COALESCE(conversion_issue_code,'')
 		 FROM bill_items WHERE bill_id = $1 ORDER BY id`, billID,
 	)
 	if err != nil {
@@ -704,6 +709,10 @@ func (r *BillRepo) findItems(billID string) ([]models.BillItem, error) {
 			&item.MarketplaceAliasID, &item.SourceImageURL,
 			&item.ItemCode, &item.Qty, &item.UnitCode, &item.Price, &item.GrossAmount, &item.DiscountAmount, &item.Mapped, &item.MappingID,
 			&candidatesRaw,
+			&item.SourceQty, &item.SMLQty, &item.QuantityMultiplierSnapshot,
+			&item.UnitStandValueSnapshot, &item.UnitDivideValueSnapshot, &item.BaseQtySnapshot,
+			&item.MappingRevisionSnapshot, &item.UnitCatalogGenerationSnapshot,
+			&item.SetDefinitionHashSnapshot, &item.ConversionOverrideFields, &item.ConversionIssueCode,
 		); err != nil {
 			return nil, err
 		}
@@ -739,11 +748,17 @@ func billItemDisplayGroup(item models.BillItem) int {
 
 func (r *BillRepo) InsertItem(item *models.BillItem) error {
 	return r.db.QueryRow(
-		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id,
+		 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
+		 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+		 $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		 RETURNING id`,
 		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.MarketplaceAliasID,
 		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID,
+		item.SourceQty, item.SMLQty, item.QuantityMultiplierSnapshot, item.UnitStandValueSnapshot, item.UnitDivideValueSnapshot,
+		item.BaseQtySnapshot, item.MappingRevisionSnapshot, item.UnitCatalogGenerationSnapshot, item.SetDefinitionHashSnapshot,
+		jsonObjectOrEmpty(item.ConversionOverrideFields), item.ConversionIssueCode,
 	).Scan(&item.ID)
 }
 
@@ -860,12 +875,19 @@ func (r *BillRepo) CreateWithItemsAndAudit(b *models.Bill, items []models.BillIt
 		items[i].BillID = b.ID
 		if err := tx.QueryRow(
 			`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id,
-			 source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'[]'::jsonb)
+			 source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates,
+			 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
+			 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'[]'::jsonb,
+			 $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 			 RETURNING id`,
 			items[i].BillID, items[i].RawName, items[i].SourceSKU, items[i].SourceItemID, items[i].SourceVariantID,
 			items[i].MarketplaceAliasID, items[i].SourceImageURL, items[i].ItemCode, items[i].Qty, items[i].UnitCode,
 			items[i].Price, items[i].GrossAmount, items[i].DiscountAmount, items[i].Mapped, items[i].MappingID,
+			items[i].SourceQty, items[i].SMLQty, items[i].QuantityMultiplierSnapshot,
+			items[i].UnitStandValueSnapshot, items[i].UnitDivideValueSnapshot, items[i].BaseQtySnapshot,
+			items[i].MappingRevisionSnapshot, items[i].UnitCatalogGenerationSnapshot,
+			items[i].SetDefinitionHashSnapshot, jsonObjectOrEmpty(items[i].ConversionOverrideFields), items[i].ConversionIssueCode,
 		).Scan(&items[i].ID); err != nil {
 			return fmt.Errorf("insert bill item %d: %w", i, err)
 		}
@@ -1764,12 +1786,25 @@ func (r *BillRepo) MarkProcessedEmailKey(source, messageID, orderID string) erro
 // InsertItemWithCandidates inserts a bill item including top-5 catalog candidates
 func (r *BillRepo) InsertItemWithCandidates(item *models.BillItem, candidatesJSON []byte) error {
 	return r.db.QueryRow(
-		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		`INSERT INTO bill_items (bill_id, raw_name, source_sku, source_item_id, source_variant_id, marketplace_alias_id, source_image_url, item_code, qty, unit_code, price, gross_amount, discount_amount, mapped, mapping_id, candidates,
+		 source_qty, sml_qty, quantity_multiplier_snapshot, unit_stand_value_snapshot, unit_divide_value_snapshot, base_qty_snapshot,
+		 mapping_revision_snapshot, unit_catalog_generation_snapshot, set_definition_hash_snapshot, conversion_override_fields, conversion_issue_code)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+		 $17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		 RETURNING id`,
 		item.BillID, item.RawName, item.SourceSKU, item.SourceItemID, item.SourceVariantID, item.MarketplaceAliasID,
 		item.SourceImageURL, item.ItemCode, item.Qty, item.UnitCode, item.Price, item.GrossAmount, item.DiscountAmount, item.Mapped, item.MappingID, candidatesJSON,
+		item.SourceQty, item.SMLQty, item.QuantityMultiplierSnapshot, item.UnitStandValueSnapshot, item.UnitDivideValueSnapshot,
+		item.BaseQtySnapshot, item.MappingRevisionSnapshot, item.UnitCatalogGenerationSnapshot, item.SetDefinitionHashSnapshot,
+		jsonObjectOrEmpty(item.ConversionOverrideFields), item.ConversionIssueCode,
 	).Scan(&item.ID)
+}
+
+func jsonObjectOrEmpty(value json.RawMessage) json.RawMessage {
+	if len(value) == 0 || string(value) == "null" {
+		return json.RawMessage(`{}`)
+	}
+	return value
 }
 
 // BackfillShopeePurchaseDiscounts fills discount_amount for active Shopee

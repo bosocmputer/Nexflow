@@ -107,25 +107,36 @@ type DailyInsight struct {
 }
 
 type BillItem struct {
-	ID                 string          `json:"id"`
-	BillID             string          `json:"bill_id"`
-	RawName            string          `json:"raw_name"`
-	SourceSKU          string          `json:"source_sku,omitempty"`
-	SourceItemID       string          `json:"source_item_id,omitempty"`
-	SourceVariantID    string          `json:"source_variant_id,omitempty"`
-	MarketplaceAliasID *string         `json:"marketplace_alias_id,omitempty"`
-	SourceImageURL     string          `json:"source_image_url,omitempty"`
-	ItemCode           *string         `json:"item_code,omitempty"`
-	HasHiddenChars     bool            `json:"has_hidden_chars"`
-	CleanItemCode      string          `json:"clean_item_code,omitempty"`
-	Qty                float64         `json:"qty"`
-	UnitCode           *string         `json:"unit_code,omitempty"`
-	Price              *float64        `json:"price,omitempty"`
-	GrossAmount        *float64        `json:"gross_amount,omitempty"`
-	DiscountAmount     float64         `json:"discount_amount"`
-	Mapped             bool            `json:"mapped"`
-	MappingID          *string         `json:"mapping_id,omitempty"`
-	Candidates         json.RawMessage `json:"-"` // retained in storage for migration compatibility only
+	ID                            string          `json:"id"`
+	BillID                        string          `json:"bill_id"`
+	RawName                       string          `json:"raw_name"`
+	SourceSKU                     string          `json:"source_sku,omitempty"`
+	SourceItemID                  string          `json:"source_item_id,omitempty"`
+	SourceVariantID               string          `json:"source_variant_id,omitempty"`
+	MarketplaceAliasID            *string         `json:"marketplace_alias_id,omitempty"`
+	SourceImageURL                string          `json:"source_image_url,omitempty"`
+	ItemCode                      *string         `json:"item_code,omitempty"`
+	HasHiddenChars                bool            `json:"has_hidden_chars"`
+	CleanItemCode                 string          `json:"clean_item_code,omitempty"`
+	Qty                           float64         `json:"qty"`
+	SourceQty                     *float64        `json:"source_qty,omitempty"`
+	SMLQty                        *float64        `json:"sml_qty,omitempty"`
+	QuantityMultiplierSnapshot    *int64          `json:"quantity_multiplier_snapshot,omitempty"`
+	UnitStandValueSnapshot        *string         `json:"unit_stand_value_snapshot,omitempty"`
+	UnitDivideValueSnapshot       *string         `json:"unit_divide_value_snapshot,omitempty"`
+	BaseQtySnapshot               *string         `json:"base_qty_snapshot,omitempty"`
+	MappingRevisionSnapshot       *int64          `json:"mapping_revision_snapshot,omitempty"`
+	UnitCatalogGenerationSnapshot *string         `json:"unit_catalog_generation_snapshot,omitempty"`
+	SetDefinitionHashSnapshot     string          `json:"set_definition_hash_snapshot,omitempty"`
+	ConversionOverrideFields      json.RawMessage `json:"conversion_override_fields,omitempty"`
+	ConversionIssueCode           string          `json:"conversion_issue_code,omitempty"`
+	UnitCode                      *string         `json:"unit_code,omitempty"`
+	Price                         *float64        `json:"price,omitempty"`
+	GrossAmount                   *float64        `json:"gross_amount,omitempty"`
+	DiscountAmount                float64         `json:"discount_amount"`
+	Mapped                        bool            `json:"mapped"`
+	MappingID                     *string         `json:"mapping_id,omitempty"`
+	Candidates                    json.RawMessage `json:"-"` // retained in storage for migration compatibility only
 }
 
 const ShopeeShippingSourceSKU = "__shopee_shipping__"

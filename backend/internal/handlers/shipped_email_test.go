@@ -265,6 +265,7 @@ func TestEnsureShopeeShippingLineForSendAddsMissingConfiguredLine(t *testing.T) 
 		WithArgs(
 			bill.ID, "ค่าจัดส่งสินค้า", models.ShopeeShippingSourceSKU, "", "", nil, "",
 			sqlmock.AnyArg(), float64(1), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, float64(0), true, nil,
+			nil, nil, nil, nil, nil, nil, nil, nil, "", sqlmock.AnyArg(), "",
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ship-item"))
 
@@ -332,6 +333,7 @@ func TestEnsureShopeeShippingLineForSendAddsZeroAmountLine(t *testing.T) {
 		WithArgs(
 			bill.ID, "ค่าจัดส่งสินค้า", models.ShopeeShippingSourceSKU, "", "", nil, "",
 			sqlmock.AnyArg(), float64(1), sqlmock.AnyArg(), sqlmock.AnyArg(), nil, float64(0), true, nil,
+			nil, nil, nil, nil, nil, nil, nil, nil, "", sqlmock.AnyArg(), "",
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("ship-item"))
 
