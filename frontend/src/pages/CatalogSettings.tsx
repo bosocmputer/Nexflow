@@ -156,9 +156,9 @@ export default function CatalogSettings() {
         ) : (
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow><TableHead className="w-16">รูป</TableHead><TableHead>รหัสสินค้า</TableHead><TableHead className="min-w-[260px]">ชื่อสินค้า</TableHead><TableHead>หน่วย</TableHead><TableHead className="text-right">ราคา</TableHead>{canManageCatalog && <TableHead className="text-right">จัดการ</TableHead>}</TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="w-16">รูป</TableHead><TableHead>รหัสสินค้า</TableHead><TableHead className="min-w-[260px]">ชื่อสินค้า</TableHead><TableHead>หน่วยหลัก</TableHead>{canManageCatalog && <TableHead className="text-right">จัดการ</TableHead>}</TableRow></TableHeader>
               <TableBody>
-                {loading ? Array.from({ length: 8 }).map((_, index) => <TableRow key={index}><TableCell colSpan={canManageCatalog ? 6 : 5}><Skeleton className="h-11 w-full" /></TableCell></TableRow>) : items.map((item) => {
+                {loading ? Array.from({ length: 8 }).map((_, index) => <TableRow key={index}><TableCell colSpan={canManageCatalog ? 5 : 4}><Skeleton className="h-11 w-full" /></TableCell></TableRow>) : items.map((item) => {
                   const hasImage = Boolean(item.image_url && (item.image_count ?? 0) > 0)
                   return (
                     <TableRow key={item.item_code}>
@@ -177,7 +177,6 @@ export default function CatalogSettings() {
                       </TableCell>
                       <TableCell><div className="font-medium">{item.item_name}</div>{item.item_name2 && <div className="text-xs text-muted-foreground">{item.item_name2}</div>}</TableCell>
                       <TableCell>{item.unit_code || '-'}</TableCell>
-                      <TableCell className="text-right tabular-nums">{item.price == null ? '-' : new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(item.price)}</TableCell>
                       {canManageCatalog && <TableCell className="text-right"><Button size="sm" variant="outline" disabled={refreshingCode === item.item_code} onClick={() => void refreshOne(item.item_code)}><RefreshCw className={cn('h-3.5 w-3.5', refreshingCode === item.item_code && 'animate-spin')} />อัปเดต</Button></TableCell>}
                     </TableRow>
                   )
@@ -211,16 +210,16 @@ export default function CatalogSettings() {
 }
 
 function CreateProductDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => Promise<void> }) {
-  const [form, setForm] = useState({ code: '', name: '', unit_code: 'ชิ้น', price: '0' })
+  const [form, setForm] = useState({ code: '', name: '', unit_code: 'ชิ้น' })
   const [saving, setSaving] = useState(false)
   const create = async () => {
     if (!form.code.trim() || !form.name.trim() || !form.unit_code.trim()) { toast.error('กรอกรหัส ชื่อ และหน่วยสินค้าให้ครบ'); return }
     setSaving(true)
     try {
-      await api.post('/api/catalog/products', { ...form, code: form.code.trim(), name: form.name.trim(), unit_code: form.unit_code.trim(), price: Number(form.price) || 0 })
+      await api.post('/api/catalog/products', { code: form.code.trim(), name: form.name.trim(), unit_code: form.unit_code.trim() })
       toast.success('เพิ่มสินค้าใน SML แล้ว')
       onOpenChange(false)
-      setForm({ code: '', name: '', unit_code: 'ชิ้น', price: '0' })
+      setForm({ code: '', name: '', unit_code: 'ชิ้น' })
       await onCreated()
     } catch (error) {
       toast.error(messageFrom(error, 'เพิ่มสินค้าไม่สำเร็จ'))
@@ -233,8 +232,8 @@ function CreateProductDialog({ open, onOpenChange, onCreated }: { open: boolean;
         <div className="grid gap-3">
           <div><Label htmlFor="catalog-code">รหัสสินค้า</Label><Input id="catalog-code" value={form.code} onChange={(event) => setForm((value) => ({ ...value, code: event.target.value }))} /></div>
           <div><Label htmlFor="catalog-name">ชื่อสินค้า</Label><Input id="catalog-name" value={form.name} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} /></div>
-          <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="catalog-unit">หน่วย</Label><Input id="catalog-unit" value={form.unit_code} onChange={(event) => setForm((value) => ({ ...value, unit_code: event.target.value }))} /></div><div><Label htmlFor="catalog-price">ราคาขาย</Label><Input id="catalog-price" type="number" min="0" step="0.01" value={form.price} onChange={(event) => setForm((value) => ({ ...value, price: event.target.value }))} /></div></div>
-          <p className="text-xs text-muted-foreground">ระบบจะสร้างสินค้าใน SML ก่อน แล้วจึงนำมาใช้ใน Nexflow</p>
+          <div><Label htmlFor="catalog-unit">หน่วยหลัก</Label><Input id="catalog-unit" value={form.unit_code} onChange={(event) => setForm((value) => ({ ...value, unit_code: event.target.value }))} /></div>
+          <p className="text-xs text-muted-foreground">ระบบจะสร้างสินค้าใน SML โดยไม่กำหนดราคา ราคาขายใช้จาก Marketplace ของแต่ละช่องทาง</p>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={create} disabled={saving}>{saving ? 'กำลังเพิ่ม...' : 'เพิ่มสินค้า'}</Button></DialogFooter>
       </DialogContent>

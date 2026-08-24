@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -62,18 +63,18 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 	_, err = tx.Exec(`
 		INSERT INTO sml_catalog
 		  (item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		   price, group_code, balance_qty, image_count, primary_image_roworder,
+		   group_code, balance_qty, image_count, primary_image_roworder,
 		   primary_image_guid, primary_image_bytes, image_synced_at, synced_at,
 		   item_type, set_component_count, set_definition_hash,
 		   set_document_valid, set_stock_valid, set_warning_codes, last_seen_at)
 		VALUES (
-		  $1,$2,$3,$4,$5,$6,$7,$8,$9,
-		  CASE WHEN $14::boolean THEN $10::int ELSE 0 END,
-		  CASE WHEN $14::boolean THEN $11::int ELSE NULL::int END,
-		  CASE WHEN $14::boolean THEN $12::text ELSE '' END,
-		  CASE WHEN $14::boolean THEN $13::bigint ELSE NULL::bigint END,
-		  CASE WHEN $14::boolean THEN NOW() ELSE NULL END,
-		  NOW(),$15,$16,$17,$18,$19,$20,$21
+		  $1,$2,$3,$4,$5,$6,$7,$8,
+		  CASE WHEN $13::boolean THEN $9::int ELSE 0 END,
+		  CASE WHEN $13::boolean THEN $10::int ELSE NULL::int END,
+		  CASE WHEN $13::boolean THEN $11::text ELSE '' END,
+		  CASE WHEN $13::boolean THEN $12::bigint ELSE NULL::bigint END,
+		  CASE WHEN $13::boolean THEN NOW() ELSE NULL END,
+		  NOW(),$14,$15,$16,$17,$18,$19,$20
 		)
 		ON CONFLICT (item_code) DO UPDATE SET
 		  item_name   = EXCLUDED.item_name,
@@ -81,7 +82,6 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 		  unit_code   = EXCLUDED.unit_code,
 		  wh_code     = EXCLUDED.wh_code,
 		  shelf_code  = EXCLUDED.shelf_code,
-		  price       = EXCLUDED.price,
 		  group_code  = EXCLUDED.group_code,
 		  balance_qty = EXCLUDED.balance_qty,
 		  item_type = EXCLUDED.item_type,
@@ -94,23 +94,23 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 		  missing_at = NULL,
 		  last_seen_at = EXCLUDED.last_seen_at,
 		  image_count = CASE
-		    WHEN $14::boolean THEN EXCLUDED.image_count
+		    WHEN $13::boolean THEN EXCLUDED.image_count
 		    ELSE sml_catalog.image_count
 		  END,
 		  primary_image_roworder = CASE
-		    WHEN $14::boolean THEN EXCLUDED.primary_image_roworder
+		    WHEN $13::boolean THEN EXCLUDED.primary_image_roworder
 		    ELSE sml_catalog.primary_image_roworder
 		  END,
 		  primary_image_guid = CASE
-		    WHEN $14::boolean THEN EXCLUDED.primary_image_guid
+		    WHEN $13::boolean THEN EXCLUDED.primary_image_guid
 		    ELSE sml_catalog.primary_image_guid
 		  END,
 		  primary_image_bytes = CASE
-		    WHEN $14::boolean THEN EXCLUDED.primary_image_bytes
+		    WHEN $13::boolean THEN EXCLUDED.primary_image_bytes
 		    ELSE sml_catalog.primary_image_bytes
 		  END,
 		  image_synced_at = CASE
-		    WHEN $14::boolean AND (
+		    WHEN $13::boolean AND (
 		      sml_catalog.image_count IS DISTINCT FROM EXCLUDED.image_count OR
 		      sml_catalog.primary_image_roworder IS DISTINCT FROM EXCLUDED.primary_image_roworder OR
 		      sml_catalog.primary_image_guid IS DISTINCT FROM EXCLUDED.primary_image_guid OR
@@ -126,7 +126,7 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 	`,
 		item.ItemCode, item.ItemName, item.ItemName2,
 		item.UnitCode, item.WHCode, item.ShelfCode,
-		item.Price, item.GroupCode, item.BalanceQty,
+		item.GroupCode, item.BalanceQty,
 		item.ImageCount, item.PrimaryImageRoworder, item.PrimaryImageGuid,
 		item.PrimaryImageBytes, item.ImageMetadataSynced,
 		item.ItemType, item.SetComponentCount, item.SetDefinitionHash,
@@ -161,6 +161,35 @@ func (r *SMLCatalogRepo) UpsertAt(item models.CatalogItem, runStartedAt time.Tim
 		}
 	}
 	return tx.Commit()
+}
+
+// ListActiveUnits returns only units belonging to the fully activated catalog
+// generation. A partially staged generation is never visible to callers.
+func (r *SMLCatalogRepo) ListActiveUnits(ctx context.Context, itemCode string) ([]models.CatalogUnit, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT u.item_code, u.unit_code, u.unit_name,
+		       u.stand_value::text, u.divide_value::text,
+		       u.is_default, u.unit_order, u.generation_id::text
+		FROM sml_catalog_units u
+		JOIN sml_catalog_sync_runs run ON run.id = u.generation_id AND run.status = 'active'
+		WHERE u.item_code = $1 AND u.is_active = true
+		ORDER BY u.is_default DESC, u.unit_order, u.unit_code
+	`, itemCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	units := make([]models.CatalogUnit, 0)
+	for rows.Next() {
+		var unit models.CatalogUnit
+		if err := rows.Scan(&unit.ItemCode, &unit.UnitCode, &unit.UnitName,
+			&unit.StandValue, &unit.DivideValue, &unit.IsDefault, &unit.UnitOrder, &unit.GenerationID); err != nil {
+			return nil, err
+		}
+		units = append(units, unit)
+	}
+	return units, rows.Err()
 }
 
 func (r *SMLCatalogRepo) FinalizeSuccessfulSync(runStartedAt time.Time) error {

@@ -12,7 +12,7 @@ type CatalogItem struct {
 	UnitCode             string                `json:"unit_code"`
 	WHCode               string                `json:"wh_code"`
 	ShelfCode            string                `json:"shelf_code"`
-	Price                *float64              `json:"price"`
+	Price                *float64              `json:"-"` // legacy rollback storage only
 	GroupCode            string                `json:"group_code"`
 	BalanceQty           *float64              `json:"balance_qty"`
 	ItemType             int                   `json:"item_type"`
@@ -63,7 +63,7 @@ type CatalogMatch struct {
 	UnitCode             string                `json:"unit_code"`
 	WHCode               string                `json:"wh_code"`
 	ShelfCode            string                `json:"shelf_code"`
-	Price                float64               `json:"price"`
+	Price                float64               `json:"-"` // legacy rollback storage only
 	ItemType             int                   `json:"item_type"`
 	SetComponentCount    int                   `json:"set_component_count"`
 	SetDefinitionHash    string                `json:"set_definition_hash,omitempty"`
@@ -81,4 +81,17 @@ type CatalogMatch struct {
 	Score                float64               `json:"score"` // deterministic rank retained for response compatibility
 	Method               string                `json:"method,omitempty"`
 	MatchType            string                `json:"match_type,omitempty"`
+}
+
+// CatalogUnit is an exact decimal snapshot from SML ic_unit_use. String
+// decimals prevent rational conversion values from being rounded in transit.
+type CatalogUnit struct {
+	ItemCode     string `json:"item_code"`
+	UnitCode     string `json:"unit_code"`
+	UnitName     string `json:"unit_name"`
+	StandValue   string `json:"stand_value"`
+	DivideValue  string `json:"divide_value"`
+	IsDefault    bool   `json:"is_default"`
+	UnitOrder    int    `json:"unit_order"`
+	GenerationID string `json:"generation_id"`
 }

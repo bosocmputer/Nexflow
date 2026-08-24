@@ -39,12 +39,11 @@ func TestCatalogRefreshBatchPartialSuccessAndDuplicate(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	expectCatalogGetOneForBatch(mock, "SHIP_POL").WillReturnRows(sqlmock.NewRows(catalogGetOneWithSetColumns()))
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO sml_catalog").
 		WithArgs(
 			"SHIP_POL", "ค่าขนส่งสินค้า", "", "บาท", "", "",
-			nil, "SERVICE", sqlmock.AnyArg(), 0, nil, "", nil, true,
+			"SERVICE", sqlmock.AnyArg(), 0, nil, "", nil, true,
 			0, 0, "", true, true, sqlmock.AnyArg(), sqlmock.AnyArg(),
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))

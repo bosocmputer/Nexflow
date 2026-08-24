@@ -33,7 +33,7 @@ func TestParseProductV4ResponseNexflowNativeMeta(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("items=%d", len(items))
 	}
-	if items[0].GroupCodeV1 != "G1" || items[0].Price != 12.5 {
+	if items[0].GroupCodeV1 != "G1" {
 		t.Fatalf("item = %+v", items[0])
 	}
 	if items[0].ImageCount != 2 || items[0].PrimaryImageRoworder == nil || *items[0].PrimaryImageRoworder != 1 {

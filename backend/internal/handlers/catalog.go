@@ -954,12 +954,21 @@ func catalogImageRowURL(itemCode string, roworder int) string {
 // createProductRequest is the body the frontend sends. It's a compact "quick
 // form" — only the minimum required for SML to accept the product.
 type createProductRequest struct {
-	Code      string  `json:"code" binding:"required"`      // SML item code (user-supplied)
-	Name      string  `json:"name" binding:"required"`      // Product name (Thai or English)
-	UnitCode  string  `json:"unit_code" binding:"required"` // e.g. "ชิ้น", "ถุง"
-	Price     float64 `json:"price"`                        // per-unit selling price (>= 0)
-	WHCode    string  `json:"wh_code,omitempty"`            // optional default warehouse
-	ShelfCode string  `json:"shelf_code,omitempty"`         // optional default shelf
+	Code      string `json:"code" binding:"required"`      // SML item code (user-supplied)
+	Name      string `json:"name" binding:"required"`      // Product name (Thai or English)
+	UnitCode  string `json:"unit_code" binding:"required"` // e.g. "ชิ้น", "ถุง"
+	WHCode    string `json:"wh_code,omitempty"`            // optional default warehouse
+	ShelfCode string `json:"shelf_code,omitempty"`         // optional default shelf
+}
+
+func buildQuickCreateProductRequest(req createProductRequest) sml.CreateProductRequest {
+	return sml.CreateProductRequest{
+		Code: req.Code, Name: req.Name, TaxType: 0, ItemType: 0, UnitType: 1,
+		UnitCost: req.UnitCode, UnitStandard: req.UnitCode, PurchasePoint: 0,
+		Units: []sml.ProductUnit{{
+			UnitCode: req.UnitCode, UnitName: req.UnitCode, StandValue: 1, DivideValue: 1,
+		}},
+	}
 }
 
 // POST /api/catalog/products — quick-create a product in SML and sync to local catalog.
@@ -1012,24 +1021,9 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 		return
 	}
 
-	// 2. Build SML payload — defaults pulled from the request example
-	priceStr := strconv.FormatFloat(req.Price, 'f', -1, 64)
-	smlReq := sml.CreateProductRequest{
-		Code:          req.Code,
-		Name:          req.Name,
-		TaxType:       0, // VAT แยกนอก (matches Shopee saleinvoice default)
-		ItemType:      0, // สินค้าทั่วไป
-		UnitType:      1,
-		UnitCost:      req.UnitCode,
-		UnitStandard:  req.UnitCode,
-		PurchasePoint: 0,
-		Units: []sml.ProductUnit{
-			{UnitCode: req.UnitCode, UnitName: req.UnitCode, StandValue: 1, DivideValue: 1},
-		},
-		PriceFormulas: []sml.ProductPriceFormula{
-			{UnitCode: req.UnitCode, SaleType: 0, Price0: priceStr, TaxType: 0, PriceCurrency: 0},
-		},
-	}
+	// 2. Marketplace prices remain authoritative, so Quick Create deliberately
+	// omits SML price formulas.
+	smlReq := buildQuickCreateProductRequest(req)
 
 	// 3. POST to SML
 	statusCode, smlResp, err := h.productClient.CreateProduct(smlReq)
@@ -1055,7 +1049,6 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 	}
 
 	// 5. Upsert into the local deterministic catalog.
-	priceVal := req.Price
 	whCode := req.WHCode
 	shelfCode := req.ShelfCode
 	if err := h.catalogRepo.Upsert(models.CatalogItem{
@@ -1064,7 +1057,6 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 		UnitCode:        req.UnitCode,
 		WHCode:          whCode,
 		ShelfCode:       shelfCode,
-		Price:           &priceVal,
 		EmbeddingStatus: "disabled",
 	}); err != nil {
 		h.logger.Error("create_product: catalog upsert failed",
@@ -1083,7 +1075,6 @@ func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 				"final_code":     finalCode,
 				"name":           req.Name,
 				"unit_code":      req.UnitCode,
-				"price":          req.Price,
 			},
 		})
 	}

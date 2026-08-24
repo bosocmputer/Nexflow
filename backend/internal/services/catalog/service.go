@@ -91,33 +91,21 @@ type smlProductV4Response struct {
 	HasMore *bool `json:"has_more"`
 }
 
-type smlBarcodeItem struct {
-	Price  float64 `json:"price"`
-	Price0 string  `json:"price_0"`
-}
-
-type smlPriceFormula struct {
-	Price0 string `json:"price_0"`
-}
-
 type smlProductItem struct {
-	Code                  string            `json:"code"`
-	Name                  string            `json:"name_1"`
-	Name2                 string            `json:"name_2"`
-	Unit                  string            `json:"unit_standard"`
-	GroupCode             string            `json:"group_main"`
-	GroupCodeV1           string            `json:"group_code"`
-	BalanceQty            float64           `json:"balance_qty"`
-	ItemType              int               `json:"item_type"`
-	SetDefinition         *smlSetDefinition `json:"set_definition"`
-	SetComponents         []smlSetComponent `json:"set_components"`
-	Price                 float64           `json:"price"`
-	ImageCount            int               `json:"image_count"`
-	PrimaryImageRoworder  *int              `json:"primary_image_roworder"`
-	PrimaryImageGuid      string            `json:"primary_image_guid"`
-	PrimaryImageBytes     int64             `json:"primary_image_bytes"`
-	InventoryBarcode      []smlBarcodeItem  `json:"inventory_barcode"`
-	InventoryPriceFormula []smlPriceFormula `json:"inventory_price_formula"`
+	Code                 string            `json:"code"`
+	Name                 string            `json:"name_1"`
+	Name2                string            `json:"name_2"`
+	Unit                 string            `json:"unit_standard"`
+	GroupCode            string            `json:"group_main"`
+	GroupCodeV1          string            `json:"group_code"`
+	BalanceQty           float64           `json:"balance_qty"`
+	ItemType             int               `json:"item_type"`
+	SetDefinition        *smlSetDefinition `json:"set_definition"`
+	SetComponents        []smlSetComponent `json:"set_components"`
+	ImageCount           int               `json:"image_count"`
+	PrimaryImageRoworder *int              `json:"primary_image_roworder"`
+	PrimaryImageGuid     string            `json:"primary_image_guid"`
+	PrimaryImageBytes    int64             `json:"primary_image_bytes"`
 }
 
 type smlSetDefinition struct {
@@ -182,15 +170,6 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 
 		for _, it := range items {
 			unit := it.Unit
-			// Extract price: prefer inventory_price_formula[0].price_0, fallback to inventory_barcode[0].price
-			var price float64
-			if len(it.InventoryPriceFormula) > 0 && it.InventoryPriceFormula[0].Price0 != "" {
-				fmt.Sscanf(it.InventoryPriceFormula[0].Price0, "%f", &price)
-			} else if len(it.InventoryBarcode) > 0 {
-				price = it.InventoryBarcode[0].Price
-			} else if it.Price > 0 {
-				price = it.Price
-			}
 			groupCode := it.GroupCode
 			if groupCode == "" {
 				groupCode = it.GroupCodeV1
@@ -200,7 +179,6 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 				ItemName:             it.Name,
 				ItemName2:            it.Name2,
 				UnitCode:             unit,
-				Price:                &price,
 				GroupCode:            groupCode,
 				ItemType:             it.ItemType,
 				SetDocumentValid:     it.ItemType != 3,
@@ -421,17 +399,10 @@ func (s *SMLCatalogService) RefreshOneContext(ctx context.Context, itemCode stri
 	}
 	bq := d.BalanceQty
 	ci.BalanceQty = &bq
-	// Preserve price from existing row — single-product GET endpoint doesn't
-	// return prices, so leaving ci.Price nil would wipe what's already stored.
-	if existing, _ := s.repo.GetOne(itemCode); existing != nil && existing.Price != nil {
-		p := *existing.Price
-		ci.Price = &p
-	}
 	if err := s.repo.Upsert(ci); err != nil {
 		return nil, false, fmt.Errorf("upsert: %w", err)
 	}
-	// Re-fetch so the caller sees the canonical row (with timestamps + price
-	// preserved from the prior version).
+	// Re-fetch so the caller sees the canonical row and timestamps.
 	out, err := s.repo.GetOne(itemCode)
 	if err != nil {
 		return nil, false, fmt.Errorf("readback: %w", err)
@@ -488,7 +459,7 @@ func parseProductV4Response(body []byte) (items []smlProductItem, currentPage, m
 // SyncFromCSV parses a CSV file (UTF-8) and upserts all rows.
 // Expected header (case-insensitive, flexible):
 //
-//	item_code, item_name, [item_name2], [unit_code], [wh_code], [shelf_code], [price], [group_code]
+//	item_code, item_name, [item_name2], [unit_code], [wh_code], [shelf_code], [group_code]
 func (s *SMLCatalogService) SyncFromCSV(data []byte) (int, error) {
 	// Strip BOM if present (Excel CSV often has BOM)
 	content := data
@@ -549,11 +520,6 @@ func (s *SMLCatalogService) SyncFromCSV(data []byte) (int, error) {
 			SetDocumentValid: true,
 			SetStockValid:    true,
 		}
-		if priceStr := get("price"); priceStr != "" {
-			if p, err := strconv.ParseFloat(priceStr, 64); err == nil {
-				ci.Price = &p
-			}
-		}
 		if qtyStr := get("balance_qty"); qtyStr != "" {
 			if q, err := strconv.ParseFloat(qtyStr, 64); err == nil {
 				ci.BalanceQty = &q
@@ -606,8 +572,6 @@ func normalizeHeader(h string) string {
 		return "wh_code"
 	case "shelf", "ชั้น":
 		return "shelf_code"
-	case "ราคา":
-		return "price"
 	}
 	return h
 }

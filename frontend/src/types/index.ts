@@ -94,8 +94,6 @@ export interface CatalogItem {
   item_name: string
   item_name2?: string
   unit_code: string
-  price?: number | null
-  sale_price?: number | null
   embedding_status: 'disabled' | 'pending' | 'done' | 'error'
   embedded_at?: string | null
   image_count?: number
