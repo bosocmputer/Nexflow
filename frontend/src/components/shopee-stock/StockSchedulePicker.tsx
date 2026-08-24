@@ -120,8 +120,14 @@ export function StockSchedulePicker({
   const customValid = Number.isInteger(amount) && amount >= rules.min && amount <= rules.max &&
     (unit !== 'month' || (monthlyDay >= 1 && monthlyDay <= 28 && /^([01]\d|2[0-3]):[0-5]\d$/.test(monthlyTime))) &&
     (!customIsLong || riskAcknowledged)
-  const longInterval = value.schedule_mode === 'monthly' || value.interval_seconds >= 86400
   const nextLabel = nextRunLabel(nextRunAt)
+  const scheduleStatus = scheduleDirty
+    ? 'บันทึกเพื่อคำนวณรอบถัดไป'
+    : enabled && nextLabel
+      ? `รอบถัดไป ${nextLabel}`
+      : switchDisabled && disabledReason
+        ? disabledReason
+        : ''
 
   const choosePreset = (seconds: number) => {
     onChange({ schedule_mode: 'interval', interval_seconds: seconds, monthly_interval: 1, monthly_day: 1, monthly_time: '00:00', schedule_risk_acknowledged: false })
@@ -176,6 +182,7 @@ export function StockSchedulePicker({
             <div>
               <p className="text-sm font-semibold">เลือกรอบซิงก์</p>
               <p className="mt-0.5 text-xs text-muted-foreground">ระบบใช้เวลาประเทศไทย และทำเพียงหนึ่งรอบเมื่อ server กลับมาหลังหยุดทำงาน</p>
+              {scheduleStatus && <p className="mt-1 text-xs font-medium text-primary">{scheduleStatus}</p>}
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
               {PRESETS.map((preset) => {
@@ -236,9 +243,6 @@ export function StockSchedulePicker({
           <Switch aria-label="เปิดซิงก์สต๊อกอัตโนมัติ" checked={enabled} disabled={switchDisabled} onCheckedChange={onEnabledChange} />
         </div>
       </div>
-      <p className={cn('truncate text-[11px]', enabled && longInterval ? 'text-warning' : 'text-muted-foreground')} title={disabledReason}>
-        {!enabled ? (disabledReason || 'ปิดอยู่ ไม่เปลี่ยนยอด Shopee') : scheduleDirty ? 'บันทึกเพื่อคำนวณรอบถัดไป' : nextLabel ? `รอบถัดไป ${nextLabel}` : 'กำลังคำนวณรอบถัดไป'}
-      </p>
     </div>
   )
 }
