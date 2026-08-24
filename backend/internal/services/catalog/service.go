@@ -38,17 +38,32 @@ type SMLCatalogService struct {
 	embedStatus  EmbedStatus
 	// Background sync state. Full SML catalog sync can take minutes, so the
 	// HTTP handler starts it asynchronously and reports progress via stats.
-	syncRunning atomic.Int32
-	syncMu      sync.RWMutex
-	syncStatus  SyncStatus
+	syncRunning        atomic.Int32
+	syncMu             sync.RWMutex
+	syncStatus         SyncStatus
+	unitCatalogClient  stockCatalogPager
+	unitCatalogEnabled bool
+	unitCatalogOwner   string
 }
 
 type SyncStatus struct {
-	Running    bool       `json:"running"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Count      int        `json:"count"`
-	Error      string     `json:"error,omitempty"`
+	Running          bool       `json:"running"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Count            int        `json:"count"`
+	UnitCatalogCount int        `json:"unit_catalog_count"`
+	Error            string     `json:"error,omitempty"`
+}
+
+func (s *SMLCatalogService) WithUnitCatalog(client stockCatalogPager, enabled bool, instanceID string) *SMLCatalogService {
+	s.unitCatalogClient = client
+	s.unitCatalogEnabled = enabled
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		instanceID = "nexflow"
+	}
+	s.unitCatalogOwner = fmt.Sprintf("%s:%d", instanceID, time.Now().UnixNano())
+	return s
 }
 
 type EmbedStatus struct {
@@ -232,7 +247,18 @@ func (s *SMLCatalogService) SyncFromAPI() (int, error) {
 	if upsertErrors > 0 {
 		return total, fmt.Errorf("catalog sync stored %d products but %d products failed; inactive products were not finalized", total, upsertErrors)
 	}
-	if err := s.repo.FinalizeSuccessfulSync(runStartedAt); err != nil {
+	if s.unitCatalogEnabled {
+		if s.unitCatalogClient == nil {
+			return total, fmt.Errorf("unit catalog sync is enabled but the SML stock catalog client is unavailable")
+		}
+		unitCount, err := runUnitCatalogGeneration(context.Background(), s.repo, s.unitCatalogClient, s.unitCatalogOwner, runStartedAt)
+		if err != nil {
+			return total, fmt.Errorf("sync SML unit generation: %w", err)
+		}
+		s.syncMu.Lock()
+		s.syncStatus.UnitCatalogCount = unitCount
+		s.syncMu.Unlock()
+	} else if err := s.repo.FinalizeSuccessfulSync(runStartedAt); err != nil {
 		return total, fmt.Errorf("finalize catalog sync: %w", err)
 	}
 

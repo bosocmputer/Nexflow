@@ -357,6 +357,7 @@ func main() {
 		BaseURL: cfg.ShopeeSMLURL, GUID: cfg.ShopeeSMLGUID, Provider: cfg.ShopeeSMLProvider,
 		ConfigFile: cfg.ShopeeSMLConfigFile, Database: cfg.ShopeeSMLDatabase,
 	})
+	catalogSvc.WithUnitCatalog(stockSMLClient, cfg.MarketplaceUnitCatalogEnabled, cfg.ShopeeGatewayTenant)
 	var stockShopeeClient shopeeapi.APIClient
 	if strings.EqualFold(strings.TrimSpace(cfg.ShopeeOpenAPIMode), "gateway") {
 		stockShopeeClient = shopeeapi.NewGateway(shopeeapi.GatewayConfig{

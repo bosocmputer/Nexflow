@@ -32,6 +32,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS sml_catalog_sync_runs_active_uidx
 CREATE INDEX IF NOT EXISTS sml_catalog_sync_runs_status_idx
   ON sml_catalog_sync_runs(status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS sml_catalog_sync_lease (
+  singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+  owner_id TEXT NOT NULL,
+  fencing_token BIGINT NOT NULL DEFAULT 0,
+  lease_until TIMESTAMPTZ NOT NULL,
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS sml_catalog_units (
   generation_id UUID NOT NULL REFERENCES sml_catalog_sync_runs(id) ON DELETE RESTRICT,
   item_code TEXT NOT NULL,
@@ -235,6 +244,7 @@ ALTER TABLE bills
 CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_key TEXT NOT NULL DEFAULT '',
+  idempotency_key TEXT,
   alias_id UUID REFERENCES marketplace_item_aliases(id) ON DELETE SET NULL,
   target_revision BIGINT NOT NULL,
   job_type TEXT NOT NULL DEFAULT 'mapping_reconcile'
@@ -261,6 +271,10 @@ CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs (
 
 CREATE INDEX IF NOT EXISTS marketplace_mapping_jobs_claim_idx
   ON marketplace_mapping_jobs(status, lease_until, created_at);
+ALTER TABLE marketplace_mapping_jobs
+  ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS marketplace_mapping_jobs_idempotency_uidx
+  ON marketplace_mapping_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS marketplace_stock_reservations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

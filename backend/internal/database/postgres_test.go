@@ -60,6 +60,7 @@ func TestMigration085IsAdditiveAndSchemaOnly(t *testing.T) {
 	sqlText := string(data)
 	for _, required := range []string{
 		"CREATE TABLE IF NOT EXISTS sml_catalog_sync_runs",
+		"CREATE TABLE IF NOT EXISTS sml_catalog_sync_lease",
 		"CREATE TABLE IF NOT EXISTS sml_catalog_units",
 		"CREATE TABLE IF NOT EXISTS marketplace_mapping_jobs",
 		"CREATE TABLE IF NOT EXISTS marketplace_stock_reservations",

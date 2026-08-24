@@ -134,6 +134,44 @@ func TestCatalogGetProductUnitsReturnsEmptyWhenUpstreamNotFound(t *testing.T) {
 	}
 }
 
+func TestCatalogGetProductUnitsUsesActiveLocalGeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("JOIN sml_catalog_sync_runs").WithArgs("SKU-1").WillReturnRows(
+		sqlmock.NewRows([]string{"item_code", "unit_code", "unit_name", "stand_value", "divide_value", "is_default", "unit_order", "generation_id"}).
+			AddRow("SKU-1", "ชิ้น", "ชิ้น", "1", "1", true, 0, "gen-1").
+			AddRow("SKU-1", "แพ็ค", "แพ็ค 12", "12", "1", false, 1, "gen-1"),
+	)
+
+	h := &CatalogHandler{
+		cfg:         &config.Config{MarketplaceUnitCatalogEnabled: true},
+		catalogRepo: repository.NewSMLCatalogRepo(db),
+		logger:      zap.NewNop(),
+	}
+	router := gin.New()
+	router.GET("/api/catalog/:code/units", h.GetProductUnits)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/SKU-1/units", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Units []catalogUnitOption `json:"units"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Units) != 2 || body.Units[1].StandValueExact != "12" || body.Units[1].GenerationID != "gen-1" {
+		t.Fatalf("units = %#v", body.Units)
+	}
+}
+
 func TestCatalogGetProductUnitsFallsBackToLocalCatalogUnit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

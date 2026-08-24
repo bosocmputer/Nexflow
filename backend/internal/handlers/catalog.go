@@ -44,12 +44,15 @@ type catalogImageMeta struct {
 }
 
 type catalogUnitOption struct {
-	Code        string  `json:"code"`
-	Name1       string  `json:"name_1"`
-	Name2       string  `json:"name_2"`
-	StandValue  float64 `json:"stand_value,omitempty"`
-	DivideValue float64 `json:"divide_value,omitempty"`
-	IsDefault   bool    `json:"is_default,omitempty"`
+	Code             string  `json:"code"`
+	Name1            string  `json:"name_1"`
+	Name2            string  `json:"name_2"`
+	StandValue       float64 `json:"stand_value,omitempty"`
+	DivideValue      float64 `json:"divide_value,omitempty"`
+	StandValueExact  string  `json:"stand_value_exact,omitempty"`
+	DivideValueExact string  `json:"divide_value_exact,omitempty"`
+	IsDefault        bool    `json:"is_default,omitempty"`
+	GenerationID     string  `json:"generation_id,omitempty"`
 }
 
 const (
@@ -573,6 +576,35 @@ func (h *CatalogHandler) GetProductUnits(c *gin.Context) {
 	code := strings.TrimSpace(c.Param("code"))
 	if code == "" || strings.ContainsAny(code, "\x00\r\n") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid item code"})
+		return
+	}
+	if h.cfg != nil && h.cfg.MarketplaceUnitCatalogEnabled {
+		if h.catalogRepo == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "local unit catalog is not configured"})
+			return
+		}
+		localUnits, err := h.catalogRepo.ListActiveUnits(c.Request.Context(), code)
+		if err != nil {
+			h.logger.Error("catalog product units: active generation lookup failed", zap.String("code", code), zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่านหน่วยนับจาก catalog generation ไม่สำเร็จ"})
+			return
+		}
+		units := make([]catalogUnitOption, 0, len(localUnits))
+		for _, unit := range localUnits {
+			stand, standErr := strconv.ParseFloat(unit.StandValue, 64)
+			divide, divideErr := strconv.ParseFloat(unit.DivideValue, 64)
+			if standErr != nil || divideErr != nil || stand <= 0 || divide <= 0 {
+				c.JSON(http.StatusConflict, gin.H{"error": "unit conversion in the active catalog generation is invalid"})
+				return
+			}
+			units = append(units, catalogUnitOption{
+				Code: unit.UnitCode, Name1: unit.UnitName, StandValue: stand, DivideValue: divide,
+				StandValueExact: unit.StandValue, DivideValueExact: unit.DivideValue,
+				IsDefault: unit.IsDefault, GenerationID: unit.GenerationID,
+			})
+		}
+		c.Header("Cache-Control", "private, max-age=300")
+		c.JSON(http.StatusOK, gin.H{"units": units})
 		return
 	}
 	if h.cfg == nil || strings.TrimSpace(h.cfg.ShopeeSMLURL) == "" {
