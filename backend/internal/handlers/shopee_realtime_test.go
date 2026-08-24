@@ -86,6 +86,34 @@ func TestShopeeRealtimeRouteSignatureChangesForDocumentRoutingFields(t *testing.
 	}
 }
 
+func TestShopeeRealtimeRouteMissingFields(t *testing.T) {
+	cfg := ShopeeConfigRequest{
+		Endpoint: "saleinvoice", DocFormat: "SI", CustCode: "AR-001",
+		WHCode: "AB-1", ShelfCode: "001", VATType: 1, VATRate: 7,
+	}
+	def := &models.ChannelDefault{DocPrefix: "BF-INV", DocRunningFormat: "YYMM####"}
+	missing := shopeeRealtimeRouteMissingFields(cfg, def)
+	if len(missing) != 1 || missing[0] != "เวลาเอกสาร" {
+		t.Fatalf("missing = %v, want [เวลาเอกสาร]", missing)
+	}
+
+	cfg.DocTime = "14:30"
+	if missing := shopeeRealtimeRouteMissingFields(cfg, def); len(missing) != 0 {
+		t.Fatalf("ready route missing = %v", missing)
+	}
+}
+
+func TestApplyDocumentOverridesMatchesShopeeRealtimeAndManualSend(t *testing.T) {
+	branch, sale, unit, docTime := "ENV-BR", "ENV-SALE", "ENV-UNIT", "09:00"
+	def := &models.ChannelDefault{
+		BranchCode: "BR-1", SaleCode: "SALE-1", UnitCode: "ชิ้น", DocTime: "14:30",
+	}
+	applyDocumentOverrides(def, &branch, &sale, &unit, &docTime)
+	if branch != "BR-1" || sale != "SALE-1" || unit != "ชิ้น" || docTime != "14:30" {
+		t.Fatalf("resolved document config = %q/%q/%q/%q", branch, sale, unit, docTime)
+	}
+}
+
 func TestClassifySMLSendFailure(t *testing.T) {
 	tests := []struct {
 		name   string

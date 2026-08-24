@@ -397,6 +397,10 @@ func (h *ShopeeImportHandler) CurrentShopeeSaleConfigForChannel(channel string) 
 	vatRate := h.cfg.ShopeeSMLVATRate
 	docFormat := h.cfg.ShopeeSMLDocFormat
 	endpoint := ""
+	branchCode := h.cfg.ShopeeSMLBranchCode
+	saleCode := h.cfg.ShopeeSMLSaleCode
+	unitCode := h.cfg.ShopeeSMLUnitCode
+	docTime := h.cfg.ShopeeSMLDocTime
 	channel = strings.TrimSpace(channel)
 	if channel == "" {
 		channel = "shopee"
@@ -405,6 +409,7 @@ func (h *ShopeeImportHandler) CurrentShopeeSaleConfigForChannel(channel string) 
 		if def, _ := h.channelDefaults.Get(channel, "sale"); def != nil {
 			custCode = def.PartyCode
 			endpoint = def.Endpoint
+			applyDocumentOverrides(def, &branchCode, &saleCode, &unitCode, &docTime)
 			if def.WHCode != "" {
 				whCode = def.WHCode
 			}
@@ -431,14 +436,14 @@ func (h *ShopeeImportHandler) CurrentShopeeSaleConfigForChannel(channel string) 
 		DocFormat:  docFormat,
 		Endpoint:   endpoint,
 		CustCode:   custCode,
-		SaleCode:   h.cfg.ShopeeSMLSaleCode,
-		BranchCode: h.cfg.ShopeeSMLBranchCode,
+		SaleCode:   saleCode,
+		BranchCode: branchCode,
 		WHCode:     whCode,
 		ShelfCode:  shelfCode,
-		UnitCode:   h.cfg.ShopeeSMLUnitCode,
+		UnitCode:   unitCode,
 		VATType:    vatType,
 		VATRate:    vatRate,
-		DocTime:    h.cfg.ShopeeSMLDocTime,
+		DocTime:    docTime,
 	}
 }
 

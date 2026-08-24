@@ -272,15 +272,8 @@ func (h *ShopeeRealtimeHandler) realtimeRouteReadiness(ctx context.Context) gin.
 	cfg := h.importH.CurrentShopeeSaleConfigForChannel("shopee_realtime")
 	destination := shopeeImportDocumentName(cfg)
 	canCreate := strings.TrimSpace(def.Endpoint) != "" && strings.TrimSpace(def.DocFormatCode) != ""
-	readyToSend := canCreate &&
-		strings.TrimSpace(cfg.CustCode) != "" &&
-		strings.TrimSpace(def.DocPrefix) != "" &&
-		strings.TrimSpace(def.DocRunningFormat) != "" &&
-		strings.TrimSpace(cfg.WHCode) != "" &&
-		strings.TrimSpace(cfg.ShelfCode) != "" &&
-		strings.TrimSpace(cfg.DocTime) != "" &&
-		cfg.VATType >= 0 &&
-		cfg.VATRate >= 0
+	missing := shopeeRealtimeRouteMissingFields(cfg, def)
+	readyToSend := len(missing) == 0
 	out["can_create_document"] = canCreate
 	out["ready_to_send_sml"] = readyToSend
 	out["route"] = destination
@@ -289,16 +282,55 @@ func (h *ShopeeRealtimeHandler) realtimeRouteReadiness(ctx context.Context) gin.
 	out["doc_format_code"] = def.DocFormatCode
 	out["doc_prefix"] = def.DocPrefix
 	out["doc_running_format"] = def.DocRunningFormat
+	out["missing_fields"] = missing
 	if canCreate {
 		out["message"] = "สร้างเอกสารใน Nexflow ได้ แล้วให้ผู้ใช้ส่ง SML จากหน้าคิวเอกสาร"
 	} else {
 		out["message"] = "กรุณาตั้งปลายทางและ doc format ของ Shopee Realtime ก่อนสร้างเอกสาร"
+	}
+	if canCreate && len(missing) > 0 {
+		out["message"] = "เส้นทางยังไม่พร้อมส่ง SML กรุณาตั้งค่า: " + strings.Join(missing, ", ")
 	}
 	if readyToSend {
 		out["message"] = "เส้นทางพร้อมสร้างเอกสารและพร้อมส่ง SML จากหน้าคิวเอกสาร"
 	}
 	_ = ctx
 	return out
+}
+
+func shopeeRealtimeRouteMissingFields(cfg ShopeeConfigRequest, def *models.ChannelDefault) []string {
+	missing := make([]string, 0, 10)
+	if strings.TrimSpace(cfg.Endpoint) == "" {
+		missing = append(missing, "ปลายทาง")
+	}
+	if strings.TrimSpace(cfg.DocFormat) == "" {
+		missing = append(missing, "รูปแบบเอกสาร")
+	}
+	if strings.TrimSpace(cfg.CustCode) == "" {
+		missing = append(missing, "ลูกค้า SML")
+	}
+	if def == nil || strings.TrimSpace(def.DocPrefix) == "" {
+		missing = append(missing, "คำนำหน้าเลขเอกสาร")
+	}
+	if def == nil || strings.TrimSpace(def.DocRunningFormat) == "" {
+		missing = append(missing, "รูปแบบเลขรัน")
+	}
+	if strings.TrimSpace(cfg.WHCode) == "" {
+		missing = append(missing, "คลัง")
+	}
+	if strings.TrimSpace(cfg.ShelfCode) == "" {
+		missing = append(missing, "พื้นที่เก็บ")
+	}
+	if strings.TrimSpace(cfg.DocTime) == "" {
+		missing = append(missing, "เวลาเอกสาร")
+	}
+	if cfg.VATType < 0 {
+		missing = append(missing, "ประเภทภาษี")
+	}
+	if cfg.VATRate < 0 {
+		missing = append(missing, "อัตราภาษี")
+	}
+	return missing
 }
 
 func (h *ShopeeRealtimeHandler) ListOrders(c *gin.Context) {
