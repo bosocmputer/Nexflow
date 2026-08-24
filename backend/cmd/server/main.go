@@ -59,6 +59,10 @@ func main() {
 		logger.Fatal("database connect", zap.Error(err))
 	}
 	defer db.Close()
+	if err := database.CheckMarketplaceActivation(context.Background(), db, cfg.MarketplaceConversionMode,
+		cfg.MarketplaceUnitCatalogEnabled, cfg.MarketplaceReservationLedgerEnabled); err != nil {
+		logger.Fatal("marketplace conversion readiness", zap.Error(err))
+	}
 	appCtx, stopBackgroundJobs := context.WithCancel(context.Background())
 	defer stopBackgroundJobs()
 

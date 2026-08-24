@@ -1,9 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -46,22 +48,26 @@ type Config struct {
 
 	// Shopee SML (REST API — saleinvoice).
 	// CustCode moved to channel_defaults table — manage via /settings/channels.
-	ShopeeSMLURL                  string
-	ShopeeSMLGUID                 string
-	ShopeeSMLProvider             string
-	ShopeeSMLConfigFile           string
-	ShopeeSMLDatabase             string
-	ShopeeSMLDocFormat            string
-	ShopeeSMLSaleCode             string
-	ShopeeSMLBranchCode           string
-	ShopeeSMLWHCode               string
-	ShopeeSMLShelfCode            string
-	ShopeeSMLUnitCode             string
-	ShopeeSMLVATType              int
-	ShopeeSMLVATRate              float64
-	ShopeeSMLDocTime              string
-	SMLSetProductExpansionEnabled bool
-	ShopeeSetStockEnabled         bool
+	ShopeeSMLURL                        string
+	ShopeeSMLGUID                       string
+	ShopeeSMLProvider                   string
+	ShopeeSMLConfigFile                 string
+	ShopeeSMLDatabase                   string
+	ShopeeSMLDocFormat                  string
+	ShopeeSMLSaleCode                   string
+	ShopeeSMLBranchCode                 string
+	ShopeeSMLWHCode                     string
+	ShopeeSMLShelfCode                  string
+	ShopeeSMLUnitCode                   string
+	ShopeeSMLVATType                    int
+	ShopeeSMLVATRate                    float64
+	ShopeeSMLDocTime                    string
+	SMLSetProductExpansionEnabled       bool
+	ShopeeSetStockEnabled               bool
+	MarketplaceGroupedUIEnabled         bool
+	MarketplaceUnitCatalogEnabled       bool
+	MarketplaceConversionMode           string
+	MarketplaceReservationLedgerEnabled bool
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
@@ -109,70 +115,79 @@ func Load() *Config {
 	// Load .env if present (ignore error — production uses OS env)
 	_ = godotenv.Load()
 
+	conversionMode, err := parseMarketplaceConversionMode(getEnv("MARKETPLACE_CONVERSION_MODE", "off"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	c := &Config{
-		Port:                               getEnv("PORT", "8090"),
-		Env:                                getEnv("ENV", "development"),
-		DatabaseURL:                        getEnv("DATABASE_URL", ""),
-		DBUser:                             getEnv("DB_USER", "nexflow"),
-		DBPassword:                         getEnv("DB_PASSWORD", "changeme"),
-		JWTSecret:                          getEnv("JWT_SECRET", ""),
-		JWTExpireHours:                     getEnvInt("JWT_EXPIRE_HOURS", 24),
-		LineChannelSecret:                  getEnv("LINE_CHANNEL_SECRET", ""),
-		LineChannelAccessToken:             getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
-		LineAdminUserID:                    getEnv("LINE_ADMIN_USER_ID", ""),
-		LineGreeting:                       getEnv("LINE_GREETING", ""),
-		PublicBaseURL:                      getEnv("PUBLIC_BASE_URL", ""),
-		MediaSigningKey:                    getEnv("MEDIA_SIGNING_KEY", ""),
-		ShopeeSMLURL:                       getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
-		ShopeeSMLGUID:                      getEnv("SHOPEE_SML_GUID", "SMLX"),
-		ShopeeSMLProvider:                  getEnv("SHOPEE_SML_PROVIDER", "SML1"),
-		ShopeeSMLConfigFile:                getEnv("SHOPEE_SML_CONFIG_FILE", "SMLConfigSML1.xml"),
-		ShopeeSMLDatabase:                  getEnv("SHOPEE_SML_DATABASE", "SMLPLOY"),
-		ShopeeSMLDocFormat:                 getEnv("SHOPEE_SML_DOC_FORMAT", ""),
-		ShopeeSMLSaleCode:                  getEnv("SHOPEE_SML_SALE_CODE", ""),
-		ShopeeSMLBranchCode:                getEnv("SHOPEE_SML_BRANCH_CODE", ""),
-		ShopeeSMLWHCode:                    getEnv("SHOPEE_SML_WH_CODE", ""),
-		ShopeeSMLShelfCode:                 getEnv("SHOPEE_SML_SHELF_CODE", ""),
-		ShopeeSMLUnitCode:                  getEnv("SHOPEE_SML_UNIT_CODE", ""),
-		ShopeeSMLVATType:                   getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
-		ShopeeSMLVATRate:                   getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
-		ShopeeSMLDocTime:                   getEnv("SHOPEE_SML_DOC_TIME", ""),
-		SMLSetProductExpansionEnabled:      getEnvBool("SML_SET_PRODUCT_EXPANSION_ENABLED", false),
-		ShopeeSetStockEnabled:              getEnvBool("SHOPEE_SET_STOCK_ENABLED", false),
-		ShopeeOpenAPIEnabled:               getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
-		ShopeeOpenAPIEnv:                   getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
-		ShopeeOpenAPIBaseURL:               getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
-		ShopeeOpenAPIPartnerID:             getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
-		ShopeeOpenAPIPartnerKey:            getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
-		ShopeeOpenAPIRedirect:              getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
-		ShopeeOpenAPIMode:                  getEnv("SHOPEE_OPEN_API_MODE", "direct"),
-		ShopeeGatewayBaseURL:               getEnv("SHOPEE_GATEWAY_BASE_URL", ""),
-		ShopeeGatewayPublicURL:             getEnv("SHOPEE_GATEWAY_PUBLIC_URL", ""),
-		ShopeeGatewayTenant:                getEnv("SHOPEE_GATEWAY_TENANT", ""),
-		ShopeeGatewayInternalSecret:        getEnv("SHOPEE_GATEWAY_INTERNAL_SECRET", ""),
-		ShopeeRealtimeOpsEnabled:           getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
-		ShopeeAdvancedDropoffEnabled:       getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
-		ShopeeShippingActionsEnabled:       getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
-		ShopeeCancelAfterSMLAlertsEnabled:  getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
-		ShopeeSMLCancelDocumentsEnabled:    getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
-		ShopeeRichLineFlexEnabled:          getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
-		ShopeeSettlementLineAlertsEnabled:  getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
-		ShopeeOrderEscrowEnrichmentEnabled: getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
-		ShopeeRealtimeWebhookSecret:        getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
-		ShopeeRealtimeSyncIntervalSeconds:  getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
-		ShopeeAutoSMLEnabled:               getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
-		LineMyShopEnabled:                  getEnvBool("ENABLE_LINE_MYSHOP", true),
-		PurchaseFlowEnabled:                false,
-		BackupCronHour:                     getEnvInt("BACKUP_CRON_HOUR", 0),
-		DiskWarnPercent:                    getEnvInt("DISK_WARN_PERCENT", 90),
-		DataLifecycleEnabled:               getEnvBool("DATA_LIFECYCLE_ENABLED", true),
-		DataLifecycleCronHour:              getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
-		HotLogDays:                         getEnvInt("HOT_LOG_DAYS", 90),
-		AutoArchiveDays:                    getEnvInt("AUTO_ARCHIVE_DAYS", 180),
-		SummaryRetentionDays:               getEnvInt("SUMMARY_RETENTION_DAYS", 730),
-		PurgeBatchSize:                     getEnvInt("PURGE_BATCH_SIZE", 1000),
-		ArtifactsDir:                       getEnv("ARTIFACTS_DIR", "/app/artifacts"),
-		ArtifactsMaxBytes:                  int64(getEnvInt("ARTIFACTS_MAX_BYTES", 20*1024*1024)), // 20 MB
+		Port:                                getEnv("PORT", "8090"),
+		Env:                                 getEnv("ENV", "development"),
+		DatabaseURL:                         getEnv("DATABASE_URL", ""),
+		DBUser:                              getEnv("DB_USER", "nexflow"),
+		DBPassword:                          getEnv("DB_PASSWORD", "changeme"),
+		JWTSecret:                           getEnv("JWT_SECRET", ""),
+		JWTExpireHours:                      getEnvInt("JWT_EXPIRE_HOURS", 24),
+		LineChannelSecret:                   getEnv("LINE_CHANNEL_SECRET", ""),
+		LineChannelAccessToken:              getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
+		LineAdminUserID:                     getEnv("LINE_ADMIN_USER_ID", ""),
+		LineGreeting:                        getEnv("LINE_GREETING", ""),
+		PublicBaseURL:                       getEnv("PUBLIC_BASE_URL", ""),
+		MediaSigningKey:                     getEnv("MEDIA_SIGNING_KEY", ""),
+		ShopeeSMLURL:                        getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
+		ShopeeSMLGUID:                       getEnv("SHOPEE_SML_GUID", "SMLX"),
+		ShopeeSMLProvider:                   getEnv("SHOPEE_SML_PROVIDER", "SML1"),
+		ShopeeSMLConfigFile:                 getEnv("SHOPEE_SML_CONFIG_FILE", "SMLConfigSML1.xml"),
+		ShopeeSMLDatabase:                   getEnv("SHOPEE_SML_DATABASE", "SMLPLOY"),
+		ShopeeSMLDocFormat:                  getEnv("SHOPEE_SML_DOC_FORMAT", ""),
+		ShopeeSMLSaleCode:                   getEnv("SHOPEE_SML_SALE_CODE", ""),
+		ShopeeSMLBranchCode:                 getEnv("SHOPEE_SML_BRANCH_CODE", ""),
+		ShopeeSMLWHCode:                     getEnv("SHOPEE_SML_WH_CODE", ""),
+		ShopeeSMLShelfCode:                  getEnv("SHOPEE_SML_SHELF_CODE", ""),
+		ShopeeSMLUnitCode:                   getEnv("SHOPEE_SML_UNIT_CODE", ""),
+		ShopeeSMLVATType:                    getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
+		ShopeeSMLVATRate:                    getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
+		ShopeeSMLDocTime:                    getEnv("SHOPEE_SML_DOC_TIME", ""),
+		SMLSetProductExpansionEnabled:       getEnvBool("SML_SET_PRODUCT_EXPANSION_ENABLED", false),
+		ShopeeSetStockEnabled:               getEnvBool("SHOPEE_SET_STOCK_ENABLED", false),
+		MarketplaceGroupedUIEnabled:         getEnvBool("MARKETPLACE_GROUPED_UI_ENABLED", false),
+		MarketplaceUnitCatalogEnabled:       getEnvBool("MARKETPLACE_UNIT_CATALOG_ENABLED", false),
+		MarketplaceConversionMode:           conversionMode,
+		MarketplaceReservationLedgerEnabled: getEnvBool("MARKETPLACE_RESERVATION_LEDGER_ENABLED", false),
+		ShopeeOpenAPIEnabled:                getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
+		ShopeeOpenAPIEnv:                    getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
+		ShopeeOpenAPIBaseURL:                getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
+		ShopeeOpenAPIPartnerID:              getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
+		ShopeeOpenAPIPartnerKey:             getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
+		ShopeeOpenAPIRedirect:               getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
+		ShopeeOpenAPIMode:                   getEnv("SHOPEE_OPEN_API_MODE", "direct"),
+		ShopeeGatewayBaseURL:                getEnv("SHOPEE_GATEWAY_BASE_URL", ""),
+		ShopeeGatewayPublicURL:              getEnv("SHOPEE_GATEWAY_PUBLIC_URL", ""),
+		ShopeeGatewayTenant:                 getEnv("SHOPEE_GATEWAY_TENANT", ""),
+		ShopeeGatewayInternalSecret:         getEnv("SHOPEE_GATEWAY_INTERNAL_SECRET", ""),
+		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
+		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
+		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
+		ShopeeCancelAfterSMLAlertsEnabled:   getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
+		ShopeeSMLCancelDocumentsEnabled:     getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
+		ShopeeRichLineFlexEnabled:           getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
+		ShopeeSettlementLineAlertsEnabled:   getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
+		ShopeeOrderEscrowEnrichmentEnabled:  getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
+		ShopeeRealtimeWebhookSecret:         getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
+		ShopeeRealtimeSyncIntervalSeconds:   getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
+		ShopeeAutoSMLEnabled:                getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
+		LineMyShopEnabled:                   getEnvBool("ENABLE_LINE_MYSHOP", true),
+		PurchaseFlowEnabled:                 false,
+		BackupCronHour:                      getEnvInt("BACKUP_CRON_HOUR", 0),
+		DiskWarnPercent:                     getEnvInt("DISK_WARN_PERCENT", 90),
+		DataLifecycleEnabled:                getEnvBool("DATA_LIFECYCLE_ENABLED", true),
+		DataLifecycleCronHour:               getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
+		HotLogDays:                          getEnvInt("HOT_LOG_DAYS", 90),
+		AutoArchiveDays:                     getEnvInt("AUTO_ARCHIVE_DAYS", 180),
+		SummaryRetentionDays:                getEnvInt("SUMMARY_RETENTION_DAYS", 730),
+		PurgeBatchSize:                      getEnvInt("PURGE_BATCH_SIZE", 1000),
+		ArtifactsDir:                        getEnv("ARTIFACTS_DIR", "/app/artifacts"),
+		ArtifactsMaxBytes:                   int64(getEnvInt("ARTIFACTS_MAX_BYTES", 20*1024*1024)), // 20 MB
 	}
 
 	if c.JWTSecret == "" {
@@ -186,6 +201,16 @@ func Load() *Config {
 	}
 
 	return c
+}
+
+func parseMarketplaceConversionMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "off", "shadow", "active":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("MARKETPLACE_CONVERSION_MODE must be off, shadow, or active; got %q", raw)
+	}
 }
 
 func getEnv(key, fallback string) string {

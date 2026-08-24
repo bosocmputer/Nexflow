@@ -1,8 +1,10 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -12,6 +14,12 @@ import (
 
 //go:embed migrations/*.sql
 var migrationFS embed.FS
+
+// migrationAdvisoryLockKey is stable across Nexflow containers that point at
+// the same tenant database. A session-level lock is used because every SQL
+// migration is intentionally replayable and multiple containers may start at
+// the same time during a rollout.
+const migrationAdvisoryLockKey int64 = 0x4e4558464c4f57 // "NEXFLOW"
 
 func Connect(databaseURL string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", databaseURL)
@@ -35,23 +43,45 @@ func Connect(databaseURL string) (*sql.DB, error) {
 }
 
 func runMigrations(db *sql.DB) error {
-	entries, err := migrationFS.ReadDir("migrations")
+	return withMigrationLock(db, func(conn *sql.Conn) error {
+		entries, err := migrationFS.ReadDir("migrations")
+		if err != nil {
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			data, err := migrationFS.ReadFile("migrations/" + entry.Name())
+			if err != nil {
+				return fmt.Errorf("read %s: %w", entry.Name(), err)
+			}
+			if _, err := conn.ExecContext(context.Background(), string(data)); err != nil {
+				return fmt.Errorf("exec %s: %w", entry.Name(), err)
+			}
+			log.Printf("migration applied: %s", entry.Name())
+		}
+		return nil
+	})
+}
+
+func withMigrationLock(db *sql.DB, migrate func(*sql.Conn) error) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("reserve migration connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire migration advisory lock: %w", err)
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		data, err := migrationFS.ReadFile("migrations/" + entry.Name())
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if _, err := db.Exec(string(data)); err != nil {
-			return fmt.Errorf("exec %s: %w", entry.Name(), err)
-		}
-		log.Printf("migration applied: %s", entry.Name())
+	migrateErr := migrate(conn)
+	_, unlockErr := conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationAdvisoryLockKey)
+	if unlockErr != nil {
+		unlockErr = fmt.Errorf("release migration advisory lock: %w", unlockErr)
 	}
-	return nil
+	return errors.Join(migrateErr, unlockErr)
 }
