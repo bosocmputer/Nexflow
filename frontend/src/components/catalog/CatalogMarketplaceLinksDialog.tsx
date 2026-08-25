@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Link2, Loader2, Store } from 'lucide-react'
 
 import api from '@/api/client'
@@ -43,23 +43,27 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const requestSequence = useRef(0)
 
   const load = useCallback(async (cursor = '', append = false) => {
     if (!itemCode) return
+    const requestID = ++requestSequence.current
     setLoading(true)
     setError('')
     try {
       const response = await api.get<MarketplaceLinkPage>(`/api/catalog/${encodeURIComponent(itemCode)}/marketplace-links`, {
         params: { limit: 25, cursor: cursor || undefined },
       })
+      if (requestID !== requestSequence.current) return
       const page = response.data.data ?? []
       setLinks((current) => append ? [...current, ...page] : page)
       setNextCursor(response.data.next_cursor ?? '')
       setHasMore(Boolean(response.data.has_more))
     } catch {
+      if (requestID !== requestSequence.current) return
       setError('โหลดสินค้าที่จับคู่ไม่สำเร็จ กรุณาลองใหม่')
     } finally {
-      setLoading(false)
+      if (requestID === requestSequence.current) setLoading(false)
     }
   }, [itemCode])
 
@@ -69,6 +73,7 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
     setNextCursor('')
     setHasMore(false)
     void load()
+    return () => { requestSequence.current += 1 }
   }, [itemCode, load, open])
 
   return (
