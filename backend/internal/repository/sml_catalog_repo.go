@@ -389,7 +389,110 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 	if err := r.attachSetComponents(items); err != nil {
 		return nil, 0, err
 	}
+	if err := r.attachMarketplaceSummaries(items); err != nil {
+		return nil, 0, err
+	}
 	return items, total, nil
+}
+
+func (r *SMLCatalogRepo) attachMarketplaceSummaries(items []models.CatalogItem) error {
+	indexes := make(map[string]int, len(items))
+	codes := make([]string, 0, len(items))
+	for i := range items {
+		items[i].MarketplaceSummaries = []models.CatalogMarketplaceSummary{}
+		indexes[items[i].ItemCode] = i
+		codes = append(codes, items[i].ItemCode)
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	rows, err := r.db.Query(`
+		SELECT item_code, source, COUNT(*)::int,
+		       COUNT(DISTINCT account_key||chr(31)||COALESCE(NULLIF(parent_key,''),NULLIF(external_parent_id,''),NULLIF(external_item_id,''),id::text))::int,
+		       COUNT(DISTINCT account_key)::int
+		FROM marketplace_item_aliases
+		WHERE is_active=true AND item_code=ANY($1)
+		GROUP BY item_code,source
+		ORDER BY item_code,source`, pq.Array(codes))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var itemCode string
+		var summary models.CatalogMarketplaceSummary
+		if err := rows.Scan(&itemCode, &summary.Source, &summary.MappingCount, &summary.ProductCount, &summary.AccountCount); err != nil {
+			return err
+		}
+		if index, ok := indexes[itemCode]; ok {
+			items[index].MarketplaceSummaries = append(items[index].MarketplaceSummaries, summary)
+		}
+	}
+	return rows.Err()
+}
+
+type CatalogMarketplaceLinkFilter struct {
+	ItemCode        string
+	Limit           int
+	AfterSource     string
+	AfterAccountKey string
+	AfterID         string
+}
+
+// MarketplaceLinks returns a bounded keyset page of active Marketplace Product
+// Master rows that point to one SML item. The limit+1 read determines hasMore
+// without a separate count query.
+func (r *SMLCatalogRepo) MarketplaceLinks(ctx context.Context, filter CatalogMarketplaceLinkFilter) ([]models.CatalogMarketplaceLink, bool, error) {
+	if filter.Limit < 1 || filter.Limit > 100 {
+		filter.Limit = 50
+	}
+	args := []interface{}{strings.TrimSpace(filter.ItemCode)}
+	where := []string{"a.is_active=true", "a.item_code=$1"}
+	if filter.AfterSource != "" || filter.AfterAccountKey != "" || filter.AfterID != "" {
+		args = append(args, filter.AfterSource, filter.AfterAccountKey, filter.AfterID)
+		where = append(where, fmt.Sprintf("(a.source,a.account_key,a.id::text)>($%d,$%d,$%d)", len(args)-2, len(args)-1, len(args)))
+	}
+	args = append(args, filter.Limit+1)
+	query := fmt.Sprintf(`
+		SELECT a.id::text,a.source,a.account_key,
+		       CASE WHEN a.source='shopee' THEN COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),'') ELSE '' END,
+		       COALESCE(NULLIF(a.source_product_name,''),NULLIF(split_part(a.raw_name,' / ',1),''),a.raw_name),
+		       COALESCE(NULLIF(a.source_variant_name,''),NULLIF(split_part(a.raw_name,' / ',2),''),a.raw_name),
+		       a.source_sku,a.external_item_id,a.external_variant_id,a.unit_code,
+		       a.quantity_multiplier,a.conversion_status,a.scope_confirmed,a.updated_at
+		FROM marketplace_item_aliases a
+		LEFT JOIN shopee_api_connections sc
+		  ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+		WHERE %s
+		ORDER BY a.source,a.account_key,a.id
+		LIMIT $%d`, strings.Join(where, " AND "), len(args))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	links := make([]models.CatalogMarketplaceLink, 0, filter.Limit+1)
+	for rows.Next() {
+		var link models.CatalogMarketplaceLink
+		if err := rows.Scan(
+			&link.ID, &link.Source, &link.AccountKey, &link.AccountName,
+			&link.ProductName, &link.VariantName, &link.SourceSKU,
+			&link.ExternalItemID, &link.ExternalVariantID, &link.UnitCode,
+			&link.QuantityMultiplier, &link.ConversionStatus, &link.ScopeConfirmed,
+			&link.UpdatedAt,
+		); err != nil {
+			return nil, false, err
+		}
+		links = append(links, link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(links) > filter.Limit
+	if hasMore {
+		links = links[:filter.Limit]
+	}
+	return links, hasMore, nil
 }
 
 func joinAnd(parts []string) string {
