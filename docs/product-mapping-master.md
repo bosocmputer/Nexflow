@@ -56,6 +56,29 @@ the exact line amount, so increasing quantity does not increase document value.
 - Unit, multiplier, sales policy, and stock policy live on the canonical scoped
   variant. `shopee_stock_mappings` mirrors the resulting factor for stock runs.
 
+## Synthetic performance verification
+
+The 2026-08-25 pre-release check used an isolated local PostgreSQL 14.18
+database with 50,000 SML products, 250,000 units, 50,000 Marketplace aliases,
+50,000 Shopee variants, and 100,000 active reservations. Production runs
+PostgreSQL 16, so repeat the plans on a restored tenant-sized PostgreSQL 16
+dataset before enabling flags.
+
+- The original Product Master parent query materialized all variant rows,
+  spilled temporary data, and took 368 ms. Selecting bounded parent keys first
+  reduced the authenticated API p95 to 64 ms; search p95 was 164 ms.
+- The original Shopee parent query used the same materialization pattern and
+  took 274 ms. The bounded-key query reduced authenticated API p95 to 9 ms;
+  search p95 was 131 ms.
+- Child API p95 was 23 ms for Product Master and 56 ms for Shopee stock. The
+  largest measured response was about 15 KB, below the 250 KB budget.
+- The normalized 100,000-row reservation aggregate took 255 ms. It remains in
+  the asynchronous stock-preview path; do not move it into page rendering.
+
+These are repeatable synthetic measurements, not production SLA evidence.
+Record PostgreSQL 16 query plans, tenant data distribution, and authenticated
+browser timings again at each rollout gate.
+
 ## Rollout
 
 1. Back up the instance database and record alias, legacy mapping, stock mapping,
