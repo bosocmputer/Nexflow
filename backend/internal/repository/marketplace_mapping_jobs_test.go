@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,27 @@ func TestMarketplaceAliasAuditQueryTypesJSONParameters(t *testing.T) {
 	}
 	if !strings.Contains(marketplaceAliasAuditInsertSQL, "'affected_shop_ids',$11::jsonb") {
 		t.Fatal("affected shop ids must remain explicitly typed as jsonb")
+	}
+}
+
+func TestMarketplaceMappingCompletionReadyQueryHasContiguousParameters(t *testing.T) {
+	matches := regexp.MustCompile(`\$(\d+)`).FindAllStringSubmatch(marketplaceMappingCompletionReadySQL, -1)
+	seen := map[int]bool{}
+	maxParameter := 0
+	for _, match := range matches {
+		parameter, err := strconv.Atoi(match[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[parameter] = true
+		if parameter > maxParameter {
+			maxParameter = parameter
+		}
+	}
+	for parameter := 1; parameter <= maxParameter; parameter++ {
+		if !seen[parameter] {
+			t.Fatalf("query skips $%d, so PostgreSQL cannot infer its parameter type", parameter)
+		}
 	}
 }
 

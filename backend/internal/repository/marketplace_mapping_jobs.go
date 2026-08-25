@@ -27,10 +27,20 @@ var (
 	ErrMarketplaceStockZeroingInProgress                 = errors.New("Shopee stock zeroing is still in progress")
 )
 
-const marketplaceAliasAuditInsertSQL = `INSERT INTO audit_logs
-	(action,user_id,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
-	VALUES($1,NULLIF($2,'')::uuid,$3,'info',$4::uuid,$5,$6,$7::uuid,$8,$9,
-	  jsonb_build_object('impact_digest',$10::text,'affected_shop_ids',$11::jsonb))`
+const (
+	marketplaceAliasAuditInsertSQL = `INSERT INTO audit_logs
+		(action,user_id,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
+		VALUES($1,NULLIF($2,'')::uuid,$3,'info',$4::uuid,$5,$6,$7::uuid,$8,$9,
+		  jsonb_build_object('impact_digest',$10::text,'affected_shop_ids',$11::jsonb))`
+	marketplaceMappingCompletionReadySQL = `UPDATE shopee_stock_mappings SET
+		sml_item_code=$2,sml_unit_code=$3,unit_factor=$5::numeric*$6::numeric/$7::numeric,
+		manual_unit_factor=CASE WHEN manual_unit_factor IS NULL THEN NULL ELSE $5::numeric*$6::numeric/$7::numeric END,
+		shared_pool_enabled=CASE WHEN $8='managed' THEN shared_pool_enabled ELSE false END,
+		set_definition_hash=$4,
+		warning_codes=(warning_codes-'master_revision_pending'-'conversion_needs_review'-'conversion_stale'-'conversion_blocked'-
+		  'stock_policy_blocked'-'stock_policy_manual_unmanaged'-'stock_policy_zeroing'-'stock_policy_disabled_zero') || $9::jsonb,
+		updated_at=NOW() WHERE marketplace_alias_id=$1::uuid`
+)
 
 type MarketplaceAliasProposal struct {
 	AliasID                    string
@@ -932,15 +942,8 @@ func (r *MarketplaceAliasRepo) completeMappingJob(ctx context.Context, job *clai
 		return err
 	}
 	if job.Snapshot.StandValue != "" && job.Snapshot.DivideValue != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings SET
-			sml_item_code=$2,sml_unit_code=$3,unit_factor=$6::numeric*$7::numeric/$8::numeric,
-			manual_unit_factor=CASE WHEN manual_unit_factor IS NULL THEN NULL ELSE $6::numeric*$7::numeric/$8::numeric END,
-			shared_pool_enabled=CASE WHEN $9='managed' THEN shared_pool_enabled ELSE false END,
-			set_definition_hash=$4,
-			warning_codes=(warning_codes-'master_revision_pending'-'conversion_needs_review'-'conversion_stale'-'conversion_blocked'-
-			  'stock_policy_blocked'-'stock_policy_manual_unmanaged'-'stock_policy_zeroing'-'stock_policy_disabled_zero') || $10::jsonb,
-			updated_at=NOW() WHERE marketplace_alias_id=$1::uuid`, job.AliasID, job.Snapshot.ItemCode,
-			job.Snapshot.UnitCode, job.Snapshot.SetDefinitionHash, job.Snapshot.ConversionStatus,
+		if _, err := tx.ExecContext(ctx, marketplaceMappingCompletionReadySQL, job.AliasID, job.Snapshot.ItemCode,
+			job.Snapshot.UnitCode, job.Snapshot.SetDefinitionHash,
 			job.Snapshot.QuantityMultiplier, job.Snapshot.StandValue, job.Snapshot.DivideValue,
 			job.Snapshot.StockPolicy, warningsJSON); err != nil {
 			return err
