@@ -26,6 +26,20 @@ func TestSingleWarehouseFallbackOnlyAcceptsShopeeWhitelistCapability(t *testing.
 	}
 }
 
+func TestManagedMappingCannotBeExcludedBeforeSafeDisable(t *testing.T) {
+	if err := validateStockMappingExclusionPolicy("managed"); !errors.Is(err, ErrUnsafeManagedExclusion) {
+		t.Fatalf("managed mapping must not be excluded while Shopee may still hold stock: %v", err)
+	}
+	if err := validateStockMappingExclusionPolicy("zeroing"); !errors.Is(err, ErrUnsafeManagedExclusion) {
+		t.Fatalf("zeroing mapping must remain locked until read-back completes: %v", err)
+	}
+	for _, policy := range []string{"blocked", "manual_unmanaged", "disabled_zero", ""} {
+		if err := validateStockMappingExclusionPolicy(policy); err != nil {
+			t.Fatalf("policy %q should be safe to exclude: %v", policy, err)
+		}
+	}
+}
+
 func TestTodayBangkokReturnsCalendarDate(t *testing.T) {
 	if _, err := time.Parse("2006-01-02", TodayBangkok()); err != nil {
 		t.Fatalf("TodayBangkok returned invalid date: %v", err)

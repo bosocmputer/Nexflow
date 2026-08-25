@@ -20,25 +20,29 @@ import (
 )
 
 var (
-	ErrMarketplaceImpactChanged = errors.New("marketplace mapping impact changed")
-	ErrMarketplaceUnitNotReady  = errors.New("marketplace unit is not available in the active catalog generation")
+	ErrMarketplaceImpactChanged                          = errors.New("marketplace mapping impact changed")
+	ErrMarketplaceUnitNotReady                           = errors.New("marketplace unit is not available in the active catalog generation")
+	ErrMarketplaceUnsafeStockDisable                     = errors.New("managed Shopee stock must be zeroed or explicitly unmanaged before disabling")
+	ErrMarketplaceManualUnmanagedAcknowledgementRequired = errors.New("manual Shopee stock management requires explicit acknowledgement")
+	ErrMarketplaceStockZeroingInProgress                 = errors.New("Shopee stock zeroing is still in progress")
 )
 
 type MarketplaceAliasProposal struct {
-	AliasID              string
-	Identity             models.MarketplaceAliasIdentity
-	BillType             string
-	ItemCode             string
-	UnitCode             string
-	QuantityMultiplier   int64
-	SalesEnabled         *bool
-	StockPolicy          string
-	ScopeConfirmed       *bool
-	MatchMethod          string
-	ConfirmedBy          string
-	ExpectedRevision     int64
-	ExpectedImpactDigest string
-	Deactivate           bool
+	AliasID                    string
+	Identity                   models.MarketplaceAliasIdentity
+	BillType                   string
+	ItemCode                   string
+	UnitCode                   string
+	QuantityMultiplier         int64
+	SalesEnabled               *bool
+	StockPolicy                string
+	AcknowledgeManualUnmanaged bool
+	ScopeConfirmed             *bool
+	MatchMethod                string
+	ConfirmedBy                string
+	ExpectedRevision           int64
+	ExpectedImpactDigest       string
+	Deactivate                 bool
 }
 
 type MarketplaceAliasCommitResult struct {
@@ -49,25 +53,26 @@ type MarketplaceAliasCommitResult struct {
 }
 
 type marketplaceMutationTarget struct {
-	Identity           models.MarketplaceAliasIdentity `json:"identity"`
-	BillType           string                          `json:"bill_type"`
-	ItemCode           string                          `json:"item_code"`
-	UnitCode           string                          `json:"unit_code"`
-	QuantityMultiplier int64                           `json:"quantity_multiplier"`
-	StandValue         string                          `json:"stand_value"`
-	DivideValue        string                          `json:"divide_value"`
-	CatalogGeneration  string                          `json:"catalog_generation"`
-	ConversionStatus   string                          `json:"conversion_status"`
-	SalesEnabled       bool                            `json:"sales_enabled"`
-	StockPolicy        string                          `json:"stock_policy"`
-	ScopeConfirmed     bool                            `json:"scope_confirmed"`
-	Deactivate         bool                            `json:"deactivate"`
-	OldItemCode        string                          `json:"old_item_code"`
-	OldUnitCode        string                          `json:"old_unit_code"`
-	OldRevision        int64                           `json:"old_revision"`
-	SetDefinitionHash  string                          `json:"set_definition_hash"`
-	AffectedShopIDs    []int64                         `json:"affected_shop_ids"`
-	RequestedAt        time.Time                       `json:"requested_at"`
+	Identity                    models.MarketplaceAliasIdentity `json:"identity"`
+	BillType                    string                          `json:"bill_type"`
+	ItemCode                    string                          `json:"item_code"`
+	UnitCode                    string                          `json:"unit_code"`
+	QuantityMultiplier          int64                           `json:"quantity_multiplier"`
+	StandValue                  string                          `json:"stand_value"`
+	DivideValue                 string                          `json:"divide_value"`
+	CatalogGeneration           string                          `json:"catalog_generation"`
+	ConversionStatus            string                          `json:"conversion_status"`
+	SalesEnabled                bool                            `json:"sales_enabled"`
+	StockPolicy                 string                          `json:"stock_policy"`
+	ManualUnmanagedAcknowledged bool                            `json:"manual_unmanaged_acknowledged"`
+	ScopeConfirmed              bool                            `json:"scope_confirmed"`
+	Deactivate                  bool                            `json:"deactivate"`
+	OldItemCode                 string                          `json:"old_item_code"`
+	OldUnitCode                 string                          `json:"old_unit_code"`
+	OldRevision                 int64                           `json:"old_revision"`
+	SetDefinitionHash           string                          `json:"set_definition_hash"`
+	AffectedShopIDs             []int64                         `json:"affected_shop_ids"`
+	RequestedAt                 time.Time                       `json:"requested_at"`
 }
 
 type marketplaceImpactQueryer interface {
@@ -260,12 +265,6 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 			proposal.StockPolicy = "blocked"
 		}
 	}
-	if err := validateMarketplaceStockPolicyTransition(current.StockPolicy, proposal.StockPolicy); err != nil {
-		return proposal, current, marketplaceMutationTarget{}, err
-	}
-	if targetSource := firstNonEmptyRepository(proposal.Identity.Source, current.Identity.Source); targetSource != "shopee" && proposal.StockPolicy != "blocked" {
-		return proposal, marketplaceAliasCurrent{}, marketplaceMutationTarget{}, fmt.Errorf("stock policy is only available for Shopee")
-	}
 	salesEnabled := current.SalesEnabled
 	if proposal.SalesEnabled != nil {
 		salesEnabled = *proposal.SalesEnabled
@@ -280,10 +279,17 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 		proposal.ItemCode = current.ItemCode
 		proposal.UnitCode = current.UnitCode
 	}
+	if err := validateMarketplaceStockPolicyTransition(current.StockPolicy, proposal.StockPolicy, proposal.AcknowledgeManualUnmanaged); err != nil {
+		return proposal, current, marketplaceMutationTarget{}, err
+	}
+	if targetSource := firstNonEmptyRepository(proposal.Identity.Source, current.Identity.Source); targetSource != "shopee" && proposal.StockPolicy != "blocked" {
+		return proposal, marketplaceAliasCurrent{}, marketplaceMutationTarget{}, fmt.Errorf("stock policy is only available for Shopee")
+	}
 	target := marketplaceMutationTarget{
 		Identity: proposal.Identity, BillType: proposal.BillType, ItemCode: proposal.ItemCode, UnitCode: proposal.UnitCode,
 		QuantityMultiplier: proposal.QuantityMultiplier, SalesEnabled: salesEnabled, StockPolicy: proposal.StockPolicy,
-		ScopeConfirmed: scopeConfirmed, Deactivate: proposal.Deactivate, OldItemCode: current.ItemCode,
+		ManualUnmanagedAcknowledged: proposal.AcknowledgeManualUnmanaged,
+		ScopeConfirmed:              scopeConfirmed, Deactivate: proposal.Deactivate, OldItemCode: current.ItemCode,
 		OldUnitCode: current.UnitCode, OldRevision: current.MappingRevision,
 	}
 	var productActive, setDocumentValid bool
@@ -489,7 +495,7 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 		policyJob = &models.MarketplaceStockPolicyJob{ID: policyJobID, ShopID: shopID, MarketplaceAlias: aliasID,
 			TargetRevision: targetRevision, ItemID: itemID, ModelID: modelID, PolicyAction: "zero_then_disable", Status: "queued", CreatedAt: time.Now()}
 	}
-	if target.StockPolicy == "manual_unmanaged" {
+	if target.StockPolicy == "manual_unmanaged" && proposal.AcknowledgeManualUnmanaged {
 		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_item_aliases SET stock_policy_acknowledged_at=NOW(),
 			stock_policy_acknowledged_by=NULLIF($2,'')::uuid WHERE id=$1::uuid`, aliasID, proposal.ConfirmedBy); err != nil {
 			return nil, err
@@ -602,7 +608,7 @@ func validMarketplaceStockPolicy(value string) bool {
 	}
 }
 
-func validateMarketplaceStockPolicyTransition(current, next string) error {
+func validateMarketplaceStockPolicyTransition(current, next string, manualUnmanagedAcknowledged bool) error {
 	// disabled_zero is a read-back-confirmed terminal state. Only the durable
 	// policy worker may enter it after Shopee returns zero; accepting it from a
 	// public mutation would turn a user choice into an unverified assertion.
@@ -611,8 +617,18 @@ func validateMarketplaceStockPolicyTransition(current, next string) error {
 	}
 	// While zeroing is in flight, the retry endpoint is the only safe mutation.
 	// Otherwise a late successful write could race a newly managed listing.
-	if current == "zeroing" && next != "zeroing" {
-		return fmt.Errorf("stock zeroing is still in progress")
+	if current == "zeroing" {
+		return ErrMarketplaceStockZeroingInProgress
+	}
+	// A managed listing may still expose a non-zero quantity in Shopee. It can
+	// only leave managed through a durable zero-and-read-back job or through an
+	// explicit operator acknowledgement that Shopee stock will be maintained
+	// outside Nexflow.
+	if current == "managed" && next != "managed" && next != "zeroing" && next != "manual_unmanaged" {
+		return ErrMarketplaceUnsafeStockDisable
+	}
+	if current != "manual_unmanaged" && next == "manual_unmanaged" && !manualUnmanagedAcknowledged {
+		return ErrMarketplaceManualUnmanagedAcknowledgementRequired
 	}
 	return nil
 }
@@ -1019,6 +1035,23 @@ func (r *MarketplaceAliasRepo) GetStockPolicyJob(ctx context.Context, id string)
 		return nil, err
 	}
 	job.MarketplaceAlias = aliasID.String
+	return &job, nil
+}
+
+func (r *MarketplaceAliasRepo) LatestStockPolicyJobForAlias(ctx context.Context, aliasID string) (*models.MarketplaceStockPolicyJob, error) {
+	var job models.MarketplaceStockPolicyJob
+	var scannedAliasID sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT id::text,shop_id,marketplace_alias_id::text,target_revision,item_id,model_id,
+		policy_action,status,attempt_count,error_message,created_at,finished_at
+		FROM shopee_stock_policy_jobs
+		WHERE marketplace_alias_id=$1::uuid AND tenant_key=$2
+		ORDER BY created_at DESC LIMIT 1`, aliasID, r.tenantKey).Scan(&job.ID, &job.ShopID, &scannedAliasID,
+		&job.TargetRevision, &job.ItemID, &job.ModelID, &job.PolicyAction, &job.Status, &job.AttemptCount,
+		&job.ErrorMessage, &job.CreatedAt, &job.FinishedAt)
+	if err != nil {
+		return nil, err
+	}
+	job.MarketplaceAlias = scannedAliasID.String
 	return &job, nil
 }
 

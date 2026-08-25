@@ -290,7 +290,8 @@ func (h *ShopeeStockHandler) UpdateMapping(c *gin.Context) {
 		},
 		BillType: "sale", ItemCode: request.SMLItemCode, UnitCode: request.SMLUnitCode,
 		QuantityMultiplier: request.QuantityMultiplier, SalesEnabled: request.SalesEnabled, StockPolicy: request.StockPolicy,
-		ScopeConfirmed: &scopeConfirmed, MatchMethod: "manual_identity", ConfirmedBy: c.GetString("user_id"),
+		AcknowledgeManualUnmanaged: request.AcknowledgeManualUnmanaged,
+		ScopeConfirmed:             &scopeConfirmed, MatchMethod: "manual_identity", ConfirmedBy: c.GetString("user_id"),
 		ExpectedRevision: request.ExpectedRevision, ExpectedImpactDigest: request.ImpactDigest,
 	})
 	if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
@@ -361,6 +362,7 @@ func optionalInt64(value string) (int64, error) {
 
 func (h *ShopeeStockHandler) fail(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
+	message := err.Error()
 	var validation *shopeestock.ValidationError
 	var gatewayErr *shopeeapi.GatewayError
 	if errors.As(err, &validation) || errors.Is(err, shopeestock.ErrScopeRequired) ||
@@ -374,6 +376,9 @@ func (h *ShopeeStockHandler) fail(c *gin.Context, err error) {
 	if errors.Is(err, shopeestock.ErrSyncInProgress) || errors.Is(err, shopeestock.ErrMappingConflict) || errors.Is(err, shopeestock.ErrBlockedReservations) || errors.Is(err, shopeestock.ErrPreviewStale) {
 		status = http.StatusConflict
 	}
+	if errors.Is(err, repository.ErrMarketplaceStockZeroingInProgress) {
+		status = http.StatusConflict
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		status = http.StatusGatewayTimeout
 	} else if errors.As(err, &gatewayErr) || strings.Contains(strings.ToLower(err.Error()), "sml stock") {
@@ -382,13 +387,27 @@ func (h *ShopeeStockHandler) fail(c *gin.Context, err error) {
 	if errors.Is(err, shopeestock.ErrInvalidUnit) || errors.Is(err, shopeestock.ErrInvalidManualFactor) {
 		status = http.StatusUnprocessableEntity
 	}
+	if errors.Is(err, shopeestock.ErrUnsafeManagedExclusion) ||
+		errors.Is(err, repository.ErrMarketplaceUnsafeStockDisable) ||
+		errors.Is(err, repository.ErrMarketplaceManualUnmanagedAcknowledgementRequired) {
+		status = http.StatusUnprocessableEntity
+	}
+	if errors.Is(err, repository.ErrMarketplaceUnsafeStockDisable) {
+		message = "กรุณาเลือกตั้ง stock เป็น 0 แล้วปิด หรือยืนยันว่าจะจัดการ stock เอง ก่อนหยุดให้ Nexflow จัดการรายการนี้"
+	}
+	if errors.Is(err, repository.ErrMarketplaceManualUnmanagedAcknowledgementRequired) {
+		message = "กรุณายืนยันว่ารับทราบว่าจะตรวจและจัดการ stock Shopee รายการนี้เอง"
+	}
+	if errors.Is(err, repository.ErrMarketplaceStockZeroingInProgress) {
+		message = "กำลังตั้ง stock เป็น 0 และรอผลยืนยันจาก Shopee กรุณารอให้งานเดิมเสร็จ"
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		status = http.StatusNotFound
 	}
 	if status >= 500 {
 		h.log.Warn("shopee stock", zap.Error(err))
 	}
-	c.JSON(status, gin.H{"error": err.Error()})
+	c.JSON(status, gin.H{"error": message})
 }
 
 func (h *ShopeeStockHandler) auditChange(c *gin.Context, action string, shopID int64, detail map[string]any) {

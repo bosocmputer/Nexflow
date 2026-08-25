@@ -53,6 +53,30 @@ func TestUpdateSettingsPersistsStructuredScheduleAndNextRun(t *testing.T) {
 	}
 }
 
+func TestUpdateMappingRejectsManagedExclusionUnderAliasLock(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(m.marketplace_alias_id::text,''\).*shopee_stock_products`).
+		WithArgs(int64(42), int64(1001), int64(2001)).
+		WillReturnRows(sqlmock.NewRows([]string{"marketplace_alias_id"}).AddRow("00000000-0000-0000-0000-000000000001"))
+	mock.ExpectQuery(`SELECT stock_policy FROM marketplace_item_aliases.*FOR UPDATE`).
+		WithArgs("00000000-0000-0000-0000-000000000001").
+		WillReturnRows(sqlmock.NewRows([]string{"stock_policy"}).AddRow("managed"))
+	mock.ExpectRollback()
+
+	_, err = NewStore(db).UpdateMapping(context.Background(), 42, 1001, 2001, MappingUpdate{Excluded: true}, "")
+	if !errors.Is(err, ErrUnsafeManagedExclusion) {
+		t.Fatalf("managed mapping exclusion must fail before changing local state: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectation: %v", err)
+	}
+}
+
 func TestEnabledDueShopsUsesPersistedNextRun(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

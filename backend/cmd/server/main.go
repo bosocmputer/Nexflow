@@ -603,6 +603,7 @@ func main() {
 		api.POST("/marketplace-aliases/jobs/:id/retry", middleware.RequireRole("admin"), aliasH.RetryJob)
 		api.GET("/marketplace-aliases/policy-jobs/:id", middleware.RequireRole("admin", "staff"), aliasH.PolicyJob)
 		api.POST("/marketplace-aliases/policy-jobs/:id/retry", middleware.RequireRole("admin"), aliasH.RetryPolicyJob)
+		api.GET("/marketplace-aliases/:id/policy-job", middleware.RequireRole("admin", "staff"), aliasH.LatestPolicyJobForAlias)
 		api.POST("/marketplace-aliases/impact-preview", middleware.RequireRole("admin"), aliasH.ImpactPreview)
 		api.POST("/marketplace-aliases/confirm", middleware.RequireRole("admin"), aliasH.Confirm)
 		api.PUT("/marketplace-aliases/:id", middleware.RequireRole("admin"), aliasH.Update)

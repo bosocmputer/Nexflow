@@ -24,6 +24,22 @@ func isMarketplaceSource(source string) bool {
 	return false
 }
 
+func writeMarketplaceStockPolicyError(c *gin.Context, err error) bool {
+	switch {
+	case errors.Is(err, repository.ErrMarketplaceUnsafeStockDisable):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "สินค้านี้กำลังให้ Nexflow จัดการ stock Shopee กรุณาเลือก ‘ตั้ง stock เป็น 0 แล้วปิด’ หรือ ‘คง stock เดิมและจัดการเอง’ ก่อนหยุดใช้การจับคู่"})
+		return true
+	case errors.Is(err, repository.ErrMarketplaceManualUnmanagedAcknowledgementRequired):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "กรุณายืนยันว่ารับทราบว่า Nexflow จะหยุดส่ง stock และผู้ใช้ต้องดูแล stock Shopee รายการนี้เอง"})
+		return true
+	case errors.Is(err, repository.ErrMarketplaceStockZeroingInProgress):
+		c.JSON(http.StatusConflict, gin.H{"error": "กำลังตั้ง stock เป็น 0 และรอผลยืนยันจาก Shopee กรุณารอให้งานเสร็จหรือกดลองใหม่ที่งานเดิม"})
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *MarketplaceAliasHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
@@ -180,21 +196,22 @@ func (h *MarketplaceAliasHandler) ReviewGroups(c *gin.Context) {
 
 func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 	var req struct {
-		Source             string `json:"source" binding:"required"`
-		AccountKey         string `json:"account_key"`
-		ExternalItemID     string `json:"external_item_id"`
-		ExternalVariantID  string `json:"external_variant_id"`
-		BillType           string `json:"bill_type" binding:"required"`
-		SourceSKU          string `json:"source_sku"`
-		RawName            string `json:"raw_name"`
-		NormalizedKey      string `json:"normalized_key"`
-		ItemCode           string `json:"item_code" binding:"required"`
-		UnitCode           string `json:"unit_code"`
-		QuantityMultiplier int64  `json:"quantity_multiplier"`
-		SalesEnabled       *bool  `json:"sales_enabled"`
-		StockPolicy        string `json:"stock_policy"`
-		ExpectedRevision   int64  `json:"expected_mapping_revision"`
-		ImpactDigest       string `json:"impact_digest" binding:"required"`
+		Source                     string `json:"source" binding:"required"`
+		AccountKey                 string `json:"account_key"`
+		ExternalItemID             string `json:"external_item_id"`
+		ExternalVariantID          string `json:"external_variant_id"`
+		BillType                   string `json:"bill_type" binding:"required"`
+		SourceSKU                  string `json:"source_sku"`
+		RawName                    string `json:"raw_name"`
+		NormalizedKey              string `json:"normalized_key"`
+		ItemCode                   string `json:"item_code" binding:"required"`
+		UnitCode                   string `json:"unit_code"`
+		QuantityMultiplier         int64  `json:"quantity_multiplier"`
+		SalesEnabled               *bool  `json:"sales_enabled"`
+		StockPolicy                string `json:"stock_policy"`
+		AcknowledgeManualUnmanaged bool   `json:"acknowledge_manual_unmanaged"`
+		ExpectedRevision           int64  `json:"expected_mapping_revision"`
+		ImpactDigest               string `json:"impact_digest" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -242,11 +259,15 @@ func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 			RawName: req.RawName, NormalizedKey: req.NormalizedKey,
 		},
 		BillType: req.BillType, ItemCode: req.ItemCode, UnitCode: unitCode, QuantityMultiplier: req.QuantityMultiplier,
-		SalesEnabled: req.SalesEnabled, StockPolicy: req.StockPolicy, MatchMethod: method, ScopeConfirmed: &scopeConfirmed,
+		SalesEnabled: req.SalesEnabled, StockPolicy: req.StockPolicy, AcknowledgeManualUnmanaged: req.AcknowledgeManualUnmanaged,
+		MatchMethod: method, ScopeConfirmed: &scopeConfirmed,
 		ConfirmedBy: userID, ExpectedRevision: req.ExpectedRevision, ExpectedImpactDigest: req.ImpactDigest,
 	})
 	if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
 		c.JSON(http.StatusConflict, gin.H{"error": "สินค้าต้นทางนี้มีการจับคู่ในขอบเขตร้านแล้ว กรุณารีเฟรชและตรวจรายการเดิม"})
+		return
+	}
+	if writeMarketplaceStockPolicyError(c, err) {
 		return
 	}
 	if err != nil {
@@ -259,14 +280,15 @@ func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 
 func (h *MarketplaceAliasHandler) Update(c *gin.Context) {
 	var req struct {
-		ItemCode           string `json:"item_code" binding:"required"`
-		UnitCode           string `json:"unit_code"`
-		BillType           string `json:"bill_type"`
-		QuantityMultiplier int64  `json:"quantity_multiplier"`
-		SalesEnabled       *bool  `json:"sales_enabled"`
-		StockPolicy        string `json:"stock_policy"`
-		ExpectedRevision   int64  `json:"expected_mapping_revision"`
-		ImpactDigest       string `json:"impact_digest" binding:"required"`
+		ItemCode                   string `json:"item_code" binding:"required"`
+		UnitCode                   string `json:"unit_code"`
+		BillType                   string `json:"bill_type"`
+		QuantityMultiplier         int64  `json:"quantity_multiplier"`
+		SalesEnabled               *bool  `json:"sales_enabled"`
+		StockPolicy                string `json:"stock_policy"`
+		AcknowledgeManualUnmanaged bool   `json:"acknowledge_manual_unmanaged"`
+		ExpectedRevision           int64  `json:"expected_mapping_revision"`
+		ImpactDigest               string `json:"impact_digest" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลแก้ไขไม่ครบ"})
@@ -293,10 +315,14 @@ func (h *MarketplaceAliasHandler) Update(c *gin.Context) {
 	result, err := h.aliasRepo.CommitMutation(c.Request.Context(), repository.MarketplaceAliasProposal{
 		AliasID: c.Param("id"), BillType: req.BillType, ItemCode: product.ItemCode, UnitCode: unitCode,
 		QuantityMultiplier: req.QuantityMultiplier, SalesEnabled: req.SalesEnabled, StockPolicy: req.StockPolicy,
-		ConfirmedBy: userID, ExpectedRevision: req.ExpectedRevision, ExpectedImpactDigest: req.ImpactDigest,
+		AcknowledgeManualUnmanaged: req.AcknowledgeManualUnmanaged,
+		ConfirmedBy:                userID, ExpectedRevision: req.ExpectedRevision, ExpectedImpactDigest: req.ImpactDigest,
 	})
 	if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
 		c.JSON(http.StatusConflict, gin.H{"error": "รายการนี้ถูกแก้ไขโดยผู้ใช้อื่นแล้ว กรุณารีเฟรชหน้า"})
+		return
+	}
+	if writeMarketplaceStockPolicyError(c, err) {
 		return
 	}
 	if err != nil {
@@ -324,6 +350,9 @@ func (h *MarketplaceAliasHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "รายการนี้ถูกแก้ไขหรือลบแล้ว กรุณารีเฟรชหน้า"})
 		return
 	}
+	if writeMarketplaceStockPolicyError(c, err) {
+		return
+	}
 	if err != nil {
 		h.logger.Error("delete marketplace alias", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ลบการจับคู่ไม่สำเร็จ"})
@@ -334,20 +363,21 @@ func (h *MarketplaceAliasHandler) Delete(c *gin.Context) {
 
 func (h *MarketplaceAliasHandler) ImpactPreview(c *gin.Context) {
 	var req struct {
-		AliasID            string `json:"alias_id"`
-		Source             string `json:"source" binding:"required"`
-		AccountKey         string `json:"account_key"`
-		ExternalItemID     string `json:"external_item_id"`
-		ExternalVariantID  string `json:"external_variant_id"`
-		SourceSKU          string `json:"source_sku"`
-		RawName            string `json:"raw_name"`
-		NormalizedKey      string `json:"normalized_key"`
-		ItemCode           string `json:"item_code" binding:"required"`
-		UnitCode           string `json:"unit_code"`
-		QuantityMultiplier int64  `json:"quantity_multiplier"`
-		SalesEnabled       *bool  `json:"sales_enabled"`
-		StockPolicy        string `json:"stock_policy"`
-		Deactivate         bool   `json:"deactivate"`
+		AliasID                    string `json:"alias_id"`
+		Source                     string `json:"source" binding:"required"`
+		AccountKey                 string `json:"account_key"`
+		ExternalItemID             string `json:"external_item_id"`
+		ExternalVariantID          string `json:"external_variant_id"`
+		SourceSKU                  string `json:"source_sku"`
+		RawName                    string `json:"raw_name"`
+		NormalizedKey              string `json:"normalized_key"`
+		ItemCode                   string `json:"item_code" binding:"required"`
+		UnitCode                   string `json:"unit_code"`
+		QuantityMultiplier         int64  `json:"quantity_multiplier"`
+		SalesEnabled               *bool  `json:"sales_enabled"`
+		StockPolicy                string `json:"stock_policy"`
+		AcknowledgeManualUnmanaged bool   `json:"acknowledge_manual_unmanaged"`
+		Deactivate                 bool   `json:"deactivate"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || !isMarketplaceSource(req.Source) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลสำหรับตรวจผลกระทบไม่ครบ"})
@@ -364,9 +394,13 @@ func (h *MarketplaceAliasHandler) ImpactPreview(c *gin.Context) {
 			ExternalVariantID: req.ExternalVariantID, SourceSKU: req.SourceSKU, RawName: req.RawName, NormalizedKey: req.NormalizedKey},
 		BillType: "sale", ItemCode: strings.TrimSpace(req.ItemCode), UnitCode: req.UnitCode,
 		QuantityMultiplier: req.QuantityMultiplier, SalesEnabled: req.SalesEnabled, StockPolicy: req.StockPolicy,
-		ScopeConfirmed: scopeConfirmed, Deactivate: req.Deactivate,
+		AcknowledgeManualUnmanaged: req.AcknowledgeManualUnmanaged,
+		ScopeConfirmed:             scopeConfirmed, Deactivate: req.Deactivate,
 	})
 	if err != nil {
+		if writeMarketplaceStockPolicyError(c, err) {
+			return
+		}
 		h.logger.Error("preview marketplace alias impact", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจผลกระทบไม่สำเร็จ"})
 		return
@@ -425,6 +459,25 @@ func (h *MarketplaceAliasHandler) PolicyJob(c *gin.Context) {
 	}
 	if err != nil {
 		h.logger.Error("get stock policy job", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดสถานะงานตั้ง stock ไม่สำเร็จ"})
+		return
+	}
+	c.JSON(http.StatusOK, job)
+}
+
+func (h *MarketplaceAliasHandler) LatestPolicyJobForAlias(c *gin.Context) {
+	aliasID := strings.TrimSpace(c.Param("id"))
+	if !uuidPattern.MatchString(aliasID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "alias id ไม่ถูกต้อง"})
+		return
+	}
+	job, err := h.aliasRepo.LatestStockPolicyJobForAlias(c.Request.Context(), aliasID)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบงานตั้ง stock สำหรับรายการนี้"})
+		return
+	}
+	if err != nil {
+		h.logger.Error("get latest stock policy job for alias", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดสถานะงานตั้ง stock ไม่สำเร็จ"})
 		return
 	}

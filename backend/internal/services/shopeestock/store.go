@@ -1210,12 +1210,36 @@ func (s *Store) UpdateMapping(ctx context.Context, shopID, itemID, modelID int64
 		return nil, err
 	}
 	defer tx.Rollback()
+	var initialAliasID string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(m.marketplace_alias_id::text,'')
+		FROM shopee_stock_products p JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
+		WHERE p.shop_id=$1 AND p.item_id=$2 AND p.model_id=$3 AND p.is_active=true`, shopID, itemID, modelID).
+		Scan(&initialAliasID); err != nil {
+		return nil, err
+	}
+	if initialAliasID != "" {
+		var stockPolicy string
+		if err := tx.QueryRowContext(ctx, `SELECT stock_policy FROM marketplace_item_aliases
+			WHERE id=$1::uuid FOR UPDATE`, initialAliasID).Scan(&stockPolicy); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrMappingConflict
+			}
+			return nil, err
+		}
+		if err := validateStockMappingExclusionPolicy(stockPolicy); err != nil {
+			return nil, err
+		}
+	}
 	var previousSMLItemCode string
-	if err := tx.QueryRowContext(ctx, `SELECT m.sml_item_code
+	var lockedAliasID string
+	if err := tx.QueryRowContext(ctx, `SELECT m.sml_item_code,COALESCE(m.marketplace_alias_id::text,'')
 		FROM shopee_stock_products p JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
 		WHERE p.shop_id=$1 AND p.item_id=$2 AND p.model_id=$3 AND p.is_active=true FOR UPDATE OF m`, shopID, itemID, modelID).
-		Scan(&previousSMLItemCode); err != nil {
+		Scan(&previousSMLItemCode, &lockedAliasID); err != nil {
 		return nil, err
+	}
+	if lockedAliasID != initialAliasID {
+		return nil, ErrMappingConflict
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE shopee_stock_mappings
 			SET excluded=true,shared_pool_enabled=false,pool_allocation_pct=100,updated_by=NULLIF($5,'')::uuid,updated_at=NOW()

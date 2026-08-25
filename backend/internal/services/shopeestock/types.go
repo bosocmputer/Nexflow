@@ -194,18 +194,19 @@ type ProductVariantFilter struct {
 }
 
 type MappingUpdate struct {
-	SMLItemCode               string     `json:"sml_item_code"`
-	SMLUnitCode               string     `json:"sml_unit_code"`
-	ManualUnitFactor          *float64   `json:"manual_unit_factor,omitempty"`
-	Excluded                  bool       `json:"excluded"`
-	UpdatedAt                 time.Time  `json:"updated_at"`
-	MarketplaceAliasID        string     `json:"marketplace_alias_id,omitempty"`
-	MarketplaceAliasUpdatedAt *time.Time `json:"marketplace_alias_updated_at,omitempty"`
-	QuantityMultiplier        int64      `json:"quantity_multiplier,omitempty"`
-	SalesEnabled              *bool      `json:"sales_enabled,omitempty"`
-	StockPolicy               string     `json:"stock_policy,omitempty"`
-	ExpectedRevision          int64      `json:"expected_mapping_revision,omitempty"`
-	ImpactDigest              string     `json:"impact_digest,omitempty"`
+	SMLItemCode                string     `json:"sml_item_code"`
+	SMLUnitCode                string     `json:"sml_unit_code"`
+	ManualUnitFactor           *float64   `json:"manual_unit_factor,omitempty"`
+	Excluded                   bool       `json:"excluded"`
+	UpdatedAt                  time.Time  `json:"updated_at"`
+	MarketplaceAliasID         string     `json:"marketplace_alias_id,omitempty"`
+	MarketplaceAliasUpdatedAt  *time.Time `json:"marketplace_alias_updated_at,omitempty"`
+	QuantityMultiplier         int64      `json:"quantity_multiplier,omitempty"`
+	SalesEnabled               *bool      `json:"sales_enabled,omitempty"`
+	StockPolicy                string     `json:"stock_policy,omitempty"`
+	AcknowledgeManualUnmanaged bool       `json:"acknowledge_manual_unmanaged,omitempty"`
+	ExpectedRevision           int64      `json:"expected_mapping_revision,omitempty"`
+	ImpactDigest               string     `json:"impact_digest,omitempty"`
 }
 
 type SharedPoolMember struct {

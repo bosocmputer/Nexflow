@@ -21,19 +21,29 @@ import (
 )
 
 var (
-	ErrUnavailable         = errors.New("ระบบซิงก์สต๊อก Shopee ยังไม่พร้อมใช้งาน")
-	ErrGatewayOnly         = errors.New("ซิงก์สต๊อก v1 รองรับเฉพาะ Central Shopee Gateway")
-	ErrScopeRequired       = errors.New("กรุณาเลือก 1 คลังและ 1 พื้นที่เก็บ")
-	ErrSelectedLocation    = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
-	ErrSyncInProgress      = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
-	ErrBlockedReservations = errors.New("มีคำสั่งซื้อที่ยังพิสูจน์ mapping หรือ conversion ไม่ได้ ระบบหยุดส่ง stock เพื่อป้องกันขายเกิน")
-	ErrPreviewStale        = errors.New("ข้อมูลสินค้า สต๊อก หรือการตั้งค่าเปลี่ยนระหว่างคำนวณ กรุณาตรวจสต๊อกใหม่")
+	ErrUnavailable            = errors.New("ระบบซิงก์สต๊อก Shopee ยังไม่พร้อมใช้งาน")
+	ErrGatewayOnly            = errors.New("ซิงก์สต๊อก v1 รองรับเฉพาะ Central Shopee Gateway")
+	ErrScopeRequired          = errors.New("กรุณาเลือก 1 คลังและ 1 พื้นที่เก็บ")
+	ErrSelectedLocation       = errors.New("คลังหรือพื้นที่เก็บที่เลือกไม่มีอยู่ใน SML แล้ว")
+	ErrSyncInProgress         = errors.New("ร้านนี้มีงานซิงก์สต๊อกกำลังทำงานอยู่")
+	ErrBlockedReservations    = errors.New("มีคำสั่งซื้อที่ยังพิสูจน์ mapping หรือ conversion ไม่ได้ ระบบหยุดส่ง stock เพื่อป้องกันขายเกิน")
+	ErrPreviewStale           = errors.New("ข้อมูลสินค้า สต๊อก หรือการตั้งค่าเปลี่ยนระหว่างคำนวณ กรุณาตรวจสต๊อกใหม่")
+	ErrUnsafeManagedExclusion = errors.New("ต้องเลือกตั้ง stock เป็น 0 แล้วปิด หรือยืนยันว่าจะจัดการ stock เอง ก่อนยกเว้นสินค้าที่ Nexflow จัดการอยู่")
 )
 
 type ValidationError struct{ Message string }
 
 func (e *ValidationError) Error() string { return e.Message }
 func invalid(message string) error       { return &ValidationError{Message: message} }
+
+func validateStockMappingExclusionPolicy(policy string) error {
+	switch strings.TrimSpace(policy) {
+	case "managed", "zeroing":
+		return ErrUnsafeManagedExclusion
+	default:
+		return nil
+	}
+}
 
 type Config struct {
 	Enabled                  bool

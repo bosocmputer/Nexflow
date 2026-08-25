@@ -556,6 +556,10 @@ ALTER TABLE shopee_stock_policy_jobs
 CREATE INDEX IF NOT EXISTS shopee_stock_policy_jobs_claim_idx
   ON shopee_stock_policy_jobs(status, next_attempt_at, lease_until);
 
+CREATE INDEX IF NOT EXISTS shopee_stock_policy_jobs_alias_created_idx
+  ON shopee_stock_policy_jobs(tenant_key, marketplace_alias_id, created_at DESC)
+  WHERE marketplace_alias_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS marketplace_conversion_readiness (
   singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
   catalog_generation_ready BOOLEAN NOT NULL DEFAULT false,

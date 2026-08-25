@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -60,14 +61,83 @@ func TestMarketplaceMappingCompletionWarningsFailClosed(t *testing.T) {
 }
 
 func TestMarketplaceStockPolicyTransitionsRequireDurableConfirmation(t *testing.T) {
-	if err := validateMarketplaceStockPolicyTransition("managed", "disabled_zero"); err == nil {
+	if err := validateMarketplaceStockPolicyTransition("managed", "blocked", false); !errors.Is(err, ErrMarketplaceUnsafeStockDisable) {
+		t.Fatalf("managed listing must not be silently blocked: %v", err)
+	}
+	if err := validateMarketplaceStockPolicyTransition("managed", "zeroing", false); err != nil {
+		t.Fatalf("managed listing may enter durable zeroing: %v", err)
+	}
+	if err := validateMarketplaceStockPolicyTransition("managed", "manual_unmanaged", false); !errors.Is(err, ErrMarketplaceManualUnmanagedAcknowledgementRequired) {
+		t.Fatalf("manual unmanaged transition must require an explicit acknowledgement: %v", err)
+	}
+	if err := validateMarketplaceStockPolicyTransition("managed", "manual_unmanaged", true); err != nil {
+		t.Fatalf("acknowledged manual unmanaged transition should be allowed: %v", err)
+	}
+	if err := validateMarketplaceStockPolicyTransition("managed", "disabled_zero", false); err == nil {
 		t.Fatal("public mutation must not assert disabled_zero without Shopee read-back")
 	}
-	if err := validateMarketplaceStockPolicyTransition("zeroing", "manual_unmanaged"); err == nil {
-		t.Fatal("zeroing must not be bypassed while the durable write is in flight")
+	if err := validateMarketplaceStockPolicyTransition("zeroing", "manual_unmanaged", true); !errors.Is(err, ErrMarketplaceStockZeroingInProgress) {
+		t.Fatalf("zeroing must not be bypassed while the durable write is in flight: %v", err)
 	}
-	if err := validateMarketplaceStockPolicyTransition("disabled_zero", "managed"); err != nil {
+	if err := validateMarketplaceStockPolicyTransition("zeroing", "zeroing", false); !errors.Is(err, ErrMarketplaceStockZeroingInProgress) {
+		t.Fatalf("the public mutation flow must be locked while the durable zeroing job owns the listing: %v", err)
+	}
+	if err := validateMarketplaceStockPolicyTransition("disabled_zero", "managed", false); err != nil {
 		t.Fatalf("a confirmed zero listing may be enabled through the normal guarded flow: %v", err)
+	}
+}
+
+func TestDeactivateManagedMarketplaceAliasRequiresSafeStockPolicyFirst(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)SELECT id::text,source,account_key.*FROM marketplace_item_aliases WHERE id=\$1::uuid`).
+		WithArgs("00000000-0000-0000-0000-000000000001").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "account_key", "external_item_id", "external_variant_id", "source_sku", "raw_name", "normalized_key",
+			"item_code", "unit_code", "quantity_multiplier", "stand", "divide", "generation", "conversion_status",
+			"sales_enabled", "stock_policy", "scope_confirmed", "mapping_revision", "is_active",
+		}).AddRow("00000000-0000-0000-0000-000000000001", "shopee", "shop:42", "10", "20", "SELLER", "สินค้า", "สินค้า",
+			"OLD", "ชิ้น", 1, "1", "1", "00000000-0000-0000-0000-000000000099", "ready", true, "managed", true, 7, true))
+
+	_, _, _, err = resolveMarketplaceMutation(context.Background(), db, MarketplaceAliasProposal{
+		AliasID: "00000000-0000-0000-0000-000000000001", Deactivate: true,
+	})
+	if !errors.Is(err, ErrMarketplaceUnsafeStockDisable) {
+		t.Fatalf("managed alias deactivation must fail closed before any catalog mutation: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLatestStockPolicyJobForAliasRecoversDurableJobAcrossSessions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	createdAt := time.Now().UTC()
+	mock.ExpectQuery(`(?s)FROM shopee_stock_policy_jobs.*marketplace_alias_id=\$1::uuid AND tenant_key=\$2.*ORDER BY created_at DESC LIMIT 1`).
+		WithArgs("00000000-0000-0000-0000-000000000001", "tenant-a").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "shop_id", "marketplace_alias_id", "target_revision", "item_id", "model_id", "policy_action",
+			"status", "attempt_count", "error_message", "created_at", "finished_at",
+		}).AddRow("00000000-0000-0000-0000-000000000010", int64(42), "00000000-0000-0000-0000-000000000001", int64(8), int64(10), int64(20),
+			"zero_then_disable", "failed", 10, "read-back failed", createdAt, nil))
+
+	repo := NewMarketplaceAliasRepo(db).WithTenantKey("tenant-a")
+	job, err := repo.LatestStockPolicyJobForAlias(context.Background(), "00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ID != "00000000-0000-0000-0000-000000000010" || job.Status != "failed" || job.AttemptCount != 10 {
+		t.Fatalf("job=%+v", job)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

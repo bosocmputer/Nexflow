@@ -53,6 +53,12 @@ the exact line amount, so increasing quantity does not increase document value.
   Retry replays those bytes and never rebuilds a payload for the same `doc_no`.
 - Changing or disabling a Master linked to Shopee stock pauses every affected
   shop and requires reconciliation plus a new Dry-run.
+- A `managed` Shopee variant cannot be deleted, excluded, or changed directly
+  to `blocked`. The admin must choose either durable `zeroing` (write zero and
+  confirm by read-back) or `manual_unmanaged` with an explicit acknowledgement.
+  While zeroing is active, other mutations are locked. The latest durable
+  policy job is recoverable by alias after a page reload so failed/unknown jobs
+  still expose the same retry action.
 - Unit, multiplier, sales policy, and stock policy live on the canonical scoped
   variant. `shopee_stock_mappings` mirrors the resulting factor for stock runs.
 

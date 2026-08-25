@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,12 +26,25 @@ import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
 
 const SOURCE_LABEL: Record<string, string> = { shopee: 'Shopee', lazada: 'Lazada', tiktok: 'TikTok' }
+const STOCK_POLICY_LABEL: Record<MarketplaceItemAlias['stock_policy'], string> = {
+  managed: 'ให้ Nexflow จัดการ stock',
+  zeroing: 'ตั้ง stock เป็น 0 แล้วปิด',
+  disabled_zero: 'ปิดแล้วและยืนยัน stock 0',
+  manual_unmanaged: 'คง stock เดิมและจัดการเอง',
+  blocked: 'บล็อกไว้จนกว่า Dry-run จะผ่าน',
+}
 const PER_PAGE = 30
 
 type TabKey = 'pending' | 'saved'
 type SourceFilter = 'all' | 'shopee' | 'lazada' | 'tiktok'
 type StatusFilter = 'all' | 'ready' | 'fix' | 'disabled'
-type ConversionConfig = { unitCode: string; quantityMultiplier: number; salesEnabled: boolean; stockPolicy: MarketplaceItemAlias['stock_policy'] }
+type ConversionConfig = {
+  unitCode: string
+  quantityMultiplier: number
+  salesEnabled: boolean
+  stockPolicy: MarketplaceItemAlias['stock_policy']
+  acknowledgeManualUnmanaged: boolean
+}
 type ConversionEditor =
   | { kind: 'confirm'; group: MarketplaceAliasReviewGroup; product: CatalogMatch }
   | { kind: 'update'; alias: MarketplaceItemAlias; product: CatalogMatch }
@@ -72,6 +86,7 @@ export default function MarketplaceAliases() {
   const [activePolicyJob, setActivePolicyJob] = useState<MarketplaceStockPolicyJob | null>(null)
   const [readiness, setReadiness] = useState<MarketplaceConversionReadiness | null>(null)
   const jobPollToken = useRef(0)
+  const policyJobPollToken = useRef(0)
 
 	const groupedSaved = tab === 'saved' && groupedAvailable === true
   const pages = groupedSaved ? groupCursorHistory.length + 1 + (nextGroupCursor ? 1 : 0) : Math.max(1, Math.ceil(total / PER_PAGE))
@@ -123,7 +138,7 @@ export default function MarketplaceAliases() {
 	}, [groupCursor, groupedAvailable, page, query, source, status, tab])
 
   useEffect(() => { void load() }, [load])
-  useEffect(() => () => { jobPollToken.current += 1 }, [])
+  useEffect(() => () => { jobPollToken.current += 1; policyJobPollToken.current += 1 }, [])
   useEffect(() => {
     let active = true
     let timer = 0
@@ -153,6 +168,7 @@ export default function MarketplaceAliases() {
     quantityMultiplier = 1,
     salesEnabled = true,
     stockPolicy = 'blocked',
+    acknowledgeManualUnmanaged = false,
   ) => {
     setPreviewing(true)
     try {
@@ -170,6 +186,7 @@ export default function MarketplaceAliases() {
         quantity_multiplier: quantityMultiplier,
         sales_enabled: salesEnabled,
         stock_policy: stockPolicy,
+        acknowledge_manual_unmanaged: acknowledgeManualUnmanaged,
         deactivate,
       })
       return response.data
@@ -182,16 +199,30 @@ export default function MarketplaceAliases() {
   }
 
   const prepareConfirm = async (group: MarketplaceAliasReviewGroup, product: CatalogMatch, conversion: ConversionConfig) => {
-    const impact = await previewImpact(group, product.item_code, '', false, conversion.unitCode, conversion.quantityMultiplier, conversion.salesEnabled, conversion.stockPolicy)
+    const impact = await previewImpact(group, product.item_code, '', false, conversion.unitCode, conversion.quantityMultiplier, conversion.salesEnabled, conversion.stockPolicy, conversion.acknowledgeManualUnmanaged)
     if (impact) setAction({ kind: 'confirm', group, product, conversion, impact })
   }
 
   const prepareUpdate = async (alias: MarketplaceItemAlias, product: CatalogMatch, conversion: ConversionConfig) => {
-    const impact = await previewImpact(alias, product.item_code, alias.id, false, conversion.unitCode, conversion.quantityMultiplier, conversion.salesEnabled, conversion.stockPolicy)
+    const impact = await previewImpact(alias, product.item_code, alias.id, false, conversion.unitCode, conversion.quantityMultiplier, conversion.salesEnabled, conversion.stockPolicy, conversion.acknowledgeManualUnmanaged)
     if (impact) setAction({ kind: 'update', alias, product, conversion, impact })
   }
 
   const prepareDelete = async (alias: MarketplaceItemAlias) => {
+    if (alias.source === 'shopee' && alias.stock_policy === 'zeroing') {
+      toast.warning('กำลังตั้ง stock เป็น 0 กรุณารอให้ Shopee ยืนยันก่อนหยุดใช้การจับคู่')
+      void recoverPolicyJob(alias.id)
+      return
+    }
+    if (alias.source === 'shopee' && alias.stock_policy === 'managed') {
+      toast.warning('ก่อนหยุดใช้ กรุณาเลือก “ตั้ง stock เป็น 0 แล้วปิด” หรือ “คง stock เดิมและจัดการเอง”')
+      setConversionEditor({
+        kind: 'update',
+        alias,
+        product: { item_code: alias.item_code, item_name: alias.item_name || alias.item_code, unit_code: alias.unit_code, score: 1 },
+      })
+      return
+    }
     const impact = await previewImpact(alias, alias.item_code, alias.id, true, alias.unit_code, alias.quantity_multiplier || 1, false, 'blocked')
     if (impact) setAction({ kind: 'delete', alias, impact })
   }
@@ -245,9 +276,12 @@ export default function MarketplaceAliases() {
   }
 
   const monitorPolicyJob = async (initial: MarketplaceStockPolicyJob) => {
+    const token = policyJobPollToken.current + 1
+    policyJobPollToken.current = token
     setActivePolicyJob(initial)
     let consecutivePollFailures = 0
     for (let attempt = 0; attempt < 600; attempt += 1) {
+      if (policyJobPollToken.current !== token) return
       let response
       try {
         response = await client.get<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/policy-jobs/${initial.id}`)
@@ -261,6 +295,7 @@ export default function MarketplaceAliases() {
         await new Promise((resolve) => window.setTimeout(resolve, consecutivePollFailures * 1000))
         continue
       }
+      if (policyJobPollToken.current !== token) return
       setActivePolicyJob(response.data)
       if (response.data.status === 'completed') {
         toast.success('ตั้ง stock Shopee เป็น 0 และปิดการจัดการรายการนี้แล้ว')
@@ -287,6 +322,20 @@ export default function MarketplaceAliases() {
     }
   }
 
+  const recoverPolicyJob = async (aliasID: string) => {
+    try {
+      const response = await client.get<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/${aliasID}/policy-job`)
+      if (response.data.status === 'completed') {
+        toast.success('งานเดิมยืนยัน stock 0 สำเร็จแล้ว กำลังรีเฟรชรายการ')
+        await load()
+        return
+      }
+      void monitorPolicyJob(response.data)
+    } catch (error) {
+      toast.error(errorMessage(error, 'ไม่พบสถานะงานตั้ง stock 0 กรุณาติดต่อผู้ดูแลระบบ'))
+    }
+  }
+
   const confirmAction = async () => {
     if (!action) return
     try {
@@ -306,6 +355,7 @@ export default function MarketplaceAliases() {
           quantity_multiplier: conversion.quantityMultiplier,
           sales_enabled: conversion.salesEnabled,
           stock_policy: conversion.stockPolicy,
+          acknowledge_manual_unmanaged: conversion.acknowledgeManualUnmanaged,
           expected_mapping_revision: action.impact.current_mapping_revision,
           impact_digest: action.impact.impact_digest,
         })
@@ -320,6 +370,7 @@ export default function MarketplaceAliases() {
           quantity_multiplier: action.conversion.quantityMultiplier,
           sales_enabled: action.conversion.salesEnabled,
           stock_policy: action.conversion.stockPolicy,
+          acknowledge_manual_unmanaged: action.conversion.acknowledgeManualUnmanaged,
           expected_mapping_revision: action.impact.current_mapping_revision,
           impact_digest: action.impact.impact_digest,
         })
@@ -501,6 +552,7 @@ export default function MarketplaceAliases() {
       <ConversionConfigDialog
 		value={conversionEditor}
 		onClose={() => setConversionEditor(null)}
+		onRecoverPolicyJob={(aliasID) => recoverPolicyJob(aliasID)}
 		onContinue={async (conversion) => {
 		  const editor = conversionEditor
 		  setConversionEditor(null)
@@ -526,24 +578,58 @@ export default function MarketplaceAliases() {
   )
 }
 
-function ConversionConfigDialog({ value, onClose, onContinue }: { value: ConversionEditor | null; onClose: () => void; onContinue: (config: ConversionConfig) => Promise<void> }) {
+function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob }: {
+  value: ConversionEditor | null
+  onClose: () => void
+  onContinue: (config: ConversionConfig) => Promise<void>
+  onRecoverPolicyJob: (aliasID: string) => Promise<void>
+}) {
   const [units, setUnits] = useState<UnitOption[]>([])
   const [unitCode, setUnitCode] = useState('')
   const [multiplier, setMultiplier] = useState('1')
   const [salesEnabled, setSalesEnabled] = useState(true)
   const [stockPolicy, setStockPolicy] = useState<MarketplaceItemAlias['stock_policy']>('blocked')
+  const [manualUnmanagedAcknowledged, setManualUnmanagedAcknowledged] = useState(false)
   const [loadingUnits, setLoadingUnits] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [unitError, setUnitError] = useState('')
 
   const source = value?.kind === 'confirm' ? value.group.source : value?.alias.source
   const product = value?.product
+  const currentStockPolicy: MarketplaceItemAlias['stock_policy'] = value?.kind === 'update' ? value.alias.stock_policy : 'blocked'
+  const stockPolicyOptions: Array<{ value: MarketplaceItemAlias['stock_policy']; label: string; disabled?: boolean }> = currentStockPolicy === 'managed'
+    ? [
+        { value: 'managed', label: 'ให้ Nexflow คำนวณและส่งสต๊อก' },
+        { value: 'zeroing', label: 'ตั้ง stock เป็น 0 แล้วปิด' },
+        { value: 'manual_unmanaged', label: 'คง stock เดิมและจัดการเอง' },
+      ]
+    : currentStockPolicy === 'zeroing'
+      ? [{ value: 'zeroing', label: 'กำลังตั้ง stock เป็น 0 ก่อนปิด' }]
+      : currentStockPolicy === 'disabled_zero'
+        ? [
+            { value: 'disabled_zero', label: 'ปิดแล้วและยืนยัน stock 0', disabled: true },
+            { value: 'managed', label: 'เปิดให้ Nexflow จัดการสต๊อกอีกครั้ง' },
+            { value: 'manual_unmanaged', label: 'จัดการ stock เอง' },
+          ]
+        : currentStockPolicy === 'manual_unmanaged'
+          ? [
+              { value: 'manual_unmanaged', label: 'คงสต๊อกเดิมและจัดการเอง' },
+              { value: 'managed', label: 'ให้ Nexflow คำนวณและส่งสต๊อก' },
+              { value: 'zeroing', label: 'ตั้ง stock เป็น 0 แล้วปิด' },
+            ]
+          : [
+              { value: 'blocked', label: 'ยังไม่เปิดจนกว่าจะตรวจ Dry-run' },
+              { value: 'managed', label: 'ให้ Nexflow คำนวณและส่งสต๊อก' },
+              { value: 'zeroing', label: 'ตั้ง stock เป็น 0 แล้วปิด' },
+              { value: 'manual_unmanaged', label: 'คง stock เดิมและจัดการเอง' },
+            ]
   useEffect(() => {
     if (!value || !product) return
     const existing = value.kind === 'update' ? value.alias : null
     setMultiplier(String(existing?.quantity_multiplier || 1))
     setSalesEnabled(existing?.sales_enabled ?? true)
     setStockPolicy(source === 'shopee' ? (existing?.stock_policy ?? 'blocked') : 'blocked')
+    setManualUnmanagedAcknowledged(existing?.stock_policy === 'manual_unmanaged')
     setUnitCode(existing?.item_code === product.item_code ? existing.unit_code : product.unit_code)
     setUnits([])
     setUnitError('')
@@ -571,16 +657,24 @@ function ConversionConfigDialog({ value, onClose, onContinue }: { value: Convers
   const stand = selectedUnit?.stand_value_exact || selectedUnit?.stand_value
   const divide = selectedUnit?.divide_value_exact || selectedUnit?.divide_value
   const baseFactor = stand && divide && Number(divide) > 0 ? multiplierValue * Number(stand) / Number(divide) : null
-  const canSubmit = Boolean(product && selectedUnit && multiplierValid && !unitError && !loadingUnits && !submitting)
+  const requiresManualAcknowledgement = source === 'shopee' && stockPolicy === 'manual_unmanaged' && currentStockPolicy !== 'manual_unmanaged'
+  const zeroingInProgress = source === 'shopee' && currentStockPolicy === 'zeroing'
+  const canSubmit = Boolean(product && selectedUnit && multiplierValid && !unitError && !loadingUnits && !submitting && !zeroingInProgress && (!requiresManualAcknowledgement || manualUnmanagedAcknowledged))
   const submitDisabledReason = loadingUnits
     ? 'กำลังโหลดหน่วยนับ'
-    : unitError || (!selectedUnit ? 'ต้องเลือกหน่วยที่มี conversion จาก Catalog' : !multiplierValid ? 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000' : '')
+    : unitError || (zeroingInProgress ? 'กำลังตั้ง stock เป็น 0 กรุณารอให้งานเดิมเสร็จ' : !selectedUnit ? 'ต้องเลือกหน่วยที่มี conversion จาก Catalog' : !multiplierValid ? 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000' : requiresManualAcknowledgement && !manualUnmanagedAcknowledged ? 'ต้องยืนยันว่าจะจัดการ stock Shopee เอง' : '')
 
   const submit = async () => {
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      await onContinue({ unitCode, quantityMultiplier: multiplierValue, salesEnabled, stockPolicy: source === 'shopee' ? stockPolicy : 'blocked' })
+      await onContinue({
+        unitCode,
+        quantityMultiplier: multiplierValue,
+        salesEnabled,
+        stockPolicy: source === 'shopee' ? stockPolicy : 'blocked',
+        acknowledgeManualUnmanaged: requiresManualAcknowledgement && manualUnmanagedAcknowledged,
+      })
     } finally {
       setSubmitting(false)
     }
@@ -619,18 +713,37 @@ function ConversionConfigDialog({ value, onClose, onContinue }: { value: Convers
           {source === 'shopee' && (
             <div className="grid gap-2">
               <Label htmlFor="marketplace-stock-policy">การจัดการสต๊อก Shopee</Label>
-              <Select value={stockPolicy} onValueChange={(value) => setStockPolicy(value as MarketplaceItemAlias['stock_policy'])}>
+              <Select
+                value={stockPolicy}
+                disabled={currentStockPolicy === 'zeroing'}
+                onValueChange={(nextValue) => {
+                  const nextPolicy = nextValue as MarketplaceItemAlias['stock_policy']
+                  setStockPolicy(nextPolicy)
+                  setManualUnmanagedAcknowledged(nextPolicy === 'manual_unmanaged' && currentStockPolicy === 'manual_unmanaged')
+                }}
+              >
                 <SelectTrigger id="marketplace-stock-policy"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="managed">ให้ Nexflow คำนวณและส่งสต๊อก</SelectItem>
-                  <SelectItem value="zeroing">ตั้ง stock เป็น 0 แล้วปิด</SelectItem>
-                  <SelectItem value="manual_unmanaged">คงสต๊อกเดิมและจัดการเอง</SelectItem>
-                  <SelectItem value="blocked">ยังไม่เปิดจนกว่าจะตรวจ Dry-run</SelectItem>
-                  <SelectItem value="disabled_zero" disabled>ปิดแล้วและยืนยัน stock 0</SelectItem>
+                  {stockPolicyOptions.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {stockPolicy === 'manual_unmanaged' && <p className="text-xs text-warning">รายการนี้ห้ามใช้สต๊อกร่วมกับ listing ที่ระบบจัดการจนกว่าจะตั้งเป็น 0 หรือมี allocation ที่พิสูจน์ได้</p>}
-              {stockPolicy === 'zeroing' && <p className="text-xs text-warning">หลังยืนยัน ระบบจะสร้างงานตั้ง stock ของตัวเลือกนี้เป็น 0 และอ่านกลับจาก Shopee ก่อนเปลี่ยนสถานะเป็นปิด</p>}
+              {stockPolicy === 'manual_unmanaged' && (
+                <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                  <p className="text-xs text-warning">Nexflow จะไม่ส่ง stock ให้รายการนี้ และรายการนี้ห้ามใช้สต๊อกร่วมกับ listing ที่ระบบจัดการจนกว่าจะตั้งเป็น 0 หรือมี allocation ที่พิสูจน์ได้</p>
+                  {requiresManualAcknowledgement && (
+                    <label className="flex cursor-pointer items-start gap-2 text-xs">
+                      <Checkbox checked={manualUnmanagedAcknowledged} onCheckedChange={(checked) => setManualUnmanagedAcknowledged(checked === true)} />
+                      <span>ฉันรับทราบว่าจะตรวจและจัดการจำนวน stock ของตัวเลือกนี้ใน Shopee เอง</span>
+                    </label>
+                  )}
+                </div>
+              )}
+              {stockPolicy === 'zeroing' && (
+                <div className="flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                  <p className="text-xs text-warning">{zeroingInProgress ? 'รายการนี้กำลังรอ Shopee ยืนยัน stock 0 การแก้ไขอื่นถูกล็อกไว้' : 'หลังยืนยัน ระบบจะสร้างงานตั้ง stock ของตัวเลือกนี้เป็น 0 และอ่านกลับจาก Shopee ก่อนเปลี่ยนสถานะเป็นปิด'}</p>
+                  {zeroingInProgress && value?.kind === 'update' && <Button type="button" size="sm" variant="outline" onClick={() => void onRecoverPolicyJob(value.alias.id)}>ดูสถานะงาน</Button>}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -853,8 +966,8 @@ function actionDescription(action: PendingAction | null) {
   const impact = action.impact
 	const impactText = `${marketplaceImpactFormulaLines(impact).join('\n')}\nออเดอร์ที่ยังไม่ส่ง: ${impact.open_items.toLocaleString()} รายการ ใน ${impact.open_bills.toLocaleString()} บิล${impact.manual_override_items ? ` · ข้าม manual override ${impact.manual_override_items.toLocaleString()}` : ''}\nไม่แก้ย้อนหลัง: attempted/sent ${impact.attempted_items.toLocaleString()} · archived ${impact.archived_items.toLocaleString()}\nReservation ที่ต้อง reconcile: ${impact.reservation_moves.toLocaleString()}\nการซิงก์สต๊อกที่เกี่ยวข้อง: ${impact.stock_mappings.toLocaleString()} รายการ ใน ${impact.affected_shop_ids.length.toLocaleString()} ร้าน${impact.stock_conflicts ? ` · พบการจับคู่สต๊อกซ้ำ ${impact.stock_conflicts.toLocaleString()}` : ''}${impact.dry_run_required ? '\nหลังบันทึกต้องตรวจสต๊อกใหม่ก่อนเปิดซิงก์' : ''}`
   if (action.kind === 'delete') return `หยุดใช้ ${action.alias.source_sku || action.alias.raw_name} ในอนาคต\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
-  if (action.kind === 'update') return `ค่าเดิม: ${action.alias.item_code}\nค่าใหม่: ${action.product.item_code} · ${action.product.item_name}\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
-  return `ต้นทาง: ${action.group.source_sku || action.group.raw_name}\nสินค้า SML: ${action.product.item_code} · ${action.product.item_name}\n${impactText}`
+  if (action.kind === 'update') return `ค่าเดิม: ${action.alias.item_code}\nค่าใหม่: ${action.product.item_code} · ${action.product.item_name}${action.alias.source === 'shopee' ? `\nนโยบาย stock: ${STOCK_POLICY_LABEL[action.conversion.stockPolicy]}` : ''}\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
+  return `ต้นทาง: ${action.group.source_sku || action.group.raw_name}\nสินค้า SML: ${action.product.item_code} · ${action.product.item_name}${action.group.source === 'shopee' ? `\nนโยบาย stock: ${STOCK_POLICY_LABEL[action.conversion.stockPolicy]}` : ''}\n${impactText}`
 }
 
 function ChannelAccount({ source, accountName, accountKey }: { source: string; accountName?: string; accountKey: string }) {

@@ -31,6 +31,7 @@ import { StockSchedulePicker, formatStockSchedule, type StockScheduleValue } fro
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -49,7 +50,7 @@ import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
-import type { CatalogMatch, CatalogSetComponent, MarketplaceAliasImpact } from '@/types'
+import type { CatalogMatch, CatalogSetComponent, MarketplaceAliasImpact, MarketplaceStockPolicyJob } from '@/types'
 
 type LocationPair = { warehouse: string; location: string }
 type StockLocation = { warehouse_code: string; warehouse_name: string; location_code: string; location_name: string }
@@ -67,6 +68,14 @@ type StockCatalogOption = {
   set_warning_codes?: string[]
   set_components?: CatalogSetComponent[]
   units: StockCatalogUnit[]
+}
+type StockPolicy = 'managed' | 'zeroing' | 'disabled_zero' | 'manual_unmanaged' | 'blocked'
+const STOCK_POLICY_LABEL: Record<StockPolicy, string> = {
+  managed: 'ให้ Nexflow จัดการ stock',
+  zeroing: 'ตั้ง stock เป็น 0 แล้วปิด',
+  disabled_zero: 'ปิดแล้วและยืนยัน stock 0',
+  manual_unmanaged: 'คง stock เดิมและจัดการเอง',
+  blocked: 'บล็อกไว้จนกว่า Dry-run จะผ่าน',
 }
 type StockSetting = StockScheduleValue & {
   shop_id: number
@@ -1514,10 +1523,13 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
   const [units, setUnits] = useState<StockCatalogUnit[]>([])
   const [unitCode, setUnitCode] = useState('')
   const [quantityMultiplier, setQuantityMultiplier] = useState('1')
-  const [stockPolicy, setStockPolicy] = useState<'managed' | 'blocked'>('blocked')
+  const [stockPolicy, setStockPolicy] = useState<StockPolicy>('blocked')
+  const [manualUnmanagedAcknowledged, setManualUnmanagedAcknowledged] = useState(false)
   const [busy, setBusy] = useState(false)
   const [confirmExclude, setConfirmExclude] = useState(false)
   const [saveImpact, setSaveImpact] = useState<MarketplaceAliasImpact | null>(null)
+  const [recoveredPolicyJob, setRecoveredPolicyJob] = useState<MarketplaceStockPolicyJob | null>(null)
+  const [policyRefreshKey, setPolicyRefreshKey] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -1527,7 +1539,8 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
     setUnits([])
     setUnitCode(product?.sml_unit_code || '')
     setQuantityMultiplier(String(product?.marketplace_quantity_multiplier || 1))
-    setStockPolicy(product?.marketplace_stock_policy === 'managed' ? 'managed' : 'blocked')
+    setStockPolicy(product?.marketplace_stock_policy ?? 'blocked')
+    setManualUnmanagedAcknowledged(product?.marketplace_stock_policy === 'manual_unmanaged')
     if (product?.sml_item_code) {
       setBusy(true)
       void client.get<{ items: StockCatalogOption[] }>('/api/settings/shopee-stock/catalog-search', { params: { q: product.sml_item_code } })
@@ -1540,7 +1553,50 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         .finally(() => { if (active) setBusy(false) })
     }
     return () => { active = false }
-  }, [product?.item_id, product?.model_id, product?.sml_item_code, product?.sml_item_name, product?.sml_unit_code, product?.manual_unit_factor])
+  }, [product?.item_id, product?.model_id, product?.sml_item_code, product?.sml_item_name, product?.sml_unit_code, product?.manual_unit_factor, product?.marketplace_quantity_multiplier, product?.marketplace_stock_policy])
+
+  useEffect(() => {
+    const aliasID = product?.marketplace_alias_id
+    if (!aliasID || product?.marketplace_stock_policy !== 'zeroing') {
+      setRecoveredPolicyJob(null)
+      return
+    }
+    let active = true
+    let timer = 0
+    const refresh = async () => {
+      try {
+        const response = await client.get<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/${aliasID}/policy-job`)
+        if (!active) return
+        setRecoveredPolicyJob(response.data)
+        if (response.data.status === 'completed') {
+          toast.success('Shopee ยืนยัน stock 0 แล้ว กำลังรีเฟรชรายการ')
+          await onSaved()
+          return
+        }
+        if ((response.data.status === 'failed' || response.data.status === 'unknown') && response.data.attempt_count >= 10) return
+        timer = window.setTimeout(() => void refresh(), 2000)
+      } catch {
+        if (active) setRecoveredPolicyJob(null)
+      }
+    }
+    void refresh()
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [onSaved, policyRefreshKey, product?.marketplace_alias_id, product?.marketplace_stock_policy])
+
+  const retryRecoveredPolicyJob = async () => {
+    if (!recoveredPolicyJob) return
+    setBusy(true)
+    try {
+      const response = await client.post<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/policy-jobs/${recoveredPolicyJob.id}/retry`)
+      setRecoveredPolicyJob(response.data)
+      setPolicyRefreshKey((value) => value + 1)
+      toast.success('นำงานตั้ง stock 0 กลับเข้าคิวแล้ว')
+    } catch (error) {
+      toast.error(errorText(error))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const selectProduct = async (picked: CatalogMatch) => {
     setBusy(true)
@@ -1571,7 +1627,15 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
     return multiplier
   }
   const previewSave = async () => {
-    if (!product || !selected || validateSelection() == null) return
+    if (!product || !selected) return
+    const multiplier = validateSelection()
+    if (multiplier == null) return
+    const currentPolicy = product.marketplace_stock_policy ?? 'blocked'
+    const requiresAcknowledgement = stockPolicy === 'manual_unmanaged' && currentPolicy !== 'manual_unmanaged'
+    if (requiresAcknowledgement && !manualUnmanagedAcknowledged) {
+      toast.error('กรุณายืนยันว่าจะตรวจและจัดการ stock ของตัวเลือกนี้ใน Shopee เอง')
+      return
+    }
     setBusy(true)
     try {
       const response = await client.post<MarketplaceAliasImpact>('/api/marketplace-aliases/impact-preview', {
@@ -1584,9 +1648,10 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         raw_name: productDisplayName(product),
         item_code: selected.item_code,
         unit_code: unitCode,
-        quantity_multiplier: validateSelection(),
+        quantity_multiplier: multiplier,
         sales_enabled: product.marketplace_sales_enabled ?? true,
         stock_policy: stockPolicy,
+        acknowledge_manual_unmanaged: requiresAcknowledgement && manualUnmanagedAcknowledged,
       })
       setSaveImpact(response.data)
     } catch (error) {
@@ -1611,6 +1676,7 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         quantity_multiplier: multiplier,
         sales_enabled: product.marketplace_sales_enabled ?? true,
         stock_policy: stockPolicy,
+        acknowledge_manual_unmanaged: stockPolicy === 'manual_unmanaged' && (product.marketplace_stock_policy ?? 'blocked') !== 'manual_unmanaged' && manualUnmanagedAcknowledged,
         expected_mapping_revision: saveImpact?.current_mapping_revision ?? 0,
         impact_digest: saveImpact?.impact_digest ?? '',
       })
@@ -1624,6 +1690,35 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
     }
   }
   const selectedUnit = units.find((unit) => unit.code === unitCode)
+  const currentStockPolicy: StockPolicy = product?.marketplace_stock_policy ?? 'blocked'
+  const stockPolicyOptions: Array<{ value: StockPolicy; label: string; disabled?: boolean }> = currentStockPolicy === 'managed'
+    ? [
+        { value: 'managed', label: 'ให้ Nexflow จัดการสต๊อก' },
+        { value: 'zeroing', label: 'ตั้ง stock เป็น 0 แล้วปิด' },
+        { value: 'manual_unmanaged', label: 'คง stock เดิมและจัดการเอง' },
+      ]
+    : currentStockPolicy === 'zeroing'
+      ? [{ value: 'zeroing', label: 'กำลังตั้ง stock เป็น 0 ก่อนปิด' }]
+      : currentStockPolicy === 'disabled_zero'
+        ? [
+            { value: 'disabled_zero', label: 'ปิดแล้วและยืนยัน stock 0', disabled: true },
+            { value: 'managed', label: 'เปิดให้ Nexflow จัดการสต๊อกอีกครั้ง' },
+            { value: 'manual_unmanaged', label: 'จัดการ stock เอง' },
+          ]
+        : currentStockPolicy === 'manual_unmanaged'
+          ? [
+              { value: 'manual_unmanaged', label: 'คง stock เดิมและจัดการเอง' },
+              { value: 'managed', label: 'ให้ Nexflow จัดการสต๊อก' },
+              { value: 'zeroing', label: 'ตั้ง stock เป็น 0 แล้วปิด' },
+            ]
+          : [
+              { value: 'blocked', label: 'บล็อกไว้จนกว่า Dry-run จะผ่าน' },
+              { value: 'managed', label: 'ให้ Nexflow จัดการสต๊อก' },
+              { value: 'zeroing', label: 'ตั้ง stock เป็น 0 แล้วปิด' },
+              { value: 'manual_unmanaged', label: 'คง stock เดิมและจัดการเอง' },
+            ]
+  const requiresManualAcknowledgement = stockPolicy === 'manual_unmanaged' && currentStockPolicy !== 'manual_unmanaged'
+  const exclusionBlocked = currentStockPolicy === 'managed' || currentStockPolicy === 'zeroing'
   const baseUnit = useMemo(() => [...units].sort((left, right) =>
     left.row_order - right.row_order || left.line_number - right.line_number || left.code.localeCompare(right.code),
   )[0], [units])
@@ -1643,8 +1738,8 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         onOpenChange={(open) => !open && !busy && onClose()}
         footer={(
           <div className="flex flex-wrap justify-between gap-2">
-            <Button type="button" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirmExclude(true)} disabled={busy}>ยกเว้นสินค้านี้</Button>
-            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={previewSave} disabled={busy || !selected || !unitCode || !quantityMultiplier}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}ตรวจผลกระทบ</Button></div>
+            <Button type="button" variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirmExclude(true)} disabled={busy || exclusionBlocked} title={exclusionBlocked ? 'ต้องตั้ง stock เป็น 0 หรือยืนยันจัดการเองก่อนยกเว้น' : undefined}>ยกเว้นสินค้านี้</Button>
+            <div className="flex gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>ยกเลิก</Button><Button onClick={previewSave} disabled={busy || currentStockPolicy === 'zeroing' || !selected || !unitCode || !quantityMultiplier || (requiresManualAcknowledgement && !manualUnmanagedAcknowledged)}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}ตรวจผลกระทบ</Button></div>
           </div>
         )}
       >
@@ -1686,11 +1781,40 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="stock-policy">นโยบายซิงก์สต๊อก</Label>
-                  <Select value={stockPolicy} onValueChange={(value) => setStockPolicy(value as 'managed' | 'blocked')}>
+                  <Select
+                    value={stockPolicy}
+                    disabled={currentStockPolicy === 'zeroing'}
+                    onValueChange={(value) => {
+                      const nextPolicy = value as StockPolicy
+                      setStockPolicy(nextPolicy)
+                      setManualUnmanagedAcknowledged(nextPolicy === 'manual_unmanaged' && currentStockPolicy === 'manual_unmanaged')
+                    }}
+                  >
                     <SelectTrigger id="stock-policy"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="blocked">บล็อกไว้จนกว่า Dry-run จะผ่าน</SelectItem><SelectItem value="managed">ให้ Nexflow จัดการสต๊อก</SelectItem></SelectContent>
+                    <SelectContent>{stockPolicyOptions.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">ทุกการเปลี่ยนแปลงจะหยุดร้านและบังคับ Dry-run ใหม่ก่อนส่ง stock จริง</p>
+                  {stockPolicy === 'zeroing' && currentStockPolicy !== 'zeroing' && <p className="text-xs text-warning">ระบบจะตั้ง stock ตัวเลือกนี้เป็น 0 และอ่านกลับจาก Shopee ก่อนยืนยันว่าปิดแล้ว</p>}
+                  {currentStockPolicy === 'zeroing' && (
+                    <div className="flex items-start justify-between gap-3 rounded-md border border-warning/40 bg-warning/5 p-3">
+                      <div className="text-xs">
+                        <p className="font-medium">{recoveredPolicyJob && (recoveredPolicyJob.status === 'failed' || recoveredPolicyJob.status === 'unknown') && recoveredPolicyJob.attempt_count >= 10 ? 'ยืนยัน stock 0 ไม่สำเร็จ' : 'กำลังรอ Shopee ยืนยัน stock 0'}</p>
+                        {recoveredPolicyJob?.error_message && <p className="mt-1 text-muted-foreground">{recoveredPolicyJob.error_message}</p>}
+                      </div>
+                      {recoveredPolicyJob && (recoveredPolicyJob.status === 'failed' || recoveredPolicyJob.status === 'unknown') && recoveredPolicyJob.attempt_count >= 10 && <Button type="button" size="sm" variant="outline" onClick={() => void retryRecoveredPolicyJob()} disabled={busy}><RefreshCw className="h-3.5 w-3.5" />ลองใหม่</Button>}
+                    </div>
+                  )}
+                  {stockPolicy === 'manual_unmanaged' && (
+                    <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                      <p className="text-xs text-warning">Nexflow จะหยุดส่ง stock ให้ตัวเลือกนี้ คุณต้องดูแลจำนวนใน Shopee เอง และห้ามใช้สต๊อกร่วมกับ listing ที่ระบบจัดการ</p>
+                      {requiresManualAcknowledgement && (
+                        <label className="flex cursor-pointer items-start gap-2 text-xs">
+                          <Checkbox checked={manualUnmanagedAcknowledged} onCheckedChange={(checked) => setManualUnmanagedAcknowledged(checked === true)} />
+                          <span>ฉันรับทราบว่าจะตรวจและจัดการจำนวน stock ของตัวเลือกนี้ใน Shopee เอง</span>
+                        </label>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1708,7 +1832,7 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         open={saveImpact !== null}
         onOpenChange={(open) => !open && setSaveImpact(null)}
         title="ยืนยัน Product Master และหน่วยสต๊อก?"
-		description={saveImpact && product && selected ? `${productDisplayName(product)}\nสินค้า SML: ${selected.item_code} · ${selected.item_name}\n${marketplaceImpactFormulaLines(saveImpact).join('\n')}\nบิลเปิดที่จะอัปเดต: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping ที่เกี่ยวข้อง: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? `\nพบสินค้าซ้ำใน Stock ${saveImpact.stock_conflicts.toLocaleString()} รายการ` : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน และต้องทำ Dry-run ก่อนซิงก์` : undefined}
+		description={saveImpact && product && selected ? `${productDisplayName(product)}\nสินค้า SML: ${selected.item_code} · ${selected.item_name}\nนโยบาย stock: ${STOCK_POLICY_LABEL[stockPolicy]}\n${marketplaceImpactFormulaLines(saveImpact).join('\n')}\nบิลเปิดที่จะอัปเดต: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping ที่เกี่ยวข้อง: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? `\nพบสินค้าซ้ำใน Stock ${saveImpact.stock_conflicts.toLocaleString()} รายการ` : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน และต้องทำ Dry-run ก่อนซิงก์` : undefined}
         confirmLabel="บันทึกและบังคับ Dry-run"
         onConfirm={() => save(false)}
       />
