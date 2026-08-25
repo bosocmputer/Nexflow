@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `990c028` (`fix: ignore stale Catalog mapping responses`), while Demo and
+  `039b9cf` (`fix: bound excluded stock preview details`), while Demo and
   Lanboon remain on `82baa4a` (`Simplify marketplace stock quantity setup`). The
   Central SML Gateway is on `a53db50`
   (`fix: include usable SML unit status conventions`).
@@ -122,6 +122,17 @@ Current AOY UAT scope:
     active products and the alias table remains at 72 rows. The pre-deploy AOY
     backup is `pre-deploy-20260825-084650.sql.gz`. Demo and Lanboon did not
     receive migration 086 or the Catalog UI/API change.
+13. AOY-only excluded-location product identity is deployed at `039b9cf`.
+    `/settings/shopee-stock` keeps the exact excluded warehouse/location summary
+    while also showing bounded SML item details: item code, item name, unit,
+    warehouse/location, and balance. Details are capped at 200 rows in the run
+    summary with exact total/negative counts to protect preview response size.
+    Production dry-run `ae495fbe-6240-4014-94dd-7058f98d1358` checked all 44
+    listings with 0 changed and 0 blocked. The excluded AB-2/002 aggregate -3
+    `กล่อง` was resolved into `AH-0001` (-1 กล่อง) and `AH-0003` (-2 กล่อง),
+    including their SML names. Only the preview endpoint ran; no Shopee stock
+    write endpoint was called. The pre-deploy backup is
+    `pre-deploy-20260825-090208.sql.gz`. Demo and Lanboon were not deployed.
 
 Known deferred or incomplete validation:
 
