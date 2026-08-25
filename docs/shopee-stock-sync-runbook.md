@@ -134,5 +134,9 @@ migrations do not need to be rolled back.
 5. Turning either flag off is the immediate rollback; no migration rollback or
    SML data change is required.
 
-AOY must keep `SHOPEE_SET_STOCK_ENABLED=false` until a real mapped set product
-passes the controlled Seller Centre and SML component-balance checklist above.
+AOY exception (2026-08-25): the user explicitly accepted the pending
+set-product UAT risk and approved `SHOPEE_SET_STOCK_ENABLED=true` for AOY only so
+AOY staff can test the first real mapped set product. Keep the automatic stock
+schedule disabled until that listing passes the controlled Seller Centre
+read-back and SML component-balance checklist above. If the preview, write, or
+read-back is inconsistent, set the flag back to `false` and restart only AOY.

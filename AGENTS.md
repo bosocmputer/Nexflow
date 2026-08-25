@@ -102,8 +102,13 @@ Current AOY UAT scope:
     excluded negative balance of -3 `กล่อง` in `AB-2 / 002`; it is displayed but
     excluded from the selected `AB-1 / 001` calculation. No Shopee stock write
     was performed during this validation. For shop `264993963`, automatic stock
-    sync remains disabled and there is no active pause;
-    `SHOPEE_SET_STOCK_ENABLED` remains `false` globally.
+    sync remains disabled and there is no active pause. On 2026-08-25 the user
+    explicitly accepted the pending set-product UAT risk and enabled
+    `SHOPEE_SET_STOCK_ENABLED=true` for the AOY instance only so AOY staff can
+    test the first real mapped set product manually. Demo and Lanboon were not
+    changed. Treat AOY's first real set-product preview/write as controlled UAT;
+    do not enable the automatic schedule until the Seller Centre read-back and
+    SML component-balance checklist pass.
     Desktop and 390px mobile QA passed for `/marketplace-aliases` and
     `/settings/shopee-stock`; the browser console had no new warnings/errors.
 
