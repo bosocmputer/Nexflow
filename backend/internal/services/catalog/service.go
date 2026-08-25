@@ -343,8 +343,8 @@ type singleProductV3Response struct {
 // round-trip and only refreshes the fields that are likely to drift after
 // an SML-side rename: name, unit, group, balance_qty.
 //
-// Price is intentionally left untouched — the per-product GET endpoint
-// doesn't return prices, and we don't want to wipe the price column.
+// Product-level price is intentionally neither read nor written. The legacy
+// database column remains untouched only for rollback compatibility.
 //
 // Returns:
 //   - nil with `notFound = true` when SML returned 404 (caller should tell
@@ -757,10 +757,6 @@ func (s *SMLCatalogService) SearchByText(query string, topK int) ([]models.Catal
 	matches := make([]models.CatalogMatch, 0, n)
 	for i := 0; i < n; i++ {
 		it := results[i].item
-		price := 0.0
-		if it.Price != nil {
-			price = *it.Price
-		}
 		codeMeta := itemcode.Inspect(it.ItemCode)
 		matches = append(matches, models.CatalogMatch{
 			ItemCode:             it.ItemCode,
@@ -769,7 +765,6 @@ func (s *SMLCatalogService) SearchByText(query string, topK int) ([]models.Catal
 			UnitCode:             it.UnitCode,
 			WHCode:               it.WHCode,
 			ShelfCode:            it.ShelfCode,
-			Price:                price,
 			ImageCount:           it.ImageCount,
 			PrimaryImageRoworder: it.PrimaryImageRoworder,
 			PrimaryImageGuid:     it.PrimaryImageGuid,

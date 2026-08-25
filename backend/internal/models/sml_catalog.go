@@ -12,7 +12,6 @@ type CatalogItem struct {
 	UnitCode             string                `json:"unit_code"`
 	WHCode               string                `json:"wh_code"`
 	ShelfCode            string                `json:"shelf_code"`
-	Price                *float64              `json:"-"` // legacy rollback storage only
 	GroupCode            string                `json:"group_code"`
 	BalanceQty           *float64              `json:"balance_qty"`
 	ItemType             int                   `json:"item_type"`
@@ -63,7 +62,6 @@ type CatalogMatch struct {
 	UnitCode             string                `json:"unit_code"`
 	WHCode               string                `json:"wh_code"`
 	ShelfCode            string                `json:"shelf_code"`
-	Price                float64               `json:"-"` // legacy rollback storage only
 	ItemType             int                   `json:"item_type"`
 	SetComponentCount    int                   `json:"set_component_count"`
 	SetDefinitionHash    string                `json:"set_definition_hash,omitempty"`

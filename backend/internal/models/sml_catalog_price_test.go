@@ -2,13 +2,16 @@ package models
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestCatalogItemJSONDoesNotExposeLegacyPrice(t *testing.T) {
-	price := 123.45
-	body, err := json.Marshal(CatalogItem{ItemCode: "SKU-1", ItemName: "สินค้า", Price: &price})
+func TestCatalogItemDoesNotContainLegacyProductPrice(t *testing.T) {
+	if _, exists := reflect.TypeOf(CatalogItem{}).FieldByName("Price"); exists {
+		t.Fatal("CatalogItem must not read or expose the legacy product price")
+	}
+	body, err := json.Marshal(CatalogItem{ItemCode: "SKU-1", ItemName: "สินค้า"})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
@@ -17,8 +20,11 @@ func TestCatalogItemJSONDoesNotExposeLegacyPrice(t *testing.T) {
 	}
 }
 
-func TestCatalogMatchJSONDoesNotExposeLegacyPrice(t *testing.T) {
-	body, err := json.Marshal(CatalogMatch{ItemCode: "SKU-1", Price: 123.45})
+func TestCatalogMatchDoesNotContainLegacyProductPrice(t *testing.T) {
+	if _, exists := reflect.TypeOf(CatalogMatch{}).FieldByName("Price"); exists {
+		t.Fatal("CatalogMatch must not read or expose the legacy product price")
+	}
+	body, err := json.Marshal(CatalogMatch{ItemCode: "SKU-1"})
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}

@@ -259,7 +259,6 @@ type EmbeddedItem struct {
 	UnitCode             string
 	WHCode               string
 	ShelfCode            string
-	Price                *float64
 	ImageCount           int
 	PrimaryImageRoworder *int
 	PrimaryImageGuid     string
@@ -272,7 +271,7 @@ type EmbeddedItem struct {
 func (r *SMLCatalogRepo) LoadAllEmbeddings() ([]EmbeddedItem, error) {
 	rows, err := r.db.Query(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		       COALESCE(price, 0), image_count, primary_image_roworder,
+		       image_count, primary_image_roworder,
 		       primary_image_guid, primary_image_bytes, embedding
 		FROM sml_catalog
 		WHERE embedding_status = 'done' AND embedding IS NOT NULL
@@ -291,7 +290,7 @@ func (r *SMLCatalogRepo) LoadAllEmbeddings() ([]EmbeddedItem, error) {
 		if err := rows.Scan(
 			&it.ItemCode, &it.ItemName, &it.ItemName2,
 			&it.UnitCode, &it.WHCode, &it.ShelfCode,
-			&it.Price, &it.ImageCount, &primaryRoworder,
+			&it.ImageCount, &primaryRoworder,
 			&it.PrimaryImageGuid, &primaryBytes, &embJSON,
 		); err != nil {
 			continue
@@ -340,7 +339,7 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 	n := len(listArgs)
 	query := fmt.Sprintf(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		       price, group_code, balance_qty, embedding_status, embedded_at,
+		       group_code, balance_qty, embedding_status, embedded_at,
 		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
 		       primary_image_bytes, image_synced_at, synced_at, created_at,
@@ -368,7 +367,7 @@ func (r *SMLCatalogRepo) List(page, perPage int, statusFilter, q string) ([]mode
 		if err := rows.Scan(
 			&it.ItemCode, &it.ItemName, &it.ItemName2,
 			&it.UnitCode, &it.WHCode, &it.ShelfCode,
-			&it.Price, &it.GroupCode, &it.BalanceQty,
+			&it.GroupCode, &it.BalanceQty,
 			&it.EmbeddingStatus, &it.EmbeddedAt, &it.IsActive,
 			&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 			&primaryBytes, &imageSyncedAt,
@@ -443,7 +442,7 @@ func (r *SMLCatalogRepo) ListHiddenItemCodes(limit int) ([]models.CatalogItem, i
 	}
 	rows, err := r.db.Query(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		       price, group_code, balance_qty, embedding_status, embedded_at,
+		       group_code, balance_qty, embedding_status, embedded_at,
 		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
 		       primary_image_bytes, image_synced_at, synced_at, created_at
@@ -466,7 +465,7 @@ func (r *SMLCatalogRepo) ListHiddenItemCodes(limit int) ([]models.CatalogItem, i
 		if err := rows.Scan(
 			&it.ItemCode, &it.ItemName, &it.ItemName2,
 			&it.UnitCode, &it.WHCode, &it.ShelfCode,
-			&it.Price, &it.GroupCode, &it.BalanceQty,
+			&it.GroupCode, &it.BalanceQty,
 			&it.EmbeddingStatus, &it.EmbeddedAt, &it.IsActive,
 			&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 			&primaryBytes, &imageSyncedAt,
@@ -512,7 +511,7 @@ func (r *SMLCatalogRepo) GetOne(itemCode string) (*models.CatalogItem, error) {
 	var setWarnings []byte
 	err := r.db.QueryRow(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		       price, group_code, balance_qty, embedding_status, embedded_at,
+		       group_code, balance_qty, embedding_status, embedded_at,
 		       is_active,
 		       image_count, primary_image_roworder, primary_image_guid,
 		       primary_image_bytes, image_synced_at, synced_at, created_at,
@@ -522,7 +521,7 @@ func (r *SMLCatalogRepo) GetOne(itemCode string) (*models.CatalogItem, error) {
 	`, itemCode).Scan(
 		&it.ItemCode, &it.ItemName, &it.ItemName2,
 		&it.UnitCode, &it.WHCode, &it.ShelfCode,
-		&it.Price, &it.GroupCode, &it.BalanceQty,
+		&it.GroupCode, &it.BalanceQty,
 		&it.EmbeddingStatus, &it.EmbeddedAt, &it.IsActive,
 		&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 		&primaryBytes, &imageSyncedAt,
@@ -620,7 +619,7 @@ func (r *SMLCatalogRepo) GetPendingBatch(limit int) ([]models.CatalogItem, error
 func (r *SMLCatalogRepo) ListAllNames() ([]models.CatalogItem, error) {
 	rows, err := r.db.Query(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		       COALESCE(price, 0), image_count, primary_image_roworder,
+		       image_count, primary_image_roworder,
 		       primary_image_guid, primary_image_bytes, image_synced_at
 		FROM sml_catalog
 		WHERE is_active = TRUE
@@ -634,15 +633,13 @@ func (r *SMLCatalogRepo) ListAllNames() ([]models.CatalogItem, error) {
 	var items []models.CatalogItem
 	for rows.Next() {
 		var it models.CatalogItem
-		var price float64
 		var primaryRoworder sql.NullInt64
 		var primaryBytes sql.NullInt64
 		var imageSyncedAt sql.NullTime
 		_ = rows.Scan(&it.ItemCode, &it.ItemName, &it.ItemName2,
-			&it.UnitCode, &it.WHCode, &it.ShelfCode, &price,
+			&it.UnitCode, &it.WHCode, &it.ShelfCode,
 			&it.ImageCount, &primaryRoworder, &it.PrimaryImageGuid,
 			&primaryBytes, &imageSyncedAt)
-		it.Price = &price
 		applyItemCodeMetadata(&it)
 		applyCatalogImageScan(&it, primaryRoworder, primaryBytes, imageSyncedAt)
 		items = append(items, it)
@@ -666,7 +663,7 @@ func (r *SMLCatalogRepo) GetActiveMany(itemCodes []string) (map[string]*models.C
 		return result, nil
 	}
 	rows, err := r.db.Query(`
-		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code, price,
+		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
 		       item_type,set_component_count,set_definition_hash,set_document_valid,set_stock_valid,set_warning_codes
 		FROM sml_catalog
 		WHERE is_active = TRUE AND item_code = ANY($1)
@@ -680,7 +677,7 @@ func (r *SMLCatalogRepo) GetActiveMany(itemCodes []string) (map[string]*models.C
 		var setWarnings []byte
 		if err := rows.Scan(
 			&item.ItemCode, &item.ItemName, &item.ItemName2,
-			&item.UnitCode, &item.WHCode, &item.ShelfCode, &item.Price,
+			&item.UnitCode, &item.WHCode, &item.ShelfCode,
 			&item.ItemType, &item.SetComponentCount, &item.SetDefinitionHash,
 			&item.SetDocumentValid, &item.SetStockValid, &setWarnings,
 		); err != nil {
@@ -707,7 +704,7 @@ func (r *SMLCatalogRepo) CountActive() (int, error) {
 func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.CatalogMatch, error) {
 	rows, err := r.db.Query(`
 		SELECT item_code, item_name, item_name2, unit_code, wh_code, shelf_code,
-		       COALESCE(price, 0), image_count, primary_image_roworder,
+		       image_count, primary_image_roworder,
 		       primary_image_guid, primary_image_bytes,
 		       item_type,set_component_count,set_definition_hash,set_document_valid,set_warning_codes,
 		       CASE
@@ -743,7 +740,7 @@ func (r *SMLCatalogRepo) SearchActive(query string, limit int) ([]models.Catalog
 		if err := rows.Scan(
 			&match.ItemCode, &match.ItemName, &match.ItemName2,
 			&match.UnitCode, &match.WHCode, &match.ShelfCode,
-			&match.Price, &match.ImageCount, &primaryRoworder,
+			&match.ImageCount, &primaryRoworder,
 			&match.PrimaryImageGuid, &primaryBytes,
 			&match.ItemType, &match.SetComponentCount, &match.SetDefinitionHash,
 			&match.SetDocumentValid, &setWarnings, &match.MatchType,

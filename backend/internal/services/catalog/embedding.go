@@ -259,10 +259,6 @@ func (idx *CatalogIndex) Reload(repo *repository.SMLCatalogRepo) error {
 
 	items := make([]indexedItem, 0, len(dbItems))
 	for _, d := range dbItems {
-		price := 0.0
-		if d.Price != nil {
-			price = *d.Price
-		}
 		codeMeta := itemcode.Inspect(d.ItemCode)
 		items = append(items, indexedItem{
 			CatalogMatch: models.CatalogMatch{
@@ -272,7 +268,6 @@ func (idx *CatalogIndex) Reload(repo *repository.SMLCatalogRepo) error {
 				UnitCode:             d.UnitCode,
 				WHCode:               d.WHCode,
 				ShelfCode:            d.ShelfCode,
-				Price:                price,
 				ImageCount:           d.ImageCount,
 				PrimaryImageRoworder: d.PrimaryImageRoworder,
 				PrimaryImageGuid:     d.PrimaryImageGuid,

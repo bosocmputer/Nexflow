@@ -53,10 +53,37 @@ func TestCatalogUpsertDoesNotWriteLegacyPrice(t *testing.T) {
 	mock.ExpectExec("DELETE FROM sml_catalog_set_components").WithArgs("SKU-1").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 
-	price := 999.0
-	err = NewSMLCatalogRepo(db).Upsert(modelsCatalogItemForPriceTest(price))
+	err = NewSMLCatalogRepo(db).Upsert(modelsCatalogItemForPriceTest())
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
+	}
+}
+
+func TestCatalogSearchDoesNotReadLegacyProductPrice(t *testing.T) {
+	matcher := func(expectedSQL, actualSQL string) error {
+		if expectedSQL == "catalog search without product price" {
+			if containsSQLWord(actualSQL, "price") {
+				return &queryMatchError{message: "catalog search must not read legacy product price"}
+			}
+			return nil
+		}
+		return sqlmock.QueryMatcherRegexp.Match(expectedSQL, actualSQL)
+	}
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherFunc(matcher)))
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery("catalog search without product price").WithArgs("SKU", 20).
+		WillReturnRows(sqlmock.NewRows([]string{"item_code"}))
+
+	items, err := NewSMLCatalogRepo(db).SearchActive("SKU", 20)
+	if err != nil {
+		t.Fatalf("SearchActive: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("SearchActive returned %d rows, want 0", len(items))
 	}
 }
 
@@ -82,9 +109,9 @@ func catalogUpsertArgsWithoutPrice() []driver.Value {
 	}
 }
 
-func modelsCatalogItemForPriceTest(price float64) models.CatalogItem {
+func modelsCatalogItemForPriceTest() models.CatalogItem {
 	return models.CatalogItem{
-		ItemCode: "SKU-1", ItemName: "สินค้า", UnitCode: "ชิ้น", Price: &price,
+		ItemCode: "SKU-1", ItemName: "สินค้า", UnitCode: "ชิ้น",
 		SetDocumentValid: true, SetStockValid: true,
 	}
 }

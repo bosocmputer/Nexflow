@@ -52,7 +52,6 @@ export interface CatalogMatch {
   unit_code: string
   wh_code?: string
   shelf_code?: string
-  price?: number
   image_count?: number
   primary_image_roworder?: number
   primary_image_guid?: string

@@ -52,7 +52,7 @@ func TestRefreshOneUpsertsProductMissingFromLocalCatalog(t *testing.T) {
 	now := time.Now()
 	expectCatalogGetOne(mock, "SHIP_POL").WillReturnRows(
 		sqlmock.NewRows(catalogGetOneColumns).
-			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "ครั้ง", "", "", nil, "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now, 0, 0, "", true, true, []byte(`[]`)),
+			AddRow("SHIP_POL", "ค่าขนส่งสินค้า", "", "ครั้ง", "", "", "SERVICE", float64(0), "disabled", nil, true, 0, nil, "", nil, nil, now, now, 0, 0, "", true, true, []byte(`[]`)),
 	)
 
 	svc := NewSMLCatalogService(repository.NewSMLCatalogRepo(db), upstream.URL, nil, zap.NewNop())
@@ -101,7 +101,6 @@ var catalogGetOneColumns = []string{
 	"unit_code",
 	"wh_code",
 	"shelf_code",
-	"price",
 	"group_code",
 	"balance_qty",
 	"embedding_status",
