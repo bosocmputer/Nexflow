@@ -324,11 +324,8 @@ func (s *Service) QueuePreview(ctx context.Context, shopID int64, asOfDate strin
 	if err != nil {
 		return "", err
 	}
-	if settings.CredentialMode != "gateway" {
-		return "", ErrGatewayOnly
-	}
-	if settings.ScopeMode != "selected" || len(settings.Locations) != 1 {
-		return "", ErrScopeRequired
+	if err := validatePreviewScope(settings); err != nil {
+		return "", err
 	}
 	runID, err := s.store.QueuePreviewRun(ctx, shopID, asOfDate)
 	if err != nil {
@@ -345,6 +342,13 @@ func (s *Service) PrepareReadyMappings(ctx context.Context, shopID int64, userID
 	result := &PreparationResult{}
 	if !strings.EqualFold(strings.TrimSpace(s.cfg.ConversionMode), "active") {
 		return result, nil
+	}
+	settings, err := s.store.GetSettings(ctx, shopID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePreviewScope(settings); err != nil {
+		return nil, err
 	}
 	owner := s.leaseOwner("prepare", shopID)
 	_, acquired, err := s.store.AcquireFencedLease(ctx, shopID, owner, 2*time.Minute)
@@ -383,6 +387,13 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	}
 	if err := validateSyncReadiness(settings, trigger); err != nil {
 		return nil, err
+	}
+	prepared, err := s.PrepareReadyMappings(ctx, shopID, "")
+	if err != nil {
+		return nil, err
+	}
+	if prepared.ManagedCount > 0 || prepared.SharedPoolMemberCount > 0 {
+		return nil, ErrDryRunRequired
 	}
 	owner := s.leaseOwner("sync", shopID)
 	fencingToken, lease, err := s.store.AcquireFencedLease(ctx, shopID, owner, 2*time.Minute)

@@ -1,28 +1,25 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, Search, Settings2, Tags, Unlink, X } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
+import { MarketplaceQuantityField, quantityModeFromMultiplier, type MarketplaceQuantityMode } from '@/components/marketplace/MarketplaceQuantityField'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
 import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceConversionReadiness, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
-import { editableMarketplaceStockPolicy } from '@/lib/marketplace-stock-policy'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -582,10 +579,7 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
   const [units, setUnits] = useState<UnitOption[]>([])
   const [unitCode, setUnitCode] = useState('')
   const [multiplier, setMultiplier] = useState('1')
-  const [salesEnabled, setSalesEnabled] = useState(true)
-  const [stockPolicy, setStockPolicy] = useState<MarketplaceItemAlias['stock_policy']>('blocked')
-  const [manualUnmanagedAcknowledged, setManualUnmanagedAcknowledged] = useState(false)
-  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [quantityMode, setQuantityMode] = useState<MarketplaceQuantityMode>('marketplace_qty')
   const [loadingUnits, setLoadingUnits] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [unitError, setUnitError] = useState('')
@@ -593,39 +587,12 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
   const source = value?.kind === 'confirm' ? value.group.source : value?.alias.source
   const product = value?.product
   const currentStockPolicy: MarketplaceItemAlias['stock_policy'] = value?.kind === 'update' ? value.alias.stock_policy : 'blocked'
-  const stockPolicyOptions: Array<{ value: MarketplaceItemAlias['stock_policy']; label: string; disabled?: boolean }> = currentStockPolicy === 'managed'
-    ? [
-        { value: 'managed', label: 'ให้ระบบส่งสต๊อก' },
-        { value: 'zeroing', label: 'ตั้งสต๊อกเป็น 0 แล้วหยุดส่ง' },
-        { value: 'manual_unmanaged', label: 'ไม่ส่งสต๊อก ฉันจัดการเอง' },
-      ]
-    : currentStockPolicy === 'zeroing'
-      ? [{ value: 'zeroing', label: 'กำลังตั้งสต๊อกเป็น 0 เพื่อหยุด' }]
-      : currentStockPolicy === 'disabled_zero'
-        ? [
-            { value: 'disabled_zero', label: 'หยุดแล้ว (สต๊อกเป็น 0)', disabled: true },
-            { value: 'managed', label: 'ให้ระบบส่งสต๊อกอีกครั้ง' },
-            { value: 'manual_unmanaged', label: 'ไม่ส่งสต๊อก ฉันจัดการเอง' },
-          ]
-        : currentStockPolicy === 'manual_unmanaged'
-          ? [
-              { value: 'manual_unmanaged', label: 'ไม่ส่งสต๊อก ฉันจัดการเอง' },
-              { value: 'managed', label: 'ให้ระบบส่งสต๊อก' },
-              { value: 'zeroing', label: 'ตั้งสต๊อกเป็น 0 แล้วหยุดส่ง' },
-            ]
-          : [
-              { value: 'managed', label: 'ให้ระบบส่งสต๊อก' },
-              { value: 'zeroing', label: 'ตั้งสต๊อกเป็น 0 แล้วหยุดส่ง' },
-              { value: 'manual_unmanaged', label: 'ไม่ส่งสต๊อก ฉันจัดการเอง' },
-            ]
   useEffect(() => {
     if (!value || !product) return
     const existing = value.kind === 'update' ? value.alias : null
-    setMultiplier(String(existing?.quantity_multiplier || 1))
-    setSalesEnabled(existing?.sales_enabled ?? true)
-    setStockPolicy(source === 'shopee' ? editableMarketplaceStockPolicy(existing?.stock_policy) : 'blocked')
-    setManualUnmanagedAcknowledged(existing?.stock_policy === 'manual_unmanaged')
-    setAdvancedOpen(existing?.stock_policy === 'manual_unmanaged' || existing?.stock_policy === 'zeroing' || existing?.stock_policy === 'disabled_zero' || existing?.sales_enabled === false)
+    const savedMultiplier = existing?.quantity_multiplier || 1
+    setMultiplier(String(savedMultiplier))
+    setQuantityMode(quantityModeFromMultiplier(savedMultiplier))
     setUnitCode(existing?.item_code === product.item_code ? existing.unit_code : product.unit_code)
     setUnits([])
     setUnitError('')
@@ -653,12 +620,11 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
   const stand = selectedUnit?.stand_value_exact || selectedUnit?.stand_value
   const divide = selectedUnit?.divide_value_exact || selectedUnit?.divide_value
   const baseFactor = stand && divide && Number(divide) > 0 ? multiplierValue * Number(stand) / Number(divide) : null
-  const requiresManualAcknowledgement = source === 'shopee' && stockPolicy === 'manual_unmanaged' && currentStockPolicy !== 'manual_unmanaged'
   const zeroingInProgress = source === 'shopee' && currentStockPolicy === 'zeroing'
-  const canSubmit = Boolean(product && selectedUnit && multiplierValid && !unitError && !loadingUnits && !submitting && !zeroingInProgress && (!requiresManualAcknowledgement || manualUnmanagedAcknowledged))
+  const canSubmit = Boolean(product && selectedUnit && multiplierValid && !unitError && !loadingUnits && !submitting && !zeroingInProgress)
   const submitDisabledReason = loadingUnits
     ? 'กำลังโหลดหน่วยนับ'
-    : unitError || (zeroingInProgress ? 'กำลังตั้ง stock เป็น 0 กรุณารอให้งานเดิมเสร็จ' : !selectedUnit ? 'ต้องเลือกหน่วยที่มี conversion จาก Catalog' : !multiplierValid ? 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000' : requiresManualAcknowledgement && !manualUnmanagedAcknowledged ? 'ต้องยืนยันว่าจะจัดการ stock Shopee เอง' : '')
+    : unitError || (zeroingInProgress ? 'กำลังตั้งสต๊อกเป็น 0 กรุณารอให้งานเดิมเสร็จ' : !selectedUnit ? 'ต้องเลือกหน่วยจาก SML' : !multiplierValid ? 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000' : '')
 
   const submit = async () => {
     if (!canSubmit) return
@@ -667,9 +633,9 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
       await onContinue({
         unitCode,
         quantityMultiplier: multiplierValue,
-        salesEnabled,
-        stockPolicy: source === 'shopee' ? stockPolicy : 'blocked',
-        acknowledgeManualUnmanaged: requiresManualAcknowledgement && manualUnmanagedAcknowledged,
+        salesEnabled: true,
+        stockPolicy: source === 'shopee' ? (zeroingInProgress ? 'zeroing' : 'managed') : 'blocked',
+        acknowledgeManualUnmanaged: false,
       })
     } finally {
       setSubmitting(false)
@@ -692,67 +658,20 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
             </Select>
             {unitError && <p className="text-xs text-warning">{unitError}</p>}
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="marketplace-multiplier">จำนวนหน่วย SML ต่อ 1 รายการ Marketplace</Label>
-            <Input id="marketplace-multiplier" type="number" min={1} max={1_000_000} step={1} value={multiplier} onChange={(event) => setMultiplier(event.target.value)} aria-invalid={!multiplierValid} />
-            {!multiplierValid && <p className="text-xs text-destructive">กรอกจำนวนเต็มตั้งแต่ 1 ถึง 1,000,000</p>}
-          </div>
+          <MarketplaceQuantityField idPrefix="marketplace" mode={quantityMode} multiplier={multiplier} onModeChange={setQuantityMode} onMultiplierChange={setMultiplier} />
+          {!multiplierValid && <p className="text-xs text-destructive">กรอกจำนวนเต็มตั้งแต่ 1 ถึง 1,000,000</p>}
           <div className="rounded-md border bg-muted/30 p-3 text-sm">
             <p className="font-medium">สูตรที่จะใช้</p>
-            <p className="mt-1 text-muted-foreground">1 Marketplace = {multiplierValid ? multiplierValue.toLocaleString() : '-'} {unitCode || 'หน่วย SML'}{baseFactor != null ? ` = ${baseFactor.toLocaleString('th-TH', { maximumFractionDigits: 6 })} หน่วยฐาน` : ''}</p>
-            <p className="mt-1 text-xs text-muted-foreground">จำนวนจาก Marketplace จะคูณค่านี้ตอนส่ง SML และหารกลับด้วยสูตรเดียวกันตอนคำนวณสต๊อก</p>
+            <p className="mt-1 text-muted-foreground">Marketplace qty 1 = {multiplierValid ? multiplierValue.toLocaleString() : '-'} {unitCode || 'หน่วย SML'}{baseFactor != null ? ` = ${baseFactor.toLocaleString('th-TH', { maximumFractionDigits: 6 })} หน่วยฐาน` : ''}</p>
+            <p className="mt-1 text-xs text-muted-foreground">ระบบใช้สูตรเดียวกันทั้งตอนตัดจำนวนเข้า SML และตอนคำนวณสต๊อกกลับไป Marketplace</p>
           </div>
-          <p className="text-xs text-muted-foreground">หลังบันทึก ระบบจะใช้หน่วยนี้กับออเดอร์ใหม่ และเตรียมการซิงก์สต๊อกให้โดยอัตโนมัติ</p>
-          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-md border">
-            <CollapsibleTrigger asChild>
-              <Button type="button" variant="ghost" className="h-auto w-full justify-between rounded-md px-3 py-2.5 font-normal">
-                <span className="flex items-center gap-2 text-sm"><Settings2 className="h-4 w-4" />ตัวเลือกเพิ่มเติม</span>
-                <ChevronDown className={cn('h-4 w-4 transition-transform', advancedOpen && 'rotate-180')} />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-4 border-t p-3">
-              <div className="flex items-center justify-between gap-4">
-                <div><Label htmlFor="marketplace-sales-enabled">ส่งเอกสารขายเข้า SML</Label><p className="text-xs text-muted-foreground">ใช้เฉพาะกรณีที่ต้องการเก็บออเดอร์ไว้ แต่ยังไม่ส่งเอกสาร</p></div>
-                <Switch id="marketplace-sales-enabled" checked={salesEnabled} onCheckedChange={setSalesEnabled} />
-              </div>
-              {source === 'shopee' && (
-                <div className="grid gap-2 border-t pt-3">
-                  <Label htmlFor="marketplace-stock-policy">การส่งสต๊อก Shopee</Label>
-                  <Select
-                    value={stockPolicy}
-                    disabled={currentStockPolicy === 'zeroing'}
-                    onValueChange={(nextValue) => {
-                      const nextPolicy = nextValue as MarketplaceItemAlias['stock_policy']
-                      setStockPolicy(nextPolicy)
-                      setManualUnmanagedAcknowledged(nextPolicy === 'manual_unmanaged' && currentStockPolicy === 'manual_unmanaged')
-                    }}
-                  >
-                    <SelectTrigger id="marketplace-stock-policy"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {stockPolicyOptions.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {stockPolicy === 'manual_unmanaged' && (
-                    <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3">
-                      <p className="text-xs text-warning">ระบบจะไม่ส่งสต๊อกให้รายการนี้ คุณต้องดูแลจำนวนใน Shopee เอง และจะใช้สต๊อกร่วมกับรายการที่ระบบดูแลไม่ได้</p>
-                      {requiresManualAcknowledgement && (
-                        <label className="flex cursor-pointer items-start gap-2 text-xs">
-                          <Checkbox checked={manualUnmanagedAcknowledged} onCheckedChange={(checked) => setManualUnmanagedAcknowledged(checked === true)} />
-                          <span>ฉันรับทราบว่าจะตรวจและจัดการจำนวนสต๊อกของตัวเลือกนี้ใน Shopee เอง</span>
-                        </label>
-                      )}
-                    </div>
-                  )}
-                  {stockPolicy === 'zeroing' && (
-                    <div className="flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
-                      <p className="text-xs text-warning">{zeroingInProgress ? 'กำลังรอ Shopee ยืนยันสต๊อก 0 จึงยังแก้รายการนี้ไม่ได้' : 'ระบบจะตั้งสต๊อกเป็น 0 และตรวจยืนยันกับ Shopee ก่อนหยุดส่ง'}</p>
-                      {zeroingInProgress && value?.kind === 'update' && <Button type="button" size="sm" variant="outline" onClick={() => void onRecoverPolicyJob(value.alias.id)}>ดูสถานะงาน</Button>}
-                    </div>
-                  )}
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+          <p className="text-xs text-muted-foreground">หลังบันทึก ระบบจะใช้การจับคู่นี้กับออเดอร์ใหม่และการซิงก์สต๊อกโดยอัตโนมัติ</p>
+          {zeroingInProgress && value?.kind === 'update' && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+              <p className="text-xs text-warning">กำลังรอ Shopee ยืนยันสต๊อก 0 จึงยังแก้รายการนี้ไม่ได้</p>
+              <Button type="button" size="sm" variant="outline" onClick={() => void onRecoverPolicyJob(value.alias.id)}>ดูสถานะงาน</Button>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>ยกเลิก</Button>
@@ -911,6 +830,7 @@ function SavedGroupedTable({
 
 function GroupedVariantRow({ alias, canManage, onEdit, onDelete }: { alias: MarketplaceItemAlias; canManage: boolean; onEdit: (row: MarketplaceItemAlias) => void; onDelete: (row: MarketplaceItemAlias) => void }) {
 	const status = alias.conversion_status === 'ready' && alias.sales_enabled ? 'ready' : alias.sales_enabled ? 'review' : 'disabled'
+	const canStop = alias.source !== 'shopee' || (alias.stock_policy !== 'managed' && alias.stock_policy !== 'zeroing')
 	return (
 		<div className="grid min-h-16 grid-cols-[minmax(240px,1.25fr)_minmax(220px,1fr)_minmax(190px,0.8fr)_88px] items-center gap-4 border-t px-4 py-2 text-sm first:border-t-0">
 			<div className="min-w-0 pl-8">
@@ -922,7 +842,7 @@ function GroupedVariantRow({ alias, canManage, onEdit, onDelete }: { alias: Mark
 				<Badge variant="outline" className={cn(status === 'ready' && 'border-success/30 bg-success/10 text-success', status === 'review' && 'border-warning/30 bg-warning/10 text-warning')}>{status === 'ready' ? 'พร้อมใช้งาน' : status === 'review' ? 'ต้องตรวจสอบ' : 'ปิดใช้งาน'}</Badge>
 				<div className="mt-1 text-xs text-muted-foreground">{conversionSummary(alias)}</div>
 			</div>
-			<div className="flex justify-end gap-1">{canManage ? <><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(alias)} aria-label="แก้ไขตัวเลือก"><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(alias)} aria-label="หยุดใช้ตัวเลือก"><Unlink className="h-4 w-4" /></Button></> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</div>
+			<div className="flex justify-end gap-1">{canManage ? <><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(alias)} aria-label="แก้ไขตัวเลือก"><Pencil className="h-4 w-4" /></Button>{canStop && <Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(alias)} aria-label="หยุดใช้ตัวเลือก"><Unlink className="h-4 w-4" /></Button>}</> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</div>
 		</div>
 	)
 }
@@ -959,7 +879,7 @@ function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: b
               </TableCell>
               <TableCell><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{row.item_code}</span>{!row.product_active && <Badge variant="destructive">สินค้าไม่พร้อม</Badge>}</div><div className="text-xs text-muted-foreground">{row.item_name || 'ไม่พบชื่อสินค้า'} · {row.unit_code || '-'}</div></TableCell>
               <TableCell className="whitespace-nowrap text-right tabular-nums"><div>ใช้แล้ว {row.usage_count.toLocaleString()} ครั้ง</div>{row.open_item_count > 0 && <div className="text-xs text-warning">รออัปเดต {row.open_item_count.toLocaleString()} รายการ</div>}{row.stock_mapping_count > 0 && <div className="text-xs text-muted-foreground">ใช้กับซิงก์สต๊อก</div>}</TableCell>
-              <TableCell className="text-right">{canManage ? <div className="flex justify-end gap-1"><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(row)} aria-label="แก้ไขการจับคู่" title="แก้ไขการจับคู่"><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(row)} aria-label="หยุดใช้การจับคู่" title="หยุดใช้การจับคู่"><Unlink className="h-4 w-4" /></Button></div> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</TableCell>
+              <TableCell className="text-right">{canManage ? <div className="flex justify-end gap-1"><Button size="icon" variant="outline" className="h-8 w-8" onClick={() => onEdit(row)} aria-label="แก้ไขการจับคู่" title="แก้ไขการจับคู่"><Pencil className="h-4 w-4" /></Button>{(row.source !== 'shopee' || (row.stock_policy !== 'managed' && row.stock_policy !== 'zeroing')) && <Button size="icon" variant="outline" className="h-8 w-8 text-destructive" onClick={() => onDelete(row)} aria-label="หยุดใช้การจับคู่" title="หยุดใช้การจับคู่"><Unlink className="h-4 w-4" /></Button>}</div> : <span className="text-xs text-muted-foreground">ดูอย่างเดียว</span>}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -971,7 +891,7 @@ function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: b
 function actionDescription(action: PendingAction | null) {
   if (!action) return ''
   const impact = action.impact
-	const impactText = `${marketplaceImpactFormulaLines(impact).join('\n')}\nออเดอร์ที่ยังไม่ส่ง: ${impact.open_items.toLocaleString()} รายการ ใน ${impact.open_bills.toLocaleString()} บิล${impact.manual_override_items ? ` · ข้าม manual override ${impact.manual_override_items.toLocaleString()}` : ''}\nไม่แก้ย้อนหลัง: attempted/sent ${impact.attempted_items.toLocaleString()} · archived ${impact.archived_items.toLocaleString()}\nReservation ที่ต้อง reconcile: ${impact.reservation_moves.toLocaleString()}\nการซิงก์สต๊อกที่เกี่ยวข้อง: ${impact.stock_mappings.toLocaleString()} รายการ ใน ${impact.affected_shop_ids.length.toLocaleString()} ร้าน${impact.stock_conflicts ? ` · พบการจับคู่สต๊อกซ้ำ ${impact.stock_conflicts.toLocaleString()}` : ''}${impact.dry_run_required ? '\nหลังบันทึกต้องตรวจสต๊อกใหม่ก่อนเปิดซิงก์' : ''}`
+	const impactText = `${marketplaceImpactFormulaLines(impact).join('\n')}\nออเดอร์ที่ยังไม่ส่ง: ${impact.open_items.toLocaleString()} รายการ ใน ${impact.open_bills.toLocaleString()} บิล${impact.manual_override_items ? ` · ข้ามรายการที่ผู้ใช้แก้เอง ${impact.manual_override_items.toLocaleString()}` : ''}\nเอกสารที่ส่งแล้วจะไม่ถูกเปลี่ยน: ${impact.attempted_items.toLocaleString()} รายการ · เอกสารเก่า ${impact.archived_items.toLocaleString()} รายการ\nรายการจองสต๊อกที่จะปรับ: ${impact.reservation_moves.toLocaleString()}\nการซิงก์สต๊อกที่เกี่ยวข้อง: ${impact.stock_mappings.toLocaleString()} รายการ ใน ${impact.affected_shop_ids.length.toLocaleString()} ร้าน${impact.stock_conflicts ? ` · พบสินค้าที่ใช้สต๊อกร่วมกัน ${impact.stock_conflicts.toLocaleString()} รายการ` : ''}${impact.dry_run_required ? '\nหลังบันทึกต้องตรวจสต๊อกใหม่ก่อนซิงก์' : ''}`
   if (action.kind === 'delete') return `หยุดใช้ ${action.alias.source_sku || action.alias.raw_name} ในอนาคต\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
   if (action.kind === 'update') return `ค่าเดิม: ${action.alias.item_code}\nค่าใหม่: ${action.product.item_code} · ${action.product.item_name}\n${impactText}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน`
   return `ต้นทาง: ${action.group.source_sku || action.group.raw_name}\nสินค้า SML: ${action.product.item_code} · ${action.product.item_name}\n${impactText}`

@@ -28,6 +28,16 @@ func validateSyncReadiness(settings *Settings, trigger string) error {
 	return nil
 }
 
+func validatePreviewScope(settings *Settings) error {
+	if settings == nil || settings.CredentialMode != "gateway" {
+		return ErrGatewayOnly
+	}
+	if settings.ScopeMode != "selected" || len(settings.Locations) != 1 {
+		return ErrScopeRequired
+	}
+	return nil
+}
+
 func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 	if balance <= 0 || stockPct <= 0 || unitFactor <= 0 {
 		return 0

@@ -69,6 +69,19 @@ func TestValidateSyncReadinessKeepsManualSyncIndependentFromSchedule(t *testing.
 	}
 }
 
+func TestValidatePreviewScopeFailsBeforePreparingMappings(t *testing.T) {
+	valid := &Settings{CredentialMode: "gateway", ScopeMode: "selected", Locations: []LocationPair{{Warehouse: "W1", Location: "L1"}}}
+	if err := validatePreviewScope(valid); err != nil {
+		t.Fatalf("valid settings rejected: %v", err)
+	}
+	if err := validatePreviewScope(&Settings{CredentialMode: "direct", ScopeMode: "selected", Locations: valid.Locations}); !errors.Is(err, ErrGatewayOnly) {
+		t.Fatalf("direct credentials error=%v want ErrGatewayOnly", err)
+	}
+	if err := validatePreviewScope(&Settings{CredentialMode: "gateway", ScopeMode: "all"}); !errors.Is(err, ErrScopeRequired) {
+		t.Fatalf("unselected scope error=%v want ErrScopeRequired", err)
+	}
+}
+
 func TestCalculateTarget(t *testing.T) {
 	if got := CalculateTarget(100, 80, 6); got != 13 {
 		t.Fatalf("target = %d, want 13", got)

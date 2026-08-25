@@ -1467,7 +1467,7 @@ func (s *Store) PrepareReadyMappings(ctx context.Context, shopID int64, userID s
 		WHERE m.shop_id=$1 AND p.is_active=true AND m.excluded=false AND m.sml_item_code<>''
 		GROUP BY m.sml_item_code
 		HAVING COUNT(*) BETWEEN 2 AND 50 AND BOOL_AND(alias_row.stock_policy='managed')
-		  AND NOT (BOOL_AND(m.shared_pool_enabled) AND ABS(SUM(m.pool_allocation_pct)-100)<=0.001)
+		  AND BOOL_AND(NOT m.shared_pool_enabled)
 	), ranked AS (
 		SELECT m.shop_id,m.item_id,m.model_id,m.sml_item_code,g.member_count,
 		       ROW_NUMBER() OVER (PARTITION BY m.sml_item_code ORDER BY m.item_id,m.model_id)::int AS member_position
@@ -2274,7 +2274,7 @@ func firstWarning(values []string) string {
 }
 
 var (
-	ErrDryRunRequired      = errors.New("ต้องตรวจผลกระทบแบบ dry-run ก่อนเปิดซิงก์")
+	ErrDryRunRequired      = errors.New("กรุณากดบันทึกและตรวจสต๊อกก่อนซิงก์")
 	ErrInvalidUnit         = errors.New("ไม่พบหน่วยนับที่เลือกในสินค้า SML")
 	ErrInvalidManualFactor = errors.New("อัตราส่วนที่กำหนดเองต้องไม่น้อยกว่า 1")
 	ErrMappingConflict     = errors.New("ข้อมูลการจับคู่ถูกแก้ไขโดยผู้ใช้อื่น กรุณารีเฟรช")

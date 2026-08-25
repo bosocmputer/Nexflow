@@ -360,7 +360,7 @@ func TestPrepareReadyMappingsPromotesNormalItemsAndCreatesEqualPools(t *testing.
 	mock.ExpectQuery(`(?s)WITH candidates AS.*stock_policy='blocked'.*conversion_status='ready'.*UPDATE marketplace_item_aliases.*stock_policy='managed'.*RETURNING`).
 		WithArgs(int64(42), "00000000-0000-0000-0000-000000000001").
 		WillReturnRows(sqlmock.NewRows([]string{"managed_count"}).AddRow(37))
-	mock.ExpectQuery(`(?s)WITH candidate_groups AS.*COUNT\(\*\) BETWEEN 2 AND 50.*UPDATE shopee_stock_mappings.*shared_pool_enabled=true.*pool_allocation_pct.*RETURNING`).
+	mock.ExpectQuery(`(?s)WITH candidate_groups AS.*COUNT\(\*\) BETWEEN 2 AND 50.*BOOL_AND\(NOT m.shared_pool_enabled\).*UPDATE shopee_stock_mappings.*shared_pool_enabled=true.*pool_allocation_pct.*RETURNING`).
 		WithArgs(int64(42), "00000000-0000-0000-0000-000000000001").
 		WillReturnRows(sqlmock.NewRows([]string{"pool_count", "member_count"}).AddRow(2, 6))
 	mock.ExpectExec(`UPDATE shopee_stock_mappings m.*warning_codes=m.warning_codes-'duplicate_sml_item'`).WillReturnResult(sqlmock.NewResult(0, 6))
