@@ -62,13 +62,66 @@ type StockLocationsResponse struct {
 }
 
 type StockCatalogUnit struct {
-	Code        string  `json:"code"`
-	Name        string  `json:"name"`
-	StandValue  float64 `json:"stand_value"`
-	DivideValue float64 `json:"divide_value"`
-	Ratio       float64 `json:"ratio"`
-	RowOrder    int     `json:"row_order"`
-	LineNumber  int     `json:"line_number"`
+	Code             string  `json:"code"`
+	Name             string  `json:"name"`
+	StandValue       float64 `json:"stand_value"`
+	DivideValue      float64 `json:"divide_value"`
+	Ratio            float64 `json:"ratio"`
+	RowOrder         int     `json:"row_order"`
+	LineNumber       int     `json:"line_number"`
+	StandValueExact  string  `json:"-"`
+	DivideValueExact string  `json:"-"`
+}
+
+// UnmarshalJSON retains the source decimal lexemes for catalog generation.
+// The float fields remain for legacy Shopee stock calculations and JSON
+// compatibility, but are never used as the persisted conversion authority.
+func (u *StockCatalogUnit) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Code        string          `json:"code"`
+		Name        string          `json:"name"`
+		StandValue  json.RawMessage `json:"stand_value"`
+		DivideValue json.RawMessage `json:"divide_value"`
+		Ratio       float64         `json:"ratio"`
+		RowOrder    int             `json:"row_order"`
+		LineNumber  int             `json:"line_number"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	stand, standExact, err := decodeCatalogDecimal(wire.StandValue)
+	if err != nil {
+		return fmt.Errorf("decode stand_value: %w", err)
+	}
+	divide, divideExact, err := decodeCatalogDecimal(wire.DivideValue)
+	if err != nil {
+		return fmt.Errorf("decode divide_value: %w", err)
+	}
+	*u = StockCatalogUnit{
+		Code: wire.Code, Name: wire.Name, StandValue: stand, DivideValue: divide,
+		Ratio: wire.Ratio, RowOrder: wire.RowOrder, LineNumber: wire.LineNumber,
+		StandValueExact: standExact, DivideValueExact: divideExact,
+	}
+	return nil
+}
+
+func decodeCatalogDecimal(raw json.RawMessage) (float64, string, error) {
+	exact := strings.TrimSpace(string(raw))
+	if exact == "" || exact == "null" {
+		return 0, "", nil
+	}
+	if exact[0] == '"' {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return 0, "", err
+		}
+		exact = strings.TrimSpace(text)
+	}
+	value, err := strconv.ParseFloat(exact, 64)
+	if err != nil {
+		return 0, "", err
+	}
+	return value, exact, nil
 }
 
 type StockCatalogBarcode struct {

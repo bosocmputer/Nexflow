@@ -65,6 +65,19 @@ func TestStockSyncClientCatalogRangeUsesOverlapWindow(t *testing.T) {
 	}
 }
 
+func TestStockCatalogUnitPreservesExactDecimalFactors(t *testing.T) {
+	var unit StockCatalogUnit
+	if err := json.Unmarshal([]byte(`{"code":"แพ็ค","stand_value":0.100000000000000001,"divide_value":"3.000","ratio":0.03333333333333333}`), &unit); err != nil {
+		t.Fatalf("decode unit: %v", err)
+	}
+	if unit.StandValueExact != "0.100000000000000001" || unit.DivideValueExact != "3.000" {
+		t.Fatalf("exact factors = %q/%q", unit.StandValueExact, unit.DivideValueExact)
+	}
+	if unit.StandValue <= 0 || unit.DivideValue != 3 {
+		t.Fatalf("numeric factors = %v/%v", unit.StandValue, unit.DivideValue)
+	}
+}
+
 func TestStockSyncClientRejectsFailedEnvelope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

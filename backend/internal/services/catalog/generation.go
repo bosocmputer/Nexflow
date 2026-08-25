@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -67,14 +68,16 @@ func normalizeUnitCatalogPage(items []sml.StockCatalogItem) (normalizedUnitCatal
 				return normalizedUnitCatalogPage{}, fmt.Errorf("SML item %s contains duplicate unit %s", itemCode, unitCode)
 			}
 			seenUnits[unitCode] = struct{}{}
-			if !validPositiveFactor(unit.StandValue) || !validPositiveFactor(unit.DivideValue) {
+			standValue, standOK := exactCatalogFactor(unit.StandValueExact, unit.StandValue)
+			divideValue, divideOK := exactCatalogFactor(unit.DivideValueExact, unit.DivideValue)
+			if !standOK || !divideOK {
 				return normalizedUnitCatalogPage{}, fmt.Errorf("SML item %s unit %s has invalid stand/divide", itemCode, unitCode)
 			}
 			isDefault := unitCode == standardUnit
 			defaultFound = defaultFound || isDefault
 			page.Units = append(page.Units, repository.CatalogGenerationUnit{
 				ItemCode: itemCode, UnitCode: unitCode, UnitName: strings.TrimSpace(unit.Name),
-				StandValue: exactFactor(unit.StandValue), DivideValue: exactFactor(unit.DivideValue),
+				StandValue: standValue, DivideValue: divideValue,
 				IsDefault: isDefault, UnitOrder: unit.RowOrder,
 			})
 		}
@@ -111,6 +114,21 @@ func validPositiveFactor(value float64) bool {
 
 func exactFactor(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func exactCatalogFactor(exact string, fallback float64) (string, bool) {
+	exact = strings.TrimSpace(exact)
+	if exact == "" {
+		if !validPositiveFactor(fallback) {
+			return "", false
+		}
+		return exactFactor(fallback), true
+	}
+	value, ok := new(big.Rat).SetString(exact)
+	if !ok || value.Sign() <= 0 {
+		return "", false
+	}
+	return exact, true
 }
 
 func runUnitCatalogGeneration(ctx context.Context, store catalogGenerationStore, client stockCatalogPager, owner string, startedAt time.Time) (int, error) {

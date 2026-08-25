@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import type { CatalogMatch, CatalogSetComponent, MarketplaceAliasImpact } from '@/types'
@@ -1695,7 +1696,7 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         open={saveImpact !== null}
         onOpenChange={(open) => !open && setSaveImpact(null)}
         title="ยืนยัน Product Master และหน่วยสต๊อก?"
-        description={saveImpact && product && selected ? `${productDisplayName(product)}\nสินค้า SML: ${selected.item_code} · ${selected.item_name}\nบิลเปิดที่จะอัปเดต: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping ที่เกี่ยวข้อง: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? `\nพบสินค้าซ้ำใน Stock ${saveImpact.stock_conflicts.toLocaleString()} รายการ` : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน และต้องทำ Dry-run ก่อนซิงก์` : undefined}
+		description={saveImpact && product && selected ? `${productDisplayName(product)}\nสินค้า SML: ${selected.item_code} · ${selected.item_name}\n${marketplaceImpactFormulaLines(saveImpact).join('\n')}\nบิลเปิดที่จะอัปเดต: ${saveImpact.open_items.toLocaleString()} รายการ ใน ${saveImpact.open_bills.toLocaleString()} บิล\nStock mapping ที่เกี่ยวข้อง: ${saveImpact.stock_mappings.toLocaleString()} รายการ${saveImpact.stock_conflicts ? `\nพบสินค้าซ้ำใน Stock ${saveImpact.stock_conflicts.toLocaleString()} รายการ` : ''}\nเอกสารที่ส่ง SML แล้วจะไม่ถูกเปลี่ยน และต้องทำ Dry-run ก่อนซิงก์` : undefined}
         confirmLabel="บันทึกและบังคับ Dry-run"
         onConfirm={() => save(false)}
       />

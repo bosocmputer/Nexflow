@@ -33,6 +33,22 @@ func TestNormalizeUnitCatalogPagePreservesMultipleUnits(t *testing.T) {
 	}
 }
 
+func TestNormalizeUnitCatalogPageUsesExactSourceFactors(t *testing.T) {
+	page, err := normalizeUnitCatalogPage([]sml.StockCatalogItem{{
+		ItemCode: "SKU-DECIMAL", StandardUnit: "แพ็ค",
+		Units: []sml.StockCatalogUnit{{
+			Code: "แพ็ค", StandValue: 0.1, DivideValue: 3,
+			StandValueExact: "0.100000000000000001", DivideValueExact: "3.000",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("normalizeUnitCatalogPage: %v", err)
+	}
+	if page.Units[0].StandValue != "0.100000000000000001" || page.Units[0].DivideValue != "3.000" {
+		t.Fatalf("generation factors = %s/%s", page.Units[0].StandValue, page.Units[0].DivideValue)
+	}
+}
+
 func TestNormalizeUnitCatalogPageFailsClosedForInvalidFactors(t *testing.T) {
 	for _, factor := range []float64{0, -1, math.NaN(), math.Inf(1)} {
 		_, err := normalizeUnitCatalogPage([]sml.StockCatalogItem{{
