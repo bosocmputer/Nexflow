@@ -19,7 +19,7 @@ func TestMarketplaceAliasProductGroupsUsesBoundedKeysetPage(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(`(?s)WITH all_rows AS.*matched_keys AS.*\(source,account_key,group_key\) > \(\$3,\$4,\$5\).*LIMIT \$6.*GROUP BY.*ORDER BY.*`).
+	mock.ExpectQuery(`(?s)WITH matched_keys AS.*FROM marketplace_item_aliases matched.*\(matched.source,matched.account_key,COALESCE.*\) > \(\$3,\$4,\$5\).*LIMIT \$6.*JOIN marketplace_item_aliases a.*GROUP BY.*ORDER BY.*`).
 		WithArgs("shopee", "%pack%", "shopee", "shop:1", "100", 51).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"source", "account_key", "account_name", "parent_key", "parent_key_kind", "product_name",

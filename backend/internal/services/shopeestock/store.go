@@ -932,37 +932,39 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 		filter.Limit = 30
 	}
 	args := []any{shopID}
-	matched := []string{stockProductStatusSQL(filter.Status, "")}
+	matched := []string{stockProductStatusSQL(filter.Status, "matched_mapping.")}
 	if query := strings.TrimSpace(filter.Query); query != "" {
 		args = append(args, "%"+query+"%")
 		n := len(args)
-		matched = append(matched, fmt.Sprintf("(item_name ILIKE $%d OR model_name ILIKE $%d OR item_sku ILIKE $%d OR model_sku ILIKE $%d OR sml_item_code ILIKE $%d)", n, n, n, n, n))
+		matched = append(matched, fmt.Sprintf("(matched_product.item_name ILIKE $%d OR matched_product.model_name ILIKE $%d OR matched_product.item_sku ILIKE $%d OR matched_product.model_sku ILIKE $%d OR matched_mapping.sml_item_code ILIKE $%d)", n, n, n, n, n))
 	}
 	if filter.AfterItemID > 0 {
 		args = append(args, filter.AfterItemID)
-		matched = append(matched, fmt.Sprintf("item_id>$%d", len(args)))
+		matched = append(matched, fmt.Sprintf("matched_product.item_id>$%d", len(args)))
 	}
 	args = append(args, filter.Limit+1)
-	querySQL := fmt.Sprintf(`WITH all_rows AS (
-		SELECT p.item_id,p.item_name,p.model_name,p.item_sku,p.model_sku,p.updated_at,
-		       m.sml_item_code,m.excluded,m.warning_codes
-		FROM shopee_stock_products p
-		JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
-		WHERE p.shop_id=$1 AND p.is_active=true
-	), matched_items AS (
-		SELECT item_id FROM all_rows
-		WHERE %s
-		GROUP BY item_id
-		ORDER BY item_id
+	querySQL := fmt.Sprintf(`WITH matched_items AS (
+		SELECT matched_product.item_id
+		FROM shopee_stock_products matched_product
+		JOIN shopee_stock_mappings matched_mapping
+		  ON matched_mapping.shop_id=matched_product.shop_id
+		 AND matched_mapping.item_id=matched_product.item_id
+		 AND matched_mapping.model_id=matched_product.model_id
+		WHERE matched_product.shop_id=$1 AND matched_product.is_active=true AND %s
+		GROUP BY matched_product.item_id
+		ORDER BY matched_product.item_id
 		LIMIT $%d
 	)
-	SELECT a.item_id,MAX(a.item_name),MAX(a.item_sku),COUNT(*)::int,
-	       COUNT(*) FILTER (WHERE a.excluded=false AND a.sml_item_code<>'' AND jsonb_array_length(a.warning_codes)=0)::int,
-	       COUNT(*) FILTER (WHERE a.excluded=false AND (a.sml_item_code='' OR jsonb_array_length(a.warning_codes)>0))::int,
-	       COUNT(*) FILTER (WHERE a.excluded=true)::int,MAX(a.updated_at)
-	FROM matched_items k JOIN all_rows a USING(item_id)
-	GROUP BY a.item_id
-	ORDER BY a.item_id`, strings.Join(matched, " AND "), len(args))
+	SELECT p.item_id,MAX(p.item_name),MAX(p.item_sku),COUNT(*)::int,
+	       COUNT(*) FILTER (WHERE m.excluded=false AND m.sml_item_code<>'' AND jsonb_array_length(m.warning_codes)=0)::int,
+	       COUNT(*) FILTER (WHERE m.excluded=false AND (m.sml_item_code='' OR jsonb_array_length(m.warning_codes)>0))::int,
+	       COUNT(*) FILTER (WHERE m.excluded=true)::int,MAX(p.last_seen_at)
+	FROM matched_items k
+	JOIN shopee_stock_products p ON p.shop_id=$1 AND p.item_id=k.item_id AND p.is_active=true
+	JOIN shopee_stock_mappings m
+	  ON m.shop_id=p.shop_id AND m.item_id=p.item_id AND m.model_id=p.model_id
+	GROUP BY p.item_id
+	ORDER BY p.item_id`, strings.Join(matched, " AND "), len(args))
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, false, err

@@ -142,7 +142,7 @@ func TestListProductGroupsUsesShopeeItemKeyset(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)WITH all_rows AS.*matched_items AS.*item_id>\$3.*GROUP BY item_id.*LIMIT \$4.*COUNT\(\*\) FILTER`).
+	mock.ExpectQuery(`(?s)WITH matched_items AS.*FROM shopee_stock_products matched_product.*JOIN shopee_stock_mappings matched_mapping.*matched_product.item_id>\$3.*GROUP BY matched_product.item_id.*LIMIT \$4.*SELECT p.item_id.*COUNT\(\*\) FILTER.*MAX\(p.last_seen_at\).*JOIN shopee_stock_products p`).
 		WithArgs(int64(42), "%milk%", int64(1000), 51).
 		WillReturnRows(sqlmock.NewRows([]string{"item_id", "item_name", "item_sku", "variant_count", "ready_count", "fix_count", "excluded_count", "updated_at"}))
 
