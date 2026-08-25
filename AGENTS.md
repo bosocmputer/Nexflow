@@ -13,30 +13,40 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `18a9cbf`
-  (`fix: require safe Shopee stock disable`).
+- Application baseline: production application commit `a062122`
+  (`fix: release marketplace backfill lease per batch`). The Central SML
+  Gateway is on `a53db50` (`fix: include usable SML unit status conventions`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
   migration request.
-- Verified on 2026-08-25: Demo, AOY, Lanboon, and Central Shopee Gateway health
-  endpoints all returned HTTP 200 with database status `ok`.
+- Verified on 2026-08-25: Demo, AOY, Lanboon, and Central SML Gateway health
+  endpoints returned HTTP 200; all three edge `/login` routes returned HTTP 200.
+  The Central Shopee Gateway served a successful 44-variant AOY catalog sync,
+  and no error/fatal/panic entries were found in the five runtime containers'
+  most recent 15-minute logs.
 - Migration 085 is applied on all three tenant PostgreSQL 16 databases. The new
   Catalog-generation, exact SML attempt, reservation, mapping-job, stock-policy
   job, and asynchronous stock-run tables/columns exist. Post-deploy checks found
   zero queued mapping/backfill/policy/stock jobs and zero active reservations.
-- Release A is deployed fail-closed. All three tenants explicitly have
-  `MARKETPLACE_GROUPED_UI_ENABLED=false`,
-  `MARKETPLACE_UNIT_CATALOG_ENABLED=false`,
-  `MARKETPLACE_CONVERSION_MODE=off`,
-  `MARKETPLACE_RESERVATION_LEDGER_ENABLED=false`, and
-  `SHOPEE_SET_STOCK_ENABLED=false`. Do not enable them all at once; follow
-  `docs/product-mapping-master.md`.
+- Marketplace activation remains tenant-scoped and fail-closed:
+  - Demo: unit Catalog enabled for SML validation; grouped UI, conversion,
+    reservation ledger, and set-stock remain disabled. Active generation 3 has
+    206 products, 371 units, and 115 multi-unit products with no invalid units.
+  - AOY: grouped UI and unit Catalog enabled; conversion is `active`; reservation
+    ledger enabled; set-stock disabled. Runtime readiness is true for Catalog,
+    mapping, and reservations. Of 72 aliases, 71 are ready and one TikTok alias
+    needs review because its saved unit is no longer valid for the mapped item.
+  - Lanboon: application code updated, but all five marketplace feature gates
+    remain disabled pending tenant-specific preflight.
 - Pre-deploy database backups from 2026-08-25 are stored under
   `/mnt/data/nextstep-node-2/nexflow-backups`: Demo
   `pre-deploy-20260825-042133.sql.gz`, AOY
   `pre-deploy-20260825-042413.sql.gz`, and Lanboon
   `pre-deploy-20260825-042639.sql.gz`.
+- Activation backups are also stored under the same tenant folders. Demo and AOY
+  use the `pre-marketplace-activate-20260825-044809.sql.gz` snapshots; Lanboon's
+  code-alignment backup is `pre-marketplace-code-20260825-054410.sql.gz`.
 - AOY is the active production UAT tenant. The user has handed the current build
   to the AOY admin and is waiting for real-usage feedback. Do not treat silence as
   acceptance; inspect the reported tenant, record, and runtime logs before fixing
@@ -68,6 +78,11 @@ Current AOY UAT scope:
    `docs/shopee-auto-sml-runbook.md`.
 8. Auto SML persists `doc_time` immediately before its first SML write using
    Asia/Bangkok and reuses it across retries. It is not a fixed channel setting.
+9. AOY Shopee stock Catalog has 44 variants: 38 structurally ready and six with
+   `duplicate_sml_item`. Preview `2d9fc527-ba79-4793-853e-3c883e7d8c3d` blocked
+   all 44 because every listing still has `stock_policy=blocked`. The shop is
+   disabled, no Shopee stock write occurred, and the six shared-item listings
+   require an explicit allocation/policy decision before live activation.
 
 Known deferred or incomplete validation:
 

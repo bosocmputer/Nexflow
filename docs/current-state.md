@@ -10,12 +10,15 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 
 - Demo, AOY, and Lanboon run the same application baseline, with tenant-specific
   databases, SML settings, credentials, channel routes, and feature flags.
-- Application baseline under UAT: `18a9cbf`.
+- Application baseline under UAT: `a062122`. Central SML Gateway baseline:
+  `a53db50`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
   200 with database status `ok` on 2026-08-25.
-- Migration 085 is installed on every tenant. Release A feature flags are pinned
-  off on Demo, AOY, and Lanboon; no conversion backfill, reservation, or Shopee
-  stock write job was started by the deployment.
+- Migration 085 is installed on every tenant. AOY has grouped UI, versioned unit
+  Catalog, active conversion, and the reservation ledger enabled after readiness
+  validation. Demo has only the versioned unit Catalog enabled. Lanboon retains
+  all marketplace Release A gates disabled. Shopee set-stock remains disabled
+  everywhere pending a real mapped set-product UAT case.
 - AOY is the active production UAT tenant. Current feedback is pending for the
   marketplace sales/SML stock flow, `/sale-invoices`, and the compact
   `/shopee-operations` UI.
@@ -108,7 +111,7 @@ Key recent migrations:
 
 ## Feature Flags (current build)
 
-```bash
+```text
 VITE_PHASE=2
 VITE_ENABLE_SALES_ORDERS=true
 VITE_ENABLE_SHOPEE_EXCEL=true
@@ -126,11 +129,10 @@ ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 ENABLE_LINE_MYSHOP=true
 SHOPEE_AUTO_SML_ENABLED=false
-MARKETPLACE_GROUPED_UI_ENABLED=false
-MARKETPLACE_UNIT_CATALOG_ENABLED=false
-MARKETPLACE_CONVERSION_MODE=off
-MARKETPLACE_RESERVATION_LEDGER_ENABLED=false
-SHOPEE_SET_STOCK_ENABLED=false
+Marketplace release gates (tenant-specific):
+demo:    grouped=false, unit_catalog=true,  conversion=off,    ledger=false, set_stock=false
+aoy:     grouped=true,  unit_catalog=true,  conversion=active, ledger=true,  set_stock=false
+lanboon: grouped=false, unit_catalog=false, conversion=off,    ledger=false, set_stock=false
 ```
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX`, `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS`, and
