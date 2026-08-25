@@ -11,6 +11,7 @@ import (
 )
 
 const unitRatioTolerance = 0.000001
+const maxPreviewExcludedItems = 200
 
 var bangkokTimeZone = time.FixedZone("Asia/Bangkok", 7*60*60)
 
@@ -74,6 +75,18 @@ func previewItemExcludedLocations(items []sml.StockBalanceItem) []ExcludedStockL
 		groups = append(groups, locations)
 	}
 	return mergePreviewExcludedLocations(groups...)
+}
+
+func appendPreviewExcludedItemSummary(current []ExcludedStockLocation, total int, next []ExcludedStockLocation) ([]ExcludedStockLocation, int) {
+	total += len(next)
+	remaining := maxPreviewExcludedItems - len(current)
+	if remaining <= 0 {
+		return current, total
+	}
+	if len(next) > remaining {
+		next = next[:remaining]
+	}
+	return append(current, next...), total
 }
 
 func mergePreviewExcludedLocations(groups ...[]ExcludedStockLocation) []ExcludedStockLocation {

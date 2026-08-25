@@ -369,17 +369,20 @@ type SetStockComponentPreview struct {
 }
 
 type PreviewResult struct {
-	RunID             string                  `json:"run_id"`
-	ShopID            int64                   `json:"shop_id"`
-	AsOfDate          string                  `json:"as_of_date"`
-	TotalCount        int                     `json:"total_count"`
-	ChangedCount      int                     `json:"changed_count"`
-	SkippedCount      int                     `json:"skipped_count"`
-	BlockedCount      int                     `json:"blocked_count"`
-	ExcludedBalance   float64                 `json:"excluded_balance"`
-	ExcludedLocations []ExcludedStockLocation `json:"excluded_locations"`
-	CircuitBreaker    string                  `json:"circuit_breaker,omitempty"`
-	Lines             []PreviewLine           `json:"lines"`
+	RunID                      string                  `json:"run_id"`
+	ShopID                     int64                   `json:"shop_id"`
+	AsOfDate                   string                  `json:"as_of_date"`
+	TotalCount                 int                     `json:"total_count"`
+	ChangedCount               int                     `json:"changed_count"`
+	SkippedCount               int                     `json:"skipped_count"`
+	BlockedCount               int                     `json:"blocked_count"`
+	ExcludedBalance            float64                 `json:"excluded_balance"`
+	ExcludedLocations          []ExcludedStockLocation `json:"excluded_locations"`
+	ExcludedItems              []ExcludedStockLocation `json:"excluded_items,omitempty"`
+	ExcludedItemsTotal         int                     `json:"excluded_items_total,omitempty"`
+	ExcludedNegativeItemsTotal int                     `json:"excluded_negative_items_total,omitempty"`
+	CircuitBreaker             string                  `json:"circuit_breaker,omitempty"`
+	Lines                      []PreviewLine           `json:"lines"`
 }
 
 type SyncResult struct {

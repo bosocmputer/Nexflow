@@ -890,6 +890,9 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	balanceMap := map[string]sml.StockBalanceItem{}
 	pendingExceedsBalance := map[string]bool{}
 	excludedLocations := []ExcludedStockLocation{}
+	excludedItems := []ExcludedStockLocation{}
+	excludedItemsTotal := 0
+	excludedNegativeItemsTotal := 0
 	if len(itemCodes) > 0 {
 		for start := 0; start < len(itemCodes); start += 500 {
 			end := start + 500
@@ -914,11 +917,14 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			for _, item := range scope.Items {
 				balanceMap[item.ItemCode] = item
 			}
+			excludedLocations = mergePreviewExcludedLocations(excludedLocations, previewExcludedLocations("", scope.ExcludedLocations))
 			itemExcludedLocations := previewItemExcludedLocations(scope.Items)
-			if len(itemExcludedLocations) == 0 {
-				itemExcludedLocations = previewExcludedLocations("", scope.ExcludedLocations)
+			for _, location := range itemExcludedLocations {
+				if location.BalanceQty < 0 {
+					excludedNegativeItemsTotal++
+				}
 			}
-			excludedLocations = mergePreviewExcludedLocations(excludedLocations, itemExcludedLocations)
+			excludedItems, excludedItemsTotal = appendPreviewExcludedItemSummary(excludedItems, excludedItemsTotal, itemExcludedLocations)
 			if runLeaseOwner != "" {
 				progress := 20 + (float64(end)/float64(len(itemCodes)))*40
 				if err := s.store.UpdatePreviewRunProgress(ctx, runID, runLeaseOwner, end, progress); err != nil {
@@ -942,7 +948,9 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	}
 	result := &PreviewResult{
 		RunID: runID, ShopID: shopID, AsOfDate: asOfDate,
-		ExcludedLocations: excludedLocations, Lines: make([]PreviewLine, 0, len(products)),
+		ExcludedLocations: excludedLocations, ExcludedItems: excludedItems, ExcludedItemsTotal: excludedItemsTotal,
+		ExcludedNegativeItemsTotal: excludedNegativeItemsTotal,
+		Lines:                      make([]PreviewLine, 0, len(products)),
 	}
 	for _, location := range excludedLocations {
 		result.ExcludedBalance += location.BalanceQty

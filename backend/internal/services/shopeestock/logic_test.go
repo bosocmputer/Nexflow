@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -111,6 +112,17 @@ func TestPreviewItemExcludedLocationsPreservesSMLItemIdentity(t *testing.T) {
 	}})
 	if len(got) != 1 || got[0].ItemCode != "AH-0001" || got[0].ItemName != "สีเพ้นท์คิ้ว" || got[0].UnitCode != "กล่อง" || got[0].BalanceQty != -3 {
 		t.Fatalf("item excluded locations = %#v", got)
+	}
+}
+
+func TestAppendPreviewExcludedItemSummaryBoundsRunPayload(t *testing.T) {
+	items := make([]ExcludedStockLocation, maxPreviewExcludedItems+5)
+	for index := range items {
+		items[index] = ExcludedStockLocation{ItemCode: strconv.Itoa(index + 1), BalanceQty: 1}
+	}
+	got, total := appendPreviewExcludedItemSummary(nil, 0, items)
+	if len(got) != maxPreviewExcludedItems || total != maxPreviewExcludedItems+5 {
+		t.Fatalf("bounded excluded item summary len=%d total=%d", len(got), total)
 	}
 }
 

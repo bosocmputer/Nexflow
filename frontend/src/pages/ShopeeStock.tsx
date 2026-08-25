@@ -226,6 +226,9 @@ type Preview = {
     unit_code: string
     balance_qty: number
   }>
+  excluded_items?: ExcludedLocation[]
+  excluded_items_total?: number
+  excluded_negative_items_total?: number
   circuit_breaker?: string
   lines: Array<{
     item_id: number
@@ -335,9 +338,11 @@ function uniqueExcludedLocationCount(locations: ExcludedLocation[]) {
   return new Set(locations.map((item) => `${item.warehouse_code}\u0000${item.location_code}`)).size
 }
 
-function ExcludedStockLocations({ locations }: { locations: ExcludedLocation[] }) {
-  if (!locations.length) return null
-  const negativeCount = locations.filter((item) => item.balance_qty < 0).length
+function ExcludedStockLocations({ locations, items = [], itemTotal = 0, negativeItemTotal }: { locations: ExcludedLocation[]; items?: ExcludedLocation[]; itemTotal?: number; negativeItemTotal?: number }) {
+  const rows = items.length ? items : locations
+  if (!rows.length) return null
+  const negativeCount = negativeItemTotal ?? rows.filter((item) => item.balance_qty < 0).length
+  const locationCount = uniqueExcludedLocationCount(locations.length ? locations : rows)
   return (
     <section className="overflow-hidden rounded-md border border-warning/40 bg-warning/5" aria-labelledby="excluded-stock-title">
       <div className="flex flex-col gap-2 border-b border-warning/30 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -348,10 +353,10 @@ function ExcludedStockLocations({ locations }: { locations: ExcludedLocation[] }
             <p className="text-xs text-muted-foreground">ตำแหน่งเหล่านี้ไม่ได้ถูกเลือก ระบบจะแสดงไว้ให้ตรวจสอบ แต่ไม่นำยอดไปคำนวณหรือส่ง Shopee</p>
           </div>
         </div>
-        <Badge variant="outline" className="w-fit shrink-0 border-warning/40 bg-background">{formatNumber(uniqueExcludedLocationCount(locations))} ตำแหน่ง</Badge>
+        <Badge variant="outline" className="w-fit shrink-0 border-warning/40 bg-background">{formatNumber(locationCount)} ตำแหน่ง</Badge>
       </div>
       <div className="max-h-64 divide-y overflow-y-auto">
-        {locations.map((item) => {
+        {rows.map((item) => {
           const warehouse = stockLocationLabel(item.warehouse_code, item.warehouse_name, 'ไม่ระบุคลัง')
           const location = stockLocationLabel(item.location_code, item.location_name, 'ไม่ระบุพื้นที่เก็บ')
           const itemCode = item.item_code?.trim() ?? ''
@@ -380,6 +385,7 @@ function ExcludedStockLocations({ locations }: { locations: ExcludedLocation[] }
           )
         })}
       </div>
+      {itemTotal > rows.length && <p className="border-t border-warning/30 px-3 py-2 text-xs text-muted-foreground">แสดง {formatNumber(rows.length)} จาก {formatNumber(itemTotal)} รายการสินค้า กรุณาค้นหาสินค้าในรายการด้านล่างเพื่อดูรายละเอียดเพิ่มเติม</p>}
       {negativeCount > 0 && <p className="border-t border-warning/30 px-3 py-2 text-xs text-destructive">พบยอดติดลบ {formatNumber(negativeCount)} รายการ ควรตรวจการรับเข้า/ตัดสต๊อกของตำแหน่งดังกล่าวใน SML</p>}
     </section>
   )
@@ -982,7 +988,7 @@ export default function ShopeeStock() {
       )}
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>{pauseCopy.title}</AlertTitle><AlertDescription>{pauseCopy.description}</AlertDescription></Alert>}
       {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? previewPauseCopy.title : preview.blocked_count ? `ตรวจสอบแล้ว พบ ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'ตรวจสอบสต๊อกผ่านแล้ว'}</AlertTitle><AlertDescription>{preview.circuit_breaker ? `${previewPauseCopy.description} · ` : ''}ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)}{(preview.excluded_locations?.length ?? 0) > 0 ? ` · พบสต๊อกในคลัง/พื้นที่อื่น ${formatNumber(uniqueExcludedLocationCount(preview.excluded_locations ?? []))} ตำแหน่ง` : preview.excluded_balance !== 0 ? ` · พบยอดในคลัง/พื้นที่อื่น ${formatNumber(preview.excluded_balance)}` : ''}</AlertDescription></Alert>}
-      <ExcludedStockLocations locations={preview?.excluded_locations ?? []} />
+      <ExcludedStockLocations locations={preview?.excluded_locations ?? []} items={preview?.excluded_items ?? []} itemTotal={preview?.excluded_items_total ?? 0} negativeItemTotal={preview?.excluded_negative_items_total} />
       {preview?.lines?.some((line) => line.blocked) && <section className="rounded-md border border-warning/40 bg-warning/5"><div className="border-b px-4 py-3"><h2 className="text-sm font-semibold">รายการที่ยังซิงก์ไม่ได้</h2><p className="text-xs text-muted-foreground">กด “บันทึกและตรวจสต๊อก” อีกครั้ง ระบบจะเตรียมรายการที่จับคู่พร้อมให้อัตโนมัติ หากยังแสดงอยู่จึงค่อยแก้สินค้า หน่วย หรือข้อมูล SML ตามข้อความด้านล่าง</p></div><div className="divide-y">{(preview.lines ?? []).filter((line) => line.blocked).slice(0, 20).map((line) => <div key={`${line.item_id}:${line.model_id}`} className="grid gap-1 px-4 py-2 text-sm sm:grid-cols-[minmax(180px,1fr)_minmax(220px,1.4fr)]"><span className="truncate">{productNames.get(`${line.item_id}:${line.model_id}`) || `Item ${line.item_id}${line.model_id ? ` / Model ${line.model_id}` : ''}`}</span><span className="text-amber-800 dark:text-amber-200">{line.warning_codes.map((code) => WARNING_LABEL[code] || code).join(' · ')}</span></div>)}{preview.blocked_count > 20 && <p className="px-4 py-2 text-xs text-muted-foreground">แสดง 20 จาก {formatNumber(preview.blocked_count)} รายการ กดตรวจสอบสต๊อกใหม่เพื่ออัปเดตผล</p>}</div></section>}
       {preview?.lines?.some((line) => line.item_type === 3) && <SetStockPreviewList lines={preview.lines.filter((line) => line.item_type === 3)} productNames={productNames} />}
 
