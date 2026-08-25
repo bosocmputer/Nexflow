@@ -101,6 +101,19 @@ func TestPreviewExcludedLocationsPreservesSMLWarehouseDetails(t *testing.T) {
 	}
 }
 
+func TestPreviewItemExcludedLocationsPreservesSMLItemIdentity(t *testing.T) {
+	got := previewItemExcludedLocations([]sml.StockBalanceItem{{
+		ItemCode: "AH-0001", ItemName: "สีเพ้นท์คิ้ว", UnitCode: "กล่อง",
+		ExcludedLocations: []sml.StockBalanceLocation{{
+			WarehouseCode: "AB-2", WarehouseName: "คลังสำรอง",
+			LocationCode: "002", LocationName: "หลังร้าน", BalanceQty: -3,
+		}},
+	}})
+	if len(got) != 1 || got[0].ItemCode != "AH-0001" || got[0].ItemName != "สีเพ้นท์คิ้ว" || got[0].UnitCode != "กล่อง" || got[0].BalanceQty != -3 {
+		t.Fatalf("item excluded locations = %#v", got)
+	}
+}
+
 func TestMergePreviewExcludedLocationsKeepsItemsAndUnitsSeparate(t *testing.T) {
 	got := mergePreviewExcludedLocations(
 		[]ExcludedStockLocation{{ItemCode: "A", WarehouseCode: "W2", LocationCode: "S2", UnitCode: "ชิ้น", BalanceQty: 2}},

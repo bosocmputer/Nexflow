@@ -61,6 +61,21 @@ func previewExcludedLocations(itemCode string, items []sml.StockBalanceLocation)
 	return result
 }
 
+func previewItemExcludedLocations(items []sml.StockBalanceItem) []ExcludedStockLocation {
+	groups := make([][]ExcludedStockLocation, 0, len(items))
+	for _, item := range items {
+		locations := previewExcludedLocations(item.ItemCode, item.ExcludedLocations)
+		for index := range locations {
+			locations[index].ItemName = item.ItemName
+			if strings.TrimSpace(locations[index].UnitCode) == "" {
+				locations[index].UnitCode = item.UnitCode
+			}
+		}
+		groups = append(groups, locations)
+	}
+	return mergePreviewExcludedLocations(groups...)
+}
+
 func mergePreviewExcludedLocations(groups ...[]ExcludedStockLocation) []ExcludedStockLocation {
 	values := map[string]*ExcludedStockLocation{}
 	for _, group := range groups {
@@ -72,6 +87,9 @@ func mergePreviewExcludedLocations(groups ...[]ExcludedStockLocation) []Excluded
 				current = &copy
 				values[key] = current
 				continue
+			}
+			if strings.TrimSpace(current.ItemName) == "" {
+				current.ItemName = item.ItemName
 			}
 			current.BalanceQty += item.BalanceQty
 		}

@@ -910,10 +910,15 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			if len(balances.Scopes) != 1 {
 				return fail(errors.New("SML stock response ไม่มี scope ที่ร้องขอ"))
 			}
-			for _, item := range balances.Scopes[0].Items {
+			scope := balances.Scopes[0]
+			for _, item := range scope.Items {
 				balanceMap[item.ItemCode] = item
 			}
-			excludedLocations = append(excludedLocations, previewExcludedLocations("", balances.Scopes[0].ExcludedLocations)...)
+			itemExcludedLocations := previewItemExcludedLocations(scope.Items)
+			if len(itemExcludedLocations) == 0 {
+				itemExcludedLocations = previewExcludedLocations("", scope.ExcludedLocations)
+			}
+			excludedLocations = mergePreviewExcludedLocations(excludedLocations, itemExcludedLocations)
 			if runLeaseOwner != "" {
 				progress := 20 + (float64(end)/float64(len(itemCodes)))*40
 				if err := s.store.UpdatePreviewRunProgress(ctx, runID, runLeaseOwner, end, progress); err != nil {

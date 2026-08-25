@@ -347,6 +347,7 @@ type RunLine struct {
 
 type ExcludedStockLocation struct {
 	ItemCode      string  `json:"item_code,omitempty"`
+	ItemName      string  `json:"item_name,omitempty"`
 	WarehouseCode string  `json:"warehouse_code"`
 	WarehouseName string  `json:"warehouse_name"`
 	LocationCode  string  `json:"location_code"`

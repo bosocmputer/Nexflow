@@ -218,6 +218,7 @@ type Preview = {
   excluded_balance: number
   excluded_locations?: Array<{
     item_code?: string
+    item_name?: string
     warehouse_code: string
     warehouse_name: string
     location_code: string
@@ -353,10 +354,25 @@ function ExcludedStockLocations({ locations }: { locations: ExcludedLocation[] }
         {locations.map((item) => {
           const warehouse = stockLocationLabel(item.warehouse_code, item.warehouse_name, 'ไม่ระบุคลัง')
           const location = stockLocationLabel(item.location_code, item.location_name, 'ไม่ระบุพื้นที่เก็บ')
+          const itemCode = item.item_code?.trim() ?? ''
+          const itemName = item.item_name?.trim() ?? ''
+          const itemTitle = [itemCode, itemName].filter(Boolean).join(' · ')
           return (
-            <div key={`${item.warehouse_code}:${item.location_code}:${item.unit_code}`} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:gap-3">
-              <p className="min-w-0 truncate" title={warehouse}><span className="text-muted-foreground">คลัง:</span> <span className="font-medium text-foreground">{warehouse}</span></p>
-              <p className="min-w-0 truncate" title={location}><span className="text-muted-foreground">พื้นที่เก็บ:</span> <span className="font-medium text-foreground">{location}</span></p>
+            <div key={`${itemCode}:${item.warehouse_code}:${item.location_code}:${item.unit_code}`} className="grid gap-2 px-3 py-2.5 text-xs sm:grid-cols-[minmax(220px,1.2fr)_minmax(220px,1fr)_auto] sm:items-center sm:gap-3">
+              <div className="min-w-0">
+                {itemTitle ? (
+                  <p className="truncate font-medium text-foreground" title={itemTitle}>
+                    {itemCode && <span className="font-mono">{itemCode}</span>}{itemCode && itemName && <span className="text-muted-foreground"> · </span>}{itemName}
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">ผลตรวจรอบเดิมยังไม่มีรหัสและชื่อสินค้า</p>
+                )}
+                <p className="mt-0.5 text-muted-foreground">หน่วยนับ: <span className="font-medium text-foreground">{item.unit_code || 'ไม่ระบุ'}</span></p>
+              </div>
+              <div className="min-w-0 space-y-0.5">
+                <p className="truncate" title={warehouse}><span className="text-muted-foreground">คลัง:</span> <span className="font-medium text-foreground">{warehouse}</span></p>
+                <p className="truncate" title={location}><span className="text-muted-foreground">พื้นที่เก็บ:</span> <span className="font-medium text-foreground">{location}</span></p>
+              </div>
               <p className={cn('whitespace-nowrap font-mono text-sm font-semibold tabular-nums sm:text-right', item.balance_qty < 0 ? 'text-destructive' : 'text-foreground')}>
                 {formatNumber(item.balance_qty)} <span className="font-sans text-[11px] font-normal">{item.unit_code || 'หน่วยเล็ก'}</span>
               </p>
