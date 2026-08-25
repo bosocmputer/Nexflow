@@ -9,18 +9,34 @@
 
 ---
 
-## 0. Current UAT Handoff (2026-08-24)
+## 0. Current UAT Handoff (2026-08-25)
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `dc3931a`
-  (`Clarify Shopee Auto SML control`).
+- Application baseline: production application commit `18a9cbf`
+  (`fix: require safe Shopee stock disable`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
   migration request.
-- Verified on 2026-08-24: Demo, AOY, Lanboon, and Central Shopee Gateway health
+- Verified on 2026-08-25: Demo, AOY, Lanboon, and Central Shopee Gateway health
   endpoints all returned HTTP 200 with database status `ok`.
+- Migration 085 is applied on all three tenant PostgreSQL 16 databases. The new
+  Catalog-generation, exact SML attempt, reservation, mapping-job, stock-policy
+  job, and asynchronous stock-run tables/columns exist. Post-deploy checks found
+  zero queued mapping/backfill/policy/stock jobs and zero active reservations.
+- Release A is deployed fail-closed. All three tenants explicitly have
+  `MARKETPLACE_GROUPED_UI_ENABLED=false`,
+  `MARKETPLACE_UNIT_CATALOG_ENABLED=false`,
+  `MARKETPLACE_CONVERSION_MODE=off`,
+  `MARKETPLACE_RESERVATION_LEDGER_ENABLED=false`, and
+  `SHOPEE_SET_STOCK_ENABLED=false`. Do not enable them all at once; follow
+  `docs/product-mapping-master.md`.
+- Pre-deploy database backups from 2026-08-25 are stored under
+  `/mnt/data/nextstep-node-2/nexflow-backups`: Demo
+  `pre-deploy-20260825-042133.sql.gz`, AOY
+  `pre-deploy-20260825-042413.sql.gz`, and Lanboon
+  `pre-deploy-20260825-042639.sql.gz`.
 - AOY is the active production UAT tenant. The user has handed the current build
   to the AOY admin and is waiting for real-usage feedback. Do not treat silence as
   acceptance; inspect the reported tenant, record, and runtime logs before fixing

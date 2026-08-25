@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-08-18
+Updated: 2026-08-25
 
 Production capability mode is **sales-only and deterministic**. AI, OCR,
 embedding, Daily Insight, IMAP ingestion, LINE chat, and purchase workflows are
@@ -10,9 +10,12 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 
 - Demo, AOY, and Lanboon run the same application baseline, with tenant-specific
   databases, SML settings, credentials, channel routes, and feature flags.
-- Application baseline under UAT: `5ef8b40`.
+- Application baseline under UAT: `18a9cbf`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
-  200 with database status `ok` on 2026-08-18.
+  200 with database status `ok` on 2026-08-25.
+- Migration 085 is installed on every tenant. Release A feature flags are pinned
+  off on Demo, AOY, and Lanboon; no conversion backfill, reservation, or Shopee
+  stock write job was started by the deployment.
 - AOY is the active production UAT tenant. Current feedback is pending for the
   marketplace sales/SML stock flow, `/sale-invoices`, and the compact
   `/shopee-operations` UI.
