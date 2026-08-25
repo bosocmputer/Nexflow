@@ -55,6 +55,38 @@ func TestMarketplaceBackfillClaimUsesSkipLockedAndDependencies(t *testing.T) {
 	}
 }
 
+func TestMarketplaceBackfillAdvanceRequeuesAndReleasesLease(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE marketplace_backfill_jobs SET status='queued',cursor_id=\$3::uuid.*lease_owner='',lease_until=NULL.*next_attempt_at=NOW\(\).*WHERE id=\$1::uuid AND lease_owner=\$2 AND status='running'`).
+		WithArgs("00000000-0000-0000-0000-000000000085", "backfill-worker", "00000000-0000-0000-0000-000000000099", 72).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+
+	worker := NewMarketplaceBackfillWorker(NewMarketplaceAliasRepo(db), true, false, nil)
+	job := &marketplaceBackfillJob{
+		ID: "00000000-0000-0000-0000-000000000085", LeaseOwner: "backfill-worker",
+	}
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.advanceTx(t.Context(), tx, job, "00000000-0000-0000-0000-000000000099", 72); err != nil {
+		t.Fatalf("advanceTx: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMarketplaceBackfillCompleteCastsAuditJobType(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

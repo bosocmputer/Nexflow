@@ -383,8 +383,9 @@ func (w *MarketplaceBackfillWorker) processReservationBatch(ctx context.Context,
 }
 
 func (w *MarketplaceBackfillWorker) advanceTx(ctx context.Context, tx *sql.Tx, job *marketplaceBackfillJob, cursor string, processed int) error {
-	result, err := tx.ExecContext(ctx, `UPDATE marketplace_backfill_jobs SET cursor_id=$3::uuid,
-		processed_count=processed_count+$4,heartbeat_at=NOW(),lease_until=NOW()+INTERVAL '5 minutes',updated_at=NOW()
+	result, err := tx.ExecContext(ctx, `UPDATE marketplace_backfill_jobs SET status='queued',cursor_id=$3::uuid,
+		processed_count=processed_count+$4,heartbeat_at=NOW(),lease_owner='',lease_until=NULL,
+		next_attempt_at=NOW(),updated_at=NOW()
 		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, job.ID, job.LeaseOwner, cursor, processed)
 	if err != nil {
 		return err
