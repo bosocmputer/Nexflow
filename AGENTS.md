@@ -13,18 +13,17 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `a062122`
-  (`fix: release marketplace backfill lease per batch`). The Central SML
+- Application baseline: production application commit `05d1211`
+  (`fix: close marketplace mapping parameter gap`). The Central SML
   Gateway is on `a53db50` (`fix: include usable SML unit status conventions`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
   migration request.
-- Verified on 2026-08-25: Demo, AOY, Lanboon, and Central SML Gateway health
-  endpoints returned HTTP 200; all three edge `/login` routes returned HTTP 200.
-  The Central Shopee Gateway served a successful 44-variant AOY catalog sync,
-  and no error/fatal/panic entries were found in the five runtime containers'
-  most recent 15-minute logs.
+- Verified on 2026-08-25 after rebuilding the application backend at `05d1211`:
+  Demo, AOY, Lanboon, and both Central Gateway health endpoints returned HTTP
+  200. Each tenant backend resolved the Central Shopee Gateway on the shared
+  Docker network.
 - Migration 085 is applied on all three tenant PostgreSQL 16 databases. The new
   Catalog-generation, exact SML attempt, reservation, mapping-job, stock-policy
   job, and asynchronous stock-run tables/columns exist. Post-deploy checks found
@@ -78,11 +77,16 @@ Current AOY UAT scope:
    `docs/shopee-auto-sml-runbook.md`.
 8. Auto SML persists `doc_time` immediately before its first SML write using
    Asia/Bangkok and reuses it across retries. It is not a fixed channel setting.
-9. AOY Shopee stock Catalog has 44 variants: 38 structurally ready and six with
-   `duplicate_sml_item`. Preview `2d9fc527-ba79-4793-853e-3c883e7d8c3d` blocked
-   all 44 because every listing still has `stock_policy=blocked`. The shop is
-   disabled, no Shopee stock write occurred, and the six shared-item listings
-   require an explicit allocation/policy decision before live activation.
+9. Controlled normal-product Shopee stock UAT passed for shop `264993963`, item
+   `6278820512`, model `43634992848`, mapped to SML `AH-0033` / `แท่ง` at factor
+   1. Preview `cd5a5944-8955-4660-b32d-baaccbe2e672` proved target stock 1 from
+   SML balance 1 and pending demand 0. Manual sync
+   `63ca255f-c56c-496f-b5f4-011bb79f2a99` changed Shopee 0 -> 1 with no error or
+   unknown result; catalog read-back confirmed seller stock 1. Final preview
+   `8a03d431-7263-4f9e-a7c7-d6cac213ecfb` was unchanged 1 -> 1. Automatic stock
+   sync remains disabled, while this single alias remains `managed` for UAT.
+   The other 43 listings remain blocked, including six shared-item listings that
+   still require explicit allocation/policy decisions.
 
 Known deferred or incomplete validation:
 
@@ -328,4 +332,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-24 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-25 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442

@@ -10,7 +10,7 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 
 - Demo, AOY, and Lanboon run the same application baseline, with tenant-specific
   databases, SML settings, credentials, channel routes, and feature flags.
-- Application baseline under UAT: `a062122`. Central SML Gateway baseline:
+- Application baseline under UAT: `05d1211`. Central SML Gateway baseline:
   `a53db50`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
   200 with database status `ok` on 2026-08-25.
@@ -25,6 +25,12 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 - Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
   Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
   Lazada UAT while preserving tenant isolation.
+- AOY normal-product Shopee stock UAT passed on shop `264993963` for item/model
+  `6278820512/43634992848` mapped to SML `AH-0033` at factor 1. A controlled
+  manual run changed Shopee stock 0 -> 1, catalog read-back confirmed 1, and the
+  post-write preview was unchanged 1 -> 1. Automatic stock sync is disabled;
+  Shopee set-product stock remains disabled pending a real mapped set-product
+  case.
 - Detailed resume notes, deferred work, and the per-session preflight checklist
   are maintained in `AGENTS.md` under `Current UAT Handoff`.
 
