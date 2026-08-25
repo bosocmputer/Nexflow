@@ -13,13 +13,14 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `82baa4a`
-  (`Simplify marketplace stock quantity setup`). The Central SML
-  Gateway is on `a53db50` (`fix: include usable SML unit status conventions`).
-- The same committed application code is deployed to Demo, AOY, and Lanboon.
-  Tenant databases, SML tenants, credentials, channel routes, and feature flags
-  remain isolated and must never be copied between instances without an explicit
-  migration request.
+- Application baseline is intentionally split for AOY-only UAT: AOY runs
+  `990c028` (`fix: ignore stale Catalog mapping responses`), while Demo and
+  Lanboon remain on `82baa4a` (`Simplify marketplace stock quantity setup`). The
+  Central SML Gateway is on `a53db50`
+  (`fix: include usable SML unit status conventions`).
+- Tenant databases, SML tenants, credentials, channel routes, feature flags, and
+  deployment revisions remain isolated and must never be copied between
+  instances without an explicit migration request.
 - Verified on 2026-08-25 after deploying application commit `82baa4a`:
   Demo, AOY, Lanboon, and both Central Gateway health endpoints returned HTTP
   200. Each tenant backend resolved the Central Shopee Gateway on the shared
@@ -33,9 +34,10 @@ Read this section first when resuming work in a new session.
     reservation ledger, and set-stock remain disabled. Active generation 3 has
     206 products, 371 units, and 115 multi-unit products with no invalid units.
   - AOY: grouped UI and unit Catalog enabled; conversion is `active`; reservation
-    ledger enabled; set-stock disabled. Runtime readiness is true for Catalog,
-    mapping, and reservations. Of 72 aliases, 71 are ready and one TikTok alias
-    needs review because its saved unit is no longer valid for the mapped item.
+    ledger enabled; set-stock enabled under the user's explicit controlled-UAT
+    risk acceptance. Runtime readiness is true for Catalog, mapping, and
+    reservations. Of 72 aliases, 71 are ready and one TikTok alias needs review
+    because its saved unit is no longer valid for the mapped item.
   - Lanboon: application code updated, but all five marketplace feature gates
     remain disabled pending tenant-specific preflight.
 - Pre-deploy database backups from 2026-08-25 are stored under
@@ -111,6 +113,15 @@ Current AOY UAT scope:
     SML component-balance checklist pass.
     Desktop and 390px mobile QA passed for `/marketplace-aliases` and
     `/settings/shopee-stock`; the browser console had no new warnings/errors.
+12. AOY-only Catalog Marketplace visibility is deployed at `990c028`. Migration
+    086 adds an active-alias lookup index; `/settings/catalog` now shows bounded
+    Shopee/Lazada/TikTok mapping counts for each SML item and lazy-loads the
+    matched account, product, variant, and SKU details. Production browser QA
+    found 41 mapped rows and 9 unmapped rows on the first 50-item page; opening
+    an item showed five cross-channel variants correctly. Catalog remains at 65
+    active products and the alias table remains at 72 rows. The pre-deploy AOY
+    backup is `pre-deploy-20260825-084650.sql.gz`. Demo and Lanboon did not
+    receive migration 086 or the Catalog UI/API change.
 
 Known deferred or incomplete validation:
 
@@ -121,8 +132,9 @@ Known deferred or incomplete validation:
   user removed 13 restored/legacy duplicate SML documents.
 - Shopee set-stock needs a future tenant/shop with a real set product before it
   can be declared production-validated end to end.
-- Demo and Lanboon run the same code but may have paid features or Shopee runtime
-  flags disabled. Verify per-instance status instead of assuming AOY settings.
+- Demo and Lanboon currently run the older `82baa4a` application revision and
+  may also have paid features or Shopee runtime flags disabled. Verify both the
+  deployed revision and per-instance settings instead of assuming AOY behavior.
 
 Resume checklist:
 
