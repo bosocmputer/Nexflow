@@ -328,7 +328,44 @@ func (h *ShopeeStockHandler) UpdateSharedPool(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลสต๊อกร่วมกันไม่ถูกต้อง"})
 		return
 	}
-	result, err := h.service.UpdateSharedPool(c.Request.Context(), shopID, request, c.GetString("user_id"))
+	normalized, err := h.service.NormalizeSharedPoolUpdate(request)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	if normalized.AutoManageMembers {
+		if h.aliases == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ระบบ Product Master ยังไม่พร้อม กรุณาลองใหม่"})
+			return
+		}
+		members := make([]repository.MarketplaceSharedPoolMember, 0, len(normalized.Members))
+		for _, member := range normalized.Members {
+			members = append(members, repository.MarketplaceSharedPoolMember{ItemID: member.ItemID, ModelID: member.ModelID})
+		}
+		if _, err := h.aliases.AutoManageShopeeSharedPool(c.Request.Context(), shopID, normalized.SMLItemCode, members, c.GetString("user_id")); err != nil {
+			switch {
+			case errors.Is(err, repository.ErrMarketplaceSharedPoolPolicyLocked):
+				c.JSON(http.StatusConflict, gin.H{"error": "มีรายการที่เคยเลือกหยุดซิงก์หรือจัดการสต๊อกเอง ระบบจึงไม่เปิดกลับให้อัตโนมัติ กรุณาตรวจรายการนั้นก่อน"})
+			case errors.Is(err, repository.ErrMarketplaceUnitNotReady):
+				c.JSON(http.StatusConflict, gin.H{"error": "บางรายการยังไม่มีหน่วยนับที่ตรวจสอบได้ กรุณาแก้การจับคู่ก่อนแบ่งสต๊อก"})
+			case errors.Is(err, repository.ErrMarketplaceAliasConflict), errors.Is(err, repository.ErrMarketplaceImpactChanged):
+				c.JSON(http.StatusConflict, gin.H{"error": "ข้อมูลสินค้าเปลี่ยนแล้ว กรุณารีเฟรชและบันทึกสัดส่วนอีกครั้ง"})
+			default:
+				h.fail(c, err)
+			}
+			return
+		}
+		normalized, err = h.service.RebaseSharedPoolUpdate(c.Request.Context(), shopID, normalized)
+		if err != nil {
+			if errors.Is(err, shopeestock.ErrMappingConflict) {
+				c.JSON(http.StatusConflict, gin.H{"error": "รายการในกลุ่มเปลี่ยนแล้ว กรุณารีเฟรชและบันทึกสัดส่วนอีกครั้ง"})
+				return
+			}
+			h.fail(c, err)
+			return
+		}
+	}
+	result, err := h.service.UpdateSharedPool(c.Request.Context(), shopID, normalized, c.GetString("user_id"))
 	if err != nil {
 		h.fail(c, err)
 		return

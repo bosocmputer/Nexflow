@@ -605,6 +605,41 @@ func (s *Service) UpdateSharedPool(ctx context.Context, shopID int64, request Sh
 	return s.store.UpdateSharedPool(ctx, shopID, normalized, userID)
 }
 
+func (s *Service) NormalizeSharedPoolUpdate(request SharedPoolUpdate) (SharedPoolUpdate, error) {
+	return normalizeSharedPoolUpdate(request)
+}
+
+func (s *Service) RebaseSharedPoolUpdate(ctx context.Context, shopID int64, request SharedPoolUpdate) (SharedPoolUpdate, error) {
+	pool, err := s.GetSharedPool(ctx, shopID, request.SMLItemCode)
+	if err != nil {
+		return request, err
+	}
+	return rebaseSharedPoolRequest(request, pool)
+}
+
+func rebaseSharedPoolRequest(request SharedPoolUpdate, pool *SharedPool) (SharedPoolUpdate, error) {
+	if pool == nil || strings.TrimSpace(pool.SMLItemCode) != strings.TrimSpace(request.SMLItemCode) || len(pool.Members) != len(request.Members) {
+		return request, ErrMappingConflict
+	}
+	versions := make(map[string]time.Time, len(pool.Members))
+	for _, member := range pool.Members {
+		versions[stockProductKey(member.ItemID, member.ModelID)] = member.UpdatedAt
+	}
+	for index := range request.Members {
+		key := stockProductKey(request.Members[index].ItemID, request.Members[index].ModelID)
+		updatedAt, ok := versions[key]
+		if !ok || updatedAt.IsZero() {
+			return request, ErrMappingConflict
+		}
+		request.Members[index].UpdatedAt = updatedAt
+		delete(versions, key)
+	}
+	if len(versions) != 0 {
+		return request, ErrMappingConflict
+	}
+	return request, nil
+}
+
 func normalizeSharedPoolUpdate(request SharedPoolUpdate) (SharedPoolUpdate, error) {
 	request.SMLItemCode = strings.TrimSpace(request.SMLItemCode)
 	if request.SMLItemCode == "" {

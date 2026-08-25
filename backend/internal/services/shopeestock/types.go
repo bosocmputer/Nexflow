@@ -250,8 +250,9 @@ type SharedPoolMemberUpdate struct {
 }
 
 type SharedPoolUpdate struct {
-	SMLItemCode string                   `json:"sml_item_code"`
-	Members     []SharedPoolMemberUpdate `json:"members"`
+	SMLItemCode       string                   `json:"sml_item_code"`
+	Members           []SharedPoolMemberUpdate `json:"members"`
+	AutoManageMembers bool                     `json:"auto_manage_members,omitempty"`
 }
 
 type CatalogDue struct {

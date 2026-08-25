@@ -700,7 +700,7 @@ func (s *Store) UpdateSharedPool(ctx context.Context, shopID int64, request Shar
 		SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW() WHERE shop_id=$1`, shopID); err != nil {
 		return nil, err
 	}
-	detail := map[string]any{"shop_id": shopID, "sml_item_code": request.SMLItemCode, "member_count": len(request.Members), "allocations": request.Members}
+	detail := map[string]any{"shop_id": shopID, "sml_item_code": request.SMLItemCode, "member_count": len(request.Members), "allocations": request.Members, "auto_manage_members": request.AutoManageMembers}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,detail)
 		VALUES('shopee_shared_stock_pool_updated',NULLIF($1,'')::uuid,'shopee_stock','info',$2)`, userID, mustJSON(detail)); err != nil {
 		return nil, err
