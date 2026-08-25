@@ -21,12 +21,6 @@ interface MarketplaceLinkPage {
   next_cursor: string
 }
 
-function accountLabel(link: CatalogMarketplaceLink) {
-  if (link.account_name) return link.account_name
-  if (!link.account_key || link.account_key === 'default') return 'บัญชีหลัก'
-  return link.account_key
-}
-
 export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, itemName }: Props) {
   const [links, setLinks] = useState<CatalogMarketplaceLink[]>([])
   const [nextCursor, setNextCursor] = useState('')
@@ -101,10 +95,9 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
                   const showVariant = link.variant_name && link.variant_name !== link.product_name
                   const needsReview = link.conversion_status !== 'ready' || !link.scope_confirmed
                   return (
-                    <div key={link.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[115px_minmax(0,1fr)] sm:gap-3">
-                      <div className="flex items-start gap-2 sm:block">
-                        <MarketplaceSourceChannelBadges source={link.source} />
-                        <p className="mt-1 truncate text-xs text-muted-foreground" title={accountLabel(link)}>{accountLabel(link)}</p>
+                    <div key={link.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[190px_minmax(0,1fr)] sm:gap-3">
+                      <div>
+                        <MarketplaceSourceChannelBadges source={link.source} accountName={link.account_name} />
                       </div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">

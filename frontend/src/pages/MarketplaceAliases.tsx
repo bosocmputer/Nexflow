@@ -900,9 +900,8 @@ function actionDescription(action: PendingAction | null) {
 function ChannelAccount({ source, accountName, accountKey }: { source: string; accountName?: string; accountKey: string }) {
   const name = accountName || (accountKey.startsWith('shop:') ? `ร้าน ${accountKey.slice(5)}` : '')
   return (
-    <div className="flex shrink-0 flex-col items-start gap-1">
-      <MarketplaceSourceChannelBadges source={source} />
-      {name && <span className="max-w-[140px] truncate text-xs text-muted-foreground">{name}</span>}
+    <div className="shrink-0">
+      <MarketplaceSourceChannelBadges source={source} accountName={name} />
     </div>
   )
 }

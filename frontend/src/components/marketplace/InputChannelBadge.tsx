@@ -18,23 +18,25 @@ const CHANNEL_CLASS: Record<BillInputChannel, string> = {
 export function InputChannelBadge({
   channel,
   count,
+  label,
   className,
 }: {
   channel: BillInputChannel
   count?: number
+  label?: string
   className?: string
 }) {
   const excel = channel.endsWith('_excel')
   return (
     <span
       className={cn(
-        'inline-flex h-6 w-fit items-center gap-1.5 rounded-md border px-2 text-[11px] font-semibold leading-none',
+        'inline-flex h-6 w-fit items-center gap-1.5 whitespace-nowrap rounded-md border px-2 text-[11px] font-semibold leading-none',
         CHANNEL_CLASS[channel],
         className,
       )}
     >
       {excel && <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden="true" />}
-      {billInputChannelLabel(channel)}
+      {label || billInputChannelLabel(channel)}
       {count != null && <span className="tabular-nums opacity-85">{count.toLocaleString()}</span>}
     </span>
   )
@@ -43,10 +45,12 @@ export function InputChannelBadge({
 export function MarketplaceSourceChannelBadges({
   source,
   count,
+  accountName,
   className,
 }: {
   source: string
   count?: number
+  accountName?: string
   className?: string
 }) {
   const channels = marketplaceSourceInputChannels(source)
@@ -58,7 +62,14 @@ export function MarketplaceSourceChannelBadges({
     : undefined
   return (
     <span className={cn('flex flex-wrap gap-1.5', className)} title={title}>
-      {channels.map((channel) => <InputChannelBadge key={channel} channel={channel} count={count} />)}
+      {channels.map((channel) => (
+        <InputChannelBadge
+          key={channel}
+          channel={channel}
+          count={count}
+          label={channel === 'shopee' && accountName ? `${billInputChannelLabel(channel)} (${accountName})` : undefined}
+        />
+      ))}
     </span>
   )
 }
