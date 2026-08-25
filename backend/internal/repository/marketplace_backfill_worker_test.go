@@ -54,3 +54,35 @@ func TestMarketplaceBackfillClaimUsesSkipLockedAndDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMarketplaceBackfillCompleteCastsAuditJobType(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE marketplace_backfill_jobs SET status='completed'`).
+		WithArgs("00000000-0000-0000-0000-000000000085", "backfill-worker").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE marketplace_conversion_readiness SET`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`jsonb_build_object\('job_type',\$3::text\)`).
+		WithArgs("aoy", "00000000-0000-0000-0000-000000000085", "alias_conversion").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	worker := NewMarketplaceBackfillWorker(
+		NewMarketplaceAliasRepo(db).WithTenantKey("aoy"), true, false, nil,
+	)
+	job := &marketplaceBackfillJob{
+		ID: "00000000-0000-0000-0000-000000000085", JobType: "alias_conversion", LeaseOwner: "backfill-worker",
+	}
+	if err := worker.complete(t.Context(), job); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

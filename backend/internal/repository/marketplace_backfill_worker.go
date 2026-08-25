@@ -469,7 +469,7 @@ func (w *MarketplaceBackfillWorker) complete(ctx context.Context, job *marketpla
 		(action,source,level,tenant_key,job_id,before_state,after_state,detail)
 		VALUES('marketplace_backfill_completed','marketplace','info',$1,$2::uuid,
 		  jsonb_build_object('status','running'),jsonb_build_object('status','completed'),
-		  jsonb_build_object('job_type',$3))`, w.repo.tenantKey, job.ID, job.JobType); err != nil {
+		  jsonb_build_object('job_type',$3::text))`, w.repo.tenantKey, job.ID, job.JobType); err != nil {
 		return err
 	}
 	return tx.Commit()
