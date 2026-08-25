@@ -109,6 +109,12 @@ type ProductCounts struct {
 	Excluded int `json:"excluded"`
 }
 
+type PreparationResult struct {
+	ManagedCount          int `json:"managed_count"`
+	SharedPoolCount       int `json:"shared_pool_count"`
+	SharedPoolMemberCount int `json:"shared_pool_member_count"`
+}
+
 type Run struct {
 	ID                  string          `json:"id"`
 	ShopID              int64           `json:"shop_id"`

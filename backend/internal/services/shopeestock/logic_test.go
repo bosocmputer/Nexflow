@@ -46,6 +46,29 @@ func TestTodayBangkokReturnsCalendarDate(t *testing.T) {
 	}
 }
 
+func TestValidateSyncReadinessKeepsManualSyncIndependentFromSchedule(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings Settings
+		trigger  string
+		wantErr  error
+	}{
+		{name: "manual sync while schedule is off", settings: Settings{}, trigger: "manual"},
+		{name: "scheduled sync while schedule is off", settings: Settings{}, trigger: "scheduler", wantErr: ErrDryRunRequired},
+		{name: "manual sync still requires a fresh stock check", settings: Settings{DryRunRequired: true}, trigger: "manual", wantErr: ErrDryRunRequired},
+		{name: "manual sync still respects a safety pause", settings: Settings{PausedReason: "catalog_generation_reconcile"}, trigger: "manual", wantErr: ErrDryRunRequired},
+		{name: "scheduled sync is ready when enabled", settings: Settings{Enabled: true}, trigger: "scheduler"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateSyncReadiness(&test.settings, test.trigger)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("error=%v want=%v", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestCalculateTarget(t *testing.T) {
 	if got := CalculateTarget(100, 80, 6); got != 13 {
 		t.Fatalf("target = %d, want 13", got)

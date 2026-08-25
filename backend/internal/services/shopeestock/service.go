@@ -341,6 +341,23 @@ func (s *Service) QueuePreview(ctx context.Context, shopID int64, asOfDate strin
 	return runID, nil
 }
 
+func (s *Service) PrepareReadyMappings(ctx context.Context, shopID int64, userID string) (*PreparationResult, error) {
+	result := &PreparationResult{}
+	if !strings.EqualFold(strings.TrimSpace(s.cfg.ConversionMode), "active") {
+		return result, nil
+	}
+	owner := s.leaseOwner("prepare", shopID)
+	_, acquired, err := s.store.AcquireFencedLease(ctx, shopID, owner, 2*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, ErrSyncInProgress
+	}
+	defer func() { _ = s.store.ReleaseLease(context.Background(), shopID, owner) }()
+	return s.store.PrepareReadyMappings(ctx, shopID, userID)
+}
+
 func (s *Service) ExecuteQueuedPreview(ctx context.Context, job *QueuedPreviewJob) (*PreviewResult, error) {
 	if job == nil || job.ID == "" || job.LeaseOwner == "" {
 		return nil, errors.New("queued preview job is invalid")
@@ -364,8 +381,8 @@ func (s *Service) RunSync(ctx context.Context, shopID int64, trigger string) (*S
 	if err != nil {
 		return nil, err
 	}
-	if !settings.Enabled || settings.DryRunRequired || settings.PausedReason != "" {
-		return nil, ErrDryRunRequired
+	if err := validateSyncReadiness(settings, trigger); err != nil {
+		return nil, err
 	}
 	owner := s.leaseOwner("sync", shopID)
 	fencingToken, lease, err := s.store.AcquireFencedLease(ctx, shopID, owner, 2*time.Minute)

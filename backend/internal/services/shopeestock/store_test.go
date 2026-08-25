@@ -337,13 +337,47 @@ func TestRenewAndValidateLiveWriteFailsClosedWhenSnapshotChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)WITH renewed AS.*UPDATE shopee_stock_leases.*fencing_token=\$4.*UPDATE shopee_stock_runs.*config_version=st.config_version.*demand_revision_snapshot.*RETURNING true`).
+	mock.ExpectQuery(`(?s)WITH renewed AS.*UPDATE shopee_stock_leases.*fencing_token=\$4.*UPDATE shopee_stock_runs.*\(st.enabled=true OR r.trigger_source='manual'\).*config_version=st.config_version.*demand_revision_snapshot.*RETURNING true`).
 		WithArgs("run-sync-1", int64(42), "sync-1", int64(9), 120).
 		WillReturnRows(sqlmock.NewRows([]string{"valid"}))
 
 	valid, err := NewStore(db).RenewAndValidateLiveWrite(context.Background(), "run-sync-1", 42, "sync-1", 9, 2*time.Minute)
 	if err != nil || valid {
 		t.Fatalf("valid=%v err=%v", valid, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareReadyMappingsPromotesNormalItemsAndCreatesEqualPools(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)WITH candidates AS.*stock_policy='blocked'.*conversion_status='ready'.*UPDATE marketplace_item_aliases.*stock_policy='managed'.*RETURNING`).
+		WithArgs(int64(42), "00000000-0000-0000-0000-000000000001").
+		WillReturnRows(sqlmock.NewRows([]string{"managed_count"}).AddRow(37))
+	mock.ExpectQuery(`(?s)WITH candidate_groups AS.*COUNT\(\*\) BETWEEN 2 AND 50.*UPDATE shopee_stock_mappings.*shared_pool_enabled=true.*pool_allocation_pct.*RETURNING`).
+		WithArgs(int64(42), "00000000-0000-0000-0000-000000000001").
+		WillReturnRows(sqlmock.NewRows([]string{"pool_count", "member_count"}).AddRow(2, 6))
+	mock.ExpectExec(`UPDATE shopee_stock_mappings m.*warning_codes=m.warning_codes-'duplicate_sml_item'`).WillReturnResult(sqlmock.NewResult(0, 6))
+	mock.ExpectExec(`(?s)WITH active_groups AS.*UPDATE shopee_stock_mappings`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`(?s)WITH duplicated AS.*UPDATE shopee_stock_mappings`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`UPDATE shopee_stock_settings.*enabled=false.*dry_run_required=true.*config_version=config_version\+1`).
+		WithArgs(int64(42)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO audit_logs.*shopee_stock_ready_mappings_prepared`).
+		WithArgs("00000000-0000-0000-0000-000000000001", sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := NewStore(db).PrepareReadyMappings(context.Background(), 42, "00000000-0000-0000-0000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ManagedCount != 37 || result.SharedPoolCount != 2 || result.SharedPoolMemberCount != 6 {
+		t.Fatalf("result=%+v", result)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

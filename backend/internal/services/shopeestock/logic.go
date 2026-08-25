@@ -18,6 +18,16 @@ func TodayBangkok() string {
 	return time.Now().In(bangkokTimeZone).Format("2006-01-02")
 }
 
+func validateSyncReadiness(settings *Settings, trigger string) error {
+	if settings == nil || settings.DryRunRequired || strings.TrimSpace(settings.PausedReason) != "" {
+		return ErrDryRunRequired
+	}
+	if !settings.Enabled && !strings.EqualFold(strings.TrimSpace(trigger), "manual") {
+		return ErrDryRunRequired
+	}
+	return nil
+}
+
 func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 	if balance <= 0 || stockPct <= 0 || unitFactor <= 0 {
 		return 0

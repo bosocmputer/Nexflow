@@ -169,13 +169,26 @@ func (h *ShopeeStockHandler) Preview(c *gin.Context) {
 	if strings.TrimSpace(request.AsOfDate) == "" {
 		request.AsOfDate = shopeestock.TodayBangkok()
 	}
+	prepared, err := h.service.PrepareReadyMappings(c.Request.Context(), shopID, c.GetString("user_id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
 	runID, err := h.service.QueuePreview(c.Request.Context(), shopID, request.AsOfDate)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	h.auditChange(c, "shopee_stock_preview_queued", shopID, map[string]any{"run_id": runID, "as_of_date": request.AsOfDate})
-	c.JSON(http.StatusAccepted, gin.H{"run_id": runID, "status": "queued"})
+	h.auditChange(c, "shopee_stock_preview_queued", shopID, map[string]any{
+		"run_id": runID, "as_of_date": request.AsOfDate,
+		"managed_count": prepared.ManagedCount, "shared_pool_count": prepared.SharedPoolCount,
+		"shared_pool_member_count": prepared.SharedPoolMemberCount,
+	})
+	c.JSON(http.StatusAccepted, gin.H{
+		"run_id": runID, "status": "queued",
+		"managed_count": prepared.ManagedCount, "shared_pool_count": prepared.SharedPoolCount,
+		"shared_pool_member_count": prepared.SharedPoolMemberCount,
+	})
 }
 
 func (h *ShopeeStockHandler) PreviewRun(c *gin.Context) {

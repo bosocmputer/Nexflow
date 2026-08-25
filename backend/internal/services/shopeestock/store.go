@@ -1414,6 +1414,109 @@ func (s *Store) SetDryRunRequired(ctx context.Context, shopID int64) error {
 	return err
 }
 
+func (s *Store) PrepareReadyMappings(ctx context.Context, shopID int64, userID string) (*PreparationResult, error) {
+	if shopID <= 0 {
+		return nil, invalid("ร้าน Shopee ไม่ถูกต้อง")
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	result := &PreparationResult{}
+	err = tx.QueryRowContext(ctx, `WITH candidates AS (
+		SELECT DISTINCT alias_row.id
+		FROM shopee_stock_products p
+		JOIN shopee_stock_mappings m USING(shop_id,item_id,model_id)
+		JOIN LATERAL (
+		  SELECT master.id,master.stock_policy,master.conversion_status,master.sales_enabled,master.scope_confirmed
+		  FROM marketplace_item_aliases master
+		  WHERE master.is_active=true AND master.source='shopee'
+		    AND ((master.id=m.marketplace_alias_id)
+		      OR (master.account_key='shop:'||p.shop_id::text
+		        AND master.external_item_id=p.item_id::text AND master.external_variant_id=p.model_id::text))
+		  ORDER BY (master.id=m.marketplace_alias_id) DESC LIMIT 1
+		) alias_row ON true
+		WHERE p.shop_id=$1 AND p.is_active=true AND m.excluded=false AND m.sml_item_code<>''
+		  AND alias_row.stock_policy='blocked' AND alias_row.conversion_status='ready'
+		  AND alias_row.sales_enabled=true AND alias_row.scope_confirmed=true
+	), updated AS (
+		UPDATE marketplace_item_aliases alias_row
+		SET stock_policy='managed',mapping_revision=alias_row.mapping_revision+1,
+		    confirmed_by=COALESCE(NULLIF($2,'')::uuid,alias_row.confirmed_by),updated_at=NOW()
+		FROM candidates WHERE alias_row.id=candidates.id AND alias_row.stock_policy='blocked'
+		RETURNING alias_row.id::text
+	)
+	SELECT COUNT(*)::int FROM updated`, shopID, userID).Scan(&result.ManagedCount)
+	if err != nil {
+		return nil, err
+	}
+	err = tx.QueryRowContext(ctx, `WITH candidate_groups AS (
+		SELECT m.sml_item_code,COUNT(*)::int AS member_count
+		FROM shopee_stock_mappings m
+		JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
+		JOIN LATERAL (
+		  SELECT master.stock_policy
+		  FROM marketplace_item_aliases master
+		  WHERE master.is_active=true AND master.source='shopee'
+		    AND ((master.id=m.marketplace_alias_id)
+		      OR (master.account_key='shop:'||p.shop_id::text
+		        AND master.external_item_id=p.item_id::text AND master.external_variant_id=p.model_id::text))
+		  ORDER BY (master.id=m.marketplace_alias_id) DESC LIMIT 1
+		) alias_row ON true
+		WHERE m.shop_id=$1 AND p.is_active=true AND m.excluded=false AND m.sml_item_code<>''
+		GROUP BY m.sml_item_code
+		HAVING COUNT(*) BETWEEN 2 AND 50 AND BOOL_AND(alias_row.stock_policy='managed')
+		  AND NOT (BOOL_AND(m.shared_pool_enabled) AND ABS(SUM(m.pool_allocation_pct)-100)<=0.001)
+	), ranked AS (
+		SELECT m.shop_id,m.item_id,m.model_id,m.sml_item_code,g.member_count,
+		       ROW_NUMBER() OVER (PARTITION BY m.sml_item_code ORDER BY m.item_id,m.model_id)::int AS member_position
+		FROM candidate_groups g
+		JOIN shopee_stock_mappings m ON m.shop_id=$1 AND m.sml_item_code=g.sml_item_code AND m.excluded=false
+		JOIN shopee_stock_products p USING(shop_id,item_id,model_id)
+		WHERE p.is_active=true
+	), updated AS (
+		UPDATE shopee_stock_mappings m
+		SET shared_pool_enabled=true,
+		    pool_allocation_pct=CASE WHEN ranked.member_position=ranked.member_count
+		      THEN 100.00-ROUND(100.00/ranked.member_count,2)*(ranked.member_count-1)
+		      ELSE ROUND(100.00/ranked.member_count,2) END,
+		    updated_by=NULLIF($2,'')::uuid,updated_at=NOW()
+		FROM ranked
+		WHERE m.shop_id=ranked.shop_id AND m.item_id=ranked.item_id AND m.model_id=ranked.model_id
+		RETURNING m.sml_item_code,m.item_id,m.model_id,m.pool_allocation_pct
+	)
+	SELECT COUNT(DISTINCT sml_item_code)::int,COUNT(*)::int FROM updated`, shopID, userID).
+		Scan(&result.SharedPoolCount, &result.SharedPoolMemberCount)
+	if err != nil {
+		return nil, err
+	}
+	if result.ManagedCount > 0 || result.SharedPoolMemberCount > 0 {
+		if err := markDuplicateMappings(ctx, tx); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE shopee_stock_settings
+			SET enabled=false,dry_run_required=true,config_version=config_version+1,updated_at=NOW()
+			WHERE shop_id=$1`, shopID); err != nil {
+			return nil, err
+		}
+		detail := map[string]any{
+			"shop_id": shopID, "managed_count": result.ManagedCount,
+			"shared_pool_count": result.SharedPoolCount, "shared_pool_member_count": result.SharedPoolMemberCount,
+			"stock_policy_before": "blocked", "stock_policy_after": "managed",
+			"shared_pool_allocation": "equal",
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(action,user_id,source,level,detail)
+			VALUES('shopee_stock_ready_mappings_prepared',NULLIF($1,'')::uuid,'shopee_stock','info',$2)`, userID, mustJSON(detail)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *Store) CreateRun(ctx context.Context, shopID int64, runType, trigger, asOfDate string) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx, `INSERT INTO shopee_stock_runs(shop_id,run_type,trigger_source,as_of_date)
@@ -1630,7 +1733,7 @@ func (s *Store) RenewAndValidateLiveWrite(ctx context.Context, runID string, sho
 	FROM shopee_stock_settings st,renewed
 	WHERE r.id=$1::uuid AND r.shop_id=$2 AND r.shop_id=st.shop_id AND r.status='running'
 	  AND r.lease_owner=$3 AND r.lease_fencing_token=$4 AND r.lease_until>NOW()
-	  AND st.enabled=true AND st.dry_run_required=false AND st.paused_reason=''
+	  AND (st.enabled=true OR r.trigger_source='manual') AND st.dry_run_required=false AND st.paused_reason=''
 	  AND r.config_version=st.config_version
 	  AND r.catalog_generation_id IS NOT DISTINCT FROM (
 	    SELECT id FROM sml_catalog_sync_runs WHERE status='active' ORDER BY activated_at DESC NULLS LAST,created_at DESC LIMIT 1
