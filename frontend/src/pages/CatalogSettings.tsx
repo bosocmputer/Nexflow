@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
 import { ProductImagePreviewDialog } from '@/components/common/ProductImagePreviewDialog'
 import { CatalogMarketplaceLinksDialog } from '@/components/catalog/CatalogMarketplaceLinksDialog'
+import { MarketplaceSourceChannelBadges } from '@/components/marketplace/InputChannelBadge'
 import { SetProductDetailsDialog } from '@/components/catalog/SetProductDetailsDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -184,9 +185,7 @@ export default function CatalogSettings() {
                           <button type="button" className="rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setMarketplaceDetailsItem(item)} aria-label={`ดูสินค้า Marketplace ที่จับคู่กับ ${item.item_code}`}>
                             <span className="flex flex-wrap gap-1.5">
                               {marketplaceSummaries.map((summary) => (
-                                <Badge key={summary.source} variant="outline" className={cn(summary.source === 'shopee' && 'border-[#EE4D2D]/40 bg-[#EE4D2D]/10 text-[#C23B21]', summary.source === 'lazada' && 'border-info/40 bg-info/10 text-info')}>
-                                  {summary.source === 'shopee' ? 'Shopee' : summary.source === 'lazada' ? 'Lazada' : summary.source === 'tiktok' ? 'TikTok' : summary.source} {summary.mapping_count.toLocaleString()}
-                                </Badge>
+                                <MarketplaceSourceChannelBadges key={summary.source} source={summary.source} count={summary.mapping_count} />
                               ))}
                             </span>
                             <span className="mt-1 block text-xs text-link">ดูชื่อสินค้าและตัวเลือก</span>

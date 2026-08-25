@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, Link2, Loader2, Store } from 'lucide-react'
 
 import api from '@/api/client'
+import { MarketplaceSourceChannelBadges } from '@/components/marketplace/InputChannelBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
 import type { CatalogMarketplaceLink } from '@/types'
 
 interface Props {
@@ -19,16 +19,6 @@ interface MarketplaceLinkPage {
   data: CatalogMarketplaceLink[]
   has_more: boolean
   next_cursor: string
-}
-
-const SOURCE_META: Record<string, { label: string; className: string }> = {
-  shopee: { label: 'Shopee', className: 'border-[#EE4D2D]/40 bg-[#EE4D2D]/10 text-[#C23B21]' },
-  lazada: { label: 'Lazada', className: 'border-info/40 bg-info/10 text-info' },
-  tiktok: { label: 'TikTok', className: 'border-foreground/25 bg-foreground/5 text-foreground' },
-}
-
-function sourceMeta(source: string) {
-  return SOURCE_META[source] ?? { label: source || 'Marketplace', className: 'border-border bg-muted/40 text-foreground' }
 }
 
 function accountLabel(link: CatalogMarketplaceLink) {
@@ -108,13 +98,12 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
             <div className="overflow-hidden rounded-md border">
               <div className="divide-y">
                 {links.map((link) => {
-                  const meta = sourceMeta(link.source)
                   const showVariant = link.variant_name && link.variant_name !== link.product_name
                   const needsReview = link.conversion_status !== 'ready' || !link.scope_confirmed
                   return (
                     <div key={link.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[115px_minmax(0,1fr)] sm:gap-3">
                       <div className="flex items-start gap-2 sm:block">
-                        <Badge variant="outline" className={cn('w-fit', meta.className)}>{meta.label}</Badge>
+                        <MarketplaceSourceChannelBadges source={link.source} />
                         <p className="mt-1 truncate text-xs text-muted-foreground" title={accountLabel(link)}>{accountLabel(link)}</p>
                       </div>
                       <div className="min-w-0">

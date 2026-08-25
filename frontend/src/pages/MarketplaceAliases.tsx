@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
 import { MarketplaceQuantityField, quantityModeFromMultiplier, type MarketplaceQuantityMode } from '@/components/marketplace/MarketplaceQuantityField'
+import { MarketplaceSourceChannelBadges } from '@/components/marketplace/InputChannelBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -24,7 +25,6 @@ import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
 
-const SOURCE_LABEL: Record<string, string> = { shopee: 'Shopee', lazada: 'Lazada', tiktok: 'TikTok' }
 const PER_PAGE = 30
 
 type TabKey = 'pending' | 'saved'
@@ -464,12 +464,12 @@ export default function MarketplaceAliases() {
             </div>
 			<Button variant="outline" onClick={() => { setQuery(draft.trim()); resetProductPage() }}>ค้นหา</Button>
 			<Select value={source} onValueChange={(value) => { setSource(value as SourceFilter); resetProductPage() }}>
-              <SelectTrigger className="w-[145px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">ทุกช่องทาง</SelectItem>
-                <SelectItem value="shopee">Shopee</SelectItem>
-                <SelectItem value="lazada">Lazada</SelectItem>
-                <SelectItem value="tiktok">TikTok</SelectItem>
+                <SelectItem value="shopee">Shopee API + Excel</SelectItem>
+                <SelectItem value="lazada">Lazada Excel</SelectItem>
+                <SelectItem value="tiktok">TikTok Excel</SelectItem>
               </SelectContent>
             </Select>
 			{tab === 'saved' && groupedAvailable !== false && (
@@ -901,7 +901,7 @@ function ChannelAccount({ source, accountName, accountKey }: { source: string; a
   const name = accountName || (accountKey.startsWith('shop:') ? `ร้าน ${accountKey.slice(5)}` : '')
   return (
     <div className="flex shrink-0 flex-col items-start gap-1">
-      <Badge variant="secondary">{SOURCE_LABEL[source] ?? source}</Badge>
+      <MarketplaceSourceChannelBadges source={source} />
       {name && <span className="max-w-[140px] truncate text-xs text-muted-foreground">{name}</span>}
     </div>
   )
