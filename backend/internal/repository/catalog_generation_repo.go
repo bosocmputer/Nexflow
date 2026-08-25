@@ -313,8 +313,9 @@ func (r *SMLCatalogRepo) ActivateCatalogGeneration(ctx context.Context, generati
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs
 		(action,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
 		VALUES('sml_catalog_generation_activated','sml_catalog','info',$1::uuid,$2,$3,$1::uuid,
-		  jsonb_build_object('generation_id',$4),jsonb_build_object('generation_id',$1,'status','active'),
-		  jsonb_build_object('product_count',$5,'unit_count',$6,'product_hash',$7,'unit_hash',$8))`,
+		  jsonb_build_object('generation_id',$4::text),jsonb_build_object('generation_id',$1::text,'status','active'),
+		  jsonb_build_object('product_count',$5::bigint,'unit_count',$6::bigint,
+		    'product_hash',$7::text,'unit_hash',$8::text))`,
 		generationID, r.tenantKey, generation, previousGeneration.String, productCount, unitCount, productHash, unitHash); err != nil {
 		return err
 	}
