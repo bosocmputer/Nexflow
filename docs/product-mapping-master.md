@@ -85,18 +85,24 @@ browser timings again at each rollout gate.
    bill snapshot, and reservation counts.
 2. Deploy migration 085 with all new flags disabled. Migration 085 is additive
    and contains no startup backfill or destructive price cleanup.
-3. Enable `MARKETPLACE_UNIT_CATALOG_ENABLED=true` and
-   `MARKETPLACE_GROUPED_UI_ENABLED=true` in Demo, then run a full catalog sync.
-4. Wait until `/api/marketplace-aliases/readiness` reports catalog, mapping
+3. Enable `MARKETPLACE_UNIT_CATALOG_ENABLED=true` in Demo and run a full catalog
+   sync. Demo has no Marketplace shops, so use it only to validate SML product
+   metadata, `ic_unit_use`, generation activation, and price-free Catalog UI.
+4. On AOY, enable `MARKETPLACE_GROUPED_UI_ENABLED=true` first and verify the
+   grouped Product Master with real Shopee, TikTok, and Lazada records. This is
+   a read-only UI gate; do not enable conversion or write Shopee stock yet.
+5. Wait until `/api/marketplace-aliases/readiness` reports catalog, mapping
    backfill, and reservation ledger ready for the enabled feature set.
-5. Run real import previews in `MARKETPLACE_CONVERSION_MODE=shadow` and inspect
+6. Run real AOY import previews in `MARKETPLACE_CONVERSION_MODE=shadow` and inspect
    aggregate mismatch/reconciliation counts.
-6. Confirm that unmatched real orders appear in the `รอจับคู่` tab. Legacy name
+7. Confirm that unmatched real orders appear in the `รอจับคู่` tab. Legacy name
    hints remain in storage and must never appear as an unresolved admin queue by
    themselves.
-7. Enable `MARKETPLACE_RESERVATION_LEDGER_ENABLED=true`, reconcile counts, then
+8. Enable `MARKETPLACE_RESERVATION_LEDGER_ENABLED=true`, reconcile counts, then
    switch conversion to `active`. Startup fails closed if readiness is incomplete.
-8. Repeat controlled sales, SML recalculation, stock Dry-run, and one live normal
-   product write. Keep AOY set stock disabled until its real set-product UAT passes.
-9. Roll back with conversion `shadow/off` and paused shops. Migration 085 and its
+9. Repeat controlled AOY sales for Shopee, TikTok, and Lazada, then verify SML
+   recalculation, stock Dry-run, and one live normal Shopee product write.
+   Demo must not be used for Shopee verification because it has no Shopee shop.
+10. Keep AOY set stock disabled until its real set-product UAT passes.
+11. Roll back with conversion `shadow/off` and paused shops. Migration 085 and its
    ledger remain in place; do not delete reconciliation evidence.

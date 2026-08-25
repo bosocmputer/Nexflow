@@ -16,6 +16,9 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 - AOY is the active production UAT tenant. Current feedback is pending for the
   marketplace sales/SML stock flow, `/sale-invoices`, and the compact
   `/shopee-operations` UI.
+- Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
+  Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
+  Lazada UAT while preserving tenant isolation.
 - Detailed resume notes, deferred work, and the per-session preflight checklist
   are maintained in `AGENTS.md` under `Current UAT Handoff`.
 
