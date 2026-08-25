@@ -90,6 +90,12 @@ type hiddenCatalogCodesResponse struct {
 	HasMore bool                 `json:"has_more"`
 }
 
+type catalogMarketplaceCursor struct {
+	Source     string `json:"s"`
+	AccountKey string `json:"a"`
+	ID         string `json:"i"`
+}
+
 func NewCatalogHandler(
 	svc *catalog.SMLCatalogService,
 	repo *repository.SMLCatalogRepo,
@@ -542,6 +548,43 @@ func (h *CatalogHandler) GetOne(c *gin.Context) {
 	}
 	item.ImageURL = catalogImageURL(item.ItemCode, item.ImageCount, item.PrimaryImageRoworder)
 	c.JSON(http.StatusOK, item)
+}
+
+// GET /api/catalog/:code/marketplace-links — lazy-loaded Product Master rows
+// that currently point to this SML item. The catalog page receives only small
+// per-platform counts until the user explicitly opens the detail dialog.
+func (h *CatalogHandler) MarketplaceLinks(c *gin.Context) {
+	code := strings.TrimSpace(c.Param("code"))
+	if code == "" || strings.ContainsAny(code, "\x00\r\n") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รหัสสินค้า SML ไม่ถูกต้อง"})
+		return
+	}
+	var cursor catalogMarketplaceCursor
+	if raw := c.Query("cursor"); raw != "" {
+		if err := decodeMarketplaceCursor(raw, &cursor); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "cursor ไม่ถูกต้อง กรุณาเปิดรายละเอียดใหม่"})
+			return
+		}
+	}
+	if h.catalogRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalog repository not configured"})
+		return
+	}
+	links, hasMore, err := h.catalogRepo.MarketplaceLinks(c.Request.Context(), repository.CatalogMarketplaceLinkFilter{
+		ItemCode: code, Limit: marketplacePageLimit(c.Query("limit"), 25, 100),
+		AfterSource: cursor.Source, AfterAccountKey: cursor.AccountKey, AfterID: cursor.ID,
+	})
+	if err != nil {
+		h.logger.Error("catalog marketplace links", zap.String("item_code", code), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดสินค้าที่จับคู่จาก Marketplace ไม่สำเร็จ"})
+		return
+	}
+	next := ""
+	if hasMore && len(links) > 0 {
+		last := links[len(links)-1]
+		next = encodeMarketplaceCursor(catalogMarketplaceCursor{Source: last.Source, AccountKey: last.AccountKey, ID: last.ID})
+	}
+	c.JSON(http.StatusOK, gin.H{"data": links, "has_more": hasMore, "next_cursor": next})
 }
 
 // GET /api/sml/units — authenticated proxy for SML unit master data.

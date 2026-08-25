@@ -656,6 +656,7 @@ func main() {
 		api.GET("/catalog/:code/images", catalogH.GetImages)
 		api.GET("/catalog/:code/images/:roworder", catalogH.GetImageByRoworder)
 		api.GET("/catalog/:code/units", middleware.RequireRole("admin", "staff"), catalogH.GetProductUnits)
+		api.GET("/catalog/:code/marketplace-links", middleware.RequireRole("admin", "staff"), catalogH.MarketplaceLinks)
 		api.GET("/catalog/:code", catalogH.GetOne)
 		api.POST("/catalog/products", middleware.RequireRole("admin"), catalogH.CreateProduct)
 		api.POST("/catalog/sync", middleware.RequireRole("admin"), catalogH.SyncFromAPI)
