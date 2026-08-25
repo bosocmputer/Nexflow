@@ -68,6 +68,14 @@ func TestMigration085IsAdditiveAndSchemaOnly(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS marketplace_stock_reservation_components",
 		"CREATE TABLE IF NOT EXISTS marketplace_stock_demand_versions",
 		"CREATE TABLE IF NOT EXISTS bill_sml_attempts",
+		"CONSTRAINT marketplace_stock_reservations_identity_check CHECK",
+		"CONSTRAINT marketplace_stock_reservations_source_qty_check CHECK (source_qty > 0)",
+		"CONSTRAINT marketplace_stock_reservations_multiplier_check CHECK (quantity_multiplier BETWEEN 1 AND 1000000)",
+		"CONSTRAINT marketplace_stock_reservations_unit_ratio_check CHECK",
+		"CONSTRAINT marketplace_stock_reservations_base_qty_check CHECK (base_qty IS NULL OR base_qty > 0)",
+		"CONSTRAINT marketplace_stock_reservations_demand_revision_check CHECK (demand_revision >= 1)",
+		"CONSTRAINT marketplace_stock_reservations_pending_proof_check CHECK",
+		"component_base_qty NUMERIC NOT NULL CHECK (component_base_qty > 0)",
 	} {
 		if !strings.Contains(sqlText, required) {
 			t.Errorf("migration 085 missing %q", required)

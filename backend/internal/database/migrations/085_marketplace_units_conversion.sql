@@ -371,6 +371,31 @@ CREATE TABLE IF NOT EXISTS marketplace_stock_reservations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   incorporated_at TIMESTAMPTZ,
   released_at TIMESTAMPTZ,
+  CONSTRAINT marketplace_stock_reservations_identity_check CHECK (
+    source IN ('shopee','lazada','tiktok')
+    AND btrim(account_key) <> ''
+    AND btrim(order_id) <> ''
+    AND btrim(source_line_id) <> ''
+  ),
+  CONSTRAINT marketplace_stock_reservations_source_qty_check CHECK (source_qty > 0),
+  CONSTRAINT marketplace_stock_reservations_multiplier_check CHECK (quantity_multiplier BETWEEN 1 AND 1000000),
+  CONSTRAINT marketplace_stock_reservations_unit_ratio_check CHECK (
+    (unit_stand_value IS NULL AND unit_divide_value IS NULL)
+    OR (unit_stand_value > 0 AND unit_divide_value > 0)
+  ),
+  CONSTRAINT marketplace_stock_reservations_base_qty_check CHECK (base_qty IS NULL OR base_qty > 0),
+  CONSTRAINT marketplace_stock_reservations_demand_revision_check CHECK (demand_revision >= 1),
+  CONSTRAINT marketplace_stock_reservations_pending_proof_check CHECK (
+    state NOT IN ('active','sending_sml','awaiting_stock_recalc')
+    OR (
+      marketplace_alias_id IS NOT NULL
+      AND mapping_revision >= 1
+      AND unit_stand_value > 0
+      AND unit_divide_value > 0
+      AND base_qty > 0
+      AND btrim(sml_item_code) <> ''
+    )
+  ),
   UNIQUE (source, account_key, order_id, source_line_id, external_item_id, external_variant_id)
 );
 
@@ -392,7 +417,7 @@ CREATE TABLE IF NOT EXISTS marketplace_stock_reservation_components (
   component_item_code TEXT NOT NULL,
   warehouse_code TEXT NOT NULL DEFAULT '',
   location_code TEXT NOT NULL DEFAULT '',
-  component_base_qty NUMERIC NOT NULL CHECK (component_base_qty >= 0),
+  component_base_qty NUMERIC NOT NULL CHECK (component_base_qty > 0),
   set_definition_hash TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (reservation_id, component_item_code, warehouse_code, location_code)
