@@ -34,6 +34,9 @@ percentage and parent unit factor. Components are never mapped manually.
 
 ## Safety Model
 
+- Admin and staff can inspect shop status, grouped products/variants, and stock
+  preview history. Only admins can change mappings/settings, start a dry-run, or
+  write stock to Shopee; the staff UI is explicitly read-only.
 - Every shop starts disabled with `stock_pct=80` and a 5-minute interval.
 - Admins can select 5, 10, 20, or 30 minutes, 1 hour, or a custom interval up
   to 12 weeks. Calendar schedules support every 1-12 months on days 1-28 at a

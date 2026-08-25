@@ -117,7 +117,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { menuKey: 'marketplace_aliases', to: '/marketplace-aliases', label: 'จับคู่สินค้า Marketplace', icon: Tags, hasBadge: 'marketplace_aliases', hint: 'จัดการความสัมพันธ์สินค้า Marketplace ไปยัง SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'catalog', to: '/settings/catalog', label: 'รายการสินค้า SML', icon: Database, hint: 'ดู ค้นหา และรีเฟรชสินค้าปลายทางจาก SML' },
-      { menuKey: 'shopee_stock', to: '/settings/shopee-stock', label: 'ซิงก์สต๊อก Shopee', icon: PackageCheck, hint: 'คุมสต๊อก Shopee จากยอดพร้อมขายใน SML', adminOnly: true },
+      { menuKey: 'shopee_stock', to: '/settings/shopee-stock', label: 'ซิงก์สต๊อก Shopee', icon: PackageCheck, hint: 'คุมสต๊อก Shopee จากยอดพร้อมขายใน SML' },
     ],
   },
   {

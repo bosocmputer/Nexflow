@@ -48,6 +48,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
+import { useAuthStore } from '@/store/auth'
 import type { CatalogMatch, CatalogSetComponent, MarketplaceAliasImpact } from '@/types'
 
 type LocationPair = { warehouse: string; location: string }
@@ -434,6 +435,7 @@ function normalizeStockSetting(setting: StockSetting): StockSetting {
 }
 
 export default function ShopeeStock() {
+  const canManage = useAuthStore((state) => state.user?.role === 'admin')
   const [data, setData] = useState<Overview | null>(null)
   const [shopID, setShopID] = useState(0)
   const [tab, setTab] = useState<(typeof STATUS_TABS)[number]['key']>('ready')
@@ -770,6 +772,7 @@ export default function ShopeeStock() {
               <Badge variant="outline" className={cn('h-6', selectedSetting?.enabled ? 'border-success/50 bg-success/10 text-emerald-800 dark:text-emerald-200' : 'text-muted-foreground')}>
                 {selectedSetting?.enabled ? 'กำลังซิงก์อัตโนมัติ' : 'ยังไม่เปิดซิงก์'}
               </Badge>
+              {!canManage && <Badge variant="secondary" className="h-6">ดูอย่างเดียว</Badge>}
             </div>
             <p className="mt-0.5 text-sm text-muted-foreground">ส่งสต๊อกตามคลังที่เลือก โดยกันสินค้าไว้ขายหน้าร้านตามสัดส่วนที่กำหนด</p>
           </div>
@@ -785,6 +788,10 @@ export default function ShopeeStock() {
 
       {!data?.available && (
         <Alert><CircleOff className="h-4 w-4" /><AlertTitle>ยังไม่เปิดใช้งานสำหรับร้านนี้</AlertTitle><AlertDescription>{data?.availability_text || 'ติดต่อผู้ดูแลระบบเพื่อเปิด Shopee Open API ผ่าน Central Gateway'}</AlertDescription></Alert>
+      )}
+
+      {!canManage && (
+        <Alert><Info className="h-4 w-4" /><AlertTitle>สิทธิ์ดูอย่างเดียว</AlertTitle><AlertDescription>คุณตรวจสถานะ สินค้า ตัวเลือก และประวัติได้ การแก้ mapping, ตั้งค่า, Dry-run และซิงก์สต๊อกต้องใช้สิทธิ์ผู้ดูแลระบบ</AlertDescription></Alert>
       )}
 
       {data?.diagnostics?.length ? (
@@ -818,7 +825,7 @@ export default function ShopeeStock() {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5"><Label htmlFor="stock-pct">ส่งไป Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอก 1-100</p>}</div>
+          <div className="space-y-1.5"><Label htmlFor="stock-pct">ส่งไป Shopee</Label><div className="relative"><Input id="stock-pct" type="number" min={1} max={100} disabled={!canManage} aria-invalid={!stockPctValid} aria-describedby={!stockPctValid ? 'stock-pct-error' : undefined} value={draft?.stock_pct ?? 80} onChange={(event) => draft && setDraft({ ...draft, stock_pct: Number(event.target.value), enabled: false, dry_run_required: true })} className={cn('pr-8', !stockPctValid && 'border-destructive')} /><span className="absolute right-3 top-2.5 text-sm text-muted-foreground">%</span></div>{!stockPctValid && <p id="stock-pct-error" className="text-xs text-destructive">กรอก 1-100</p>}</div>
           <div className="space-y-1.5">
             <Label>ขอบเขตสต๊อก SML</Label>
             <Popover open={locationsOpen} onOpenChange={setLocationsOpen}>
@@ -830,7 +837,7 @@ export default function ShopeeStock() {
                     'h-10 w-full justify-between px-3 font-normal',
                     scopeReady ? 'border-success/50 bg-success/10 text-foreground hover:bg-success/10' : 'text-muted-foreground',
                   )}
-                  disabled={!draft || !data?.available}
+                  disabled={!canManage || !draft || !data?.available}
                   aria-label={scopeReady ? `ขอบเขตสต๊อก SML ${scopeSummary}` : 'เลือกขอบเขตสต๊อก SML'}
                 >
                   <span className="truncate">{scopeReady ? scopeSummary : 'เลือก 1 คลัง / 1 พื้นที่เก็บ'}</span>
@@ -880,8 +887,8 @@ export default function ShopeeStock() {
             <StockSchedulePicker
               value={draft}
               enabled={draft.enabled}
-              disabled={!data?.available}
-              switchDisabled={!data?.available || !stockPctValid || !scopeReady || !!draft.dry_run_required || !!draft.paused_reason}
+              disabled={!canManage || !data?.available}
+              switchDisabled={!canManage || !data?.available || !stockPctValid || !scopeReady || !!draft.dry_run_required || !!draft.paused_reason}
               disabledReason={scheduleDisabledReason}
               nextRunAt={selectedSetting?.next_run_at}
               scheduleDirty={scheduleDirty}
@@ -889,7 +896,7 @@ export default function ShopeeStock() {
               onEnabledChange={(checked) => setDraft({ ...draft, enabled: checked })}
             />
           )}
-          <Button className="w-full sm:col-span-2 sm:w-auto sm:justify-self-end xl:col-span-1" onClick={saveSettings} disabled={!draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
+          <Button className="w-full sm:col-span-2 sm:w-auto sm:justify-self-end xl:col-span-1" onClick={saveSettings} disabled={!canManage || !draft || !stockPctValid || !scopeReady || !settingsDirty || !!busy}><Save className="h-4 w-4" />{busy === 'save' ? 'กำลังบันทึก...' : 'บันทึก'}</Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-3 py-2" aria-labelledby="stock-setup-steps">
@@ -911,7 +918,7 @@ export default function ShopeeStock() {
         <div className="flex flex-col gap-2 border-t px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center">
-              <Button variant="outline" size="sm" onClick={syncCatalog} disabled={!data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังอัปเดตจาก Shopee...' : 'อัปเดตรายการสินค้าจาก Shopee'}</Button>
+              <Button variant="outline" size="sm" onClick={syncCatalog} disabled={!canManage || !data?.available || !!busy}><Boxes className="h-4 w-4" />{busy === 'catalog' ? 'กำลังอัปเดตจาก Shopee...' : 'อัปเดตรายการสินค้าจาก Shopee'}</Button>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCatalogInfoOpen(true)} aria-label="อัปเดตรายการสินค้าจาก Shopee คืออะไร">
@@ -921,11 +928,11 @@ export default function ShopeeStock() {
                 <TooltipContent>อัปเดตรายการสินค้าจาก Shopee คืออะไร</TooltipContent>
               </Tooltip>
             </div>
-            <Button variant="outline" size="sm" onClick={previewImpact} disabled={!!previewDisabledReason || !!busy}>
+            <Button variant="outline" size="sm" onClick={previewImpact} disabled={!canManage || !!previewDisabledReason || !!busy}>
               {previewInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
               {previewInProgress ? `กำลังตรวจ ${previewProgress}%` : 'บันทึกและตรวจสต๊อก'}
             </Button>
-            <Button size="sm" onClick={syncNow} disabled={!!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
+            <Button size="sm" onClick={syncNow} disabled={!canManage || !!syncDisabledReason || !!busy}><Play className="h-4 w-4" />ซิงก์ตอนนี้</Button>
           </div>
           <span className="min-w-0 text-xs text-muted-foreground sm:max-w-[48%] sm:text-right xl:max-w-none">สินค้า {formatDateTime(selectedSetting?.last_catalog_sync_at)} · ตรวจ {formatDateTime(selectedSetting?.last_preview_at)}{draft?.dry_run_required && selectedSetting?.last_preview_at ? ' (ต้องตรวจใหม่)' : ''} · ซิงก์ {formatDateTime(selectedSetting?.last_success_at)}</span>
           {nextActionMessage && <p className="basis-full text-xs text-amber-800 dark:text-amber-200 sm:hidden"><span className="font-medium">ขั้นถัดไป:</span> {nextActionMessage}</p>}
@@ -997,9 +1004,10 @@ export default function ShopeeStock() {
 			  status={tab}
 			  query={search}
 			  groups={productGroups}
+			  canManage={canManage}
 			  onMap={setMapping}
 			  onPool={(product) => setSharedPoolItemCode(product.sml_item_code)}
-			/> : <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} onMap={() => setMapping(product)} onPool={() => setSharedPoolItemCode(product.sml_item_code)} />)}</div>}
+			/> : <div className="divide-y">{(data?.products ?? []).map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} canManage={canManage} onMap={() => setMapping(product)} onPool={() => setSharedPoolItemCode(product.sml_item_code)} />)}</div>}
 			{!(groupedProducts ? productGroups.length : data?.products.length) && (
               <div className="flex flex-col items-center px-4 py-10 text-center">
                 <PackageCheck className="mb-3 h-7 w-7 text-muted-foreground" aria-hidden="true" />
@@ -1010,7 +1018,7 @@ export default function ShopeeStock() {
                 ) : tab === 'ready' && productCounts.fix > 0 ? (
 				  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => { setTab('fix'); resetProductPagination() }}>เปิดรายการต้องแก้ ({formatNumber(productCounts.fix)})</Button>
                 ) : !selectedSetting?.last_catalog_sync_at ? (
-                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!data?.available || !!busy}>อัปเดตรายการสินค้าจาก Shopee</Button>
+                  <Button type="button" variant="outline" size="sm" className="mt-4" onClick={syncCatalog} disabled={!canManage || !data?.available || !!busy}>อัปเดตรายการสินค้าจาก Shopee</Button>
                 ) : null}
               </div>
             )}
@@ -1019,11 +1027,12 @@ export default function ShopeeStock() {
         )}
       </section>
 
-      <MappingDialog product={mapping} shopID={shopID} onClose={() => setMapping(null)} onConfigurePool={(itemCode) => { setMapping(null); setSharedPoolItemCode(itemCode) }} onSaved={async () => { setMapping(null); setPreview(null); await load(shopID) }} />
+      {canManage && <MappingDialog product={mapping} shopID={shopID} onClose={() => setMapping(null)} onConfigurePool={(itemCode) => { setMapping(null); setSharedPoolItemCode(itemCode) }} onSaved={async () => { setMapping(null); setPreview(null); await load(shopID) }} />}
       <SharedPoolDialog
         shopID={shopID}
         itemCode={sharedPoolItemCode}
         fallbackStockPct={draft?.stock_pct ?? 80}
+        canManage={canManage}
         onClose={() => setSharedPoolItemCode('')}
         onSaved={async () => { setSharedPoolItemCode(''); setPreview(null); await load(shopID) }}
       />
@@ -1082,11 +1091,12 @@ function ProductExcludedLocations({
 
 type GroupProductState = { rows: ProductRow[]; nextCursor: string; loading: boolean; error: string }
 
-function GroupedShopeeProducts({ shopID, status, query, groups, onMap, onPool }: {
+function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap, onPool }: {
 	shopID: number
 	status: string
 	query: string
 	groups: ProductGroup[]
+	canManage: boolean
 	onMap: (product: ProductRow) => void
 	onPool: (product: ProductRow) => void
 }) {
@@ -1147,14 +1157,14 @@ function GroupedShopeeProducts({ shopID, status, query, groups, onMap, onPool }:
 				{state?.loading && state.rows.length === 0 && <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
 				{state?.error && <div className="flex items-center justify-between gap-3 px-4 py-4 text-sm text-destructive"><span>{state.error}</span><Button variant="outline" size="sm" onClick={() => void loadChildren(group)}>ลองใหม่</Button></div>}
 				{state && !state.loading && !state.error && state.rows.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">ไม่พบตัวเลือกที่ตรงกับตัวกรอง</div>}
-				<div className="divide-y">{state?.rows.map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} nested onMap={() => onMap(product)} onPool={() => onPool(product)} />)}</div>
+				<div className="divide-y">{state?.rows.map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} canManage={canManage} nested onMap={() => onMap(product)} onPool={() => onPool(product)} />)}</div>
 				{state?.nextCursor && <div className="flex justify-center border-t py-2"><Button variant="outline" size="sm" disabled={state.loading} onClick={() => void loadChildren(group, true)}>{state.loading && <Loader2 className="h-4 w-4 animate-spin" />}โหลดตัวเลือกเพิ่ม</Button></div>}
 			</div>}
 		</div>
 	})}</div>
 }
 
-function ProductLine({ product, onMap, onPool, nested = false }: { product: ProductRow; onMap: () => void; onPool: () => void; nested?: boolean }) {
+function ProductLine({ product, canManage, onMap, onPool, nested = false }: { product: ProductRow; canManage: boolean; onMap: () => void; onPool: () => void; nested?: boolean }) {
   const [setDetailsOpen, setSetDetailsOpen] = useState(false)
   const sku = product.model_sku || product.item_sku || 'ไม่มี SKU'
   const itemName = productItemName(product)
@@ -1210,7 +1220,9 @@ function ProductLine({ product, onMap, onPool, nested = false }: { product: Prod
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</span>{product.last_preview_target != null && sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
         </div>
       </div>
-      {canManagePool ? (
+      {!canManage ? (canManagePool ? (
+        <Button variant="outline" size="sm" className="h-8 justify-self-end whitespace-nowrap px-2.5 lg:w-full" onClick={onPool}><GitMerge className="h-4 w-4" />ดูสัดส่วน</Button>
+      ) : <span className="justify-self-end text-xs text-muted-foreground">ดูอย่างเดียว</span>) : canManagePool ? (
         <div className="flex items-center justify-end gap-1">
           <Button variant="outline" size="sm" className="h-8 flex-1 whitespace-nowrap px-2.5" onClick={onPool}><GitMerge className="h-4 w-4" />{product.shared_pool_enabled ? 'ปรับสัดส่วน' : 'แบ่งสต๊อก'}</Button>
           <DropdownMenu>
@@ -1337,7 +1349,7 @@ function equalSharedPoolAllocations(members: SharedPoolMember[]) {
   ]))
 }
 
-function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved }: { shopID: number; itemCode: string; fallbackStockPct: number; onClose: () => void; onSaved: () => Promise<void> }) {
+function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, canManage, onClose, onSaved }: { shopID: number; itemCode: string; fallbackStockPct: number; canManage: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [pool, setPool] = useState<SharedPool | null>(null)
   const [allocations, setAllocations] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
@@ -1392,7 +1404,7 @@ function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved
   const baseUnit = pool?.members[0] ? formatUnitLabel(pool.members[0].sml_base_unit_code, pool.members[0].sml_base_unit_name) : ''
 
   const save = async () => {
-    if (!pool || !allocationValid || saving) return
+    if (!canManage || !pool || !allocationValid || saving) return
     setSaving(true)
     try {
       await client.put(`/api/settings/shopee-stock/${shopID}/shared-pool`, {
@@ -1417,8 +1429,8 @@ function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved
     <Dialog open={!!itemCode} onOpenChange={(open) => !open && !saving && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><GitMerge className="h-5 w-5 text-info" />แบ่งสต๊อกที่ใช้ร่วมกัน</DialogTitle>
-          <DialogDescription>กำหนดว่าสต๊อก SML ก้อนเดียวกันจะแบ่งให้แต่ละรายการ Shopee เท่าไร ยอดรวมต้องเท่ากับ 100%</DialogDescription>
+          <DialogTitle className="flex items-center gap-2"><GitMerge className="h-5 w-5 text-info" />{canManage ? 'แบ่งสต๊อกที่ใช้ร่วมกัน' : 'รายละเอียดสต๊อกที่ใช้ร่วมกัน'}</DialogTitle>
+          <DialogDescription>{canManage ? 'กำหนดว่าสต๊อก SML ก้อนเดียวกันจะแบ่งให้แต่ละรายการ Shopee เท่าไร ยอดรวมต้องเท่ากับ 100%' : 'ตรวจสัดส่วนที่ผู้ดูแลระบบกำหนดไว้สำหรับแต่ละรายการ Shopee'}</DialogDescription>
         </DialogHeader>
 
         {loading ? (
@@ -1434,7 +1446,7 @@ function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved
             <div className="rounded-md border bg-muted/30 px-3 py-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0"><p className="truncate text-sm font-semibold">{pool.sml_item_code} · {pool.sml_item_name}</p><p className="text-xs text-muted-foreground">ส่งขึ้น Shopee {formatNumber(stockPct)}% ก่อนแบ่งตามสัดส่วนด้านล่าง</p></div>
-                <Button type="button" variant="outline" size="sm" onClick={() => setAllocations(equalSharedPoolAllocations(pool.members))}>แบ่งเท่ากัน</Button>
+                {canManage && <Button type="button" variant="outline" size="sm" onClick={() => setAllocations(equalSharedPoolAllocations(pool.members))}>แบ่งเท่ากัน</Button>}
               </div>
               <div className="mt-2 grid grid-cols-3 gap-3 border-t pt-2 text-xs">
                 <div><span className="text-muted-foreground">คงเหลือ SML</span><p className="mt-0.5 font-mono text-sm font-semibold">{scopeBalance == null ? 'รอ Dry-run' : `${formatNumber(scopeBalance)} ${baseUnit}`}</p></div>
@@ -1468,7 +1480,7 @@ function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved
                       <div>
                         <Label htmlFor={`pool-${key}`} className="sr-only">สัดส่วนของ {itemName}</Label>
                         <div className="relative">
-                          <Input id={`pool-${key}`} type="number" min="0.01" max="100" step="0.01" inputMode="decimal" className="h-9 pr-8 text-right" value={allocations[key] ?? ''} onChange={(event) => setAllocations((current) => ({ ...current, [key]: event.target.value }))} />
+                          <Input id={`pool-${key}`} type="number" min="0.01" max="100" step="0.01" inputMode="decimal" disabled={!canManage} className="h-9 pr-8 text-right" value={allocations[key] ?? ''} onChange={(event) => setAllocations((current) => ({ ...current, [key]: event.target.value }))} />
                           <span className="pointer-events-none absolute right-3 top-2 text-xs text-muted-foreground">%</span>
                         </div>
                       </div>
@@ -1482,15 +1494,15 @@ function SharedPoolDialog({ shopID, itemCode, fallbackStockPct, onClose, onSaved
             <Alert className={allocationValid ? 'border-success/40 bg-success/10' : 'border-warning/50 bg-warning/10'}>
               {allocationValid ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
               <AlertTitle>สัดส่วนรวม {formatNumber(allocationTotal)}%</AlertTitle>
-              <AlertDescription>{allocationValid ? 'พร้อมบันทึก การเปลี่ยนค่านี้จะปิดซิงก์และบังคับตรวจ Dry-run ใหม่' : 'ปรับสัดส่วนของทุกรายการให้รวมกันเท่ากับ 100%'}</AlertDescription>
+              <AlertDescription>{canManage ? (allocationValid ? 'พร้อมบันทึก การเปลี่ยนค่านี้จะปิดซิงก์และบังคับตรวจ Dry-run ใหม่' : 'ปรับสัดส่วนของทุกรายการให้รวมกันเท่ากับ 100%') : (allocationValid ? 'สัดส่วนที่บันทึกไว้รวมกันถูกต้อง' : 'สัดส่วนที่บันทึกไว้ยังไม่พร้อมใช้งาน กรุณาแจ้งผู้ดูแลระบบ')}</AlertDescription>
             </Alert>
             <p className="text-xs text-muted-foreground">Nexflow จะส่งสต๊อกตามสัดส่วนนี้แทนการส่งยอดเต็มซ้ำให้ทุกสินค้า และจะหักออเดอร์ที่ยังไม่ลง SML ก่อนคำนวณ</p>
           </div>
         ) : null}
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>ยกเลิก</Button>
-          <Button type="button" onClick={save} disabled={!allocationValid || !dirty || saving}>{saving && <Loader2 className="h-4 w-4 animate-spin" />}{saving ? 'กำลังบันทึก...' : 'บันทึกสัดส่วน'}</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>{canManage ? 'ยกเลิก' : 'ปิด'}</Button>
+          {canManage && <Button type="button" onClick={save} disabled={!allocationValid || !dirty || saving}>{saving && <Loader2 className="h-4 w-4 animate-spin" />}{saving ? 'กำลังบันทึก...' : 'บันทึกสัดส่วน'}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

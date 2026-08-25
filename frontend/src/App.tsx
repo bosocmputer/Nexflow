@@ -115,7 +115,7 @@ export default function App() {
           <Route path="settings/catalog" element={<RequireMenu menuKey="catalog"><CatalogSettings /></RequireMenu>} />
           <Route path="settings/email" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><RequireMenu menuKey="shopee_connections"><ShopeeConnections /></RequireMenu></RequireAdmin>} />
-          <Route path="settings/shopee-stock" element={<RequireAdmin><RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu></RequireAdmin>} />
+          <Route path="settings/shopee-stock" element={<RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu>} />
           <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><RequireMenu menuKey="line_myshop"><LineMyShopSettings /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/channels" element={<RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu>} />
           <Route path="settings/instance" element={<RequireAdmin><RequireMenu menuKey="instance_settings"><InstanceSettings /></RequireMenu></RequireAdmin>} />
