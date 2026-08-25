@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `039b9cf` (`fix: bound excluded stock preview details`), while Demo and
+  `e069f2b` (`fix: bind Shopee shop name to API tag`), while Demo and
   Lanboon remain on `82baa4a` (`Simplify marketplace stock quantity setup`). The
   Central SML Gateway is on `a53db50`
   (`fix: include usable SML unit status conventions`).
@@ -48,10 +48,9 @@ Read this section first when resuming work in a new session.
 - Activation backups are also stored under the same tenant folders. Demo and AOY
   use the `pre-marketplace-activate-20260825-044809.sql.gz` snapshots; Lanboon's
   code-alignment backup is `pre-marketplace-code-20260825-054410.sql.gz`.
-- AOY is the active production UAT tenant. The user has handed the current build
-  to the AOY admin and is waiting for real-usage feedback. Do not treat silence as
-  acceptance; inspect the reported tenant, record, and runtime logs before fixing
-  any new feedback.
+- AOY is the active production UAT tenant. As of 2026-08-25 the user is actively
+  testing the current AOY build. Do not treat silence as acceptance; inspect the
+  reported tenant, record, and runtime logs before fixing any new feedback.
 
 Current AOY UAT scope:
 
@@ -133,6 +132,17 @@ Current AOY UAT scope:
     including their SML names. Only the preview endpoint ran; no Shopee stock
     write endpoint was called. The pre-deploy backup is
     `pre-deploy-20260825-090208.sql.gz`. Demo and Lanboon were not deployed.
+14. AOY-only Marketplace channel-label cleanup is deployed at `e069f2b`.
+    `/sale-invoices`, `/marketplace-aliases`, and `/settings/catalog` use one
+    input-channel vocabulary: `Shopee API`, `Shopee Excel`, `Lazada Excel`, and
+    `TikTok Excel`. Because a scoped Shopee Product Master mapping is shared by
+    API and Excel, both tags are shown; the connected shop is displayed inside
+    the API tag as `Shopee API (Henna.milkford)`. Generic `บัญชีหลัก` labels and
+    the detached shop-name line were removed. Production browser QA passed for
+    the grouped Product Master, Catalog summary, and Catalog link dialog; AOY
+    health and both routes returned HTTP 200. The two latest pre-deploy AOY
+    backups are `pre-deploy-20260825-091802.sql.gz` and
+    `pre-deploy-20260825-092638.sql.gz`. Demo and Lanboon remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 

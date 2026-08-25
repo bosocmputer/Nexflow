@@ -8,19 +8,20 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 
 ## Production UAT Status
 
-- Demo, AOY, and Lanboon run the same application baseline, with tenant-specific
-  databases, SML settings, credentials, channel routes, and feature flags.
-- Application baseline under UAT: `05d1211`. Central SML Gateway baseline:
-  `a53db50`.
+- Application baseline is intentionally split during AOY UAT. AOY runs
+  `e069f2b`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
+  settings, credentials, channel routes, and feature flags remain isolated.
+  Central SML Gateway baseline: `a53db50`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
   200 with database status `ok` on 2026-08-25.
 - Migration 085 is installed on every tenant. AOY has grouped UI, versioned unit
   Catalog, active conversion, and the reservation ledger enabled after readiness
   validation. Demo has only the versioned unit Catalog enabled. Lanboon retains
-  all marketplace Release A gates disabled. Shopee set-stock remains disabled
-  everywhere pending a real mapped set-product UAT case.
-- AOY is the active production UAT tenant. Current feedback is pending for the
-  marketplace sales/SML stock flow, `/sale-invoices`, and the compact
+  all marketplace Release A gates disabled. The user explicitly enabled AOY
+  Shopee set-stock for controlled testing; Demo and Lanboon remain disabled.
+- AOY is the active production UAT tenant and the user is actively testing the
+  current build. Feedback remains pending for the marketplace sales/SML stock
+  flow, Product Master/Catalog channel tags, `/sale-invoices`, and the compact
   `/shopee-operations` UI.
 - Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
   Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
@@ -28,9 +29,14 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 - AOY normal-product Shopee stock UAT passed on shop `264993963` for item/model
   `6278820512/43634992848` mapped to SML `AH-0033` at factor 1. A controlled
   manual run changed Shopee stock 0 -> 1, catalog read-back confirmed 1, and the
-  post-write preview was unchanged 1 -> 1. Automatic stock sync is disabled;
-  Shopee set-product stock remains disabled pending a real mapped set-product
-  case.
+  post-write preview was unchanged 1 -> 1. Automatic stock sync is disabled.
+  Shopee set-product stock is enabled only for AOY's controlled first real
+  mapped set-product UAT and is not yet production-validated end to end.
+- AOY uses consistent input-channel tags across sale invoices, Product Master,
+  and Catalog. Shopee mappings display `Shopee API (Henna.milkford)` together
+  with `Shopee Excel`; Lazada and TikTok display their Excel channels. Generic
+  `บัญชีหลัก` labels were removed. This UI is deployed only to AOY at
+  `e069f2b`.
 - Detailed resume notes, deferred work, and the per-session preflight checklist
   are maintained in `AGENTS.md` under `Current UAT Handoff`.
 
@@ -137,7 +143,7 @@ ENABLE_LINE_MYSHOP=true
 SHOPEE_AUTO_SML_ENABLED=false
 Marketplace release gates (tenant-specific):
 demo:    grouped=false, unit_catalog=true,  conversion=off,    ledger=false, set_stock=false
-aoy:     grouped=true,  unit_catalog=true,  conversion=active, ledger=true,  set_stock=false
+aoy:     grouped=true,  unit_catalog=true,  conversion=active, ledger=true,  set_stock=true
 lanboon: grouped=false, unit_catalog=false, conversion=off,    ledger=false, set_stock=false
 ```
 
