@@ -114,10 +114,35 @@ export interface CatalogItem {
   set_stock_valid?: boolean
   set_warning_codes?: string[]
   set_components?: CatalogSetComponent[]
+  marketplace_summaries?: CatalogMarketplaceSummary[]
   synced_at?: string | null
   last_seen_at?: string | null
   is_active?: boolean
   missing_at?: string | null
+}
+
+export interface CatalogMarketplaceSummary {
+  source: 'shopee' | 'lazada' | 'tiktok' | string
+  mapping_count: number
+  product_count: number
+  account_count: number
+}
+
+export interface CatalogMarketplaceLink {
+  id: string
+  source: 'shopee' | 'lazada' | 'tiktok' | string
+  account_key: string
+  account_name?: string
+  product_name: string
+  variant_name: string
+  source_sku?: string
+  external_item_id?: string
+  external_variant_id?: string
+  unit_code: string
+  quantity_multiplier: number
+  conversion_status: string
+  scope_confirmed: boolean
+  updated_at: string
 }
 
 // ─── Bill ────────────────────────────────────────────────────────────────────

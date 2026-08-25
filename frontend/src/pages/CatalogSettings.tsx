@@ -7,6 +7,7 @@ import { AuthImage } from '@/components/common/AuthImage'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
 import { ProductImagePreviewDialog } from '@/components/common/ProductImagePreviewDialog'
+import { CatalogMarketplaceLinksDialog } from '@/components/catalog/CatalogMarketplaceLinksDialog'
 import { SetProductDetailsDialog } from '@/components/catalog/SetProductDetailsDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,6 +48,7 @@ export default function CatalogSettings() {
   const [createOpen, setCreateOpen] = useState(false)
   const [preview, setPreview] = useState<CatalogItem | null>(null)
   const [setDetailsItem, setSetDetailsItem] = useState<CatalogItem | null>(null)
+  const [marketplaceDetailsItem, setMarketplaceDetailsItem] = useState<CatalogItem | null>(null)
   const canManageCatalog = user?.role === 'admin'
   const totalPages = Math.max(1, Math.ceil((stats?.total ?? 0) / PER_PAGE))
 
@@ -156,10 +158,11 @@ export default function CatalogSettings() {
         ) : (
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow><TableHead className="w-16">รูป</TableHead><TableHead>รหัสสินค้า</TableHead><TableHead className="min-w-[260px]">ชื่อสินค้า</TableHead><TableHead>หน่วยหลัก</TableHead>{canManageCatalog && <TableHead className="text-right">จัดการ</TableHead>}</TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="w-16">รูป</TableHead><TableHead>รหัสสินค้า</TableHead><TableHead className="min-w-[260px]">ชื่อสินค้า</TableHead><TableHead className="min-w-[210px]">จับคู่ Marketplace</TableHead><TableHead>หน่วยหลัก</TableHead>{canManageCatalog && <TableHead className="text-right">จัดการ</TableHead>}</TableRow></TableHeader>
               <TableBody>
-                {loading ? Array.from({ length: 8 }).map((_, index) => <TableRow key={index}><TableCell colSpan={canManageCatalog ? 5 : 4}><Skeleton className="h-11 w-full" /></TableCell></TableRow>) : items.map((item) => {
+                {loading ? Array.from({ length: 8 }).map((_, index) => <TableRow key={index}><TableCell colSpan={canManageCatalog ? 6 : 5}><Skeleton className="h-11 w-full" /></TableCell></TableRow>) : items.map((item) => {
                   const hasImage = Boolean(item.image_url && (item.image_count ?? 0) > 0)
+                  const marketplaceSummaries = item.marketplace_summaries ?? []
                   return (
                     <TableRow key={item.item_code}>
                       <TableCell><button type="button" className="h-10 w-10 rounded-md" disabled={!hasImage} onClick={() => hasImage && setPreview(item)}><AuthImage src={hasImage ? item.image_url : undefined} className="h-full w-full rounded-md border bg-muted/30" imgClassName="object-cover" fallback={<div className="flex h-full items-center justify-center"><ImageIcon className="h-4 w-4 text-muted-foreground" /></div>} /></button></TableCell>
@@ -176,6 +179,20 @@ export default function CatalogSettings() {
                         )}
                       </TableCell>
                       <TableCell><div className="font-medium">{item.item_name}</div>{item.item_name2 && <div className="text-xs text-muted-foreground">{item.item_name2}</div>}</TableCell>
+                      <TableCell>
+                        {marketplaceSummaries.length > 0 ? (
+                          <button type="button" className="rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setMarketplaceDetailsItem(item)} aria-label={`ดูสินค้า Marketplace ที่จับคู่กับ ${item.item_code}`}>
+                            <span className="flex flex-wrap gap-1.5">
+                              {marketplaceSummaries.map((summary) => (
+                                <Badge key={summary.source} variant="outline" className={cn(summary.source === 'shopee' && 'border-[#EE4D2D]/40 bg-[#EE4D2D]/10 text-[#C23B21]', summary.source === 'lazada' && 'border-info/40 bg-info/10 text-info')}>
+                                  {summary.source === 'shopee' ? 'Shopee' : summary.source === 'lazada' ? 'Lazada' : summary.source === 'tiktok' ? 'TikTok' : summary.source} {summary.mapping_count.toLocaleString()}
+                                </Badge>
+                              ))}
+                            </span>
+                            <span className="mt-1 block text-xs text-link">ดูชื่อสินค้าและตัวเลือก</span>
+                          </button>
+                        ) : <span className="text-xs text-muted-foreground">ยังไม่จับคู่</span>}
+                      </TableCell>
                       <TableCell>{item.unit_code || '-'}</TableCell>
                       {canManageCatalog && <TableCell className="text-right"><Button size="sm" variant="outline" disabled={refreshingCode === item.item_code} onClick={() => void refreshOne(item.item_code)}><RefreshCw className={cn('h-3.5 w-3.5', refreshingCode === item.item_code && 'animate-spin')} />อัปเดต</Button></TableCell>}
                     </TableRow>
@@ -204,6 +221,12 @@ export default function CatalogSettings() {
         stockValid={setDetailsItem?.set_stock_valid}
         warningCodes={setDetailsItem?.set_warning_codes}
         showStockStatus
+      />
+      <CatalogMarketplaceLinksDialog
+        open={marketplaceDetailsItem !== null}
+        onOpenChange={(open) => !open && setMarketplaceDetailsItem(null)}
+        itemCode={marketplaceDetailsItem?.item_code ?? ''}
+        itemName={marketplaceDetailsItem?.item_name ?? ''}
       />
     </div>
   )
