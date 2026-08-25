@@ -13,14 +13,14 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `05d1211`
-  (`fix: close marketplace mapping parameter gap`). The Central SML
+- Application baseline: production application commit `49d174c`
+  (`Clarify completed mapping reconciliation`). The Central SML
   Gateway is on `a53db50` (`fix: include usable SML unit status conventions`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
   migration request.
-- Verified on 2026-08-25 after rebuilding the application backend at `05d1211`:
+- Verified on 2026-08-25 after deploying application commit `49d174c`:
   Demo, AOY, Lanboon, and both Central Gateway health endpoints returned HTTP
   200. Each tenant backend resolved the Central Shopee Gateway on the shared
   Docker network.
@@ -87,6 +87,15 @@ Current AOY UAT scope:
    sync remains disabled, while this single alias remains `managed` for UAT.
    The other 43 listings remain blocked, including six shared-item listings that
    still require explicit allocation/policy decisions.
+10. Marketplace unit and Shopee-stock configuration UX was simplified in
+    `ac3a1df`–`49d174c`: normal users choose the SML item, unit, and quantity;
+    sales/stock policy controls are under advanced options; safe blocked members
+    of a shared pool can be promoted to managed during allocation save; and raw
+    pause codes are replaced with actionable Thai copy. AOY shop `264993963`
+    remains paused for mapping reconciliation and shop `1029622928` remains
+    paused for Catalog-generation reconciliation. Both have automatic stock sync
+    disabled and require a fresh stock check before any write. Global
+    `SHOPEE_SET_STOCK_ENABLED` remains `false`.
 
 Known deferred or incomplete validation:
 
