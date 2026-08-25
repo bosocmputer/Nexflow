@@ -27,6 +27,11 @@ var (
 	ErrMarketplaceStockZeroingInProgress                 = errors.New("Shopee stock zeroing is still in progress")
 )
 
+const marketplaceAliasAuditInsertSQL = `INSERT INTO audit_logs
+	(action,user_id,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
+	VALUES($1,NULLIF($2,'')::uuid,$3,'info',$4::uuid,$5,$6,$7::uuid,$8,$9,
+	  jsonb_build_object('impact_digest',$10::text,'affected_shop_ids',$11::jsonb))`
+
 type MarketplaceAliasProposal struct {
 	AliasID                    string
 	Identity                   models.MarketplaceAliasIdentity
@@ -521,10 +526,7 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 	} else if target.Deactivate {
 		action = "marketplace_alias_deactivated"
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs
-		(action,user_id,source,level,target_id,tenant_key,revision,job_id,before_state,after_state,detail)
-		VALUES($1,NULLIF($2,'')::uuid,$3,'info',$4::uuid,$5,$6,$7::uuid,$8,$9,
-		  jsonb_build_object('impact_digest',$10,'affected_shop_ids',$11::jsonb))`, action, proposal.ConfirmedBy,
+	if _, err := tx.ExecContext(ctx, marketplaceAliasAuditInsertSQL, action, proposal.ConfirmedBy,
 		target.Identity.Source, aliasID, r.tenantKey, targetRevision, jobID, beforeJSON, afterJSON, currentImpact.ImpactDigest, mustJSON(currentImpact.AffectedShopIDs)); err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,15 @@ import (
 
 	"nexflow/internal/models"
 )
+
+func TestMarketplaceAliasAuditQueryTypesJSONParameters(t *testing.T) {
+	if !strings.Contains(marketplaceAliasAuditInsertSQL, "'impact_digest',$10::text") {
+		t.Fatal("impact digest must be explicitly typed so PostgreSQL can resolve jsonb_build_object parameters")
+	}
+	if !strings.Contains(marketplaceAliasAuditInsertSQL, "'affected_shop_ids',$11::jsonb") {
+		t.Fatal("affected shop ids must remain explicitly typed as jsonb")
+	}
+}
 
 func TestMarketplaceImpactDigestIsStableButIncludesPolicy(t *testing.T) {
 	impact := models.MarketplaceAliasImpact{
