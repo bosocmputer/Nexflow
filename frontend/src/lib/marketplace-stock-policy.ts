@@ -18,8 +18,8 @@ const PAUSE_REASON_COPY: Record<string, PauseCopy> = {
     description: 'กดตรวจสอบสต๊อกเพื่อยืนยันข้อมูลล่าสุดก่อนเปิดซิงก์',
   },
   marketplace_mapping_reconcile: {
-    title: 'กำลังเตรียมการจับคู่สินค้า',
-    description: 'รอให้งานเสร็จ แล้วกดตรวจสอบสต๊อกอีกครั้ง',
+    title: 'การจับคู่สินค้าเปลี่ยนแล้ว',
+    description: 'กดตรวจสอบสต๊อกเพื่อยืนยันข้อมูลล่าสุดก่อนเปิดซิงก์',
   },
   set_definition_changed: {
     title: 'ส่วนประกอบสินค้าเปลี่ยนแล้ว',
