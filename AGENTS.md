@@ -13,14 +13,14 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline: production application commit `49d174c`
-  (`Clarify completed mapping reconciliation`). The Central SML
+- Application baseline: production application commit `82baa4a`
+  (`Simplify marketplace stock quantity setup`). The Central SML
   Gateway is on `a53db50` (`fix: include usable SML unit status conventions`).
 - The same committed application code is deployed to Demo, AOY, and Lanboon.
   Tenant databases, SML tenants, credentials, channel routes, and feature flags
   remain isolated and must never be copied between instances without an explicit
   migration request.
-- Verified on 2026-08-25 after deploying application commit `49d174c`:
+- Verified on 2026-08-25 after deploying application commit `82baa4a`:
   Demo, AOY, Lanboon, and both Central Gateway health endpoints returned HTTP
   200. Each tenant backend resolved the Central Shopee Gateway on the shared
   Docker network.
@@ -40,9 +40,9 @@ Read this section first when resuming work in a new session.
     remain disabled pending tenant-specific preflight.
 - Pre-deploy database backups from 2026-08-25 are stored under
   `/mnt/data/nextstep-node-2/nexflow-backups`: Demo
-  `pre-deploy-20260825-042133.sql.gz`, AOY
-  `pre-deploy-20260825-042413.sql.gz`, and Lanboon
-  `pre-deploy-20260825-042639.sql.gz`.
+  `pre-deploy-20260825-080734.sql.gz`, AOY
+  `pre-deploy-20260825-080912.sql.gz`, and Lanboon
+  `pre-deploy-20260825-081050.sql.gz`.
 - Activation backups are also stored under the same tenant folders. Demo and AOY
   use the `pre-marketplace-activate-20260825-044809.sql.gz` snapshots; Lanboon's
   code-alignment backup is `pre-marketplace-code-20260825-054410.sql.gz`.
@@ -84,18 +84,28 @@ Current AOY UAT scope:
    `63ca255f-c56c-496f-b5f4-011bb79f2a99` changed Shopee 0 -> 1 with no error or
    unknown result; catalog read-back confirmed seller stock 1. Final preview
    `8a03d431-7263-4f9e-a7c7-d6cac213ecfb` was unchanged 1 -> 1. Automatic stock
-   sync remains disabled, while this single alias remains `managed` for UAT.
-   The other 43 listings remain blocked, including six shared-item listings that
-   still require explicit allocation/policy decisions.
+   sync remains disabled.
 10. Marketplace unit and Shopee-stock configuration UX was simplified in
-    `ac3a1df`–`49d174c`: normal users choose the SML item, unit, and quantity;
-    sales/stock policy controls are under advanced options; safe blocked members
-    of a shared pool can be promoted to managed during allocation save; and raw
-    pause codes are replaced with actionable Thai copy. AOY shop `264993963`
-    remains paused for mapping reconciliation and shop `1029622928` remains
-    paused for Catalog-generation reconciliation. Both have automatic stock sync
-    disabled and require a fresh stock check before any write. Global
-    `SHOPEE_SET_STOCK_ENABLED` remains `false`.
+    `9f2461f`–`82baa4a`: normal users only choose the SML item, unit, and one of
+    two quantity modes: follow Marketplace quantity (multiplier 1) or set an
+    integer SML quantity per Marketplace item. Sales/stock policy controls are
+    no longer shown in the normal flow. A stock check promotes safe ready
+    listings to managed and creates equal shared-stock allocation only for a
+    completely unconfigured duplicate group; existing partial or explicit pool
+    configuration is preserved. Manual sync is independent from the automatic
+    schedule but still requires a fresh successful stock check and no safety
+    pause.
+11. AOY post-deploy stock check on 2026-08-25 passed for all 44 active Shopee
+    listings: 6 targets would change, 38 were unchanged, and 0 were blocked.
+    The previous 37 `stock_policy_blocked` listings no longer require a manual
+    policy choice. Existing shared pools passed validation. The check found an
+    excluded negative balance of -3 `กล่อง` in `AB-2 / 002`; it is displayed but
+    excluded from the selected `AB-1 / 001` calculation. No Shopee stock write
+    was performed during this validation. For shop `264993963`, automatic stock
+    sync remains disabled and there is no active pause;
+    `SHOPEE_SET_STOCK_ENABLED` remains `false` globally.
+    Desktop and 390px mobile QA passed for `/marketplace-aliases` and
+    `/settings/shopee-stock`; the browser console had no new warnings/errors.
 
 Known deferred or incomplete validation:
 
