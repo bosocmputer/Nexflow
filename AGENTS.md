@@ -14,10 +14,10 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `44b5a72` (`fix: keep Shopee stock values visible on laptops`), while Demo and
-  Lanboon remain on `82baa4a` (`Simplify marketplace stock quantity setup`). The
-  Central SML Gateway is on `a53db50`
-  (`fix: include usable SML unit status conventions`).
+  `1cd9af0` (`feat: deduct SML outstanding sales orders from Shopee stock`),
+  while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
+  quantity setup`). The Central SML Gateway is on `7723a0b`
+  (`fix: block ambiguous SML sales order identities`).
 - Tenant databases, SML tenants, credentials, channel routes, feature flags, and
   deployment revisions remain isolated and must never be copied between
   instances without an explicit migration request.
@@ -154,6 +154,27 @@ Current AOY UAT scope:
     verification was read-only: no preview or Shopee stock write was triggered.
     The final pre-deploy AOY backup is `pre-deploy-20260826-021900.sql.gz`.
     Demo and Lanboon remain on `82baa4a`.
+16. AOY-only SML outstanding-sales-order stock deduction is deployed at
+    `1cd9af0`; additive migration 087 is applied on AOY. The shared Central SML
+    Gateway is deployed at `7723a0b` and AOY is explicitly configured with
+    `SML_STOCK_AVAILABILITY_MODE=net_sale_order_v1` plus the verified source
+    fingerprint. Stock availability is now `max(SML physical - active SML
+    TRANS_FLAG 36 outstanding, 0)`, followed by Nexflow pending demand and the
+    saved unit conversion. The gateway subtracts active TRANS_FLAG 44 invoice
+    fulfillment by exact source document/item identity and fails closed on
+    ambiguous or invalid evidence. AOY document `SO26040001` has four active
+    item lines and `INV26040015` fulfills all four exactly, so its verified
+    current outstanding amount is zero. Active-mode production dry-run
+    `7237f377-da68-43be-b0cf-04bea5134cd0` checked all 44 mapped listings: all 44
+    source fingerprints and formulas matched, with 0 blocked and 0 errors. The
+    expanded UI now labels the derived value `SML พร้อมใช้` and shows the
+    per-item breakdown such as `คงเหลือ 7 แท่ง − ค้างส่ง 0 แท่ง`. This rollout
+    performed no Shopee stock write, and both AOY automatic schedules remain
+    disabled. Net availability for set products remains fail-closed until a
+    real set-product sales-order case proves component semantics. The AOY
+    pre-deploy database backup is `pre-deploy-20260826-041945.sql.gz`; runtime
+    `.env` backups with `pre-stock-net` prefixes are retained in the AOY folder.
+    Demo and Lanboon application/runtime modes were not changed.
 
 Known deferred or incomplete validation:
 
