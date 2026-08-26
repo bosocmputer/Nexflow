@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `95a8c8d` (`Automate Shopee cancellation documents safely`),
+  `a4c67a8` (`feat: add Shopee cancellation queue shortcut`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -311,6 +311,26 @@ Current AOY UAT scope:
     recreated or enabled. A real new-order cancellation is still required to
     complete the first external-write UAT; record the Order SN, generated CN,
     LINE delivery, and post-recalculation stock evidence.
+25. AOY-only Shopee cancellation queue navigation and status presentation are
+    deployed at `a4c67a8`. The new sidebar shortcut
+    `เอกสารยกเลิก/รับคืน Shopee` reuses the existing
+    `/shopee-operations?status_group=cancelled` page and the existing
+    `shopee_operations` permission; it does not add a second queue or a second
+    workflow. The filtered page now identifies the cancellation document type,
+    automatic or user-triggered creation, SML document number, creation result,
+    and durable SML stock-recalculation result. The API exposes semantic
+    `sale_cancel` / `credit_note` presentation values rather than leaking raw
+    route endpoints. Production browser QA passed on desktop and 390px mobile:
+    the shortcut, breadcrumb, heading, selected cancelled tab, and
+    `ใบขาย / เอกสารหลังยกเลิก` column were present, the mobile page had no
+    horizontal overflow, and the console was clean. Runtime verification found
+    all three cancellation/Auto SML feature gates enabled, shop `264993963`
+    enabled and unpaused, the active TRANS_FLAG 48 `CN` route unchanged, two
+    enabled LINE recipients, and zero cancellation rows; no historical
+    cancellation was backfilled. The final pre-deploy AOY backup is
+    `pre-deploy-20260826-124252.sql.gz`. Demo and Lanboon were not rebuilt and
+    remain on `82baa4a`. The first real new-order cancellation UAT is still
+    pending.
 
 Known deferred or incomplete validation:
 
@@ -335,8 +355,9 @@ Resume checklist:
 3. Ask for or inspect the newest AOY user feedback and the exact affected order,
    bill, SKU, shop, or SML document number.
 4. Preserve tenant isolation and deploy the same committed code with
-   `scripts/deploy_nextstep_instances.py`; change runtime flags only for the
-   explicitly requested tenant.
+   `scripts/deploy_nextstep_instances.py`; for a split AOY-only baseline always
+   pass `--ref <verified-commit>` because the script defaults to `origin/main`.
+   Change runtime flags only for the explicitly requested tenant.
 
 ---
 
