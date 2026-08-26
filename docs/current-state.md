@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-08-25
+Updated: 2026-08-26
 
 Production capability mode is **sales-only and deterministic**. AI, OCR,
 embedding, Daily Insight, IMAP ingestion, LINE chat, and purchase workflows are
@@ -9,7 +9,7 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 ## Production UAT Status
 
 - Application baseline is intentionally split during AOY UAT. AOY runs
-  `e069f2b`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
+  `44b5a72`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
   settings, credentials, channel routes, and feature flags remain isolated.
   Central SML Gateway baseline: `a53db50`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
@@ -37,6 +37,11 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   with `Shopee Excel`; Lazada and TikTok display their Excel channels. Generic
   `บัญชีหลัก` labels were removed. This UI is deployed only to AOY at
   `e069f2b`.
+- AOY expanded Shopee stock groups identify SML stock, current Shopee stock,
+  and the absolute stock target that Nexflow will send. Wide screens use aligned
+  column headers; laptop widths use labeled stacked values so no stock value or
+  mapping action is clipped by the sidebar. This UI is deployed only to AOY at
+  `44b5a72`; production browser QA was read-only and did not write Shopee stock.
 - Detailed resume notes, deferred work, and the per-session preflight checklist
   are maintained in `AGENTS.md` under `Current UAT Handoff`.
 

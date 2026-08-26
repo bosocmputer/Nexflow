@@ -9,12 +9,12 @@
 
 ---
 
-## 0. Current UAT Handoff (2026-08-25)
+## 0. Current UAT Handoff (2026-08-26)
 
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `e069f2b` (`fix: bind Shopee shop name to API tag`), while Demo and
+  `44b5a72` (`fix: keep Shopee stock values visible on laptops`), while Demo and
   Lanboon remain on `82baa4a` (`Simplify marketplace stock quantity setup`). The
   Central SML Gateway is on `a53db50`
   (`fix: include usable SML unit status conventions`).
@@ -48,7 +48,7 @@ Read this section first when resuming work in a new session.
 - Activation backups are also stored under the same tenant folders. Demo and AOY
   use the `pre-marketplace-activate-20260825-044809.sql.gz` snapshots; Lanboon's
   code-alignment backup is `pre-marketplace-code-20260825-054410.sql.gz`.
-- AOY is the active production UAT tenant. As of 2026-08-25 the user is actively
+- AOY is the active production UAT tenant. As of 2026-08-26 the user is actively
   testing the current AOY build. Do not treat silence as acceptance; inspect the
   reported tenant, record, and runtime logs before fixing any new feedback.
 
@@ -143,6 +143,17 @@ Current AOY UAT scope:
     health and both routes returned HTTP 200. The two latest pre-deploy AOY
     backups are `pre-deploy-20260825-091802.sql.gz` and
     `pre-deploy-20260825-092638.sql.gz`. Demo and Lanboon remain on `82baa4a`.
+15. AOY-only Shopee stock-column clarification is deployed at `44b5a72`.
+    Expanded product groups now identify the three numbers as `สต๊อก SML`,
+    `สต๊อก Shopee`, and `สต๊อกที่จะส่งไป Shopee`; the last value is the absolute
+    target Nexflow will set, not a quantity to add. At wide desktop sizes the
+    labels appear as aligned column headers. Laptop and smaller content widths
+    use a stacked row with labels beside every value so the target and mapping
+    action are not clipped by the sidebar. Production browser QA passed at the
+    default laptop viewport and 1440px, with no console warnings/errors. The
+    verification was read-only: no preview or Shopee stock write was triggered.
+    The final pre-deploy AOY backup is `pre-deploy-20260826-021900.sql.gz`.
+    Demo and Lanboon remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
