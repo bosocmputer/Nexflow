@@ -3,6 +3,7 @@ package linenotify
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -73,12 +74,19 @@ func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
 	in := models.ShopeeAutoSMLNotification{
 		ShopID: 264993963, ShopLabel: "Henna.milkford", OrderSN: "ORDER-1",
 		BillID: "bill-id", SMLDocNo: "BF-INV26080099", TotalAmount: 12345.5,
+		ItemCount: 1,
+		Items: []models.ShopeeAutoSMLNotificationItem{{
+			Name: "สีเพ้นคิ้วเฮนน่า\n", Variant: "3.น้ำตาลดำ", Qty: 2,
+		}},
 	}
 	text := buildShopeeAutoSMLText("สร้างบิล SML จาก Shopee สำเร็จ", in, "https://nexflow.example/sale-invoices/bill-id")
-	for _, want := range []string{"ORDER-1", "BF-INV26080099", "12,345.50"} {
+	for _, want := range []string{"ORDER-1", "BF-INV26080099", "12,345.50", "รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text missing %q: %s", want, text)
 		}
+	}
+	if strings.Contains(text, "เฮนน่า\n (3.") {
+		t.Fatalf("item name must be normalized to one line: %s", text)
 	}
 	if strings.Contains(text, "฿") {
 		t.Fatalf("LINE money must not include currency symbol: %s", text)
@@ -89,6 +97,41 @@ func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
 	alt, flex := buildShopeeAutoSMLFlex("สร้างบิล SML จาก Shopee สำเร็จ", "success", in, "https://nexflow.example/sale-invoices/bill-id")
 	if alt == "" || flex == nil {
 		t.Fatal("expected rich Flex payload")
+	}
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal auto SML flex: %v", err)
+	}
+	for _, want := range []string{"รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2"} {
+		if !strings.Contains(string(buf), want) {
+			t.Fatalf("auto SML flex missing %q: %s", want, buf)
+		}
+	}
+}
+
+func TestBuildShopeeAutoSMLMessagesBoundItemList(t *testing.T) {
+	items := make([]models.ShopeeAutoSMLNotificationItem, 0, 7)
+	for i := 1; i <= 7; i++ {
+		items = append(items, models.ShopeeAutoSMLNotificationItem{
+			Name: strings.Repeat("สินค้าที่ยาวมาก", 20) + fmt.Sprintf("-%d", i),
+			Qty:  1,
+		})
+	}
+	in := models.ShopeeAutoSMLNotification{
+		ShopID: 264993963, OrderSN: "ORDER-MANY", ItemCount: 7, Items: items,
+	}
+
+	text := buildShopeeAutoSMLText("สร้างบิล SML จาก Shopee สำเร็จ", in, "")
+	if !strings.Contains(text, "และอีก 2 รายการ") || strings.Count(text, " x1") != 5 {
+		t.Fatalf("text item list is not bounded correctly: %s", text)
+	}
+	_, flex := buildShopeeAutoSMLFlex("สร้างบิล SML จาก Shopee สำเร็จ", "success", in, "")
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal bounded flex: %v", err)
+	}
+	if !strings.Contains(string(buf), "และอีก 2 รายการ") || len(buf) > 10000 {
+		t.Fatalf("flex item list is not bounded: bytes=%d body=%s", len(buf), buf)
 	}
 }
 

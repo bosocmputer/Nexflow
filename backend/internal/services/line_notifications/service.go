@@ -179,6 +179,10 @@ func buildShopeeAutoSMLText(title string, in models.ShopeeAutoSMLNotification, a
 	if strings.TrimSpace(in.SMLDocNo) != "" {
 		lines = append(lines, "SML Doc No: "+strings.TrimSpace(in.SMLDocNo))
 	}
+	if items := shopeeAutoSMLProductLines(in, autoSMLNotificationItemLimit); len(items) > 0 {
+		lines = append(lines, "รายการสินค้า")
+		lines = append(lines, items...)
+	}
 	if strings.TrimSpace(in.ErrorMessage) != "" {
 		lines = append(lines, "ต้องดำเนินการ: "+strings.TrimSpace(in.ErrorMessage))
 	}
@@ -211,6 +215,15 @@ func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotificat
 		{"Bill ID", in.BillID},
 		{"SML Doc No", in.SMLDocNo},
 	})
+	if items := shopeeAutoSMLProductLines(in, autoSMLNotificationItemLimit); len(items) > 0 {
+		body = append(body,
+			map[string]any{"type": "separator", "margin": "md"},
+			flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+		)
+		for _, item := range items {
+			body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
+		}
+	}
 	if strings.TrimSpace(in.ErrorMessage) != "" {
 		body = append(body,
 			map[string]any{"type": "separator", "margin": "md"},
@@ -226,6 +239,34 @@ func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotificat
 		contents["footer"] = flexButtonFooter("เปิดใน Nexflow", actionURL)
 	}
 	return strings.Join(filterNonEmpty([]string{title, shop, in.OrderSN}), " · "), contents
+}
+
+const autoSMLNotificationItemLimit = 5
+
+func shopeeAutoSMLProductLines(in models.ShopeeAutoSMLNotification, limit int) []string {
+	if limit <= 0 {
+		limit = autoSMLNotificationItemLimit
+	}
+	items := make([]shopeeRawOrderItem, 0, minInt(len(in.Items), limit))
+	for i := 0; i < len(in.Items) && len(items) < limit; i++ {
+		item := in.Items[i]
+		if compactWhitespace(item.Name) == "" {
+			continue
+		}
+		items = append(items, shopeeRawOrderItem{ItemName: item.Name, Model: item.Variant, Qty: item.Qty})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	out := shopeeProductLines(items, 0, limit)
+	total := in.ItemCount
+	if total < len(in.Items) {
+		total = len(in.Items)
+	}
+	if total > len(items) {
+		out = append(out, fmt.Sprintf("และอีก %d รายการ", total-len(items)))
+	}
+	return out
 }
 
 func shopeeAutoSMLActionURL(publicBaseURL string, in models.ShopeeAutoSMLNotification) string {

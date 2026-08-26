@@ -122,6 +122,51 @@ func TestAutoSMLDocumentTimeUsesBangkok(t *testing.T) {
 	}
 }
 
+func TestAutoSMLNotificationItemsPreferShopeeSnapshotAndOmitPII(t *testing.T) {
+	snap := &models.ShopeeOrderSnapshot{
+		ItemCount: 1,
+		RawDetail: json.RawMessage(`{
+			"buyer_username":"buyer-secret",
+			"recipient_address":{"name":"secret-name","phone":"0999999999"},
+			"item_list":[{
+				"item_name":"สีเพ้นคิ้วเฮนน่า",
+				"model_name":"3.น้ำตาลดำ",
+				"model_quantity_purchased":2
+			}]
+		}`),
+	}
+	bill := &models.Bill{Items: []models.BillItem{{RawName: "fallback bill item", Qty: 99}}}
+
+	items, total := autoSMLNotificationItems(snap, bill)
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("items=%+v total=%d, want one Shopee item", items, total)
+	}
+	if items[0].Name != "สีเพ้นคิ้วเฮนน่า" || items[0].Variant != "3.น้ำตาลดำ" || items[0].Qty != 2 {
+		t.Fatalf("unexpected Shopee item: %+v", items[0])
+	}
+	buf, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal notification items: %v", err)
+	}
+	for _, leak := range []string{"buyer-secret", "secret-name", "0999999999", "fallback bill item"} {
+		if strings.Contains(string(buf), leak) {
+			t.Fatalf("notification items leaked %q: %s", leak, buf)
+		}
+	}
+}
+
+func TestAutoSMLNotificationItemsFallbackToBillAndSkipShipping(t *testing.T) {
+	bill := &models.Bill{Items: []models.BillItem{
+		{RawName: "สินค้า A / สีแดง", Qty: 3},
+		{RawName: "ค่าจัดส่ง Shopee", SourceSKU: models.ShopeeShippingSourceSKU, Qty: 1},
+	}}
+
+	items, total := autoSMLNotificationItems(nil, bill)
+	if total != 1 || len(items) != 1 || items[0].Name != "สินค้า A / สีแดง" || items[0].Qty != 3 {
+		t.Fatalf("fallback items=%+v total=%d", items, total)
+	}
+}
+
 func TestValidateShopeeRealtimeAutoDefaults(t *testing.T) {
 	base := models.ChannelDefaultUpsert{
 		Channel: "shopee_realtime", BillType: "sale", Endpoint: "/api/v1/ic/sale-invoices",

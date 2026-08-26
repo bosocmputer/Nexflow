@@ -71,6 +71,17 @@ type ShopeeAutoSMLNotification struct {
 	BillID       string
 	SMLDocNo     string
 	TotalAmount  float64
+	ItemCount    int
+	Items        []ShopeeAutoSMLNotificationItem
 	ErrorCode    string
 	ErrorMessage string
+}
+
+// ShopeeAutoSMLNotificationItem contains only the non-PII order fields needed
+// by the LINE notification. Marketplace quantity is intentionally preserved;
+// conversion into SML quantity is a separate document concern.
+type ShopeeAutoSMLNotificationItem struct {
+	Name    string
+	Variant string
+	Qty     float64
 }

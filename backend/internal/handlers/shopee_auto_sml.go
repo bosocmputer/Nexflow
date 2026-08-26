@@ -24,6 +24,7 @@ const (
 	shopeeAutoSMLWorkerEvery = 5 * time.Second
 	shopeeAutoSMLLease       = 5 * time.Minute
 	shopeeAutoSMLBatchSize   = 2
+	autoSMLLineItemLimit     = 5
 )
 
 var shopeeAutoSMLBangkokTimeZone = time.FixedZone("Asia/Bangkok", 7*60*60)
@@ -374,6 +375,7 @@ func (h *ShopeeRealtimeHandler) autoSMLNotification(job models.ShopeeAutoSMLJob,
 		out.ShopLabel = snap.ShopLabel
 		out.TotalAmount = snap.TotalAmount
 	}
+	out.Items, out.ItemCount = autoSMLNotificationItems(snap, bill)
 	if bill != nil {
 		out.BillID = bill.ID
 		if bill.SMLDocNo != nil {
@@ -381,6 +383,49 @@ func (h *ShopeeRealtimeHandler) autoSMLNotification(job models.ShopeeAutoSMLJob,
 		}
 	}
 	return out
+}
+
+func autoSMLNotificationItems(snap *models.ShopeeOrderSnapshot, bill *models.Bill) ([]models.ShopeeAutoSMLNotificationItem, int) {
+	if snap != nil && len(snap.RawDetail) > 0 {
+		var detail shopeeapi.OrderDetail
+		if err := json.Unmarshal(snap.RawDetail, &detail); err == nil && len(detail.ItemList) > 0 {
+			total := len(detail.ItemList)
+			items := make([]models.ShopeeAutoSMLNotificationItem, 0, min(total, autoSMLLineItemLimit))
+			for _, item := range detail.ItemList {
+				name := strings.TrimSpace(item.ItemName)
+				if name == "" {
+					continue
+				}
+				if len(items) < autoSMLLineItemLimit {
+					items = append(items, models.ShopeeAutoSMLNotificationItem{
+						Name: name, Variant: strings.TrimSpace(item.ModelName), Qty: item.ModelQuantityPurchased,
+					})
+				}
+			}
+			if len(items) > 0 {
+				return items, total
+			}
+		}
+	}
+	if bill == nil {
+		return nil, 0
+	}
+	items := make([]models.ShopeeAutoSMLNotificationItem, 0, min(len(bill.Items), autoSMLLineItemLimit))
+	total := 0
+	for _, item := range bill.Items {
+		if item.SourceSKU == models.ShopeeShippingSourceSKU {
+			continue
+		}
+		name := strings.TrimSpace(item.RawName)
+		if name == "" {
+			continue
+		}
+		total++
+		if len(items) < autoSMLLineItemLimit {
+			items = append(items, models.ShopeeAutoSMLNotificationItem{Name: name, Qty: item.Qty})
+		}
+	}
+	return items, total
 }
 
 func (h *ShopeeRealtimeHandler) enqueueAutoSMLLine(ctx context.Context, kind string, in models.ShopeeAutoSMLNotification) {
