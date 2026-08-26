@@ -196,7 +196,7 @@ Migration `045_shopee_multi_shop.sql` เปลี่ยน unique index จา�
 ## Legacy SML 248 Connection
 
 ส่วนนี้ใช้กับ Shopee Excel/API import fallback ที่สร้าง `saleorder` ผ่าน SML 248.
-Shopee Realtime daily flow และ cancelled-after-SML CN ใช้ route/config ที่ระบุใน
+Shopee Realtime daily flow และ cancelled-after-SML document ใช้ route/config ที่ระบุใน
 [`docs/current-state.md`](current-state.md) และ `sml-api-bybos` tenant `aoy`.
 
 ```

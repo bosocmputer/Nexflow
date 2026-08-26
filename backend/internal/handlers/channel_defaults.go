@@ -140,6 +140,10 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := validateShopeeRealtimeCancelDefaults(in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	userID := c.GetString("user_id")
 	d := &models.ChannelDefault{
@@ -221,6 +225,36 @@ func validateShopeeRealtimeAutoDefaults(in models.ChannelDefaultUpsert) error {
 	}
 	if in.VATRate < 0 {
 		return fmt.Errorf("กรุณาตั้งค่าอัตราภาษีสำหรับ Auto SML")
+	}
+	return nil
+}
+
+func validateShopeeRealtimeCancelDefaults(in models.ChannelDefaultUpsert) error {
+	if in.Channel != "shopee_realtime_cancel" || in.BillType != "sale" {
+		return nil
+	}
+	endpoint := strings.TrimSpace(in.Endpoint)
+	switch endpoint {
+	case "/api/v1/ic/sale-invoices/:doc_no/void",
+		"/api/v1/ic/sale-invoices/:doc_no/cancel":
+	default:
+		return fmt.Errorf("กรุณาเลือกปลายทางยกเลิก SML ที่ระบบรองรับ")
+	}
+	required := []struct {
+		value string
+		label string
+	}{
+		{in.DocFormatCode, "รูปแบบเอกสารจาก SML"},
+		{in.DocPrefix, "คำนำหน้าเลขเอกสาร"},
+		{in.DocRunningFormat, "รูปแบบเลขรัน"},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("กรุณาเลือก%sสำหรับเส้นทาง Shopee ยกเลิกหลังส่ง SML", field.label)
+		}
+	}
+	if !strings.Contains(in.DocRunningFormat, "#") {
+		return fmt.Errorf("รูปแบบเลขรันของเอกสารยกเลิกต้องมี # อย่างน้อย 1 ตัว")
 	}
 	return nil
 }

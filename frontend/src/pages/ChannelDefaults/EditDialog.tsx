@@ -107,7 +107,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
       row.endpoint ?? '',
       row.doc_format_code ?? '',
     )
-    const defaultDestination = destinationOptionsFor(row.bill_type)[0]
+    const defaultDestination = destinationOptionsFor(row.bill_type, row.channel as ChannelKey)[0]
     const destination = detectedDestination ?? defaultDestination
 
     setSelectedDestination(destination?.value ?? 'purchaseorder')
@@ -134,17 +134,22 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 
   // Fetch doc formats from SML when destination changes; auto-fill prefix + running format from selected format
   useEffect(() => {
-    if (!open) return
+    if (!open || !row) return
     let cancelled = false
-    const screenCodeMap: Record<EndpointKind, string> = {
-      saleorder: 'SR',
-      saleinvoice: 'SI',
-      purchaseorder: 'PO',
-      arreceipt: 'EE',
-      creditnote: 'CN',
-    }
-    const screenCode = screenCodeMap[selectedDestination]
+    const destination = destinationOptionsFor(row.bill_type, row.channel as ChannelKey)
+      .find((option) => option.value === selectedDestination)
+    const screenCode = destination?.screenCode
     if (!screenCode) return
+    const savedDestination = destinationFor(
+      row.channel as ChannelKey,
+      row.bill_type,
+      row.endpoint ?? '',
+      row.doc_format_code ?? '',
+    )
+    const savedDocFormatCode = savedDestination?.value === selectedDestination
+      ? (row.doc_format_code ?? '')
+      : ''
+    setDocFormats([])
     setDocFormatsLoading(true)
     client.get(`/api/sml/doc-formats?screen_code=${screenCode}`)
       .then((res) => {
@@ -153,7 +158,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
         setDocFormats(formats)
         if (formats.length === 0) return
         // Keep current selection if still in list; otherwise default to first
-        const current = formats.find((f) => f.code === selectedDocFormatCode)
+        const current = formats.find((f) => f.code === savedDocFormatCode)
         const chosen = current ?? formats[0]
         setSelectedDocFormatCode(chosen.code)
         const { prefix, runningFormat } = parseSmlFormat(chosen.code, chosen.format)
@@ -170,7 +175,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     return () => {
       cancelled = true
     }
-  }, [open, selectedDestination, selectedDocFormatCode])
+  }, [open, row, selectedDestination])
 
   useEffect(() => {
     if (!open || !row || row.channel !== 'shopee_settlement' || row.bill_type !== 'ar_receipt') return
@@ -223,11 +228,12 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     (row.channel === 'lazada' && row.bill_type === 'sale') ||
     (row.channel === 'tiktok' && row.bill_type === 'sale')
   const isShopeeRealtimeAutoRoute = row.channel === 'shopee_realtime' && row.bill_type === 'sale'
+  const isShopeeRealtimeCancelRoute = row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale'
   const channelLabel = isShopeePurchase
     ? 'Email บิลซื้อ Shopee'
     : CHANNEL_LABELS[row.channel as ChannelKey] ?? row.channel
   const billTypeLabel = isPurchase ? 'บิลซื้อ' : isSettlement ? 'ลูกหนี้' : 'บิลขาย'
-  const destinationOptions = destinationOptionsFor(row.bill_type)
+  const destinationOptions = destinationOptionsFor(row.bill_type, row.channel as ChannelKey)
   const selectedDestinationMeta =
     destinationOptions.find((option) => option.value === selectedDestination) ??
     destinationFor(row.channel as ChannelKey, row.bill_type, row.endpoint ?? '', row.doc_format_code ?? '') ??
@@ -253,6 +259,8 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     if (saving) return 'กำลังบันทึก'
     if (!selectedDestinationMeta) return 'เลือกปลายทาง SML ก่อน'
     if (docFormatsLoading) return 'รอโหลดรูปแบบเอกสารจาก SML'
+    if (isShopeeRealtimeCancelRoute && docFormats.length === 0) return 'ไม่พบรูปแบบเอกสารที่ตรงกับปลายทางนี้ใน SML'
+    if (isShopeeRealtimeCancelRoute && !selectedDocFormatCode) return 'เลือกรูปแบบเอกสารจาก SML ก่อน'
     if (isSettlement && !selectedDocFormatCode) return 'เลือกรูปแบบเอกสารรับชำระก่อน'
     if (isSettlement && !passbookCodeTrimmed) return 'เลือกบัญชีรับเงินจริงก่อน'
     if (!isSettlement && (!docPrefixTrimmed || !docRunningFormatTrimmed || !docRunningFormatTrimmed.includes('#'))) {
@@ -290,6 +298,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     }
     if (isSettlement && (!selectedDocFormatCode || !passbookCodeTrimmed)) {
       toast.error('กรุณาเลือกรูปแบบเอกสารรับชำระและบัญชีรับเงิน')
+      return
+    }
+    if (isShopeeRealtimeCancelRoute && (!selectedDocFormatCode || docFormats.length === 0)) {
+      toast.error('กรุณาเลือกรูปแบบเอกสารที่มีอยู่จริงใน SML')
       return
     }
     if (!isSettlement && (!docPrefixTrimmed || !docRunningFormatTrimmed || !docRunningFormatTrimmed.includes('#'))) {
@@ -438,8 +450,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   </SelectContent>
                 </Select>
               ) : (
-                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-sm text-foreground">
-                  {selectedDocFormatCode || selectedDestinationMeta?.docFormatCode || '-'}
+                <div className={`rounded-md border px-3 py-2 text-sm ${isShopeeRealtimeCancelRoute ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-border bg-muted/30 font-mono text-foreground'}`}>
+                  {isShopeeRealtimeCancelRoute
+                    ? 'ไม่พบรูปแบบเอกสารสำหรับปลายทางนี้ใน SML กรุณาตรวจ erp_doc_format'
+                    : (selectedDocFormatCode || selectedDestinationMeta?.docFormatCode || '-')}
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
@@ -552,7 +566,14 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             </div>
             )}
 
-            {!isSettlement && (
+            {isShopeeRealtimeCancelRoute && (
+              <div className="rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-muted-foreground">
+                ลูกค้า รายการสินค้า คลัง พื้นที่เก็บ VAT และยอดเงิน จะอ้างอิงจากใบขาย SML เดิมอัตโนมัติ
+                ผู้ใช้จึงตั้งค่าเฉพาะปลายทางและรูปแบบเอกสารเท่านั้น
+              </div>
+            )}
+
+            {!isSettlement && !isShopeeRealtimeCancelRoute && (
             <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
               <div>
                 <div className="text-xs font-semibold text-foreground">

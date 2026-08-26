@@ -96,7 +96,7 @@ function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
     return 'งานหลักสำหรับ order ใหม่: รับจาก Push/Sync แล้วกดสร้างเอกสารใน Nexflow'
   }
   if (row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale') {
-    return 'งานยกเลิกหลังส่ง SML: สร้างเอกสารขาย -> ยกเลิกขายสินค้าและบริการ'
+    return 'งานยกเลิกหลังส่ง SML: เลือกได้ว่าจะยกเลิกใบขายทั้งฉบับ หรือสร้างรับคืนสินค้า/ลดหนี้'
   }
   if (row.channel === 'shopee' && row.bill_type === 'sale') {
     return 'งานสำรองเท่านั้น: ดึงย้อนหลัง ซ่อม order ตกหล่น หรือ Excel/API fallback'

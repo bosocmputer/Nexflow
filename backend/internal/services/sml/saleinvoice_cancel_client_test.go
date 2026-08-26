@@ -93,3 +93,70 @@ func TestSaleInvoiceCancelClientCreateTreatsAlreadyExistsAsSuccess(t *testing.T)
 		t.Fatalf("cancel doc no = %q", got)
 	}
 }
+
+func TestSaleInvoiceCancelClientReadsNestedBusinessStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"status":"already_exists","message":"credit note already exists","existing_cancel_doc_no":"CN26060001"}}`))
+	}))
+	defer srv.Close()
+
+	client := NewSaleInvoiceCancelClient(PartyConfig{
+		BaseURL: srv.URL, GUID: "smlx", Provider: "SMLGOH", Database: "sml1_2026",
+	}, zap.NewNop())
+	_, resp, err := client.Create(context.Background(), "BF-SO260600001", SaleInvoiceCancelRequest{DocFormatCode: "CN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.IsAlreadyExists() || resp.BusinessStatus() != "already_exists" {
+		t.Fatalf("nested status not detected: %#v", resp)
+	}
+	if got := resp.CancelDocNo(); got != "CN26060001" {
+		t.Fatalf("cancel doc no = %q", got)
+	}
+	if got := resp.GetMessage(); got != "credit note already exists" {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestSaleInvoiceCancelClientUsesVoidEndpointForSaleCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/ic/sale-invoices/BF-INV26080058/void" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		for _, want := range []string{`"doc_no":"SIC26080002"`, `"doc_format_code":"SIC"`, `"doc_time":"17:15"`} {
+			if !strings.Contains(string(body), want) {
+				t.Fatalf("body %s missing %s", body, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"success":true,"data":{"cancel_doc_no":"SIC26080002"}}`))
+	}))
+	defer srv.Close()
+
+	client := NewSaleInvoiceCancelClient(PartyConfig{
+		BaseURL: srv.URL, GUID: "smlx", Provider: "SMLGOH", Database: "sml1_2026",
+	}, zap.NewNop())
+	status, resp, err := client.Create(context.Background(), "BF-INV26080058", SaleInvoiceCancelRequest{
+		Kind: SaleInvoiceCancelKindVoid, DocNo: "SIC26080002",
+		DocFormatCode: "SIC", DocTime: "17:15",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusCreated || resp.CancelDocNo() != "SIC26080002" {
+		t.Fatalf("status/response = %d/%#v", status, resp)
+	}
+}
+
+func TestSaleInvoiceCancelClientRejectsUnknownKindBeforeHTTP(t *testing.T) {
+	client := NewSaleInvoiceCancelClient(PartyConfig{
+		BaseURL: "http://127.0.0.1:1", GUID: "smlx", Provider: "SMLGOH", Database: "sml1_2026",
+	}, zap.NewNop())
+	_, _, err := client.Preview(context.Background(), "BF-INV26080058", SaleInvoiceCancelRequest{Kind: "unknown"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported") {
+		t.Fatalf("error = %v", err)
+	}
+}

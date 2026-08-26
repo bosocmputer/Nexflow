@@ -123,6 +123,73 @@ func TestShopeeSnapshotStatusGroupWhere(t *testing.T) {
 	}
 }
 
+func TestPrepareSMLCancellationCreatePersistsAttemptBeforeWrite(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+
+	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*cancel_sml_doc_no=\$2.*status='creating'`).
+		WithArgs("11111111-1111-1111-1111-111111111111", "CN26080002", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = repo.PrepareSMLCancellationCreate(
+		context.Background(),
+		"11111111-1111-1111-1111-111111111111",
+		"CN26080002",
+		json.RawMessage(`{"doc_no":"CN26080002","doc_format_code":"CN"}`),
+	)
+	if err != nil {
+		t.Fatalf("PrepareSMLCancellationCreate() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareSMLCancellationCreateRejectsStateRace(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+
+	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*status='creating'`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	err = repo.PrepareSMLCancellationCreate(
+		context.Background(),
+		"11111111-1111-1111-1111-111111111111",
+		"SIC26080002",
+		json.RawMessage(`{"doc_no":"SIC26080002","doc_format_code":"SIC"}`),
+	)
+	if err == nil {
+		t.Fatal("PrepareSMLCancellationCreate() error = nil, want state conflict")
+	}
+}
+
+func TestSMLCancellationDocNoExistsUsesAttemptedStates(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+
+	mock.ExpectQuery(`(?s)SELECT EXISTS.*cancel_sml_doc_no=\$1.*status IN`).
+		WithArgs("SIC26080002").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	exists, err := repo.SMLCancellationDocNoExists(context.Background(), "SIC26080002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("SMLCancellationDocNoExists() = false, want true")
+	}
+}
+
 func TestShopeeTimelineTitle(t *testing.T) {
 	tests := []struct {
 		name   string

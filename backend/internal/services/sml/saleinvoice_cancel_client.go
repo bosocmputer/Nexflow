@@ -14,8 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// SaleInvoiceCancelClient calls sml-api-bybos endpoints that create the SML
-// "ขาย -> ยกเลิกขายสินค้าและบริการ" document for an existing sale invoice.
+// SaleInvoiceCancelClient calls sml-api-bybos endpoints that either void the
+// original sale invoice or create a credit note for an existing sale invoice.
 // Nexflow owns workflow/idempotency; sml-api-bybos owns DB-specific inserts.
 type SaleInvoiceCancelClient struct {
 	cfg        PartyConfig
@@ -24,11 +24,21 @@ type SaleInvoiceCancelClient struct {
 }
 
 type SaleInvoiceCancelRequest struct {
-	DocDate       string `json:"doc_date,omitempty"`
-	DocFormatCode string `json:"doc_format_code,omitempty"`
-	DocNo         string `json:"doc_no,omitempty"`
-	Remark        string `json:"remark,omitempty"`
+	Kind          SaleInvoiceCancelKind `json:"-"`
+	DocDate       string                `json:"doc_date,omitempty"`
+	DocTime       string                `json:"doc_time,omitempty"`
+	DocFormatCode string                `json:"doc_format_code,omitempty"`
+	DocNo         string                `json:"doc_no,omitempty"`
+	Remark        string                `json:"remark,omitempty"`
+	UserRequest   string                `json:"user_request,omitempty"`
 }
+
+type SaleInvoiceCancelKind string
+
+const (
+	SaleInvoiceCancelKindVoid       SaleInvoiceCancelKind = "sale_invoice_cancel"
+	SaleInvoiceCancelKindCreditNote SaleInvoiceCancelKind = "credit_note"
+)
 
 type SaleInvoiceCancelResponse struct {
 	Success       bool            `json:"success"`
@@ -76,7 +86,11 @@ func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix st
 	if err != nil {
 		return 0, nil, err
 	}
-	path := "/api/v1/ic/sale-invoices/" + url.PathEscape(saleDocNo) + "/cancel"
+	action, err := saleInvoiceCancelAction(payload.Kind)
+	if err != nil {
+		return 0, nil, err
+	}
+	path := "/api/v1/ic/sale-invoices/" + url.PathEscape(saleDocNo) + "/" + action
 	if strings.TrimSpace(suffix) == "preview" {
 		path += "/preview"
 	}
@@ -118,6 +132,17 @@ func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix st
 	return resp.StatusCode, out, nil
 }
 
+func saleInvoiceCancelAction(kind SaleInvoiceCancelKind) (string, error) {
+	switch kind {
+	case SaleInvoiceCancelKindVoid:
+		return "void", nil
+	case "", SaleInvoiceCancelKindCreditNote:
+		return "cancel", nil
+	default:
+		return "", fmt.Errorf("unsupported SML sale invoice cancellation kind: %s", kind)
+	}
+}
+
 func (c *SaleInvoiceCancelClient) headers() map[string]string {
 	return map[string]string{
 		"guid":           c.cfg.GUID,
@@ -135,9 +160,32 @@ func (r *SaleInvoiceCancelResponse) IsSuccess() bool {
 	if r == nil {
 		return false
 	}
-	status := strings.ToLower(strings.TrimSpace(r.Status))
+	status := r.BusinessStatus()
 	code := strings.ToLower(strings.TrimSpace(r.Code))
 	return r.Success || status == "success" || status == "ok" || status == "already_exists" || code == "already_exists" || r.AlreadyExists
+}
+
+func (r *SaleInvoiceCancelResponse) BusinessStatus() string {
+	if r == nil {
+		return ""
+	}
+	if status := strings.ToLower(strings.TrimSpace(r.Status)); status != "" {
+		return status
+	}
+	var root map[string]any
+	if len(r.raw) > 0 {
+		_ = json.Unmarshal(r.raw, &root)
+	}
+	return strings.ToLower(saleInvoiceCancelFindString(root, "status"))
+}
+
+func (r *SaleInvoiceCancelResponse) IsAlreadyExists() bool {
+	if r == nil {
+		return false
+	}
+	return r.AlreadyExists ||
+		strings.EqualFold(strings.TrimSpace(r.Code), "already_exists") ||
+		r.BusinessStatus() == "already_exists"
 }
 
 func (r *SaleInvoiceCancelResponse) GetMessage() string {
@@ -148,6 +196,13 @@ func (r *SaleInvoiceCancelResponse) GetMessage() string {
 		return strings.TrimSpace(r.Message)
 	}
 	if s := saleInvoiceCancelString(r.Error); s != "" {
+		return s
+	}
+	var root map[string]any
+	if len(r.raw) > 0 {
+		_ = json.Unmarshal(r.raw, &root)
+	}
+	if s := saleInvoiceCancelFindString(root, "message"); s != "" {
 		return s
 	}
 	if len(r.raw) > 0 {
@@ -171,7 +226,7 @@ func (r *SaleInvoiceCancelResponse) CancelDocNo() string {
 	if len(r.raw) > 0 {
 		_ = json.Unmarshal(r.raw, &root)
 	}
-	for _, key := range []string{"cancel_sml_doc_no", "cancel_doc_no", "cn_doc_no", "doc_no"} {
+	for _, key := range []string{"cancel_sml_doc_no", "cancel_doc_no", "existing_cancel_doc_no", "cn_doc_no", "doc_no"} {
 		if s := saleInvoiceCancelFindString(root, key); s != "" {
 			return s
 		}

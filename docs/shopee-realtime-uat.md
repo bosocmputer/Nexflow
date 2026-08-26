@@ -57,9 +57,11 @@ Updated: 2026-06-22
 
 - ถ้า Shopee เปลี่ยนเป็น `CANCELLED` หรือ `IN_CANCEL` หลังมีเลข SML แล้ว หน้า
   `/shopee-operations` ต้องแสดง badge `ต้องสร้างเอกสารยกเลิก SML`
-- กด preview ได้เพื่อดูใบขายเดิม, เลข CN, route และยอดก่อนยืนยัน
-- Create CN เปิดใน production แต่ต้องใช้ checkbox/confirm และต้องผ่าน SML
-  readiness ของ tenant `aoy`; ถ้า SML ไม่พร้อมต้อง block โดยไม่เขียน partial CN
+- ตั้งปลายทางใน `/settings/channels` ได้สองแบบ: `TRANS_FLAG 45`
+  ยกเลิกขายสินค้าและบริการ หรือ `TRANS_FLAG 48` รับคืนสินค้า/ลดหนี้
+- กด preview ได้เพื่อดูใบขายเดิม, เลขเอกสาร, route และยอดก่อนยืนยัน
+- การสร้างเอกสารจริงต้องใช้ checkbox/confirm และผ่าน SML readiness ของ tenant
+  `aoy`; ถ้า SML ไม่พร้อมต้อง block โดยไม่เขียนเอกสารบางส่วน
 
 ## 7. สิ่งที่ห้ามกดระหว่าง UAT ถ้าไม่ได้อนุมัติชัดเจน
 
@@ -79,5 +81,5 @@ Updated: 2026-06-22
 - ถ้า Push หลุด scheduled sync ต้องดึง order เข้ามาภายในรอบ sync
 - Notification และ LINE ต้องไม่ส่งซ้ำสำหรับ order เดิม
 - สร้างเอกสารไม่สร้าง duplicate bill
-- SML ยังส่งจากหน้าคิวเอกสารเดิมเท่านั้น ยกเว้น create-CN flow ที่ทำผ่าน
+- SML ยังส่งจากหน้าคิวเอกสารเดิมเท่านั้น ยกเว้น cancellation flow ที่ทำผ่าน
   `/shopee-operations` สำหรับ cancelled-after-SML โดยเฉพาะ

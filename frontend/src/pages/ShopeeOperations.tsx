@@ -349,6 +349,8 @@ type CancelSMLDocumentPreview = {
   can_create: boolean
   route?: {
     destination?: string
+    kind?: 'sale_invoice_cancel' | 'credit_note'
+    trans_flag?: number
     doc_format_code?: string
     endpoint?: string
     message?: string
@@ -1963,7 +1965,7 @@ export default function ShopeeOperations() {
                 {!cancelSMLPreview.create_enabled && !cancelSMLStatusDone(cancelSMLPreview.status) && (
                   <Alert className="border-warning/40 bg-warning/10">
                     <AlertTriangle className="h-4 w-4 text-warning" />
-                    <AlertTitle>ปิดการสร้าง CN อยู่</AlertTitle>
+                    <AlertTitle>ปิดการสร้างเอกสาร SML อยู่</AlertTitle>
                     <AlertDescription>
                       เปิด notification และ preview ได้แล้ว แต่ปุ่มสร้างจริงยังถูกปิดด้วย feature flag จนกว่า SML domain จะพร้อม
                     </AlertDescription>
@@ -1988,7 +1990,7 @@ export default function ShopeeOperations() {
                   <div className="mt-3 border-t border-border pt-3">
                     <PreviewKV
                       label="เส้นทางเอกสาร"
-                      value={`${cancelSMLPreview.route?.destination || 'ขาย -> ยกเลิกขายสินค้าและบริการ'}${cancelSMLPreview.route?.doc_format_code ? ` (${cancelSMLPreview.route.doc_format_code})` : ''}`}
+                      value={`${cancelSMLPreview.route?.destination || 'ยังไม่ได้ตั้งปลายทาง'}${cancelSMLPreview.route?.doc_format_code ? ` (${cancelSMLPreview.route.doc_format_code})` : ''}`}
                     />
                   </div>
                 </div>
@@ -1996,7 +1998,7 @@ export default function ShopeeOperations() {
                   <AlertTriangle className="h-4 w-4 text-destructive" />
                   <AlertTitle>Rollback reality</AlertTitle>
                   <AlertDescription>
-                    {cancelSMLPreview.rollback_reality || 'หลังสร้าง CN แล้ว การย้อนกลับต้องตรวจใน SML ด้วยคนทำงาน'}
+                    {cancelSMLPreview.rollback_reality || 'หลังสร้างเอกสารแล้ว การย้อนกลับต้องตรวจใน SML โดยผู้รับผิดชอบ'}
                   </AlertDescription>
                 </Alert>
                 {!cancelSMLStatusDone(cancelSMLPreview.status) && (
@@ -2007,7 +2009,7 @@ export default function ShopeeOperations() {
                       onCheckedChange={(value) => setCancelSMLConfirmed(value === true)}
                     />
                     <span className="leading-5">
-                      ยืนยันว่า Shopee order นี้ยกเลิกแล้ว และต้องสร้างเอกสาร “ขาย - ยกเลิกขายสินค้าและบริการ” เพื่ออ้างใบขายเดิมใน SML
+                      ยืนยันว่า Shopee order นี้ยกเลิกแล้ว และต้องสร้างเอกสาร “{cancelSMLPreview.route?.destination || 'ตามปลายทางที่ตั้งไว้'}” โดยอ้างอิงใบขายเดิมใน SML
                     </span>
                   </label>
                 )}
@@ -2028,7 +2030,7 @@ export default function ShopeeOperations() {
                   title={cancelSMLCreateDisabledTitle(cancelSMLPreview, cancelSMLConfirmed)}
                 >
                   {cancelSMLCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  สร้างเอกสารยกเลิก SML
+                  สร้างเอกสารตามปลายทางที่เลือก
                 </Button>
               )}
             </DialogFooter>
@@ -2564,14 +2566,14 @@ function cancelSMLBadge(order: OrderSnapshot) {
   if (cancelSMLStatusDone(order.sml_cancel_status)) {
     return (
       <Badge variant="outline" className="mt-1 h-5 border-success/30 bg-success/10 px-1.5 text-[10px] text-success">
-        CN {order.sml_cancel_doc_no || 'สร้างแล้ว'}
+        SML {order.sml_cancel_doc_no || 'สร้างแล้ว'}
       </Badge>
     )
   }
   if (order.sml_cancel_status === 'failed') {
     return (
       <Badge variant="outline" className="mt-1 h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_error || undefined}>
-        CN ล้มเหลว
+        เอกสารยกเลิกล้มเหลว
       </Badge>
     )
   }

@@ -204,6 +204,26 @@ func TestBuildShopeeCancelledAfterSMLLineTextIsFocusedAndTextOnly(t *testing.T) 
 	}
 }
 
+func TestBuildShopeeSMLCancellationCreatedLineText(t *testing.T) {
+	snap := &models.ShopeeOrderSnapshot{
+		ShopID: 264993963, OrderSN: "260826TEST", SMLDocNo: "BF-INV26080060",
+	}
+	got := BuildShopeeSMLCancellationCreatedLineText(
+		snap, "CN26080002", "เอกสารรับคืนสินค้า/ลดหนี้", "https://nexflow-aoy.nextstep-soft.com",
+	)
+	for _, want := range []string{
+		"สร้างเอกสารรับคืนสินค้า/ลดหนี้สำเร็จ",
+		"Order SN: 260826TEST",
+		"ใบขาย SML: BF-INV26080060",
+		"เอกสารรับคืนสินค้า/ลดหนี้: CN26080002",
+		"/shopee-operations?order=260826TEST",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("message missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 	msg := BuildShopeeNewOrderLineText(&models.ShopeeOrderSnapshot{
 		ShopLabel:     "Henna.milkford",

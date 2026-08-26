@@ -253,8 +253,10 @@ ENABLE_LINE_MYSHOP=true
 ```
 
 `ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true` allows staff/admin to confirm creation
-of Shopee cancelled-after-SML credit notes. Set it back to `false` for immediate
-rollback; the backend still blocks the action when SML readiness is not OK.
+of the configured Shopee cancelled-after-SML document: TRANS_FLAG 45 sale
+cancellation or TRANS_FLAG 48 sale return / credit note. Set it back to `false`
+for immediate rollback; the backend still blocks the action when SML readiness
+is not OK.
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX=true` sends structured LINE Flex messages from the
 notification outbox for Shopee order alerts. `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true`

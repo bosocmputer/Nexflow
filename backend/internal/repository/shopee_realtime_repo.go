@@ -1037,6 +1037,48 @@ func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, st
 	return &out, nil
 }
 
+func (r *ShopeeRealtimeRepo) PrepareSMLCancellationCreate(ctx context.Context, id, cancelSMLDocNo string, request json.RawMessage) error {
+	id = strings.TrimSpace(id)
+	cancelSMLDocNo = strings.TrimSpace(cancelSMLDocNo)
+	if id == "" || cancelSMLDocNo == "" || len(request) == 0 || !json.Valid(request) {
+		return fmt.Errorf("cancellation id, doc_no, and valid request payload are required")
+	}
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET cancel_sml_doc_no=$2,
+		       response=$3::jsonb,
+		       updated_at=NOW()
+		 WHERE id=$1::uuid
+		   AND status='creating'`, id, cancelSMLDocNo, request)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("cancellation attempt changed before payload persistence")
+	}
+	return nil
+}
+
+func (r *ShopeeRealtimeRepo) SMLCancellationDocNoExists(ctx context.Context, docNo string) (bool, error) {
+	docNo = strings.TrimSpace(docNo)
+	if docNo == "" {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			  FROM shopee_sml_cancellations
+			 WHERE cancel_sml_doc_no=$1
+			   AND status IN ('creating','created','already_exists','failed')
+		)`, docNo).Scan(&exists)
+	return exists, err
+}
+
 func (r *ShopeeRealtimeRepo) MergeSnapshotShippingMetadata(ctx context.Context, shopID int64, orderSN string, tracking *shopeeapi.TrackingNumberResponse, info *shopeeapi.TrackingInfoResponse) (*models.ShopeeOrderSnapshot, error) {
 	orderSN = strings.TrimSpace(orderSN)
 	if shopID <= 0 || orderSN == "" {

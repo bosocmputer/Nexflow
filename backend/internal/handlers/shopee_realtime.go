@@ -83,6 +83,7 @@ func NewShopeeRealtimeHandler(repo *repository.ShopeeRealtimeRepo, notificationR
 type lineOrderNotifier interface {
 	EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, dedupeKey string) (int, error)
 	EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error)
+	EnqueueShopeeSMLCancellationCreated(ctx context.Context, snap *models.ShopeeOrderSnapshot, cancelDocNo, documentLabel, dedupeKey string) (int, error)
 }
 
 type lineAutoSMLNotifier interface {
@@ -890,10 +891,39 @@ type shopeeSMLCancelDocumentContext struct {
 	Bill       *models.Bill
 	SaleDocNo  string
 	RouteDef   *models.ChannelDefault
+	RouteMeta  shopeeSMLCancellationRoute
 	Route      gin.H
 	Existing   *models.ShopeeSMLCancellation
 	SMLReady   sml.ReadinessStatus
 	CreateFlag bool
+}
+
+type shopeeSMLCancellationRoute struct {
+	Kind           sml.SaleInvoiceCancelKind
+	DocNoRoute     string
+	Destination    string
+	TransFlag      int
+	FallbackPrefix string
+	StockRoute     string
+}
+
+func resolveShopeeSMLCancellationRoute(endpoint string) (shopeeSMLCancellationRoute, error) {
+	switch strings.TrimSpace(endpoint) {
+	case "/api/v1/ic/sale-invoices/:doc_no/void":
+		return shopeeSMLCancellationRoute{
+			Kind: sml.SaleInvoiceCancelKindVoid, DocNoRoute: "saleinvoicecancel",
+			Destination: "ขาย -> ยกเลิกขายสินค้าและบริการ", TransFlag: 45,
+			FallbackPrefix: "SIC", StockRoute: "saleinvoicecancel",
+		}, nil
+	case "/api/v1/ic/sale-invoices/:doc_no/cancel":
+		return shopeeSMLCancellationRoute{
+			Kind: sml.SaleInvoiceCancelKindCreditNote, DocNoRoute: "creditnote",
+			Destination: "ขาย -> รับคืนสินค้า/ลดหนี้", TransFlag: 48,
+			FallbackPrefix: "CN", StockRoute: "creditnote",
+		}, nil
+	default:
+		return shopeeSMLCancellationRoute{}, fmt.Errorf("ปลายทางยกเลิก SML ไม่รองรับ กรุณาเลือกใหม่ใน /settings/channels")
+	}
 }
 
 func (h *ShopeeRealtimeHandler) CancelSMLDocumentPreview(c *gin.Context) {
@@ -920,7 +950,16 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocumentPreview(c *gin.Context) {
 		})
 		return
 	}
-	req := h.saleInvoiceCancelRequest(cancelCtx)
+	now := time.Now().In(shopeeAutoSMLBangkokTimeZone)
+	previewDocNo, err := h.allocateSMLCancellationDocNo(c.Request.Context(), cancelCtx, now, false)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": "เตรียมเลขเอกสารยกเลิกจาก SML ไม่สำเร็จ: " + err.Error(),
+			"code":  "sml_cancel_doc_no_failed",
+		})
+		return
+	}
+	req := h.saleInvoiceCancelRequest(cancelCtx, previewDocNo, now)
 	statusCode, resp, err := h.cancelClient.Preview(c.Request.Context(), cancelCtx.SaleDocNo, req)
 	if err != nil || resp == nil || statusCode >= 300 || !resp.IsSuccess() {
 		msg := smlCancelErrorMessage(statusCode, resp, err)
@@ -1020,7 +1059,23 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 		return
 	}
 
-	cancelReq := h.saleInvoiceCancelRequest(cancelCtx)
+	now := time.Now().In(shopeeAutoSMLBangkokTimeZone)
+	attemptDocNo, err := h.allocateSMLCancellationDocNo(c.Request.Context(), cancelCtx, now, true)
+	if err != nil {
+		msg := "เตรียมเลขเอกสารยกเลิกจาก SML ไม่สำเร็จ: " + err.Error()
+		completed, _ := h.repo.CompleteSMLCancellation(c.Request.Context(), record.ID, "failed", "", nil, msg)
+		h.auditShopeeSMLCancel(c.GetString("user_id"), cancelCtx, completed, "error", "shopee_sml_cancel_doc_no_failed", msg)
+		c.JSON(http.StatusBadGateway, gin.H{"error": msg, "code": "sml_cancel_doc_no_failed"})
+		return
+	}
+	cancelReq := h.saleInvoiceCancelRequest(cancelCtx, attemptDocNo, now)
+	persistedRequest, _ := json.Marshal(cancelReq)
+	if err := h.repo.PrepareSMLCancellationCreate(c.Request.Context(), record.ID, attemptDocNo, persistedRequest); err != nil {
+		msg := "บันทึก payload เอกสารยกเลิกก่อนส่ง SML ไม่สำเร็จ"
+		_, _ = h.repo.CompleteSMLCancellation(c.Request.Context(), record.ID, "failed", attemptDocNo, nil, msg)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": msg, "code": "sml_cancel_payload_persist_failed"})
+		return
+	}
 	statusCode, resp, err := h.cancelClient.Create(c.Request.Context(), cancelCtx.SaleDocNo, cancelReq)
 	if err != nil || resp == nil || (!resp.IsSuccess() && !smlCancelAlreadyExists(resp)) || statusCode >= 500 {
 		msg := smlCancelErrorMessage(statusCode, resp, err)
@@ -1036,6 +1091,9 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 		finalStatus = "already_exists"
 	}
 	cancelDocNo := resp.CancelDocNo()
+	if strings.TrimSpace(cancelDocNo) == "" {
+		cancelDocNo = attemptDocNo
+	}
 	completed, err := h.repo.CompleteSMLCancellation(c.Request.Context(), record.ID, finalStatus, cancelDocNo, resp.Raw(), "")
 	if err != nil {
 		h.logger.Warn("shopee_realtime: complete SML cancellation tracking failed", zap.String("record_id", record.ID), zap.Error(err))
@@ -1052,6 +1110,7 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 	}
 	_ = h.repo.RecordAction(c.Request.Context(), shopID, orderSN, "cancel_sml_document", c.GetString("user_id"), "done", requestRaw, actionResp, "")
 	h.auditShopeeSMLCancel(c.GetString("user_id"), cancelCtx, completed, "info", "shopee_sml_cancel_created", "")
+	h.notifySMLCancellationCreated(c.Request.Context(), cancelCtx, cancelDocNo)
 	h.triggerCancelStockRecalculation(cancelCtx, cancelDocNo)
 	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "sml_cancel_document_created")
 	c.JSON(http.StatusOK, h.cancelSMLDocumentPayload(cancelCtx, completed, finalStatus, resp.Raw(), "สร้างเอกสารยกเลิก SML แล้ว"))
@@ -1349,21 +1408,20 @@ func (h *ShopeeRealtimeHandler) realtimeSaleConfig(ctx context.Context) (ShopeeC
 	return cfg, def, nil
 }
 
-func (h *ShopeeRealtimeHandler) cancelSaleRoute(ctx context.Context) (*models.ChannelDefault, gin.H, error) {
+func (h *ShopeeRealtimeHandler) cancelSaleRoute(ctx context.Context) (*models.ChannelDefault, shopeeSMLCancellationRoute, gin.H, error) {
 	route := gin.H{
-		"channel":     "shopee_realtime_cancel",
-		"bill_type":   "sale",
-		"destination": "ขาย -> ยกเลิกขายสินค้าและบริการ",
-		"ready":       false,
+		"channel":   "shopee_realtime_cancel",
+		"bill_type": "sale",
+		"ready":     false,
 	}
 	if h == nil || h.importH == nil || h.importH.channelDefaults == nil {
 		route["message"] = "ยังไม่ได้ตั้งค่าเส้นทางยกเลิก SML ใน /settings/channels"
-		return nil, route, fmt.Errorf("ยังไม่ได้ตั้งค่าเส้นทางยกเลิก SML ใน /settings/channels")
+		return nil, shopeeSMLCancellationRoute{}, route, fmt.Errorf("ยังไม่ได้ตั้งค่าเส้นทางยกเลิก SML ใน /settings/channels")
 	}
 	def, err := h.importH.channelDefaults.Get("shopee_realtime_cancel", "sale")
 	if err != nil {
 		route["message"] = "โหลดเส้นทางยกเลิก SML ไม่สำเร็จ"
-		return nil, route, fmt.Errorf("โหลดเส้นทางยกเลิก SML ไม่สำเร็จ: %w", err)
+		return nil, shopeeSMLCancellationRoute{}, route, fmt.Errorf("โหลดเส้นทางยกเลิก SML ไม่สำเร็จ: %w", err)
 	}
 	if def != nil {
 		route["endpoint"] = strings.TrimSpace(def.Endpoint)
@@ -1373,16 +1431,24 @@ func (h *ShopeeRealtimeHandler) cancelSaleRoute(ctx context.Context) (*models.Ch
 	}
 	if def == nil {
 		route["message"] = "ยังไม่ได้ตั้งค่า Shopee Realtime Cancel / sale ในหน้าเส้นทางเอกสาร SML"
-		return nil, route, fmt.Errorf("ยังไม่ได้ตั้งค่า Shopee Realtime Cancel / sale ในหน้าเส้นทางเอกสาร SML")
+		return nil, shopeeSMLCancellationRoute{}, route, fmt.Errorf("ยังไม่ได้ตั้งค่า Shopee Realtime Cancel / sale ในหน้าเส้นทางเอกสาร SML")
 	}
 	if strings.TrimSpace(def.Endpoint) == "" || strings.TrimSpace(def.DocFormatCode) == "" {
 		route["message"] = "กรุณาตั้งปลายทางและ doc format ของเส้นทางยกเลิก SML"
-		return def, route, fmt.Errorf("กรุณาตั้งปลายทางและ doc format ของเส้นทางยกเลิก SML")
+		return def, shopeeSMLCancellationRoute{}, route, fmt.Errorf("กรุณาตั้งปลายทางและ doc format ของเส้นทางยกเลิก SML")
 	}
+	meta, err := resolveShopeeSMLCancellationRoute(def.Endpoint)
+	if err != nil {
+		route["message"] = err.Error()
+		return def, shopeeSMLCancellationRoute{}, route, err
+	}
+	route["destination"] = meta.Destination
+	route["kind"] = meta.Kind
+	route["trans_flag"] = meta.TransFlag
 	route["ready"] = true
-	route["message"] = "พร้อมสร้างเอกสารยกเลิก SML"
+	route["message"] = "พร้อมสร้างเอกสาร " + meta.Destination
 	_ = ctx
-	return def, route, nil
+	return def, meta, route, nil
 }
 
 func (h *ShopeeRealtimeHandler) cancelSMLDocumentContext(ctx context.Context, shopID int64, orderSN string) (*shopeeSMLCancelDocumentContext, int, gin.H) {
@@ -1411,7 +1477,7 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentContext(ctx context.Context, sh
 		return nil, http.StatusNotFound, gin.H{"error": "ไม่พบเอกสารเดิมใน Nexflow", "code": "bill_not_found"}
 	}
 	if bill.ArchivedAt != nil {
-		return nil, http.StatusConflict, gin.H{"error": "เอกสารเดิมถูกเก็บเข้าคลังแล้ว กรุณาตรวจใน Nexflow ก่อนสร้าง CN", "code": "bill_archived"}
+		return nil, http.StatusConflict, gin.H{"error": "เอกสารเดิมถูกเก็บเข้าคลังแล้ว กรุณาตรวจใน Nexflow ก่อนสร้างเอกสารยกเลิก", "code": "bill_archived"}
 	}
 	if bill.Source != "shopee" || !billAllowsRealtimeSMLCancel(bill, snap) {
 		return nil, http.StatusBadRequest, gin.H{"error": "ใช้ได้เฉพาะเอกสารที่สร้างจาก Shopee Realtime", "code": "not_shopee_realtime_bill"}
@@ -1422,7 +1488,7 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentContext(ctx context.Context, sh
 			return nil, http.StatusBadRequest, gin.H{"error": "เอกสารเดิมยังไม่ได้ส่ง SML สำเร็จ จึงยังสร้างเอกสารยกเลิก SML ไม่ได้", "code": "bill_not_sent"}
 		}
 	}
-	routeDef, route, routeErr := h.cancelSaleRoute(ctx)
+	routeDef, routeMeta, route, routeErr := h.cancelSaleRoute(ctx)
 	if routeErr != nil {
 		return nil, http.StatusBadRequest, gin.H{"error": routeErr.Error(), "code": "cancel_route_not_ready", "route": route}
 	}
@@ -1447,6 +1513,7 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentContext(ctx context.Context, sh
 		Bill:       bill,
 		SaleDocNo:  saleDocNo,
 		RouteDef:   routeDef,
+		RouteMeta:  routeMeta,
 		Route:      route,
 		Existing:   existing,
 		SMLReady:   readiness,
@@ -1454,16 +1521,70 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentContext(ctx context.Context, sh
 	}, http.StatusOK, nil
 }
 
-func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCancelDocumentContext) sml.SaleInvoiceCancelRequest {
+func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCancelDocumentContext, docNo string, now time.Time) sml.SaleInvoiceCancelRequest {
 	req := sml.SaleInvoiceCancelRequest{
-		DocDate:       time.Now().Format("2006-01-02"),
+		Kind:          cancelCtx.RouteMeta.Kind,
+		DocDate:       now.Format("2006-01-02"),
+		DocTime:       now.Format("15:04"),
 		DocFormatCode: "CN",
+		DocNo:         strings.TrimSpace(docNo),
 		Remark:        "Shopee order cancelled: " + cancelCtx.Snapshot.OrderSN,
+		UserRequest:   "NEXFLOW",
 	}
 	if cancelCtx != nil && cancelCtx.RouteDef != nil && strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode) != "" {
 		req.DocFormatCode = strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode)
 	}
 	return req
+}
+
+func (h *ShopeeRealtimeHandler) allocateSMLCancellationDocNo(
+	ctx context.Context,
+	cancelCtx *shopeeSMLCancelDocumentContext,
+	now time.Time,
+	reserve bool,
+) (string, error) {
+	if h == nil || h.billH == nil || cancelCtx == nil || cancelCtx.RouteDef == nil {
+		return "", fmt.Errorf("cancel document route is not ready")
+	}
+	if h.billH.docNoClient == nil || !h.billH.docNoClient.IsConfigured() {
+		return "", fmt.Errorf("SML doc_no API ยังไม่ได้ตั้งค่า")
+	}
+	prefix, format := resolveDocCounterPattern(cancelCtx.RouteDef, cancelCtx.RouteMeta.FallbackPrefix)
+	docDate := now.Format("2006-01-02")
+	next, err := h.billH.docNoClient.Next(ctx, sml.NextDocNoRequest{
+		Route: cancelCtx.RouteMeta.DocNoRoute, Prefix: prefix, Format: format, DocDate: docDate,
+	})
+	if err != nil {
+		return "", err
+	}
+	if !reserve {
+		return strings.TrimSpace(next.NextDocNo), nil
+	}
+	if h.billH.docCounters == nil {
+		return "", fmt.Errorf("local doc_no counter not configured")
+	}
+	docNoDate, err := time.Parse("2006-01-02", next.DocDate)
+	if err != nil || docNoDate.IsZero() {
+		docNoDate = now
+	}
+	for i := 0; i < 100; i++ {
+		docNo, err := h.billH.docCounters.GenerateDocNoAtLeast(prefix, format, docNoDate, next.NextSeq)
+		if err != nil {
+			return "", err
+		}
+		billExists, err := h.billH.localDocNoExists(docNo, "")
+		if err != nil {
+			return "", err
+		}
+		cancelExists, err := h.repo.SMLCancellationDocNoExists(ctx, docNo)
+		if err != nil {
+			return "", err
+		}
+		if !billExists && !cancelExists {
+			return docNo, nil
+		}
+	}
+	return "", fmt.Errorf("cannot allocate unique cancellation doc_no for prefix %s", prefix)
 }
 
 func (h *ShopeeRealtimeHandler) cancelSMLDocumentPayload(cancelCtx *shopeeSMLCancelDocumentContext, record *models.ShopeeSMLCancellation, status string, raw json.RawMessage, message string) gin.H {
@@ -1497,7 +1618,7 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentPayload(cancelCtx *shopeeSMLCan
 		"route":                cancelCtx.Route,
 		"total_amount":         billTotalAmount(bill),
 		"item_count":           len(bill.Items),
-		"rollback_reality":     "หลังสร้าง CN แล้ว SML จะมีเอกสารยกเลิกและใบขายเดิมถูก mark used_status=1 การย้อนกลับต้องตรวจ/แก้ใน SML ด้วยคนทำงาน",
+		"rollback_reality":     cancellationRollbackReality(cancelCtx.RouteMeta.Kind),
 		"sml_readiness":        cancelCtx.SMLReady,
 		"original_bill_status": bill.Status,
 	}
@@ -1518,6 +1639,46 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentPayload(cancelCtx *shopeeSMLCan
 		out["tracking"] = record
 	}
 	return out
+}
+
+func cancellationRollbackReality(kind sml.SaleInvoiceCancelKind) string {
+	if kind == sml.SaleInvoiceCancelKindVoid {
+		return "หลังสร้างเอกสารยกเลิกขายสินค้าและบริการ SML จะเปลี่ยนใบขายเดิมเป็นสถานะยกเลิก การย้อนกลับต้องตรวจและแก้ใน SML โดยผู้รับผิดชอบ"
+	}
+	return "หลังสร้างเอกสารรับคืนสินค้า/ลดหนี้ SML จะผูกเอกสารใหม่กับใบขายเดิมและ mark used_status=1 การย้อนกลับต้องตรวจและแก้ใน SML โดยผู้รับผิดชอบ"
+}
+
+func cancellationDocumentLabel(kind sml.SaleInvoiceCancelKind) string {
+	if kind == sml.SaleInvoiceCancelKindVoid {
+		return "เอกสารยกเลิกขายสินค้าและบริการ"
+	}
+	return "เอกสารรับคืนสินค้า/ลดหนี้"
+}
+
+func (h *ShopeeRealtimeHandler) notifySMLCancellationCreated(ctx context.Context, cancelCtx *shopeeSMLCancelDocumentContext, cancelDocNo string) {
+	if h == nil || cancelCtx == nil || cancelCtx.Snapshot == nil || strings.TrimSpace(cancelDocNo) == "" {
+		return
+	}
+	label := cancellationDocumentLabel(cancelCtx.RouteMeta.Kind)
+	key := fmt.Sprintf("shopee:sml_cancel_created:%d:%s:%s", cancelCtx.Snapshot.ShopID, cancelCtx.Snapshot.OrderSN, strings.TrimSpace(cancelDocNo))
+	created := h.publishNotification(ctx, models.NotificationInput{
+		Source: "shopee_realtime", Severity: "info", Title: "สร้าง" + label + "สำเร็จ",
+		Body:       strings.TrimSpace(cancelCtx.Snapshot.OrderSN) + " · " + strings.TrimSpace(cancelDocNo),
+		ActionURL:  shopeeNotificationActionURL(cancelCtx.Snapshot.OrderSN),
+		EntityType: "shopee_order", EntityID: fmt.Sprintf("%d:%s", cancelCtx.Snapshot.ShopID, cancelCtx.Snapshot.OrderSN),
+		DedupeKey: key,
+	})
+	if created == 0 || h.lineNotifier == nil {
+		return
+	}
+	if _, err := h.lineNotifier.EnqueueShopeeSMLCancellationCreated(ctx, cancelCtx.Snapshot, cancelDocNo, label, key); err != nil && h.logger != nil {
+		h.logger.Warn("shopee_realtime: enqueue SML cancellation LINE notification failed",
+			zap.Int64("shop_id", cancelCtx.Snapshot.ShopID),
+			zap.String("order_sn", cancelCtx.Snapshot.OrderSN),
+			zap.String("cancel_doc_no", cancelDocNo),
+			zap.Error(err),
+		)
+	}
 }
 
 func billTotalAmount(bill *models.Bill) float64 {
@@ -1584,10 +1745,8 @@ func smlCancelAlreadyExists(resp *sml.SaleInvoiceCancelResponse) bool {
 	if resp == nil {
 		return false
 	}
-	code := strings.ToLower(strings.TrimSpace(resp.Code))
-	status := strings.ToLower(strings.TrimSpace(resp.Status))
 	msg := strings.ToLower(resp.GetMessage())
-	return resp.AlreadyExists || code == "already_exists" || status == "already_exists" || strings.Contains(msg, "already_exists")
+	return resp.IsAlreadyExists() || strings.Contains(msg, "already_exists")
 }
 
 func smlCancelErrorMessage(statusCode int, resp *sml.SaleInvoiceCancelResponse, err error) string {
@@ -1668,7 +1827,7 @@ func (h *ShopeeRealtimeHandler) triggerCancelStockRecalculation(cancelCtx *shope
 			itemCodes = append(itemCodes, strings.TrimSpace(*item.ItemCode))
 		}
 	}
-	h.billH.triggerStockRecalculation(cancelCtx.Bill.ID, cancelDocNo, "creditnote", "", itemCodes)
+	h.billH.triggerStockRecalculation(cancelCtx.Bill.ID, cancelDocNo, cancelCtx.RouteMeta.StockRoute, "", itemCodes)
 }
 
 func billURLFromRoute(route, billID string) string {

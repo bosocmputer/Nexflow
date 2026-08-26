@@ -293,13 +293,15 @@ step. The legacy Shopee import route may still create Sales Order documents, so
 
 Shopee cancelled-after-SML uses a separate route:
 
-| channel | bill_type | endpoint | doc_format_code | doc_prefix | doc_running_format |
+| channel | bill_type | destination | endpoint | SML screen | trans_flag |
 | --- | --- | --- | --- | --- | --- |
-| shopee_realtime_cancel | sale | creditnote | CN | CN | YYMM#### |
+| shopee_realtime_cancel | sale | ยกเลิกขายสินค้าและบริการ | `/api/v1/ic/sale-invoices/:doc_no/void` | SIC | 45 |
+| shopee_realtime_cancel | sale | รับคืนสินค้า/ลดหนี้ | `/api/v1/ic/sale-invoices/:doc_no/cancel` | ST | 48 |
 
-The create-CN feature flag is enabled in production. The action still checks SML
-readiness before creating a credit note; if tenant `aoy` cannot reach SML, the UI
-will block creation with the SML readiness error rather than writing a partial CN.
+`doc_format_code` is loaded from the selected SML screen so tenants with more
+than one format can choose the correct one. The create feature flag still gates
+all writes. If tenant `aoy` cannot reach SML, the UI blocks creation with the
+SML readiness error rather than writing a partial document.
 
 Shopee payment breakdown snapshots are active. `shopee_order_payment_snapshots`
 is populated from Shopee `get_escrow_detail` by queue/manual refresh and is read
@@ -354,9 +356,9 @@ implementation notes; do not configure an inbox in the current release.
 - **sml-api-bybos** — must use `--force-recreate` (not `restart`) when changing `.env`.
   Current Aoy tenant points to `nextstep.iszai.com:6843`, not the old demserver
   host. Nexflow calls it through Docker gateway `http://172.24.0.1:8200`.
-- **Shopee cancelled after SML** — alerts and create-CN are enabled. CN creation
-  uses `shopee_realtime_cancel / sale` and writes through `sml-api-bybos`; SML
-  readiness must be OK before the create action is allowed.
+- **Shopee cancelled after SML** — alerts and cancellation creation are enabled.
+  `shopee_realtime_cancel / sale` can route to TRANS_FLAG 45 or 48 through
+  `sml-api-bybos`; SML readiness must be OK before the create action is allowed.
 - **Shopee LINE alerts** — `/settings/line-notifications` manages admin/team
   recipients separately from LINE chat. New-order Flex uses order snapshot data
   and cached payment breakdown when ready, shows times in Asia/Bangkok, and must

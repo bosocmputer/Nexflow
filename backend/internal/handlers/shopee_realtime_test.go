@@ -16,6 +16,7 @@ import (
 	"nexflow/internal/config"
 	"nexflow/internal/models"
 	"nexflow/internal/services/shopeeapi"
+	"nexflow/internal/services/sml"
 )
 
 func TestParseShopeePushPayloadAllowsShopLevelAuthorizationEvent(t *testing.T) {
@@ -179,6 +180,80 @@ func TestValidateShopeeRealtimeAutoDefaults(t *testing.T) {
 	base.PartyCode = ""
 	if err := validateShopeeRealtimeAutoDefaults(base); err == nil || !strings.Contains(err.Error(), "ลูกค้า SML") {
 		t.Fatalf("missing party error = %v", err)
+	}
+}
+
+func TestValidateShopeeRealtimeCancelDefaults(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      models.ChannelDefaultUpsert
+		wantErr string
+	}{
+		{
+			name: "sale invoice cancellation",
+			in: models.ChannelDefaultUpsert{
+				Channel: "shopee_realtime_cancel", BillType: "sale",
+				Endpoint:      "/api/v1/ic/sale-invoices/:doc_no/void",
+				DocFormatCode: "SIC", DocPrefix: "SIC", DocRunningFormat: "YYMM####",
+			},
+		},
+		{
+			name: "credit note",
+			in: models.ChannelDefaultUpsert{
+				Channel: "shopee_realtime_cancel", BillType: "sale",
+				Endpoint:      "/api/v1/ic/sale-invoices/:doc_no/cancel",
+				DocFormatCode: "CN", DocPrefix: "CN", DocRunningFormat: "YYMM####",
+			},
+		},
+		{
+			name: "unsupported endpoint",
+			in: models.ChannelDefaultUpsert{
+				Channel: "shopee_realtime_cancel", BillType: "sale",
+				Endpoint: "/api/v1/ic/sale-invoices", DocFormatCode: "CN",
+				DocPrefix: "CN", DocRunningFormat: "YYMM####",
+			},
+			wantErr: "ปลายทางยกเลิก SML",
+		},
+		{
+			name: "missing doc format",
+			in: models.ChannelDefaultUpsert{
+				Channel: "shopee_realtime_cancel", BillType: "sale",
+				Endpoint:  "/api/v1/ic/sale-invoices/:doc_no/cancel",
+				DocPrefix: "CN", DocRunningFormat: "YYMM####",
+			},
+			wantErr: "รูปแบบเอกสาร",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateShopeeRealtimeCancelDefaults(tt.in)
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("complete defaults rejected: %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestResolveShopeeSMLCancellationRoute(t *testing.T) {
+	voidRoute, err := resolveShopeeSMLCancellationRoute("/api/v1/ic/sale-invoices/:doc_no/void")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if voidRoute.Kind != sml.SaleInvoiceCancelKindVoid || voidRoute.TransFlag != 45 || voidRoute.DocNoRoute != "saleinvoicecancel" {
+		t.Fatalf("void route = %+v", voidRoute)
+	}
+	creditRoute, err := resolveShopeeSMLCancellationRoute("/api/v1/ic/sale-invoices/:doc_no/cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creditRoute.Kind != sml.SaleInvoiceCancelKindCreditNote || creditRoute.TransFlag != 48 || creditRoute.DocNoRoute != "creditnote" {
+		t.Fatalf("credit route = %+v", creditRoute)
+	}
+	if _, err := resolveShopeeSMLCancellationRoute("/api/v1/ic/sale-invoices"); err == nil {
+		t.Fatal("unsupported endpoint should fail closed")
 	}
 }
 

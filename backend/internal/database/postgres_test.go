@@ -120,6 +120,29 @@ func TestMigration087IsAdditiveAndSchemaOnly(t *testing.T) {
 	}
 }
 
+func TestMigration088OnlyNormalizesLegacyShopeeCancelRoute(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/088_shopee_sml_cancel_destinations.sql")
+	if err != nil {
+		t.Fatalf("read migration 088: %v", err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"update channel_defaults",
+		"shopee_realtime_cancel",
+		"/api/v1/ic/sale-invoices/:doc_no/cancel",
+		"creditnote",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Errorf("migration 088 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Errorf("migration 088 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

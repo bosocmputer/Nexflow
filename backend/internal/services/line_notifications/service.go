@@ -118,6 +118,39 @@ func (s *Service) EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *mode
 	})
 }
 
+func (s *Service) EnqueueShopeeSMLCancellationCreated(
+	ctx context.Context,
+	snap *models.ShopeeOrderSnapshot,
+	cancelDocNo string,
+	documentLabel string,
+	dedupeKey string,
+) (int, error) {
+	if s == nil || s.repo == nil || snap == nil || strings.TrimSpace(cancelDocNo) == "" {
+		return 0, nil
+	}
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		dedupeKey = fmt.Sprintf("shopee:sml_cancel_created:%d:%s:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN), strings.TrimSpace(cancelDocNo))
+	}
+	documentLabel = strings.TrimSpace(documentLabel)
+	if documentLabel == "" {
+		documentLabel = "เอกสารยกเลิก SML"
+	}
+	title := "สร้าง" + documentLabel + "สำเร็จ"
+	message := BuildShopeeSMLCancellationCreatedLineText(snap, cancelDocNo, documentLabel, s.publicBaseURL)
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source:      "shopee_realtime",
+		Severity:    "info",
+		Title:       title,
+		Body:        strings.Join(filterNonEmpty([]string{strings.TrimSpace(snap.OrderSN), strings.TrimSpace(cancelDocNo)}), " · "),
+		ActionURL:   ShopeeOrderActionURL(s.publicBaseURL, snap.OrderSN),
+		EntityType:  "shopee_order",
+		EntityID:    fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
+		DedupeKey:   dedupeKey,
+		MessageText: message,
+	})
+}
+
 func (s *Service) EnqueueShopeeAutoSMLSuccess(ctx context.Context, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
 	return s.enqueueShopeeAutoSML(ctx, "success", in, dedupeKey)
 }
@@ -1660,6 +1693,28 @@ func BuildShopeeCancelledAfterSMLLineText(snap *models.ShopeeOrderSnapshot, publ
 		parts = append(parts, fmt.Sprintf("ยอดรวม: ฿%.2f", snap.TotalAmount))
 	}
 	parts = append(parts, "ต้องสร้างเอกสารยกเลิก SML ใน Nexflow")
+	if url := ShopeeOrderActionURL(publicBaseURL, snap.OrderSN); url != "" {
+		parts = append(parts, "เปิดใน Nexflow: "+url)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func BuildShopeeSMLCancellationCreatedLineText(snap *models.ShopeeOrderSnapshot, cancelDocNo, documentLabel, publicBaseURL string) string {
+	documentLabel = strings.TrimSpace(documentLabel)
+	if documentLabel == "" {
+		documentLabel = "เอกสารยกเลิก SML"
+	}
+	if snap == nil {
+		return "สร้าง" + documentLabel + "สำเร็จ"
+	}
+	parts := []string{
+		"สร้าง" + documentLabel + "สำเร็จ",
+		"Order SN: " + fallbackDash(strings.TrimSpace(snap.OrderSN)),
+	}
+	if strings.TrimSpace(snap.SMLDocNo) != "" {
+		parts = append(parts, "ใบขาย SML: "+strings.TrimSpace(snap.SMLDocNo))
+	}
+	parts = append(parts, documentLabel+": "+fallbackDash(strings.TrimSpace(cancelDocNo)))
 	if url := ShopeeOrderActionURL(publicBaseURL, snap.OrderSN); url != "" {
 		parts = append(parts, "เปิดใน Nexflow: "+url)
 	}

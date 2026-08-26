@@ -89,6 +89,7 @@ export type EndpointKind =
   | 'saleinvoice'
   | 'purchaseorder'
   | 'arreceipt'
+  | 'saleinvoicecancel'
   | 'creditnote'
 
 export interface SmlDestinationOption {
@@ -96,6 +97,7 @@ export interface SmlDestinationOption {
   billType: ChannelBillType
   label: string
   apiPath: string
+  screenCode: string
   docFormatCode: string
   docPrefix: string
   docRunningFormat: string
@@ -113,6 +115,7 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     billType: 'sale',
     label: 'ขาย -> ใบสั่งขาย',
     apiPath: '/api/v1/ic/sale-orders',
+    screenCode: 'SR',
     docFormatCode: 'SR',
     docPrefix: 'NX-SO',
     docRunningFormat: 'YYMM####',
@@ -125,6 +128,7 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     billType: 'sale',
     label: 'ขาย -> ขายสินค้าและบริการ',
     apiPath: '/api/v1/ic/sale-invoices',
+    screenCode: 'SI',
     docFormatCode: 'SI',
     docPrefix: 'NX-INV',
     docRunningFormat: 'YYMM####',
@@ -137,6 +141,7 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     billType: 'purchase',
     label: 'ซื้อ -> ใบสั่งซื้อ',
     apiPath: '/api/v1/ic/purchase-orders',
+    screenCode: 'PO',
     docFormatCode: 'PO',
     docPrefix: 'NX-PO',
     docRunningFormat: 'YYMM####',
@@ -149,6 +154,7 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     billType: 'ar_receipt',
     label: 'ลูกหนี้ -> รับชำระหนี้',
     apiPath: '/api/v1/ar/receipts',
+    screenCode: 'EE',
     docFormatCode: 'RC',
     docPrefix: 'RC',
     docRunningFormat: '@YYMM####',
@@ -157,15 +163,29 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     phase1Enabled: true,
   },
   {
-    value: 'creditnote',
+    value: 'saleinvoicecancel',
     billType: 'sale',
     label: 'ขาย -> ยกเลิกขายสินค้าและบริการ',
+    apiPath: '/api/v1/ic/sale-invoices/:doc_no/void',
+    screenCode: 'SIC',
+    docFormatCode: 'SIC',
+    docPrefix: 'SIC',
+    docRunningFormat: 'YYMM####',
+    statusLabel: 'ตรวจโครงสร้างจาก AOY แล้ว · รอ UAT สร้างจริง',
+    description: 'ยกเลิกใบขายเดิมทั้งฉบับใน SML (TRANS_FLAG 45) และทำให้ใบขายเดิมเป็นสถานะยกเลิก',
+    phase1Enabled: true,
+  },
+  {
+    value: 'creditnote',
+    billType: 'sale',
+    label: 'ขาย -> รับคืนสินค้า/ลดหนี้',
     apiPath: '/api/v1/ic/sale-invoices/:doc_no/cancel',
+    screenCode: 'ST',
     docFormatCode: 'CN',
     docPrefix: 'CN',
     docRunningFormat: 'YYMM####',
-    statusLabel: 'ทดสอบกับ SML test DB แล้ว',
-    description: 'สร้างเอกสารยกเลิกขายสินค้าและบริการ อ้างใบขายเดิมหลัง Shopee ยกเลิก order',
+    statusLabel: 'ตรวจโครงสร้างจาก AOY แล้ว · รอ UAT สร้างจริง',
+    description: 'สร้างเอกสารรับคืนสินค้า/ลดหนี้ (TRANS_FLAG 48) อ้างอิงใบขายเดิมและคืนสต๊อกตามรายการ',
     phase1Enabled: true,
   },
 ]
@@ -176,7 +196,7 @@ export function destinationFor(
   endpoint = '',
   docFormatCode = '',
 ): SmlDestinationOption | undefined {
-  const kind = destinationKindFor(endpoint, channel, billType)
+  const kind = destinationKindFor(endpoint, channel, billType, docFormatCode)
   return SML_DESTINATION_OPTIONS.find((option) => {
     if (option.value !== kind) return false
     if (!docFormatCode) return true
@@ -186,9 +206,12 @@ export function destinationFor(
 
 export function destinationOptionsFor(
   billType?: ChannelBillType,
+  channel?: ChannelKey,
 ): SmlDestinationOption[] {
   return SML_DESTINATION_OPTIONS.filter((option) => (
-    option.phase1Enabled && (!billType || option.billType === billType)
+    option.phase1Enabled &&
+    (!billType || option.billType === billType) &&
+    (channel !== 'shopee_realtime_cancel' || option.value === 'saleinvoicecancel' || option.value === 'creditnote')
   ))
 }
 
@@ -199,10 +222,13 @@ export function destinationKindFor(
   override: string,
   channel: ChannelKey,
   billType: ChannelBillType,
+  docFormatCode = '',
 ): EndpointKind {
   const lower = (override || '').toLowerCase()
+  const format = docFormatCode.trim().toUpperCase()
   if (channel === 'shopee_settlement' || billType === 'ar_receipt' || lower.includes('ar/receipts')) return 'arreceipt'
-  if (channel === 'shopee_realtime_cancel' || lower.includes('creditnote') || lower.includes('cancel')) return 'creditnote'
+  if (lower.includes('/void') || lower.includes('saleinvoicecancel') || format === 'SIC') return 'saleinvoicecancel'
+  if (channel === 'shopee_realtime_cancel' || lower.includes('creditnote') || lower.includes('/cancel')) return 'creditnote'
   if (lower.includes('purchaseorder') || lower.includes('purchase-orders')) return 'purchaseorder'
   if (lower.includes('saleinvoice') || lower.includes('sale-invoices')) return 'saleinvoice'
   if (lower.includes('saleorder') || lower.includes('sale-orders')) return 'saleorder'
