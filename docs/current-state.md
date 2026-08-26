@@ -9,7 +9,7 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 ## Production UAT Status
 
 - Application baseline is intentionally split during AOY UAT. AOY runs
-  `0cf1a97`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
+  `5e8ac44`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
   settings, credentials, channel routes, and feature flags remain isolated.
   Central SML Gateway baseline: `42992f5`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
@@ -28,6 +28,10 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   trigger with versioned future-transition cutoffs and immutable job snapshots.
   Future Auto SML LINE notifications derive shipping details only from the
   final SML bill shipping item, never Shopee fee estimates.
+- AOY Shopee Operations now suppresses the redundant `Auto: ส่งด้วยมือ` badge
+  on successful manual sends. Manual rows show `ส่ง SML แล้ว`; automatic rows
+  continue to show `ส่ง SML แล้ว (AUTO)`. Actionable Auto SML states remain
+  visible.
 - Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
   Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
   Lazada UAT while preserving tenant isolation.

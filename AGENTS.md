@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `0cf1a97` (`feat: configure Shopee Auto SML trigger status`),
+  `5e8ac44` (`fix: hide redundant manual Auto SML status`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -356,6 +356,19 @@ Current AOY UAT scope:
     The AOY backup is `pre-deploy-20260826-145316.sql.gz`. Demo and Lanboon were
     not deployed and remain on `82baa4a`. A controlled real `PROCESSED` trigger
     order remains pending user UAT; do not switch AOY automatically.
+27. AOY-only Shopee Operations status cleanup is deployed at `5e8ac44`.
+    Successfully sent manual bills now show only `ส่ง SML แล้ว` and the SML
+    document number; the redundant `Auto: ส่งด้วยมือ` badge is suppressed.
+    Successful automatic bills still show `ส่ง SML แล้ว (AUTO)`, while queued,
+    running, retry, needs-review, failure, pause, cancellation, and other
+    actionable Auto SML states remain visible. Production browser QA verified
+    manual order `260824752AP990` / `BF-INV26080056`, automatic order
+    `260826C78TFM12` / `BF-INV26080055`, zero occurrences of the removed badge,
+    and a clean console. Frontend regression tests, lint, production build,
+    sales-only guard, deployment health, Gateway connectivity, and the recent
+    backend error scan passed. The AOY pre-deploy backup is
+    `pre-deploy-20260826-151707.sql.gz`. No migration or runtime configuration
+    changed; Demo and Lanboon were not deployed and remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
