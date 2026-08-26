@@ -55,6 +55,7 @@ import {
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { useNotificationsStore } from '@/lib/notifications-store'
 import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
+import { shouldMergeAutoSMLSuccessStatus } from '@/lib/shopee-operations-status'
 import { shouldOpenTimelineFromQuery } from '@/lib/shopee-timeline-dialog'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
@@ -1614,6 +1615,11 @@ export default function ShopeeOperations() {
                 {!loading && orders.map((order) => {
                   const selectableReason = bulkCreateDisabledReason(order, readiness)
                   const checked = selectedOrderKeys.has(orderKey(order))
+                  const mergeAutoSMLSuccess = shouldMergeAutoSMLSuccessStatus(
+                    order.erp_status,
+                    order.sml_doc_no,
+                    order.auto_sml?.status,
+                  )
                   return (
                     <tr
                       key={order.id}
@@ -1662,11 +1668,11 @@ export default function ShopeeOperations() {
                       )}
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <ERPStatusBadge status={order.erp_status} />
+                      <ERPStatusBadge status={order.erp_status} automatic={mergeAutoSMLSuccess} />
                       <div className="mt-1 text-xs text-muted-foreground">
                         {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
                       </div>
-                      <AutoSMLStatusBadge job={order.auto_sml} />
+                      {!mergeAutoSMLSuccess && <AutoSMLStatusBadge job={order.auto_sml} />}
                       {cancelSMLBadge(order)}
                     </td>
                     <td className="px-3 py-2 align-top">
@@ -2299,7 +2305,8 @@ function OrderStatusBadge({ status }: { status: string }) {
   )
 }
 
-function ERPStatusBadge({ status }: { status: string }) {
+function ERPStatusBadge({ status, automatic = false }: { status: string; automatic?: boolean }) {
+  const label = automatic ? `${erpStatusLabel(status)} (AUTO)` : erpStatusLabel(status)
   return (
     <Badge variant="outline" className={cn(
       'bg-background',
@@ -2307,7 +2314,7 @@ function ERPStatusBadge({ status }: { status: string }) {
       status === 'needs_review' && 'border-warning/40 bg-warning/10 text-warning',
       status === 'failed' || status === 'cancelled' ? 'border-destructive/40 bg-destructive/10 text-destructive' : '',
     )}>
-      {erpStatusLabel(status)}
+      {label}
     </Badge>
   )
 }
