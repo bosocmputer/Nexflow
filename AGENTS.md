@@ -14,10 +14,10 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `ea803ec` (`fix: show verifiable Shopee stock group quantities`),
+  `52f4cea` (`fix: clarify Shopee cancellation route settings`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
-  quantity setup`). The Central SML Gateway is on `7723a0b`
-  (`fix: block ambiguous SML sales order identities`).
+  quantity setup`). The Central SML Gateway is on `42992f5`
+  (`feat: separate SML sale cancellations from credit notes`).
 - Tenant databases, SML tenants, credentials, channel routes, feature flags, and
   deployment revisions remain isolated and must never be copied between
   instances without an explicit migration request.
@@ -266,6 +266,27 @@ Current AOY UAT scope:
     `catalog_generation_reconcile`. This deployment did not change either shop
     setting. The pre-deploy AOY backup is
     `pre-deploy-20260826-091915.sql.gz`. Demo and Lanboon remain on `82baa4a`.
+23. AOY-only Shopee cancellation destinations are deployed at application
+    `52f4cea` (feature commit `cf93b4c`) with additive migration 088; the shared
+    Central SML Gateway is deployed at `42992f5`. The channel dialog now offers
+    the two verified AOY document semantics separately: TRANS_FLAG 45
+    `ยกเลิกขายสินค้าและบริการ` through `/void` and SML screen `SIC`, or
+    TRANS_FLAG 48 `รับคืนสินค้า/ลดหนี้` through `/cancel` and SML screen `ST`.
+    `doc_format_code` is loaded from the selected SML screen and is selectable
+    when the tenant has multiple formats. The current AOY legacy setting was
+    normalized to the corrected TRANS_FLAG 48 route and remains `CN`; no user
+    destination choice was overwritten. Read-only production previews against
+    source invoice `BF-INV26080055` proved TRANS_FLAG 45 as a header-only void
+    and TRANS_FLAG 48 as a two-line return/credit note with source references.
+    No cancellation document was created and the durable cancellation table
+    remained empty. Successful future creates have bounded LINE notification
+    support without buyer PII, but creation remains a confirmed operator action
+    during UAT rather than an automatic external write. Browser QA verified both
+    destination choices, real `SIC`/`CN` formats, the source-invoice explanation,
+    and a clean console. AOY backups are `pre-deploy-20260826-110234.sql.gz` and
+    `pre-deploy-20260826-110730.sql.gz`; the Gateway source/runtime/image backups
+    use the `pre-sml-cancel-20260826-1054` and `pre-42992f5-20260826-1059`
+    prefixes. Demo and Lanboon remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
