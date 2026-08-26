@@ -954,28 +954,65 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 		matched = append(matched, fmt.Sprintf("matched_product.item_id>$%d", len(args)))
 	}
 	args = append(args, filter.Limit+1)
-	querySQL := fmt.Sprintf(`WITH matched_items AS (
-		SELECT matched_product.item_id
+	querySQL := fmt.Sprintf(`WITH matched_variants AS (
+		SELECT matched_product.item_id,matched_product.model_id
 		FROM shopee_stock_products matched_product
 		JOIN shopee_stock_mappings matched_mapping
 		  ON matched_mapping.shop_id=matched_product.shop_id
 		 AND matched_mapping.item_id=matched_product.item_id
 		 AND matched_mapping.model_id=matched_product.model_id
 		WHERE matched_product.shop_id=$1 AND matched_product.is_active=true AND %s
-		GROUP BY matched_product.item_id
-		ORDER BY matched_product.item_id
+	), matched_items AS (
+		SELECT item_id
+		FROM matched_variants
+		GROUP BY item_id
+		ORDER BY item_id
 		LIMIT $%d
+	), aggregated AS (
+		SELECT p.item_id,MAX(p.item_name) AS item_name,MAX(p.item_sku) AS item_sku,COUNT(*)::int AS variant_count,
+		       COUNT(*) FILTER (WHERE m.excluded=false AND m.sml_item_code<>'' AND jsonb_array_length(m.warning_codes)=0)::int AS ready_count,
+		       COUNT(*) FILTER (WHERE m.excluded=false AND (m.sml_item_code='' OR jsonb_array_length(m.warning_codes)>0))::int AS fix_count,
+		       COUNT(*) FILTER (WHERE m.excluded=true)::int AS excluded_count,MAX(p.last_seen_at) AS updated_at,
+		       COUNT(*) FILTER (WHERE matched.model_id IS NOT NULL)::int AS summary_count,
+		       SUM(COALESCE(m.last_preview_sml_usable_qty,m.last_preview_balance)) FILTER (WHERE matched.model_id IS NOT NULL) AS sml_usable_raw_total,
+		       COUNT(COALESCE(m.last_preview_sml_usable_qty,m.last_preview_balance)) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_value_count,
+		       COUNT(NULLIF(m.sml_item_code,'')) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_mapped_count,
+		       COUNT(DISTINCT NULLIF(m.sml_item_code,'')) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_source_count,
+		       COALESCE(BOOL_OR(m.shared_pool_enabled) FILTER (WHERE matched.model_id IS NOT NULL),false) AS has_shared_pool,
+		       COUNT(DISTINCT NULLIF(base_unit.unit_code,'')) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_base_unit_count,
+		       COALESCE(MAX(base_unit.unit_code) FILTER (WHERE matched.model_id IS NOT NULL),'') AS sml_base_unit_code,
+		       COALESCE(MAX(base_unit.unit_name) FILTER (WHERE matched.model_id IS NOT NULL),'') AS sml_base_unit_name,
+		       COALESCE(SUM(p.shopee_available) FILTER (WHERE matched.model_id IS NOT NULL),0)::bigint AS shopee_stock_total,
+		       SUM(m.last_preview_target) FILTER (WHERE matched.model_id IS NOT NULL) AS target_stock_raw_total,
+		       COUNT(m.last_preview_target) FILTER (WHERE matched.model_id IS NOT NULL)::int AS target_count,
+		       COUNT(*) FILTER (WHERE matched.model_id IS NOT NULL AND m.last_preview_target IS NOT NULL AND m.last_preview_target<>p.shopee_available)::int AS changed_count
+		FROM matched_items k
+		JOIN shopee_stock_products p ON p.shop_id=$1 AND p.item_id=k.item_id AND p.is_active=true
+		JOIN shopee_stock_mappings m
+		  ON m.shop_id=p.shop_id AND m.item_id=p.item_id AND m.model_id=p.model_id
+		LEFT JOIN matched_variants matched ON matched.item_id=p.item_id AND matched.model_id=p.model_id
+		LEFT JOIN shopee_stock_sml_catalog catalog ON catalog.item_code=m.sml_item_code AND catalog.is_active=true
+		LEFT JOIN LATERAL (
+		  SELECT COALESCE(unit->>'code','') AS unit_code,COALESCE(unit->>'name','') AS unit_name
+		  FROM jsonb_array_elements(COALESCE(catalog.units,'[]'::jsonb)) unit
+		  ORDER BY COALESCE(NULLIF(unit->>'row_order','')::int,0),COALESCE(NULLIF(unit->>'line_number','')::int,0),COALESCE(unit->>'code','')
+		  LIMIT 1
+		) base_unit ON true
+		GROUP BY p.item_id
 	)
-	SELECT p.item_id,MAX(p.item_name),MAX(p.item_sku),COUNT(*)::int,
-	       COUNT(*) FILTER (WHERE m.excluded=false AND m.sml_item_code<>'' AND jsonb_array_length(m.warning_codes)=0)::int,
-	       COUNT(*) FILTER (WHERE m.excluded=false AND (m.sml_item_code='' OR jsonb_array_length(m.warning_codes)>0))::int,
-	       COUNT(*) FILTER (WHERE m.excluded=true)::int,MAX(p.last_seen_at)
-	FROM matched_items k
-	JOIN shopee_stock_products p ON p.shop_id=$1 AND p.item_id=k.item_id AND p.is_active=true
-	JOIN shopee_stock_mappings m
-	  ON m.shop_id=p.shop_id AND m.item_id=p.item_id AND m.model_id=p.model_id
-	GROUP BY p.item_id
-	ORDER BY p.item_id`, strings.Join(matched, " AND "), len(args))
+	SELECT item_id,item_name,item_sku,variant_count,ready_count,fix_count,excluded_count,updated_at,
+	       summary_count,
+	       CASE WHEN sml_value_count=summary_count AND sml_mapped_count=summary_count AND sml_source_count=summary_count AND has_shared_pool=false AND sml_base_unit_count=1 THEN sml_usable_raw_total::float8 END,
+	       sml_base_unit_code,sml_base_unit_name,
+	       CASE WHEN sml_value_count<summary_count OR sml_mapped_count<summary_count THEN 'waiting'
+	            WHEN has_shared_pool OR sml_source_count<summary_count THEN 'shared_source'
+	            WHEN sml_base_unit_count<>1 THEN 'mixed_unit'
+	            ELSE 'ready' END,
+	       shopee_stock_total,
+	       CASE WHEN target_count=summary_count THEN target_stock_raw_total::bigint END,
+	       target_count,changed_count
+	FROM aggregated
+	ORDER BY item_id`, strings.Join(matched, " AND "), len(args))
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, false, err
@@ -984,7 +1021,11 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 	groups := make([]ProductGroup, 0, filter.Limit+1)
 	for rows.Next() {
 		var group ProductGroup
-		if err := rows.Scan(&group.ItemID, &group.ItemName, &group.ItemSKU, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.ExcludedCount, &group.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&group.ItemID, &group.ItemName, &group.ItemSKU, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.ExcludedCount, &group.UpdatedAt,
+			&group.SummaryCount, &group.SMLUsableTotal, &group.SMLBaseUnitCode, &group.SMLBaseUnitName, &group.SMLTotalStatus,
+			&group.ShopeeStockTotal, &group.TargetStockTotal, &group.TargetCount, &group.ChangedCount,
+		); err != nil {
 			return nil, false, err
 		}
 		groups = append(groups, group)

@@ -48,6 +48,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
 import { marketplaceStockPauseCopy } from '@/lib/marketplace-stock-policy'
+import { buildShopeeStockGroupSummary } from '@/lib/shopee-stock-group-summary'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -153,9 +154,23 @@ type ProductGroup = {
 	ready_count: number
 	fix_count: number
 	excluded_count: number
+	summary_count: number
+	sml_usable_total?: number | null
+	sml_base_unit_code?: string
+	sml_base_unit_name?: string
+	sml_total_status: string
+	shopee_stock_total: number
+	target_stock_total?: number | null
+	target_count: number
+	changed_count: number
 	updated_at: string
 }
 type CursorPage<T> = { data: T[]; has_more: boolean; next_cursor: string }
+type StockOperationResult = {
+  tone: 'success' | 'warning'
+  title: string
+  detail: string
+}
 type SharedPoolMember = {
   item_id: number
   model_id: number
@@ -507,6 +522,7 @@ export default function ShopeeStock() {
   const [busy, setBusy] = useState('')
   const [preview, setPreview] = useState<Preview | null>(null)
   const [previewRun, setPreviewRun] = useState<SyncRun | null>(null)
+  const [operationResult, setOperationResult] = useState<StockOperationResult | null>(null)
   const [mapping, setMapping] = useState<ProductRow | null>(null)
   const [sharedPoolItemCode, setSharedPoolItemCode] = useState('')
   const [catalogInfoOpen, setCatalogInfoOpen] = useState(false)
@@ -560,6 +576,7 @@ export default function ShopeeStock() {
     previewPollToken.current += 1
     setPreviewRun(null)
     setPreview(null)
+    setOperationResult(null)
   }, [shopID])
 
   const selectedSetting = data?.settings.find((item) => item.shop_id === shopID)
@@ -654,14 +671,21 @@ export default function ShopeeStock() {
   })
 
   const syncCatalog = () => runAction('catalog', async () => {
-    await client.post(`/api/settings/shopee-stock/${shopID}/catalog-sync`, {}, { timeout: 180000 })
+    setOperationResult(null)
+    const response = await client.post<SyncRun>(`/api/settings/shopee-stock/${shopID}/catalog-sync`, {}, { timeout: 180000 })
     setPreview(null)
-    toast.success('อัปเดตสินค้า Shopee และ SML แล้ว')
+    setOperationResult({
+      tone: 'success',
+      title: 'อัปเดตรายการสินค้าจาก Shopee แล้ว',
+      detail: `พบ ${formatNumber(response.data.total_count)} ตัวเลือก ระบบอัปเดตรายการด้านล่างแล้ว`,
+    })
+    toast.success(`อัปเดตสินค้า ${formatNumber(response.data.total_count)} ตัวเลือกแล้ว`)
     await load(shopID)
   })
 
   const previewImpact = () => runAction('preview', async () => {
     if (!draft) return
+    setOperationResult(null)
     await client.put(`/api/settings/shopee-stock/${shopID}`, {
       enabled: false,
       stock_pct: draft.stock_pct,
@@ -712,8 +736,26 @@ export default function ShopeeStock() {
   })
 
   const syncNow = () => runAction('run', async () => {
-    const response = await client.post<{ changed_count: number; error_count: number; unknown_count: number }>(`/api/settings/shopee-stock/${shopID}/run`, {}, { timeout: 180000 })
-    toast.success(`อัปเดต ${response.data.changed_count} รายการ`)
+    setOperationResult(null)
+    const response = await client.post<{ changed_count: number; blocked_count: number; error_count: number; unknown_count: number }>(`/api/settings/shopee-stock/${shopID}/run`, {}, { timeout: 180000 })
+    const issueCount = response.data.blocked_count + response.data.error_count + response.data.unknown_count
+    const detail = [
+      `อัปเดต ${formatNumber(response.data.changed_count)} ตัวเลือก`,
+      response.data.blocked_count > 0 ? `ต้องแก้ ${formatNumber(response.data.blocked_count)}` : '',
+      response.data.error_count > 0 ? `ไม่สำเร็จ ${formatNumber(response.data.error_count)}` : '',
+      response.data.unknown_count > 0 ? `รอยืนยัน ${formatNumber(response.data.unknown_count)}` : '',
+    ].filter(Boolean).join(' · ')
+    setPreview(null)
+    setOperationResult({
+      tone: issueCount > 0 ? 'warning' : 'success',
+      title: issueCount > 0
+        ? 'ซิงก์เสร็จแล้ว แต่มีรายการที่ต้องตรวจ'
+        : response.data.changed_count > 0
+          ? 'ซิงก์สต๊อกไป Shopee แล้ว'
+          : 'สต๊อก Shopee ตรงกับเป้าหมายแล้ว',
+      detail,
+    })
+    toast.success(`อัปเดต ${formatNumber(response.data.changed_count)} ตัวเลือก`)
     await load(shopID)
   })
 
@@ -1017,6 +1059,13 @@ export default function ShopeeStock() {
         </Alert>
       )}
       {draft?.paused_reason && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>{pauseCopy.title}</AlertTitle><AlertDescription>{pauseCopy.description}</AlertDescription></Alert>}
+      {operationResult && (
+        <Alert className={operationResult.tone === 'warning' ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>
+          {operationResult.tone === 'warning' ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+          <AlertTitle>{operationResult.title}</AlertTitle>
+          <AlertDescription>{operationResult.detail}</AlertDescription>
+        </Alert>
+      )}
       {preview && <Alert className={preview.circuit_breaker ? 'border-destructive/50 bg-destructive/5' : preview.blocked_count ? 'border-warning/50 bg-warning/10' : 'border-success/40 bg-success/10'}>{preview.circuit_breaker || preview.blocked_count ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}<AlertTitle>{preview.circuit_breaker ? previewPauseCopy.title : preview.blocked_count ? `ตรวจสอบแล้ว พบ ${formatNumber(preview.blocked_count)} รายการที่ต้องแก้` : 'ตรวจสอบสต๊อกผ่านแล้ว'}</AlertTitle><AlertDescription>{preview.circuit_breaker ? `${previewPauseCopy.description} · ` : ''}ตรวจ {formatNumber(preview.total_count)} รายการ · จะเปลี่ยน {formatNumber(preview.changed_count)} · ไม่เปลี่ยน {formatNumber(preview.skipped_count)}{(preview.excluded_locations?.length ?? 0) > 0 ? ` · พบสต๊อกในคลัง/พื้นที่อื่น ${formatNumber(uniqueExcludedLocationCount(preview.excluded_locations ?? []))} ตำแหน่ง` : preview.excluded_balance !== 0 ? ` · พบยอดในคลัง/พื้นที่อื่น ${formatNumber(preview.excluded_balance)}` : ''}</AlertDescription></Alert>}
       <ExcludedStockLocations locations={preview?.excluded_locations ?? []} items={preview?.excluded_items ?? []} itemTotal={preview?.excluded_items_total ?? 0} negativeItemTotal={preview?.excluded_negative_items_total} />
       {preview?.lines?.some((line) => line.blocked) && <section className="rounded-md border border-warning/40 bg-warning/5"><div className="border-b px-4 py-3"><h2 className="text-sm font-semibold">รายการที่ยังซิงก์ไม่ได้</h2><p className="text-xs text-muted-foreground">กด “บันทึกและตรวจสต๊อก” อีกครั้ง ระบบจะเตรียมรายการที่จับคู่พร้อมให้อัตโนมัติ หากยังแสดงอยู่จึงค่อยแก้สินค้า หน่วย หรือข้อมูล SML ตามข้อความด้านล่าง</p></div><div className="divide-y">{(preview.lines ?? []).filter((line) => line.blocked).slice(0, 20).map((line) => <div key={`${line.item_id}:${line.model_id}`} className="grid gap-1 px-4 py-2 text-sm sm:grid-cols-[minmax(180px,1fr)_minmax(220px,1.4fr)]"><span className="truncate">{productNames.get(`${line.item_id}:${line.model_id}`) || `Item ${line.item_id}${line.model_id ? ` / Model ${line.model_id}` : ''}`}</span><span className="text-amber-800 dark:text-amber-200">{line.warning_codes.map((code) => WARNING_LABEL[code] || code).join(' · ')}</span></div>)}{preview.blocked_count > 20 && <p className="px-4 py-2 text-xs text-muted-foreground">แสดง 20 จาก {formatNumber(preview.blocked_count)} รายการ กดตรวจสอบสต๊อกใหม่เพื่ออัปเดตผล</p>}</div></section>}
@@ -1056,6 +1105,7 @@ export default function ShopeeStock() {
 			  status={tab}
 			  query={search}
 			  groups={productGroups}
+			  previewStale={Boolean(draft?.dry_run_required)}
 			  canManage={canManage}
 			  onMap={setMapping}
 			  onPool={(product) => setSharedPoolItemCode(product.sml_item_code)}
@@ -1143,11 +1193,12 @@ function ProductExcludedLocations({
 
 type GroupProductState = { rows: ProductRow[]; nextCursor: string; loading: boolean; error: string }
 
-function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap, onPool }: {
+function GroupedShopeeProducts({ shopID, status, query, groups, previewStale, canManage, onMap, onPool }: {
 	shopID: number
 	status: string
 	query: string
 	groups: ProductGroup[]
+	previewStale: boolean
 	canManage: boolean
 	onMap: (product: ProductRow) => void
 	onPool: (product: ProductRow) => void
@@ -1192,18 +1243,19 @@ function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap
 		const open = expanded.has(group.item_id)
 		const state = children[group.item_id]
 		return <div key={group.item_id} className="border-b last:border-b-0">
-			<div className={cn('grid min-h-16 grid-cols-[minmax(0,1fr)_40px] items-center gap-3 px-3 py-2 sm:grid-cols-[minmax(280px,1fr)_minmax(220px,auto)_40px]', open && 'bg-muted/25')}>
+			<div className={cn('grid min-h-16 grid-cols-[minmax(0,1fr)_40px] items-center gap-x-3 gap-y-2 px-3 py-2 xl:grid-cols-[minmax(260px,1fr)_minmax(180px,auto)_minmax(360px,0.9fr)_40px]', open && 'bg-muted/25')}>
 				<button type="button" className="min-w-0 text-left" onClick={() => toggle(group)} aria-expanded={open}>
 					<p className="line-clamp-2 text-sm font-semibold">{group.item_name || 'ไม่ระบุชื่อสินค้า'}</p>
 					<p className="mt-1 truncate text-xs text-muted-foreground">SKU: <span className="font-mono text-foreground">{group.item_sku || '-'}</span> · Item <span className="font-mono">{group.item_id}</span></p>
 				</button>
-				<div className="col-span-2 row-start-2 flex flex-wrap justify-start gap-1 sm:col-span-1 sm:row-start-auto sm:justify-end">
+				<div className="col-span-2 row-start-2 flex flex-wrap justify-start gap-1 xl:col-span-1 xl:col-start-2 xl:row-start-1 xl:justify-end">
 					<Badge variant="outline">{formatNumber(group.variant_count)} ตัวเลือก</Badge>
 					{group.ready_count > 0 && <Badge variant="outline" className="border-success/30 bg-success/10 text-success">พร้อม {formatNumber(group.ready_count)}</Badge>}
 					{group.fix_count > 0 && <Badge variant="outline" className="border-warning/30 bg-warning/10 text-amber-800 dark:text-amber-200">ต้องแก้ {formatNumber(group.fix_count)}</Badge>}
 					{group.excluded_count > 0 && <Badge variant="secondary">ไม่นับ {formatNumber(group.excluded_count)}</Badge>}
 				</div>
-				<Button type="button" variant="ghost" size="icon" className="col-start-2 row-start-1 h-8 w-8 justify-self-end sm:col-start-auto sm:row-start-auto" onClick={() => toggle(group)} aria-label={open ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={open}><ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></Button>
+				<GroupStockTotals group={group} previewStale={previewStale} />
+				<Button type="button" variant="ghost" size="icon" className="col-start-2 row-start-1 h-8 w-8 justify-self-end xl:col-start-4" onClick={() => toggle(group)} aria-label={open ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={open}><ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></Button>
 			</div>
 			{open && <div className="border-t bg-muted/10">
 				{state?.loading && state.rows.length === 0 && <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
@@ -1220,6 +1272,34 @@ function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap
 			</div>}
 		</div>
 	})}</div>
+}
+
+function GroupStockTotals({ group, previewStale }: { group: ProductGroup; previewStale: boolean }) {
+	const summary = buildShopeeStockGroupSummary(group, previewStale)
+	const smlHint = summary.smlStatusText === 'สต๊อกร่วม'
+		? 'มีตัวเลือกที่ใช้สต๊อก SML ก้อนเดียวกัน จึงไม่รวมยอดซ้ำ กดแสดงตัวเลือกเพื่อดูรายละเอียด'
+		: summary.smlStatusText === 'หลายหน่วย'
+			? 'ตัวเลือกใช้หน่วยฐานต่างกัน จึงไม่รวมเป็นตัวเลขเดียว กดแสดงตัวเลือกเพื่อดูรายละเอียด'
+			: summary.smlStatusText === 'ตรวจใหม่'
+				? 'ข้อมูลเปลี่ยนแล้ว กดบันทึกและตรวจสต๊อกเพื่อคำนวณยอดใหม่'
+				: 'ยังไม่มียอดจากการตรวจสต๊อก'
+	return (
+		<div className="col-span-2 row-start-3 grid grid-cols-3 gap-2 rounded-md bg-muted/30 p-2 xl:col-span-1 xl:col-start-3 xl:row-start-1 xl:bg-transparent xl:p-0" aria-label={`ยอดรวม ${formatNumber(group.summary_count)} ตัวเลือก`}>
+			<div className="min-w-0" title={summary.smlStatusText ? smlHint : `ยอด SML พร้อมใช้รวม ${formatNumber(summary.smlValue ?? 0)} ${summary.smlUnit}`}>
+				<p className="truncate text-[10px] text-muted-foreground">SML พร้อมใช้รวม</p>
+				<p className={cn('truncate text-sm font-semibold tabular-nums', summary.smlStatusText && 'text-muted-foreground')}>{summary.smlStatusText || formatNumber(summary.smlValue ?? 0)}{summary.smlValue != null && summary.smlUnit && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{summary.smlUnit}</span>}</p>
+			</div>
+			<div className="min-w-0" title={`สต๊อก Shopee ปัจจุบันรวม ${formatNumber(summary.shopeeValue)}`}>
+				<p className="truncate text-[10px] text-muted-foreground">Shopee ปัจจุบันรวม</p>
+				<p className="truncate text-sm font-semibold tabular-nums">{formatNumber(summary.shopeeValue)}</p>
+			</div>
+			<div className="min-w-0" title={summary.targetStatusText || `ยอดที่ Nexflow จะตั้งใน Shopee รวม ${formatNumber(summary.targetValue ?? 0)}`}>
+				<p className="truncate text-[10px] text-muted-foreground">Shopee เป้าหมายรวม</p>
+				<p className={cn('truncate text-sm font-semibold tabular-nums', summary.targetStatusText && 'text-muted-foreground')}>{summary.targetStatusText || formatNumber(summary.targetValue ?? 0)}</p>
+				{summary.changeText && <p className={cn('truncate text-[10px]', group.changed_count > 0 ? 'text-warning' : 'text-success')}>{summary.changeText}</p>}
+			</div>
+		</div>
+	)
 }
 
 function StockColumnLabels() {

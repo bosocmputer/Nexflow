@@ -183,14 +183,23 @@ type ProductFilter struct {
 }
 
 type ProductGroup struct {
-	ItemID        int64     `json:"item_id"`
-	ItemName      string    `json:"item_name"`
-	ItemSKU       string    `json:"item_sku"`
-	VariantCount  int       `json:"variant_count"`
-	ReadyCount    int       `json:"ready_count"`
-	FixCount      int       `json:"fix_count"`
-	ExcludedCount int       `json:"excluded_count"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ItemID           int64     `json:"item_id"`
+	ItemName         string    `json:"item_name"`
+	ItemSKU          string    `json:"item_sku"`
+	VariantCount     int       `json:"variant_count"`
+	ReadyCount       int       `json:"ready_count"`
+	FixCount         int       `json:"fix_count"`
+	ExcludedCount    int       `json:"excluded_count"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	SummaryCount     int       `json:"summary_count"`
+	SMLUsableTotal   *float64  `json:"sml_usable_total,omitempty"`
+	SMLBaseUnitCode  string    `json:"sml_base_unit_code,omitempty"`
+	SMLBaseUnitName  string    `json:"sml_base_unit_name,omitempty"`
+	SMLTotalStatus   string    `json:"sml_total_status"`
+	ShopeeStockTotal int64     `json:"shopee_stock_total"`
+	TargetStockTotal *int64    `json:"target_stock_total,omitempty"`
+	TargetCount      int       `json:"target_count"`
+	ChangedCount     int       `json:"changed_count"`
 }
 
 type ProductGroupFilter struct {

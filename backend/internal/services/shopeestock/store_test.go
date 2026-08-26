@@ -166,13 +166,27 @@ func TestListProductGroupsUsesShopeeItemKeyset(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)WITH matched_items AS.*FROM shopee_stock_products matched_product.*JOIN shopee_stock_mappings matched_mapping.*matched_product.item_id>\$3.*GROUP BY matched_product.item_id.*LIMIT \$4.*SELECT p.item_id.*COUNT\(\*\) FILTER.*MAX\(p.last_seen_at\).*JOIN shopee_stock_products p`).
+	mock.ExpectQuery(`(?s)WITH matched_variants AS.*FROM shopee_stock_products matched_product.*JOIN shopee_stock_mappings matched_mapping.*matched_product.item_id>\$3.*matched_items AS.*GROUP BY.*item_id.*LIMIT \$4.*aggregated AS.*MAX\(p.last_seen_at\).*LEFT JOIN matched_variants.*SELECT item_id.*sml_value_count.*target_count`).
 		WithArgs(int64(42), "%milk%", int64(1000), 51).
-		WillReturnRows(sqlmock.NewRows([]string{"item_id", "item_name", "item_sku", "variant_count", "ready_count", "fix_count", "excluded_count", "updated_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"item_id", "item_name", "item_sku", "variant_count", "ready_count", "fix_count", "excluded_count", "updated_at",
+			"summary_count", "sml_usable_total", "sml_base_unit_code", "sml_base_unit_name", "sml_total_status",
+			"shopee_stock_total", "target_stock_total", "target_count", "changed_count",
+		}).AddRow(
+			int64(1100), "Milk product", "MILK-1", 3, 3, 0, 0, time.Now(),
+			3, 48.0, "PCS", "ชิ้น", "ready", int64(42), int64(48), 3, 2,
+		))
 
 	groups, more, err := NewStore(db).ListProductGroups(context.Background(), 42, ProductGroupFilter{Query: "milk", AfterItemID: 1000, Limit: 50})
-	if err != nil || more || len(groups) != 0 {
+	if err != nil || more || len(groups) != 1 {
 		t.Fatalf("groups=%#v more=%v err=%v", groups, more, err)
+	}
+	group := groups[0]
+	if group.SummaryCount != 3 || group.SMLUsableTotal == nil || *group.SMLUsableTotal != 48 || group.SMLBaseUnitName != "ชิ้น" || group.SMLTotalStatus != "ready" {
+		t.Fatalf("unexpected SML summary: %#v", group)
+	}
+	if group.ShopeeStockTotal != 42 || group.TargetStockTotal == nil || *group.TargetStockTotal != 48 || group.TargetCount != 3 || group.ChangedCount != 2 {
+		t.Fatalf("unexpected Shopee summary: %#v", group)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
