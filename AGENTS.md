@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `52f4cea` (`fix: clarify Shopee cancellation route settings`),
+  `0f31748` (`fix: label SML document number preview accurately`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -267,7 +267,7 @@ Current AOY UAT scope:
     setting. The pre-deploy AOY backup is
     `pre-deploy-20260826-091915.sql.gz`. Demo and Lanboon remain on `82baa4a`.
 23. AOY-only Shopee cancellation destinations are deployed at application
-    `52f4cea` (feature commit `cf93b4c`) with additive migration 088; the shared
+    `0f31748` (feature commit `cf93b4c`) with additive migration 088; the shared
     Central SML Gateway is deployed at `42992f5`. The channel dialog now offers
     the two verified AOY document semantics separately: TRANS_FLAG 45
     `ยกเลิกขายสินค้าและบริการ` through `/void` and SML screen `SIC`, or
@@ -283,8 +283,10 @@ Current AOY UAT scope:
     support without buyer PII, but creation remains a confirmed operator action
     during UAT rather than an automatic external write. Browser QA verified both
     destination choices, real `SIC`/`CN` formats, the source-invoice explanation,
-    and a clean console. AOY backups are `pre-deploy-20260826-110234.sql.gz` and
-    `pre-deploy-20260826-110730.sql.gz`; the Gateway source/runtime/image backups
+    the accurate `ตัวอย่างรูปแบบเลขเอกสาร` label, and a clean console. AOY
+    backups are `pre-deploy-20260826-110234.sql.gz`,
+    `pre-deploy-20260826-110730.sql.gz`, and
+    `pre-deploy-20260826-111132.sql.gz`; the Gateway source/runtime/image backups
     use the `pre-sml-cancel-20260826-1054` and `pre-42992f5-20260826-1059`
     prefixes. Demo and Lanboon remain on `82baa4a`.
 
