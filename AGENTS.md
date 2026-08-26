@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `a4c67a8` (`feat: add Shopee cancellation queue shortcut`),
+  `0cf1a97` (`feat: configure Shopee Auto SML trigger status`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -331,6 +331,31 @@ Current AOY UAT scope:
     `pre-deploy-20260826-124252.sql.gz`. Demo and Lanboon were not rebuilt and
     remain on `82baa4a`. The first real new-order cancellation UAT is still
     pending.
+26. AOY-only configurable Auto SML trigger and final-bill shipping details are
+    deployed at `0cf1a97` with additive migration 090. Each shop may use
+    `READY_TO_SHIP` (default/recommended) or `PROCESSED`; changing the trigger
+    creates a new optimistic configuration version and cutoff for future
+    transitions only. Jobs snapshot the trigger, exact transition evidence,
+    and configuration version, while forward lifecycle states may finish the
+    same immutable job. Unknown/missing evidence fails closed, and
+    `UNPAID`/`IN_CANCEL`/`CANCELLED` cannot create an SML sale. AOY shop
+    `264993963` remains enabled, unpaused, and unchanged at `READY_TO_SHIP`,
+    `config_version=1`, with its existing 2026-08-24 cutoff; no queued job or
+    historical order was created. The two existing jobs remain succeeded.
+    Future Auto SML LINE Flex/text adds a separate `ค่าจัดส่งเข้า SML` section
+    only when the final bill contains `source_sku=__shopee_shipping__`.
+    Production evidence confirms `BF-INV26080055` will show
+    `15.00 บาท · AH-0061 · 1 ชิ้น`, while `BF-INV26080059` has no shipping line
+    and will not show estimated Shopee fees. Desktop and 390px browser QA passed
+    without saving `PROCESSED`; the selected value, no-backfill copy, queue
+    snapshot copy, and two enabled LINE recipients were visible, with no
+    overflow or console error. Go tests, race tests, vet, frontend regression
+    tests, lint/build, sales-only guard, schema constraints, health, Gateway
+    connectivity, and post-deploy error scan passed. Auto SML, automatic
+    cancellation, set-stock, sales/CN routes, and LINE recipients were unchanged.
+    The AOY backup is `pre-deploy-20260826-145316.sql.gz`. Demo and Lanboon were
+    not deployed and remain on `82baa4a`. A controlled real `PROCESSED` trigger
+    order remains pending user UAT; do not switch AOY automatically.
 
 Known deferred or incomplete validation:
 

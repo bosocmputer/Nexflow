@@ -9,9 +9,9 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 ## Production UAT Status
 
 - Application baseline is intentionally split during AOY UAT. AOY runs
-  `44b5a72`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
+  `0cf1a97`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
   settings, credentials, channel routes, and feature flags remain isolated.
-  Central SML Gateway baseline: `a53db50`.
+  Central SML Gateway baseline: `42992f5`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
   200 with database status `ok` on 2026-08-25.
 - Migration 085 is installed on every tenant. AOY has grouped UI, versioned unit
@@ -23,6 +23,11 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   current build. Feedback remains pending for the marketplace sales/SML stock
   flow, Product Master/Catalog channel tags, `/sale-invoices`, and the compact
   `/shopee-operations` UI.
+- AOY shop `264993963` has Auto SML enabled at its unchanged
+  `READY_TO_SHIP` trigger. Migration 090 adds an admin-selectable `PROCESSED`
+  trigger with versioned future-transition cutoffs and immutable job snapshots.
+  Future Auto SML LINE notifications derive shipping details only from the
+  final SML bill shipping item, never Shopee fee estimates.
 - Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
   Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
   Lazada UAT while preserving tenant isolation.
