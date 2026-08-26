@@ -564,7 +564,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                 </div>
               </div>
               <div className="text-xs text-muted-foreground">
-                <b>ตัวอย่างถัดไป:</b>{' '}
+                <b>ตัวอย่างรูปแบบเลขเอกสาร:</b>{' '}
                 <code className="rounded bg-background px-1.5 py-0.5 font-mono text-foreground">
                   {previewDocNo(docPrefixTrimmed || 'BF', docRunningFormatTrimmed || 'YYMM####')}
                 </code>
