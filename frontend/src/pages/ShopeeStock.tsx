@@ -1018,7 +1018,7 @@ export default function ShopeeStock() {
 
         {tab === 'history' ? <HistoryList runs={data?.runs ?? []} /> : (
           <>
-			{!groupedProducts && <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid">
+			{!groupedProducts && <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground xl:grid">
               <span>สินค้า Shopee</span>
               <span>สินค้าที่จับคู่ใน SML</span>
               <div className="grid grid-cols-3 gap-3 text-right">
@@ -1088,7 +1088,7 @@ function ProductExcludedLocations({
   }
   const primaryDetail = primary ? locationDetail(primary) : null
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-warning/25 pt-1.5 text-[11px] text-amber-900 dark:text-amber-200 lg:col-span-4">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-warning/25 pt-1.5 text-[11px] text-amber-900 dark:text-amber-200 xl:col-span-4">
       <Warehouse className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <span className="font-medium">ยอดคงเหลืออยู่ในคลัง/พื้นที่เก็บอื่น</span>
       {primary && primaryDetail ? (
@@ -1185,7 +1185,7 @@ function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap
 				{state?.loading && state.rows.length === 0 && <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
 				{state?.error && <div className="flex items-center justify-between gap-3 px-4 py-4 text-sm text-destructive"><span>{state.error}</span><Button variant="outline" size="sm" onClick={() => void loadChildren(group)}>ลองใหม่</Button></div>}
 				{state && !state.loading && !state.error && state.rows.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">ไม่พบตัวเลือกที่ตรงกับตัวกรอง</div>}
-				{state && state.rows.length > 0 && <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/30 py-1.5 pl-8 pr-3 text-[11px] font-medium text-muted-foreground lg:grid">
+				{state && state.rows.length > 0 && <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/30 py-1.5 pl-8 pr-3 text-[11px] font-medium text-muted-foreground xl:grid">
 					<span>ตัวเลือก Shopee</span>
 					<span>สินค้าที่จับคู่ใน SML</span>
 					<div className="grid grid-cols-3 gap-3 text-right"><StockColumnLabels /></div>
@@ -1225,7 +1225,7 @@ function ProductLine({ product, canManage, onMap, onPool, nested = false }: { pr
   const excludedLocations = product.last_preview_excluded_locations ?? []
   return (
     <>
-	<div className={cn('grid gap-x-3 gap-y-2 px-3 py-2 lg:grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] lg:items-center', nested && 'pl-8')}>
+	<div className={cn('grid gap-x-3 gap-y-2 px-3 py-2 xl:grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] xl:items-center', nested && 'pl-8')}>
       <div className="min-w-0">
 		<p className="truncate text-sm font-medium leading-5" title={nested ? optionName || itemName : itemName}>{nested ? optionName || 'ตัวเลือกหลัก' : itemName}</p>
         <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs">
@@ -1249,23 +1249,23 @@ function ProductLine({ product, canManage, onMap, onPool, nested = false }: { pr
         </div>
         <p className="text-xs text-muted-foreground">{product.sml_unit_code ? `${conversionText}${product.manual_unit_factor ? ' (กำหนดเอง)' : ''}` : 'เลือกสินค้าและหน่วย SML'}</p>
       </div>
-      <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
-        <div className="min-w-0 text-left lg:text-right">
-		  <p className="text-[11px] text-muted-foreground lg:hidden">{STOCK_COLUMN_LABELS.sml}</p>
+      <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 xl:bg-transparent xl:p-0">
+        <div className="min-w-0 text-left xl:text-right">
+		  <p className="text-[11px] text-muted-foreground xl:hidden">{STOCK_COLUMN_LABELS.sml}</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</span>{product.last_preview_balance != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
         </div>
-        <div className="min-w-0 text-left lg:text-right">
-		  <p className="text-[11px] text-muted-foreground lg:hidden">{STOCK_COLUMN_LABELS.shopee}</p>
+        <div className="min-w-0 text-left xl:text-right">
+		  <p className="text-[11px] text-muted-foreground xl:hidden">{STOCK_COLUMN_LABELS.shopee}</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{formatNumber(product.shopee_available)}</span>{sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
           {product.shopee_reserved > 0 && <p className="text-[11px] text-warning">จอง {formatNumber(product.shopee_reserved)}</p>}
         </div>
-        <div className="min-w-0 text-left lg:text-right">
-		  <p className="text-[11px] text-muted-foreground lg:hidden">{STOCK_COLUMN_LABELS.target}</p>
+        <div className="min-w-0 text-left xl:text-right">
+		  <p className="text-[11px] text-muted-foreground xl:hidden">{STOCK_COLUMN_LABELS.target}</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</span>{product.last_preview_target != null && sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
         </div>
       </div>
       {!canManage ? (canManagePool ? (
-        <Button variant="outline" size="sm" className="h-8 justify-self-end whitespace-nowrap px-2.5 lg:w-full" onClick={onPool}><GitMerge className="h-4 w-4" />ดูสัดส่วน</Button>
+        <Button variant="outline" size="sm" className="h-8 justify-self-end whitespace-nowrap px-2.5 xl:w-full" onClick={onPool}><GitMerge className="h-4 w-4" />ดูสัดส่วน</Button>
       ) : <span className="justify-self-end text-xs text-muted-foreground">ดูอย่างเดียว</span>) : canManagePool ? (
         <div className="flex items-center justify-end gap-1">
           <Button variant="outline" size="sm" className="h-8 flex-1 whitespace-nowrap px-2.5" onClick={onPool}><GitMerge className="h-4 w-4" />{product.shared_pool_enabled ? 'ปรับสัดส่วน' : 'แบ่งสต๊อก'}</Button>
@@ -1277,7 +1277,7 @@ function ProductLine({ product, canManage, onMap, onPool, nested = false }: { pr
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      ) : <Button variant="outline" size="sm" className="h-8 justify-self-end whitespace-nowrap px-2.5 lg:w-full" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยนสินค้า' : 'จับคู่สินค้า'}</Button>}
+      ) : <Button variant="outline" size="sm" className="h-8 justify-self-end whitespace-nowrap px-2.5 xl:w-full" onClick={onMap}><Settings2 className="h-4 w-4" />{product.excluded ? 'แก้ไข' : product.sml_item_code ? 'เปลี่ยนสินค้า' : 'จับคู่สินค้า'}</Button>}
       {(excludedLocations.length > 0 || !!product.last_preview_excluded_balance) && (
         <ProductExcludedLocations
           locations={excludedLocations}
