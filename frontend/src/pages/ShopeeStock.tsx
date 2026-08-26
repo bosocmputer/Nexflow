@@ -1243,19 +1243,19 @@ function GroupedShopeeProducts({ shopID, status, query, groups, previewStale, ca
 		const open = expanded.has(group.item_id)
 		const state = children[group.item_id]
 		return <div key={group.item_id} className="border-b last:border-b-0">
-			<div className={cn('grid min-h-16 grid-cols-[minmax(0,1fr)_40px] items-center gap-x-3 gap-y-2 px-3 py-2 xl:grid-cols-[minmax(260px,1fr)_minmax(180px,auto)_minmax(360px,0.9fr)_40px]', open && 'bg-muted/25')}>
+			<div className={cn('grid min-h-16 grid-cols-[minmax(0,1fr)_40px] items-center gap-x-3 gap-y-2 px-3 py-2 lg:grid-cols-[minmax(200px,1fr)_minmax(120px,auto)_minmax(300px,0.9fr)_32px]', open && 'bg-muted/25')}>
 				<button type="button" className="min-w-0 text-left" onClick={() => toggle(group)} aria-expanded={open}>
 					<p className="line-clamp-2 text-sm font-semibold">{group.item_name || 'ไม่ระบุชื่อสินค้า'}</p>
 					<p className="mt-1 truncate text-xs text-muted-foreground">SKU: <span className="font-mono text-foreground">{group.item_sku || '-'}</span> · Item <span className="font-mono">{group.item_id}</span></p>
 				</button>
-				<div className="col-span-2 row-start-2 flex flex-wrap justify-start gap-1 xl:col-span-1 xl:col-start-2 xl:row-start-1 xl:justify-end">
+				<div className="col-span-2 row-start-2 flex flex-wrap justify-start gap-1 lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:justify-end">
 					<Badge variant="outline">{formatNumber(group.variant_count)} ตัวเลือก</Badge>
 					{group.ready_count > 0 && <Badge variant="outline" className="border-success/30 bg-success/10 text-success">พร้อม {formatNumber(group.ready_count)}</Badge>}
 					{group.fix_count > 0 && <Badge variant="outline" className="border-warning/30 bg-warning/10 text-amber-800 dark:text-amber-200">ต้องแก้ {formatNumber(group.fix_count)}</Badge>}
 					{group.excluded_count > 0 && <Badge variant="secondary">ไม่นับ {formatNumber(group.excluded_count)}</Badge>}
 				</div>
 				<GroupStockTotals group={group} previewStale={previewStale} />
-				<Button type="button" variant="ghost" size="icon" className="col-start-2 row-start-1 h-8 w-8 justify-self-end xl:col-start-4" onClick={() => toggle(group)} aria-label={open ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={open}><ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></Button>
+				<Button type="button" variant="ghost" size="icon" className="col-start-2 row-start-1 h-8 w-8 justify-self-end lg:col-start-4" onClick={() => toggle(group)} aria-label={open ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={open}><ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} /></Button>
 			</div>
 			{open && <div className="border-t bg-muted/10">
 				{state?.loading && state.rows.length === 0 && <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
@@ -1284,7 +1284,7 @@ function GroupStockTotals({ group, previewStale }: { group: ProductGroup; previe
 				? 'ข้อมูลเปลี่ยนแล้ว กดบันทึกและตรวจสต๊อกเพื่อคำนวณยอดใหม่'
 				: 'ยังไม่มียอดจากการตรวจสต๊อก'
 	return (
-		<div className="col-span-2 row-start-3 grid grid-cols-3 gap-2 rounded-md bg-muted/30 p-2 xl:col-span-1 xl:col-start-3 xl:row-start-1 xl:bg-transparent xl:p-0" aria-label={`ยอดรวม ${formatNumber(group.summary_count)} ตัวเลือก`}>
+		<div className="col-span-2 row-start-3 grid grid-cols-3 gap-2 rounded-md bg-muted/30 p-2 lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:bg-transparent lg:p-0" aria-label={`ยอดรวม ${formatNumber(group.summary_count)} ตัวเลือก`}>
 			<div className="min-w-0" title={summary.smlStatusText ? smlHint : `ยอด SML พร้อมใช้รวม ${formatNumber(summary.smlValue ?? 0)} ${summary.smlUnit}`}>
 				<p className="truncate text-[10px] text-muted-foreground">SML พร้อมใช้รวม</p>
 				<p className={cn('truncate text-sm font-semibold tabular-nums', summary.smlStatusText && 'text-muted-foreground')}>{summary.smlStatusText || formatNumber(summary.smlValue ?? 0)}{summary.smlValue != null && summary.smlUnit && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{summary.smlUnit}</span>}</p>
