@@ -55,6 +55,7 @@ import {
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { useNotificationsStore } from '@/lib/notifications-store'
 import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
+import { shouldOpenTimelineFromQuery } from '@/lib/shopee-timeline-dialog'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -543,6 +544,7 @@ export default function ShopeeOperations() {
   const listRequestSeq = useRef(0)
   const listRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const deferListRefreshRef = useRef(false)
+  const dismissedTimelineOrderSNRef = useRef('')
   const page = readPage(params)
   const perPage = readPerPage(params)
   const statusGroup = readStatusGroup(params)
@@ -759,7 +761,11 @@ export default function ShopeeOperations() {
 
   useEffect(() => {
     const orderSN = focusedOrderSN.trim()
-    if (!orderSN || timelineOpen) return
+    if (!orderSN) {
+      dismissedTimelineOrderSNRef.current = ''
+      return
+    }
+    if (!shouldOpenTimelineFromQuery(orderSN, timelineOpen, dismissedTimelineOrderSNRef.current)) return
     const matched = orders.find((order) => order.order_sn === orderSN)
     if (matched) void openTimeline(matched, false)
     else void openTimelineFromDeepLink(orderSN)
@@ -1140,6 +1146,7 @@ export default function ShopeeOperations() {
   }
 
   const openTimeline = async (order: OrderSnapshot, updateURL = true) => {
+    dismissedTimelineOrderSNRef.current = ''
     setSelected(order)
     setTimelineOpen(true)
     if (updateURL) {
@@ -1152,13 +1159,17 @@ export default function ShopeeOperations() {
   }
 
   const handleTimelineOpenChange = (open: boolean) => {
-    setTimelineOpen(open)
-    if (!open) {
-      const next = new URLSearchParams(params)
-      next.delete('order')
-      setParams(next, { replace: true })
-      setPaymentBreakdown(null)
+    if (open) {
+      dismissedTimelineOrderSNRef.current = ''
+      setTimelineOpen(true)
+      return
     }
+    dismissedTimelineOrderSNRef.current = focusedOrderSN.trim() || selected?.order_sn.trim() || ''
+    setTimelineOpen(open)
+    const next = new URLSearchParams(params)
+    next.delete('order')
+    setParams(next, { replace: true })
+    setPaymentBreakdown(null)
   }
 
   const refreshTimelineFromShopee = async () => {

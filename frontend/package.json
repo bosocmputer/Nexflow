@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint src --ext ts,tsx"
+    "lint": "eslint src --ext ts,tsx",
+    "test:timeline-dialog": "node --test src/lib/shopee-timeline-dialog.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
