@@ -329,6 +329,13 @@ export default function ChannelDefaults() {
         </div>
       )
     }
+    if (r.channel === 'shopee_realtime_cancel' && r.bill_type === 'sale') {
+      return (
+        <span className="text-xs text-muted-foreground">
+          ลูกค้า สินค้า คลัง VAT และยอดเงินอ้างอิงจากใบขาย SML เดิม
+        </span>
+      )
+    }
     return (
       <span className="text-xs text-muted-foreground">
         ค่า wh/shelf/VAT เลือกใน dialog ส่ง SML

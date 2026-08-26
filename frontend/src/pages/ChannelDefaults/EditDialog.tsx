@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -381,6 +382,11 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
             <DialogTitle>
               ตั้งค่าเส้นทาง SML สำหรับ {channelLabel} ({billTypeLabel})
             </DialogTitle>
+            <DialogDescription>
+              {isShopeeRealtimeCancelRoute
+                ? 'เลือกว่าจะยกเลิกใบขายเดิม หรือสร้างเอกสารรับคืนสินค้า/ลดหนี้ พร้อมรูปแบบเอกสารจาก SML'
+                : 'กำหนดปลายทางและค่าเริ่มต้นที่ Nexflow ใช้เมื่อสร้างเอกสารใน SML'}
+            </DialogDescription>
           </DialogHeader>
 
           <div className="-mx-6 space-y-4 overflow-y-auto px-6 py-2">
