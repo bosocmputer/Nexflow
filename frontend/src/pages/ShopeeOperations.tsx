@@ -67,6 +67,7 @@ import {
   cancellationStockRecalcLabel,
   cancellationTriggerLabel,
   shouldMergeAutoSMLSuccessStatus,
+  shouldShowAutoSMLStatusBadge,
 } from '@/lib/shopee-operations-status'
 import { shouldOpenTimelineFromQuery } from '@/lib/shopee-timeline-dialog'
 import { cn } from '@/lib/utils'
@@ -1699,6 +1700,10 @@ export default function ShopeeOperations() {
                     order.sml_doc_no,
                     order.auto_sml?.status,
                   )
+                  const showAutoSMLStatus = shouldShowAutoSMLStatusBadge(
+                    order.auto_sml?.status,
+                    mergeAutoSMLSuccess,
+                  )
                   return (
                     <tr
                       key={order.id}
@@ -1751,7 +1756,7 @@ export default function ShopeeOperations() {
                       <div className="mt-1 text-xs text-muted-foreground">
                         {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
                       </div>
-                      {!mergeAutoSMLSuccess && <AutoSMLStatusBadge job={order.auto_sml} />}
+                      {showAutoSMLStatus && <AutoSMLStatusBadge job={order.auto_sml} />}
                       {cancelSMLBadge(order)}
                     </td>
                     <td className="px-3 py-2 align-top">
@@ -2459,7 +2464,6 @@ function AutoSMLStatusBadge({ job }: { job?: AutoSMLJobView }) {
     failed: { label: 'Auto: ล้มเหลว', className: 'border-destructive/40 bg-destructive/10 text-destructive' },
     cancelled: { label: 'Auto: ยกเลิก', className: 'border-border bg-muted text-muted-foreground' },
     paused: { label: 'Auto: หยุดชั่วคราว', className: 'border-warning/40 bg-warning/10 text-warning' },
-    manual_required: { label: 'Auto: ส่งด้วยมือ', className: 'border-border bg-muted text-muted-foreground' },
   }
   const value = meta[status] ?? { label: status, className: 'border-border bg-background text-muted-foreground' }
   return (

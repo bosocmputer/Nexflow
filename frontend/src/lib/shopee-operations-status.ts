@@ -8,6 +8,15 @@ export function shouldMergeAutoSMLSuccessStatus(
     && autoSMLStatus?.trim().toLowerCase() === 'succeeded'
 }
 
+export function shouldShowAutoSMLStatusBadge(
+  autoSMLStatus?: string,
+  mergedIntoERPStatus = false,
+) {
+  if (mergedIntoERPStatus) return false
+  const normalized = autoSMLStatus?.trim().toLowerCase() ?? ''
+  return normalized !== '' && normalized !== 'manual_required'
+}
+
 export function cancellationDocumentTypeLabel(documentType?: string) {
   const normalized = documentType?.trim().toLowerCase() ?? ''
   if (normalized === 'sale_cancel') {

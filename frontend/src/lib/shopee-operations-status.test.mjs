@@ -14,6 +14,7 @@ const {
   cancellationStockRecalcLabel,
   cancellationTriggerLabel,
   shouldMergeAutoSMLSuccessStatus,
+  shouldShowAutoSMLStatusBadge,
 } = await vite.ssrLoadModule(
   '/src/lib/shopee-operations-status.ts',
 )
@@ -33,6 +34,15 @@ test('keeps non-success Auto SML states as a separate status row', () => {
 
 test('does not claim Auto SML completion without an SML document number', () => {
   assert.equal(shouldMergeAutoSMLSuccessStatus('sent', '', 'succeeded'), false)
+})
+
+test('hides the redundant manual Auto SML tag but preserves actionable states', () => {
+  assert.equal(shouldShowAutoSMLStatusBadge('manual_required', false), false)
+  assert.equal(shouldShowAutoSMLStatusBadge('queued', false), true)
+  assert.equal(shouldShowAutoSMLStatusBadge('needs_review', false), true)
+  assert.equal(shouldShowAutoSMLStatusBadge('failed', false), true)
+  assert.equal(shouldShowAutoSMLStatusBadge('succeeded', false), true)
+  assert.equal(shouldShowAutoSMLStatusBadge('succeeded', true), false)
 })
 
 test('labels the two verified SML cancellation document types', () => {
