@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `8ba0bd6` (`fix: keep Shopee stock totals compact on laptops`),
+  `ea803ec` (`fix: show verifiable Shopee stock group quantities`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `7723a0b`
   (`fix: block ambiguous SML sales order identities`).
@@ -248,6 +248,24 @@ Current AOY UAT scope:
     The final pre-deploy AOY backup is
     `pre-deploy-20260826-085727.sql.gz`. Demo and Lanboon remain running their
     existing `82baa4a` containers.
+22. AOY-only verifiable shared/mixed-unit stock totals are deployed at
+    `ea803ec`. Collapsed parent rows no longer replace quantities with the
+    internal labels `สต๊อกร่วม` or `หลายหน่วย`. The backend deduplicates each
+    SML item code before aggregating, so AOY's two shared-stock parents each
+    display the proven `91 กล่อง` source total with a warning that the balance
+    is shared with another Shopee product. The mixed-unit parent displays
+    `0 แท่ง · 0 แพ็ค` and warns that unlike units must be inspected separately;
+    they are never added into a false scalar total. The old scalar API fields
+    remain compatible and the new per-unit breakdown is additive. Production
+    API requests completed in 6.8–18.9 ms, laptop and 390px mobile browser QA
+    passed, and the browser console plus recent backend error scan were clean.
+    Verification was read-only and did not call stock preview or Shopee write
+    endpoints. At verification time both AOY shops had automatic sync disabled;
+    shop `264993963` retained its five-minute interval and fresh dry-run state,
+    while shop `1029622928` remained stale with
+    `catalog_generation_reconcile`. This deployment did not change either shop
+    setting. The pre-deploy AOY backup is
+    `pre-deploy-20260826-091915.sql.gz`. Demo and Lanboon remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
