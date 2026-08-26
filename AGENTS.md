@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `0a1a616` (`fix: merge successful Auto SML status row`),
+  `8ba0bd6` (`fix: keep Shopee stock totals compact on laptops`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `7723a0b`
   (`fix: block ambiguous SML sales order identities`).
@@ -226,6 +226,28 @@ Current AOY UAT scope:
     sales-only guard, deployment health, and Gateway health passed. The
     pre-deploy AOY backup is `pre-deploy-20260826-061917.sql.gz`. Demo and
     Lanboon remain on `82baa4a`.
+21. AOY-only collapsed Shopee stock summaries are deployed at `8ba0bd6`
+    (feature commit `9e85519`). Every grouped parent row now shows the safe
+    aggregate `SML พร้อมใช้รวม`, current `Shopee ปัจจุบันรวม`, and absolute
+    `Shopee เป้าหมายรวม`, plus whether any variants would change, without
+    loading or expanding its children. The aggregate fails closed: a group that
+    participates in shared allocation shows `สต๊อกร่วม` instead of summing SML
+    availability, and mixed base units show `หลายหน่วย`; current and target
+    Shopee totals remain visible when independently safe. Successful manual
+    Catalog refreshes and stock writes now also leave a persistent result alert,
+    while the existing stock-check result remains visible after its async job.
+    AOY's 44 ready variants resolve into 11 parent rows: eight exact SML totals,
+    two shared-stock indicators, and one mixed-unit indicator. The bounded parent
+    query uses no child N+1 loading and executed in 4.643 ms on the current AOY
+    dataset. Production QA passed at the default
+    1100px laptop viewport and 390px mobile, all 11 collapsed summaries were
+    present, and the browser console plus recent backend error scan were clean.
+    QA was read-only and did not call Catalog refresh, preview, or Shopee stock
+    write endpoints. Shop `264993963` was already showing automatic stock sync
+    enabled every five minutes; this deployment did not change that setting.
+    The final pre-deploy AOY backup is
+    `pre-deploy-20260826-085727.sql.gz`. Demo and Lanboon remain running their
+    existing `82baa4a` containers.
 
 Known deferred or incomplete validation:
 
