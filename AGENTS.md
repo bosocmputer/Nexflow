@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `9bebf3e` (`fix: preserve Shopee gateway network on backend recreate`),
+  `40ac450` (`fix: close Shopee order timeline in one action`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `7723a0b`
   (`fix: block ambiguous SML sales order identities`).
@@ -187,6 +187,18 @@ Current AOY UAT scope:
     HTTP 200 in 2.217 seconds, 45 stored products / 44 active, and no browser
     console or recent backend errors. The pre-deploy AOY backup is
     `pre-deploy-20260826-043401.sql.gz`. Demo and Lanboon were not deployed.
+18. AOY-only Shopee Operations timeline close race is fixed at `40ac450`.
+    The controlled drawer previously wrote `?order=<order_sn>` while open; on
+    close, `timelineOpen=false` could render before React Router removed the
+    query, so the deep-link effect immediately reopened the same order and made
+    users press close twice. A dismissed-order guard now blocks only that
+    transition until the query is cleared. Regression tests cover initial deep
+    links, dismissal of the same order, a different order, empty queries, and
+    the already-open state. Production browser QA passed for one-click X close,
+    Escape close, opening another order, reopening the first order, query
+    cleanup, and a clean console. AOY health remained HTTP 200 with no recent
+    backend 500/panic/fatal errors. The pre-deploy AOY backup is
+    `pre-deploy-20260826-044708.sql.gz`. Demo and Lanboon were not deployed.
 
 Known deferred or incomplete validation:
 
