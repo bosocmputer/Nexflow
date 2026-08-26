@@ -168,6 +168,30 @@ func TestMigration089AddsDurableAutoSMLCancellationQueue(t *testing.T) {
 	}
 }
 
+func TestMigration090AddsVersionedAutoSMLTriggerSnapshots(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/090_shopee_auto_sml_trigger_status.sql")
+	if err != nil {
+		t.Fatalf("read migration 090: %v", err)
+	}
+	sqlText := strings.ToLower(string(data))
+	for _, required := range []string{
+		"trigger_status", "config_version", "trigger_status_snapshot",
+		"trigger_transition_at", "trigger_config_version",
+		"ready_to_ship", "processed", "if not exists",
+		"update shopee_auto_sml_jobs", "coalesce(order_update_time, created_at)",
+		"shopee_auto_sml_jobs_missing_trigger_evidence_idx",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Errorf("migration 090 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(sqlText, forbidden) {
+			t.Errorf("migration 090 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

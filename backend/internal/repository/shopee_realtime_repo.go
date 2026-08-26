@@ -1731,10 +1731,9 @@ func (r *ShopeeRealtimeRepo) orderStatusEvidence(ctx context.Context, shopID int
 }
 
 // OrderStatusTransitionAt returns the earliest confirmed timestamp for the
-// requested Shopee lifecycle status. Auto SML uses READY_TO_SHIP evidence as
-// its activation cutoff so orders created before the switch was enabled can
-// still be processed when they become ready afterwards, without replaying old
-// READY_TO_SHIP backlog.
+// requested Shopee lifecycle status. Auto SML uses the configured trigger
+// transition as its activation cutoff, so an older order may be processed only
+// when it enters READY_TO_SHIP or PROCESSED after that configuration was saved.
 func (r *ShopeeRealtimeRepo) OrderStatusTransitionAt(ctx context.Context, shopID int64, orderSN, status string) (*time.Time, error) {
 	ref := ShopeeSnapshotRef{ShopID: shopID, OrderSN: strings.TrimSpace(orderSN)}
 	transitions, err := r.OrderStatusTransitionTimes(ctx, []ShopeeSnapshotRef{ref}, status)

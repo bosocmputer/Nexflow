@@ -29,11 +29,18 @@ const (
 
 var shopeeAutoSMLBangkokTimeZone = time.FixedZone("Asia/Bangkok", 7*60*60)
 
-func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail shopeeapi.OrderDetail, before, snap *models.ShopeeOrderSnapshot) {
+func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail shopeeapi.OrderDetail, before, snap *models.ShopeeOrderSnapshot, setting *models.ShopeeAutoSMLSetting) {
 	if h == nil || h.cfg == nil || !h.cfg.ShopeeAutoSMLEnabled || h.autoSMLRepo == nil || snap == nil {
 		return
 	}
-	if strings.ToUpper(strings.TrimSpace(snap.OrderStatus)) != "READY_TO_SHIP" || detail.CreateTime <= 0 {
+	if detail.CreateTime <= 0 {
+		return
+	}
+	if setting == nil || setting.ShopID != snap.ShopID || !setting.Enabled || setting.PausedReason != "" || setting.EligibleAfter == nil {
+		return
+	}
+	triggerStatus := models.NormalizeShopeeAutoSMLTriggerStatus(setting.TriggerStatus)
+	if !models.ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, snap.OrderStatus) {
 		return
 	}
 	createTime := time.Unix(detail.CreateTime, 0)
@@ -42,33 +49,48 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSML(ctx context.Context, detail 
 		value := time.Unix(detail.UpdateTime, 0)
 		updateTime = &value
 	}
-	readyToShipAt, err := h.autoSMLReadyToShipAt(ctx, detail, before, snap)
+	triggerTransitionAt, err := h.autoSMLTriggerTransitionAt(ctx, triggerStatus, detail, before, snap)
 	if err != nil {
-		h.logger.Warn("shopee_auto_sml: load ready transition failed", zap.Int64("shop_id", snap.ShopID), zap.String("order_sn", snap.OrderSN), zap.Error(err))
+		h.logger.Warn("shopee_auto_sml: load trigger transition failed", zap.Int64("shop_id", snap.ShopID), zap.String("order_sn", snap.OrderSN), zap.String("trigger_status", triggerStatus), zap.Error(err))
 		return
 	}
-	if readyToShipAt == nil {
+	if triggerTransitionAt == nil {
 		return
 	}
-	inserted, err := h.autoSMLRepo.Enqueue(ctx, snap.ShopID, snap.OrderSN, createTime, updateTime, *readyToShipAt, h.realtimeRouteSignature(ctx))
+	inserted, err := h.autoSMLRepo.Enqueue(
+		ctx, snap.ShopID, snap.OrderSN, createTime, updateTime, *triggerTransitionAt,
+		h.realtimeRouteSignature(ctx), triggerStatus, setting.ConfigVersion,
+	)
 	if err != nil {
 		h.logger.Warn("shopee_auto_sml: enqueue failed", zap.Int64("shop_id", snap.ShopID), zap.String("order_sn", snap.OrderSN), zap.Error(err))
 		return
 	}
 	if inserted {
+		h.logger.Info("shopee_auto_sml: queued",
+			zap.Int64("shop_id", snap.ShopID),
+			zap.String("order_sn", snap.OrderSN),
+			zap.String("trigger_status", triggerStatus),
+			zap.Int64("trigger_config_version", setting.ConfigVersion),
+			zap.Time("trigger_transition_at", *triggerTransitionAt),
+		)
 		h.publishShopeeRealtimeChanged(ctx, snap.ShopID, snap.OrderSN, "auto_sml_queued")
 	}
 }
 
-func (h *ShopeeRealtimeHandler) autoSMLReadyToShipAt(ctx context.Context, detail shopeeapi.OrderDetail, before, snap *models.ShopeeOrderSnapshot) (*time.Time, error) {
+func (h *ShopeeRealtimeHandler) autoSMLTriggerTransitionAt(ctx context.Context, triggerStatus string, detail shopeeapi.OrderDetail, before, snap *models.ShopeeOrderSnapshot) (*time.Time, error) {
 	if h == nil || h.repo == nil || snap == nil {
 		return nil, nil
 	}
-	transition, err := h.repo.OrderStatusTransitionAt(ctx, snap.ShopID, snap.OrderSN, "READY_TO_SHIP")
+	triggerStatus = models.NormalizeShopeeAutoSMLTriggerStatus(triggerStatus)
+	if triggerStatus == "" {
+		return nil, nil
+	}
+	transition, err := h.repo.OrderStatusTransitionAt(ctx, snap.ShopID, snap.OrderSN, triggerStatus)
 	if err != nil || transition != nil {
 		return transition, err
 	}
-	if before == nil || models.NormalizeShopeeOrderStatus(before.OrderStatus) == "READY_TO_SHIP" || detail.UpdateTime <= 0 {
+	if before == nil || strings.EqualFold(strings.TrimSpace(before.OrderStatus), triggerStatus) ||
+		!strings.EqualFold(strings.TrimSpace(snap.OrderStatus), triggerStatus) || detail.UpdateTime <= 0 {
 		return nil, nil
 	}
 	value := time.Unix(detail.UpdateTime, 0)
@@ -87,26 +109,36 @@ func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context
 	for _, setting := range settings {
 		byShop[setting.ShopID] = setting
 	}
-	refs := make([]repository.ShopeeSnapshotRef, 0, len(snapshots))
+	refsByTrigger := map[string][]repository.ShopeeSnapshotRef{
+		models.ShopeeAutoSMLTriggerReadyToShip: {},
+		models.ShopeeAutoSMLTriggerProcessed:   {},
+	}
 	for i := range snapshots {
 		snap := &snapshots[i]
 		setting, ok := byShop[snap.ShopID]
-		if snap.AutoSML.Status == "" && models.NormalizeShopeeOrderStatus(snap.OrderStatus) == "READY_TO_SHIP" &&
-			ok && setting.Enabled && setting.PausedReason == "" && setting.EligibleAfter != nil {
-			refs = append(refs, repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN})
+		triggerStatus := models.NormalizeShopeeAutoSMLTriggerStatus(setting.TriggerStatus)
+		if snap.AutoSML.Status == "" && ok && setting.Enabled && setting.PausedReason == "" && setting.EligibleAfter != nil &&
+			models.ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, snap.OrderStatus) {
+			refsByTrigger[triggerStatus] = append(refsByTrigger[triggerStatus], repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN})
 		}
 	}
-	transitions, err := h.repo.OrderStatusTransitionTimes(ctx, refs, "READY_TO_SHIP")
-	if err != nil {
-		return
+	transitionsByTrigger := make(map[string]map[repository.ShopeeSnapshotRef]time.Time, 2)
+	for _, triggerStatus := range []string{models.ShopeeAutoSMLTriggerReadyToShip, models.ShopeeAutoSMLTriggerProcessed} {
+		transitions, err := h.repo.OrderStatusTransitionTimes(ctx, refsByTrigger[triggerStatus], triggerStatus)
+		if err != nil {
+			return
+		}
+		transitionsByTrigger[triggerStatus] = transitions
 	}
 	for i := range snapshots {
 		snap := &snapshots[i]
-		if snap.AutoSML.Status != "" || strings.ToUpper(strings.TrimSpace(snap.OrderStatus)) != "READY_TO_SHIP" {
+		if snap.AutoSML.Status != "" {
 			continue
 		}
 		setting, ok := byShop[snap.ShopID]
-		if !ok || !setting.Enabled || setting.PausedReason != "" || setting.EligibleAfter == nil {
+		triggerStatus := models.NormalizeShopeeAutoSMLTriggerStatus(setting.TriggerStatus)
+		if !ok || !setting.Enabled || setting.PausedReason != "" || setting.EligibleAfter == nil ||
+			!models.ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, snap.OrderStatus) {
 			continue
 		}
 		var detail shopeeapi.OrderDetail
@@ -114,14 +146,45 @@ func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context
 			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "missing_create_time", ErrorMessage: "Shopee ไม่มี create_time จึงต้องสร้างและส่ง SML ด้วยมือ"}
 			continue
 		}
-		readyToShipAt, found := transitions[repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN}]
+		triggerTransitionAt, found := transitionsByTrigger[triggerStatus][repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN}]
 		if !found {
-			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "missing_ready_transition", ErrorMessage: "ไม่พบเวลาเข้า READY_TO_SHIP จึงต้องสร้างและส่ง SML ด้วยมือ"}
+			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "missing_trigger_transition", ErrorMessage: "ไม่พบเวลาเข้า " + triggerStatus + " จึงต้องสร้างและส่ง SML ด้วยมือ"}
 			continue
 		}
-		if readyToShipAt.Before(*setting.EligibleAfter) {
-			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "before_eligible_after", ErrorMessage: "ออเดอร์นี้เข้า READY_TO_SHIP ก่อนเปิด Auto SML จึงไม่ประมวลผลย้อนหลัง"}
+		if triggerTransitionAt.Before(*setting.EligibleAfter) {
+			snap.AutoSML = models.ShopeeAutoSMLJobView{Status: "manual_required", ErrorCode: "before_eligible_after", ErrorMessage: "ออเดอร์นี้เข้า " + triggerStatus + " ก่อนบันทึก Auto SML จึงไม่ประมวลผลย้อนหลัง"}
 		}
+	}
+}
+
+type autoSMLTriggerDecision string
+
+const (
+	autoSMLTriggerProceed autoSMLTriggerDecision = "proceed"
+	autoSMLTriggerCancel  autoSMLTriggerDecision = "cancel"
+	autoSMLTriggerReview  autoSMLTriggerDecision = "review"
+)
+
+func classifyAutoSMLJobTrigger(job models.ShopeeAutoSMLJob, orderStatus string) (autoSMLTriggerDecision, string, string) {
+	orderStatus = strings.ToUpper(strings.TrimSpace(orderStatus))
+	if models.ShopeeAutoSMLStopStatus(orderStatus) {
+		return autoSMLTriggerCancel, "status_changed", "สถานะ Shopee เปลี่ยนเป็น " + orderStatus + " ก่อนเริ่มส่ง SML"
+	}
+	triggerStatus := models.NormalizeShopeeAutoSMLTriggerStatus(job.TriggerStatusSnapshot)
+	if triggerStatus == "" {
+		return autoSMLTriggerReview, "invalid_trigger_snapshot", "งานไม่มีสถานะเริ่มสร้างบิลที่ถูกต้อง กรุณาตรวจสอบก่อนส่ง SML"
+	}
+	if job.TriggerTransitionAt == nil || job.TriggerTransitionAt.IsZero() {
+		return autoSMLTriggerReview, "missing_trigger_transition", "งานไม่มีหลักฐานเวลาเข้า " + triggerStatus + " กรุณาตรวจสอบก่อนส่ง SML"
+	}
+	if models.ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, orderStatus) {
+		return autoSMLTriggerProceed, "", ""
+	}
+	switch orderStatus {
+	case "READY_TO_SHIP", "PROCESSED", "SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED":
+		return autoSMLTriggerReview, "trigger_status_not_reached", "สถานะล่าสุดของ Shopee ยังไม่สอดคล้องกับ " + triggerStatus
+	default:
+		return autoSMLTriggerReview, "unknown_order_status", "พบสถานะ Shopee ที่ระบบยังไม่รู้จัก: " + firstNonEmpty(orderStatus, "(ว่าง)")
 	}
 }
 
@@ -170,7 +233,14 @@ func (h *ShopeeRealtimeHandler) processAutoSMLBatch(ctx context.Context) {
 
 func (h *ShopeeRealtimeHandler) processAutoSMLJob(ctx context.Context, job models.ShopeeAutoSMLJob) {
 	started := time.Now()
-	log := h.logger.With(zap.String("job_id", job.ID), zap.Int64("shop_id", job.ShopID), zap.String("order_sn", job.OrderSN), zap.Int("attempt", job.Attempts))
+	log := h.logger.With(
+		zap.String("job_id", job.ID),
+		zap.Int64("shop_id", job.ShopID),
+		zap.String("order_sn", job.OrderSN),
+		zap.Int("attempt", job.Attempts),
+		zap.String("trigger_status", job.TriggerStatusSnapshot),
+		zap.Int64("trigger_config_version", job.TriggerConfigVersion),
+	)
 	defer func() {
 		log.Info("shopee_auto_sml: processed", zap.Duration("duration", time.Since(started)))
 	}()
@@ -191,17 +261,26 @@ func (h *ShopeeRealtimeHandler) processAutoSMLJob(ctx context.Context, job model
 		h.handleAutoSMLTransient(ctx, job, "shopee_reconcile_failed", shopeeAPIErrorMessage(err, "ตรวจสถานะล่าสุดจาก Shopee ไม่สำเร็จ").Message, nil)
 		return
 	}
-	if strings.ToUpper(strings.TrimSpace(snap.OrderStatus)) != "READY_TO_SHIP" {
-		_ = h.autoSMLRepo.MarkCancelled(ctx, job.ID, "status_changed", "สถานะ Shopee เปลี่ยนก่อนเริ่มส่ง SML")
+	decision, decisionCode, decisionMessage := classifyAutoSMLJobTrigger(job, snap.OrderStatus)
+	if decision == autoSMLTriggerCancel {
+		_ = h.autoSMLRepo.MarkCancelled(ctx, job.ID, decisionCode, decisionMessage)
 		h.publishShopeeRealtimeChanged(ctx, job.ShopID, job.OrderSN, "auto_sml_cancelled")
+		return
+	}
+	if decision == autoSMLTriggerReview {
+		h.markAutoSMLNeedsReview(ctx, job, decisionCode, decisionMessage, snap)
 		return
 	}
 
 	requestRaw, _ := json.Marshal(gin.H{"confirm": "AUTO_SML", "job_id": job.ID})
-	outcome := h.createDocumentForOrderMode(ctx, job.ShopID, job.OrderSN, "", "auto-sml-"+job.ID, requestRaw, true)
+	outcome := h.createDocumentForOrderMode(ctx, job.ShopID, job.OrderSN, "", "auto-sml-"+job.ID, requestRaw, job.TriggerStatusSnapshot)
 	if outcome.HTTPStatus >= 400 && strings.TrimSpace(outcome.BillID) == "" {
-		if outcome.HTTPStatus == http.StatusConflict && strings.Contains(outcome.Reason, "READY_TO_SHIP") {
+		if outcome.ReasonCode == "unpaid" || outcome.ReasonCode == "cancelled" {
 			_ = h.autoSMLRepo.MarkCancelled(ctx, job.ID, "status_changed", outcome.Reason)
+			return
+		}
+		if outcome.ReasonCode == "trigger_status_not_reached" {
+			h.markAutoSMLNeedsReview(ctx, job, outcome.ReasonCode, outcome.Reason, snap)
 			return
 		}
 		if outcome.HTTPStatus == http.StatusConflict && strings.Contains(outcome.Reason, "กำลังสร้างเอกสาร") {
@@ -376,6 +455,7 @@ func (h *ShopeeRealtimeHandler) autoSMLNotification(job models.ShopeeAutoSMLJob,
 		out.TotalAmount = snap.TotalAmount
 	}
 	out.Items, out.ItemCount = autoSMLNotificationItems(snap, bill)
+	out.ShippingLines = autoSMLNotificationShippingLines(bill)
 	if bill != nil {
 		out.BillID = bill.ID
 		if bill.SMLDocNo != nil {
@@ -383,6 +463,40 @@ func (h *ShopeeRealtimeHandler) autoSMLNotification(job models.ShopeeAutoSMLJob,
 		}
 	}
 	return out
+}
+
+func autoSMLNotificationShippingLines(bill *models.Bill) []models.ShopeeAutoSMLShippingLine {
+	if bill == nil {
+		return nil
+	}
+	lines := make([]models.ShopeeAutoSMLShippingLine, 0, 1)
+	for _, item := range bill.Items {
+		if strings.TrimSpace(item.SourceSKU) != models.ShopeeShippingSourceSKU {
+			continue
+		}
+		qty := item.Qty
+		if item.SMLQty != nil {
+			qty = *item.SMLQty
+		}
+		amount := 0.0
+		if item.GrossAmount != nil {
+			amount = *item.GrossAmount
+		} else if item.Price != nil {
+			amount = item.Qty * *item.Price
+		}
+		line := models.ShopeeAutoSMLShippingLine{Amount: amount, Qty: qty}
+		if item.ItemCode != nil {
+			line.ItemCode = strings.TrimSpace(*item.ItemCode)
+		}
+		if item.UnitCode != nil {
+			line.UnitCode = strings.TrimSpace(*item.UnitCode)
+		}
+		lines = append(lines, line)
+		if len(lines) == 3 {
+			break
+		}
+	}
+	return lines
 }
 
 func autoSMLNotificationItems(snap *models.ShopeeOrderSnapshot, bill *models.Bill) ([]models.ShopeeAutoSMLNotificationItem, int) {
@@ -531,26 +645,72 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Enabled bool   `json:"enabled"`
-		Confirm string `json:"confirm"`
+		Enabled               *bool   `json:"enabled"`
+		TriggerStatus         *string `json:"trigger_status"`
+		ExpectedConfigVersion *int64  `json:"expected_config_version"`
+		Confirm               string  `json:"confirm"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
 		return
 	}
-	if req.Enabled {
-		if req.Confirm != "ENABLE_AUTO_SML" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณายืนยันด้วย ENABLE_AUTO_SML"})
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ enabled"})
+		return
+	}
+	if req.TriggerStatus != nil && req.ExpectedConfigVersion == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ expected_config_version เมื่อเปลี่ยนสถานะเริ่มสร้างบิล", "code": "config_version_required"})
+		return
+	}
+	if req.ExpectedConfigVersion != nil && *req.ExpectedConfigVersion <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expected_config_version ไม่ถูกต้อง", "code": "invalid_config_version"})
+		return
+	}
+	before, err := h.autoSMLRepo.GetSetting(c.Request.Context(), shopID)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบร้าน Shopee"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดการตั้งค่า Auto SML ไม่สำเร็จ"})
+		return
+	}
+	targetTrigger := models.NormalizeShopeeAutoSMLTriggerStatus(before.TriggerStatus)
+	if targetTrigger == "" {
+		targetTrigger = models.ShopeeAutoSMLTriggerReadyToShip
+	}
+	if req.TriggerStatus != nil {
+		targetTrigger = models.NormalizeShopeeAutoSMLTriggerStatus(*req.TriggerStatus)
+		if targetTrigger == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "สถานะเริ่มสร้างบิลต้องเป็น READY_TO_SHIP หรือ PROCESSED", "code": "invalid_trigger_status"})
 			return
 		}
+	}
+	requiredConfirmation := requiredAutoSMLSettingConfirmation(*before, *req.Enabled, targetTrigger)
+	if requiredConfirmation != "" && strings.TrimSpace(req.Confirm) != requiredConfirmation {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณายืนยันด้วย " + requiredConfirmation, "code": "confirmation_required"})
+		return
+	}
+	if *req.Enabled {
 		if code, message := h.autoSMLPreflight(c.Request.Context(), shopID); code != "" {
 			c.JSON(http.StatusConflict, gin.H{"error": message, "code": code})
 			return
 		}
 	}
-	setting, err := h.autoSMLRepo.SetEnabled(c.Request.Context(), shopID, req.Enabled, c.GetString("user_id"), h.realtimeRouteSignature(c.Request.Context()))
+	setting, err := h.autoSMLRepo.UpdateSetting(c.Request.Context(), repository.ShopeeAutoSMLSettingUpdate{
+		ShopID: shopID, Enabled: *req.Enabled, TriggerStatus: req.TriggerStatus,
+		ExpectedConfigVersion: req.ExpectedConfigVersion, UserID: c.GetString("user_id"),
+		RouteSignature: h.realtimeRouteSignature(c.Request.Context()),
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบร้าน Shopee"})
+		return
+	}
+	if errors.Is(err, repository.ErrShopeeAutoSMLConfigConflict) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "การตั้งค่าถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดค่าล่าสุดก่อนบันทึกใหม่",
+			"code":  "auto_sml_config_changed",
+		})
 		return
 	}
 	if err != nil {
@@ -560,10 +720,33 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 	if h.billH != nil && h.billH.auditRepo != nil {
 		target := strconv.FormatInt(shopID, 10)
 		userID := c.GetString("user_id")
-		h.billH.auditRepo.Log(models.AuditEntry{Action: "shopee_auto_sml_setting_updated", TargetID: &target, UserID: &userID, Source: "shopee_realtime", Detail: gin.H{"enabled": req.Enabled}})
+		h.billH.auditRepo.Log(models.AuditEntry{
+			Action: "shopee_auto_sml_setting_updated", TargetID: &target, UserID: &userID, Source: "shopee_realtime",
+			Detail: gin.H{
+				"before": gin.H{"enabled": before.Enabled, "trigger_status": before.TriggerStatus, "eligible_after": before.EligibleAfter, "config_version": before.ConfigVersion},
+				"after":  gin.H{"enabled": setting.Enabled, "trigger_status": setting.TriggerStatus, "eligible_after": setting.EligibleAfter, "config_version": setting.ConfigVersion},
+			},
+		})
 	}
 	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, "", "auto_sml_setting_updated")
-	c.JSON(http.StatusOK, gin.H{"setting": setting, "message": map[bool]string{true: "เปิดสร้างบิล SML อัตโนมัติแล้ว", false: "ปิดสร้างบิล SML อัตโนมัติแล้ว"}[req.Enabled]})
+	message := map[bool]string{true: "เปิดสร้างบิล SML อัตโนมัติแล้ว", false: "ปิดสร้างบิล SML อัตโนมัติแล้ว"}[*req.Enabled]
+	if before.Enabled && setting.Enabled && before.TriggerStatus != setting.TriggerStatus {
+		message = "เปลี่ยนสถานะเริ่มสร้างบิล SML อัตโนมัติแล้ว"
+	}
+	c.JSON(http.StatusOK, gin.H{"setting": setting, "message": message})
+}
+
+func requiredAutoSMLSettingConfirmation(before models.ShopeeAutoSMLSetting, enabled bool, triggerStatus string) string {
+	if !enabled {
+		return ""
+	}
+	if !before.Enabled {
+		return "ENABLE_AUTO_SML"
+	}
+	if models.NormalizeShopeeAutoSMLTriggerStatus(before.TriggerStatus) != models.NormalizeShopeeAutoSMLTriggerStatus(triggerStatus) {
+		return "UPDATE_AUTO_SML_TRIGGER"
+	}
+	return ""
 }
 
 func (h *ShopeeRealtimeHandler) RetryAutoSML(c *gin.Context) {

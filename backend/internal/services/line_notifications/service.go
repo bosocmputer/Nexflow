@@ -216,6 +216,10 @@ func buildShopeeAutoSMLText(title string, in models.ShopeeAutoSMLNotification, a
 		lines = append(lines, "รายการสินค้า")
 		lines = append(lines, items...)
 	}
+	if shipping := shopeeAutoSMLShippingLines(in, 3); len(shipping) > 0 {
+		lines = append(lines, "ค่าจัดส่งเข้า SML")
+		lines = append(lines, shipping...)
+	}
 	if strings.TrimSpace(in.ErrorMessage) != "" {
 		lines = append(lines, "ต้องดำเนินการ: "+strings.TrimSpace(in.ErrorMessage))
 	}
@@ -255,6 +259,15 @@ func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotificat
 		)
 		for _, item := range items {
 			body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
+		}
+	}
+	if shipping := shopeeAutoSMLShippingLines(in, 3); len(shipping) > 0 {
+		body = append(body,
+			map[string]any{"type": "separator", "margin": "md"},
+			flexText("ค่าจัดส่งเข้า SML", "sm", "bold", "#334155", "md", true),
+		)
+		for _, line := range shipping {
+			body = append(body, flexText(line, "sm", "", "#0F172A", "", true))
 		}
 	}
 	if strings.TrimSpace(in.ErrorMessage) != "" {
@@ -300,6 +313,34 @@ func shopeeAutoSMLProductLines(in models.ShopeeAutoSMLNotification, limit int) [
 		out = append(out, fmt.Sprintf("และอีก %d รายการ", total-len(items)))
 	}
 	return out
+}
+
+func shopeeAutoSMLShippingLines(in models.ShopeeAutoSMLNotification, limit int) []string {
+	if limit <= 0 {
+		limit = 3
+	}
+	out := make([]string, 0, minInt(len(in.ShippingLines), limit))
+	for i := 0; i < len(in.ShippingLines) && len(out) < limit; i++ {
+		line := in.ShippingLines[i]
+		parts := []string{formatLineMoneyValue(line.Amount) + " บาท"}
+		if itemCode := compactWhitespace(line.ItemCode); itemCode != "" {
+			parts = append(parts, itemCode)
+		}
+		quantity := formatAutoSMLShippingQty(line.Qty)
+		if unitCode := compactWhitespace(line.UnitCode); unitCode != "" {
+			quantity += " " + unitCode
+		}
+		parts = append(parts, quantity)
+		out = append(out, strings.Join(parts, " · "))
+	}
+	return out
+}
+
+func formatAutoSMLShippingQty(qty float64) string {
+	if math.Abs(qty-math.Round(qty)) < 0.000001 {
+		return fmt.Sprintf("%.0f", qty)
+	}
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", qty), "0"), ".")
 }
 
 func shopeeAutoSMLActionURL(publicBaseURL string, in models.ShopeeAutoSMLNotification) string {

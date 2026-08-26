@@ -12,10 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/config"
 	"nexflow/internal/models"
+	"nexflow/internal/repository"
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/sml"
 )
@@ -124,6 +126,115 @@ func TestAutoSMLDocumentTimeUsesBangkok(t *testing.T) {
 	}
 }
 
+func TestClassifyAutoSMLJobTrigger(t *testing.T) {
+	transitionAt := time.Date(2026, 8, 26, 13, 30, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		job      models.ShopeeAutoSMLJob
+		status   string
+		decision autoSMLTriggerDecision
+		code     string
+	}{
+		{
+			name:   "ready trigger may continue after packing",
+			job:    models.ShopeeAutoSMLJob{TriggerStatusSnapshot: models.ShopeeAutoSMLTriggerReadyToShip, TriggerTransitionAt: &transitionAt},
+			status: "PROCESSED", decision: autoSMLTriggerProceed,
+		},
+		{
+			name:   "processed trigger waits for processed",
+			job:    models.ShopeeAutoSMLJob{TriggerStatusSnapshot: models.ShopeeAutoSMLTriggerProcessed, TriggerTransitionAt: &transitionAt},
+			status: "READY_TO_SHIP", decision: autoSMLTriggerReview, code: "trigger_status_not_reached",
+		},
+		{
+			name:   "missing transition proof fails closed",
+			job:    models.ShopeeAutoSMLJob{TriggerStatusSnapshot: models.ShopeeAutoSMLTriggerReadyToShip},
+			status: "READY_TO_SHIP", decision: autoSMLTriggerReview, code: "missing_trigger_transition",
+		},
+		{
+			name:   "cancellation stops the job",
+			job:    models.ShopeeAutoSMLJob{TriggerStatusSnapshot: models.ShopeeAutoSMLTriggerReadyToShip, TriggerTransitionAt: &transitionAt},
+			status: "IN_CANCEL", decision: autoSMLTriggerCancel, code: "status_changed",
+		},
+		{
+			name:   "unknown lifecycle fails closed",
+			job:    models.ShopeeAutoSMLJob{TriggerStatusSnapshot: models.ShopeeAutoSMLTriggerReadyToShip, TriggerTransitionAt: &transitionAt},
+			status: "FUTURE_STATUS", decision: autoSMLTriggerReview, code: "unknown_order_status",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision, code, _ := classifyAutoSMLJobTrigger(tt.job, tt.status)
+			if decision != tt.decision || code != tt.code {
+				t.Fatalf("decision/code = %s/%s, want %s/%s", decision, code, tt.decision, tt.code)
+			}
+		})
+	}
+}
+
+func TestAutoSMLTriggerTransitionFallbackRequiresExactObservedTransition(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := &ShopeeRealtimeHandler{repo: repository.NewShopeeRealtimeRepo(db)}
+	updateUnix := int64(1787731200)
+	before := &models.ShopeeOrderSnapshot{ShopID: 264993963, OrderSN: "ORDER-1", OrderStatus: "READY_TO_SHIP"}
+	processed := &models.ShopeeOrderSnapshot{ShopID: 264993963, OrderSN: "ORDER-1", OrderStatus: "PROCESSED"}
+
+	mock.ExpectQuery("WITH requested\\(shop_id,order_sn\\) AS").
+		WithArgs(int64(264993963), "ORDER-1", models.ShopeeAutoSMLTriggerProcessed).
+		WillReturnRows(sqlmock.NewRows([]string{"shop_id", "order_sn", "transition_at"}))
+	got, err := h.autoSMLTriggerTransitionAt(t.Context(), models.ShopeeAutoSMLTriggerProcessed,
+		shopeeapi.OrderDetail{UpdateTime: updateUnix}, before, processed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Unix() != updateUnix {
+		t.Fatalf("transition = %v, want exact observed get_order_detail update_time", got)
+	}
+
+	shipped := &models.ShopeeOrderSnapshot{ShopID: 264993963, OrderSN: "ORDER-1", OrderStatus: "SHIPPED"}
+	mock.ExpectQuery("WITH requested\\(shop_id,order_sn\\) AS").
+		WithArgs(int64(264993963), "ORDER-1", models.ShopeeAutoSMLTriggerProcessed).
+		WillReturnRows(sqlmock.NewRows([]string{"shop_id", "order_sn", "transition_at"}))
+	got, err = h.autoSMLTriggerTransitionAt(t.Context(), models.ShopeeAutoSMLTriggerProcessed,
+		shopeeapi.OrderDetail{UpdateTime: updateUnix + 60}, processed, shipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("later state without exact PROCESSED push evidence returned %v", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRequiredAutoSMLSettingConfirmation(t *testing.T) {
+	tests := []struct {
+		name          string
+		beforeEnabled bool
+		beforeTrigger string
+		afterEnabled  bool
+		afterTrigger  string
+		want          string
+	}{
+		{"enable with selected trigger", false, "READY_TO_SHIP", true, "PROCESSED", "ENABLE_AUTO_SML"},
+		{"change trigger while enabled", true, "READY_TO_SHIP", true, "PROCESSED", "UPDATE_AUTO_SML_TRIGGER"},
+		{"no-op", true, "READY_TO_SHIP", true, "READY_TO_SHIP", ""},
+		{"disable", true, "PROCESSED", false, "PROCESSED", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := models.ShopeeAutoSMLSetting{Enabled: tt.beforeEnabled, TriggerStatus: tt.beforeTrigger}
+			if got := requiredAutoSMLSettingConfirmation(before, tt.afterEnabled, tt.afterTrigger); got != tt.want {
+				t.Fatalf("confirmation = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAutoSMLNotificationItemsPreferShopeeSnapshotAndOmitPII(t *testing.T) {
 	snap := &models.ShopeeOrderSnapshot{
 		ItemCount: 1,
@@ -166,6 +277,31 @@ func TestAutoSMLNotificationItemsFallbackToBillAndSkipShipping(t *testing.T) {
 	items, total := autoSMLNotificationItems(nil, bill)
 	if total != 1 || len(items) != 1 || items[0].Name != "สินค้า A / สีแดง" || items[0].Qty != 3 {
 		t.Fatalf("fallback items=%+v total=%d", items, total)
+	}
+}
+
+func TestAutoSMLNotificationShippingUsesFinalBillItemOnly(t *testing.T) {
+	itemCode := "AH-0061"
+	unitCode := "ชิ้น"
+	price := 15.0
+	gross := 15.0
+	bill := &models.Bill{Items: []models.BillItem{
+		{RawName: "สินค้า A", Qty: 1},
+		{
+			RawName: "ค่าจัดส่ง Shopee", SourceSKU: models.ShopeeShippingSourceSKU,
+			ItemCode: &itemCode, UnitCode: &unitCode, Qty: 1, Price: &price, GrossAmount: &gross,
+		},
+	}}
+
+	lines := autoSMLNotificationShippingLines(bill)
+	if len(lines) != 1 {
+		t.Fatalf("shipping lines = %+v, want one", lines)
+	}
+	if lines[0].Amount != 15 || lines[0].ItemCode != "AH-0061" || lines[0].Qty != 1 || lines[0].UnitCode != "ชิ้น" {
+		t.Fatalf("unexpected shipping line: %+v", lines[0])
+	}
+	if got := autoSMLNotificationShippingLines(&models.Bill{Items: []models.BillItem{{RawName: "สินค้า A", Qty: 1}}}); len(got) != 0 {
+		t.Fatalf("bill without a shipping item returned %+v", got)
 	}
 }
 

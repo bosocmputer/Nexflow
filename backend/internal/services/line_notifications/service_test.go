@@ -78,9 +78,12 @@ func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
 		Items: []models.ShopeeAutoSMLNotificationItem{{
 			Name: "สีเพ้นคิ้วเฮนน่า\n", Variant: "3.น้ำตาลดำ", Qty: 2,
 		}},
+		ShippingLines: []models.ShopeeAutoSMLShippingLine{{
+			Amount: 15, ItemCode: "AH-0061", Qty: 1, UnitCode: "ชิ้น",
+		}},
 	}
 	text := buildShopeeAutoSMLText("สร้างบิล SML จาก Shopee สำเร็จ", in, "https://nexflow.example/sale-invoices/bill-id")
-	for _, want := range []string{"ORDER-1", "BF-INV26080099", "12,345.50", "รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2"} {
+	for _, want := range []string{"ORDER-1", "BF-INV26080099", "12,345.50", "รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2", "ค่าจัดส่งเข้า SML", "15.00 บาท · AH-0061 · 1 ชิ้น"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("text missing %q: %s", want, text)
 		}
@@ -102,10 +105,29 @@ func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal auto SML flex: %v", err)
 	}
-	for _, want := range []string{"รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2"} {
+	for _, want := range []string{"รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2", "ค่าจัดส่งเข้า SML", "15.00 บาท · AH-0061 · 1 ชิ้น"} {
 		if !strings.Contains(string(buf), want) {
 			t.Fatalf("auto SML flex missing %q: %s", want, buf)
 		}
+	}
+}
+
+func TestBuildShopeeAutoSMLMessagesOmitShippingSectionWithoutFinalBillLine(t *testing.T) {
+	in := models.ShopeeAutoSMLNotification{
+		ShopID: 264993963, OrderSN: "BF-INV26080059", TotalAmount: 270,
+		Items: []models.ShopeeAutoSMLNotificationItem{{Name: "สินค้า A", Qty: 1}}, ItemCount: 1,
+	}
+	text := buildShopeeAutoSMLText("สร้างบิล SML จาก Shopee สำเร็จ", in, "")
+	if strings.Contains(text, "ค่าจัดส่งเข้า SML") || strings.Contains(text, "38.00") {
+		t.Fatalf("notification invented a shipping line: %s", text)
+	}
+	_, flex := buildShopeeAutoSMLFlex("สร้างบิล SML จาก Shopee สำเร็จ", "success", in, "")
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(buf), "ค่าจัดส่งเข้า SML") || strings.Contains(string(buf), "38.00") {
+		t.Fatalf("Flex invented a shipping line: %s", buf)
 	}
 }
 

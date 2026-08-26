@@ -88,7 +88,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–089** (all idempotent/re-runnable)
+Migrations available on boot: **001–090** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -120,6 +120,7 @@ Key recent migrations:
 | 085–087 | Marketplace units/reservations and Shopee net stock from outstanding sales orders |
 | 088 | Selectable Shopee cancellation destinations: TRANS_FLAG 45 or 48 |
 | 089 | Durable final-CANCELLED SML document queue, immutable retries, and cancellation stock recalculation |
+| 090 | Versioned per-shop Auto SML trigger (`READY_TO_SHIP` or `PROCESSED`) and immutable job transition snapshots |
 | 079 | TikTok gross line amounts, durable amount review and one source artifact per import run |
 | 080 | Safe shared SML stock allocation across multiple active Shopee listings |
 | 081 | Persist excluded SML warehouse/location details per Shopee stock mapping |
@@ -167,7 +168,10 @@ either to `false` to hide or disable the LINE MyShop integration during rollback
 
 `SHOPEE_AUTO_SML_ENABLED` defaults to `false`. A tenant-level value of `true`
 only starts the durable worker; each shop remains disabled until an admin passes
-the readiness check and confirms activation in `/shopee-operations`.
+the readiness check and confirms activation in `/shopee-operations`. The
+per-shop trigger defaults to `READY_TO_SHIP` and may be changed to `PROCESSED`.
+Changing it creates a new cutoff for future transitions only; queued jobs keep
+their snapshotted trigger and configuration version.
 
 `SHOPEE_AUTO_SML_CANCEL_ENABLED` defaults to `false`. When enabled, a verified
 transition to Shopee `CANCELLED` for an order whose SML sale was already sent is

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestAutoSMLListSettingsExcludesDisabledConnections(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("JOIN shopee_api_connections c ON c.shop_id = st.shop_id AND c.disabled_at IS NULL").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"shop_id", "shop_label", "enabled", "eligible_after", "route_signature", "enabled_by",
+			"shop_id", "shop_label", "enabled", "trigger_status", "config_version", "eligible_after", "route_signature", "enabled_by",
 			"enabled_at", "paused_reason", "paused_at", "consecutive_system_failures", "last_success_at",
 			"last_failure_at", "queued_count", "needs_review_count", "failed_count", "oldest_queued_at", "updated_at",
 		}))
@@ -40,7 +41,84 @@ func TestAutoSMLListSettingsExcludesDisabledConnections(t *testing.T) {
 	}
 }
 
-func TestAutoSMLEnqueueUsesReadyToShipTransitionCutoff(t *testing.T) {
+func TestAutoSMLUpdateSettingRejectsStaleConfigVersion(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeAutoSMLRepo(db)
+
+	expectedVersion := int64(6)
+	trigger := models.ShopeeAutoSMLTriggerProcessed
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO shopee_auto_sml_settings").
+		WithArgs(int64(264993963)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT enabled,trigger_status,config_version,route_signature,paused_reason").
+		WithArgs(int64(264993963)).
+		WillReturnRows(sqlmock.NewRows([]string{"enabled", "trigger_status", "config_version", "route_signature", "paused_reason"}).
+			AddRow(true, models.ShopeeAutoSMLTriggerReadyToShip, int64(7), "route-v1", ""))
+	mock.ExpectRollback()
+
+	_, err = repo.UpdateSetting(t.Context(), ShopeeAutoSMLSettingUpdate{
+		ShopID: 264993963, Enabled: true, TriggerStatus: &trigger,
+		ExpectedConfigVersion: &expectedVersion, RouteSignature: "route-v1",
+	})
+	if !errors.Is(err, ErrShopeeAutoSMLConfigConflict) {
+		t.Fatalf("UpdateSetting error = %v, want config conflict", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutoSMLUpdateSettingKeepsCurrentTriggerWhenLegacyClientOmitsIt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeAutoSMLRepo(db)
+
+	shopID := int64(264993963)
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO shopee_auto_sml_settings").WithArgs(shopID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT enabled,trigger_status,config_version,route_signature,paused_reason").WithArgs(shopID).
+		WillReturnRows(sqlmock.NewRows([]string{"enabled", "trigger_status", "config_version", "route_signature", "paused_reason"}).
+			AddRow(false, models.ShopeeAutoSMLTriggerProcessed, int64(3), "", ""))
+	mock.ExpectExec("UPDATE shopee_auto_sml_settings").
+		WithArgs(shopID, models.ShopeeAutoSMLTriggerProcessed, int64(4), "route-v2", "").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectExec("INSERT INTO shopee_auto_sml_settings").WithArgs(shopID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT st.shop_id").WithArgs(shopID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"shop_id", "shop_label", "enabled", "trigger_status", "config_version", "eligible_after", "route_signature", "enabled_by",
+			"enabled_at", "paused_reason", "paused_at", "consecutive_system_failures", "last_success_at",
+			"last_failure_at", "queued_count", "needs_review_count", "failed_count", "oldest_queued_at", "updated_at",
+		}).AddRow(
+			shopID, "Henna.milkford", true, models.ShopeeAutoSMLTriggerProcessed, int64(4), time.Now(), "route-v2", nil,
+			time.Now(), "", nil, 0, nil, nil, 0, 0, 0, nil, time.Now(),
+		))
+
+	setting, err := repo.UpdateSetting(t.Context(), ShopeeAutoSMLSettingUpdate{
+		ShopID: shopID, Enabled: true, RouteSignature: "route-v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setting.TriggerStatus != models.ShopeeAutoSMLTriggerProcessed || setting.ConfigVersion != 4 {
+		t.Fatalf("setting trigger/version = %s/%d, want PROCESSED/4", setting.TriggerStatus, setting.ConfigVersion)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAutoSMLEnqueueSnapshotsTriggerTransitionAndConfigVersion(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -50,12 +128,18 @@ func TestAutoSMLEnqueueUsesReadyToShipTransitionCutoff(t *testing.T) {
 
 	createdAt := time.Date(2026, 8, 24, 6, 46, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
-	readyAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
-	mock.ExpectExec("AND st.eligible_after IS NOT NULL AND \\$5 >= st.eligible_after").
-		WithArgs(int64(264993963), "2608247BT82QQM", createdAt, &updatedAt, readyAt, "route-signature").
+	processedAt := time.Date(2026, 8, 24, 7, 16, 0, 0, time.UTC)
+	mock.ExpectExec("trigger_status_snapshot,trigger_transition_at,trigger_config_version").
+		WithArgs(
+			int64(264993963), "2608247BT82QQM", createdAt, &updatedAt,
+			processedAt, "route-signature", models.ShopeeAutoSMLTriggerProcessed, int64(7),
+		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	inserted, err := repo.Enqueue(context.Background(), 264993963, "2608247BT82QQM", createdAt, &updatedAt, readyAt, "route-signature")
+	inserted, err := repo.Enqueue(
+		context.Background(), 264993963, "2608247BT82QQM", createdAt, &updatedAt,
+		processedAt, "route-signature", models.ShopeeAutoSMLTriggerProcessed, 7,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

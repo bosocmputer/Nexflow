@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +13,17 @@ import (
 
 type ShopeeAutoSMLRepo struct {
 	db *sql.DB
+}
+
+var ErrShopeeAutoSMLConfigConflict = errors.New("shopee auto SML config version changed")
+
+type ShopeeAutoSMLSettingUpdate struct {
+	ShopID                int64
+	Enabled               bool
+	TriggerStatus         *string
+	ExpectedConfigVersion *int64
+	UserID                string
+	RouteSignature        string
 }
 
 func NewShopeeAutoSMLRepo(db *sql.DB) *ShopeeAutoSMLRepo {
@@ -33,7 +45,8 @@ func (r *ShopeeAutoSMLRepo) ListSettings(ctx context.Context) ([]models.ShopeeAu
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT st.shop_id,
 		       COALESCE(NULLIF(c.label, ''), NULLIF(c.shop_name, ''), 'Shop ' || st.shop_id::text),
-		       st.enabled, st.eligible_after, st.route_signature, st.enabled_by::text,
+		       st.enabled, st.trigger_status, st.config_version,
+		       st.eligible_after, st.route_signature, st.enabled_by::text,
 		       st.enabled_at, st.paused_reason, st.paused_at,
 		       st.consecutive_system_failures, st.last_success_at, st.last_failure_at,
 		       COUNT(j.id) FILTER (WHERE j.status IN ('queued','running','retry_wait'))::int,
@@ -74,7 +87,8 @@ func (r *ShopeeAutoSMLRepo) GetSetting(ctx context.Context, shopID int64) (*mode
 	row := r.db.QueryRowContext(ctx, `
 		SELECT st.shop_id,
 		       COALESCE(NULLIF(c.label, ''), NULLIF(c.shop_name, ''), 'Shop ' || st.shop_id::text),
-		       st.enabled, st.eligible_after, st.route_signature, st.enabled_by::text,
+		       st.enabled, st.trigger_status, st.config_version,
+		       st.eligible_after, st.route_signature, st.enabled_by::text,
 		       st.enabled_at, st.paused_reason, st.paused_at,
 		       st.consecutive_system_failures, st.last_success_at, st.last_failure_at,
 		       COUNT(j.id) FILTER (WHERE j.status IN ('queued','running','retry_wait'))::int,
@@ -103,7 +117,8 @@ func scanShopeeAutoSMLSetting(s autoSMLSettingScanner) (models.ShopeeAutoSMLSett
 	var eligibleAfter, enabledAt, pausedAt, lastSuccessAt, lastFailureAt, oldestQueuedAt sql.NullTime
 	var enabledBy sql.NullString
 	err := s.Scan(
-		&out.ShopID, &out.ShopLabel, &out.Enabled, &eligibleAfter, &out.RouteSignature, &enabledBy,
+		&out.ShopID, &out.ShopLabel, &out.Enabled, &out.TriggerStatus, &out.ConfigVersion,
+		&eligibleAfter, &out.RouteSignature, &enabledBy,
 		&enabledAt, &out.PausedReason, &pausedAt, &out.ConsecutiveSystemFailures,
 		&lastSuccessAt, &lastFailureAt, &out.QueuedCount, &out.NeedsReviewCount,
 		&out.FailedCount, &oldestQueuedAt, &out.UpdatedAt,
@@ -142,7 +157,13 @@ func scanShopeeAutoSMLSetting(s autoSMLSettingScanner) (models.ShopeeAutoSMLSett
 }
 
 func (r *ShopeeAutoSMLRepo) SetEnabled(ctx context.Context, shopID int64, enabled bool, userID, routeSignature string) (*models.ShopeeAutoSMLSetting, error) {
-	if shopID <= 0 {
+	return r.UpdateSetting(ctx, ShopeeAutoSMLSettingUpdate{
+		ShopID: shopID, Enabled: enabled, UserID: userID, RouteSignature: routeSignature,
+	})
+}
+
+func (r *ShopeeAutoSMLRepo) UpdateSetting(ctx context.Context, in ShopeeAutoSMLSettingUpdate) (*models.ShopeeAutoSMLSetting, error) {
+	if in.ShopID <= 0 {
 		return nil, fmt.Errorf("shop_id is required")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -150,64 +171,101 @@ func (r *ShopeeAutoSMLRepo) SetEnabled(ctx context.Context, shopID int64, enable
 		return nil, err
 	}
 	defer tx.Rollback()
-	if enabled {
-		if strings.TrimSpace(routeSignature) == "" {
-			return nil, fmt.Errorf("route signature is required")
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO shopee_auto_sml_settings (shop_id)
+		SELECT shop_id FROM shopee_api_connections WHERE shop_id=$1 AND disabled_at IS NULL
+		ON CONFLICT (shop_id) DO NOTHING`, in.ShopID); err != nil {
+		return nil, err
+	}
+	var currentEnabled bool
+	var currentTrigger, currentRoute, pausedReason string
+	var currentVersion int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT enabled,trigger_status,config_version,route_signature,paused_reason
+		  FROM shopee_auto_sml_settings WHERE shop_id=$1 FOR UPDATE`, in.ShopID).
+		Scan(&currentEnabled, &currentTrigger, &currentVersion, &currentRoute, &pausedReason); err != nil {
+		return nil, err
+	}
+	if in.ExpectedConfigVersion != nil && *in.ExpectedConfigVersion != currentVersion {
+		return nil, ErrShopeeAutoSMLConfigConflict
+	}
+	targetTrigger := models.NormalizeShopeeAutoSMLTriggerStatus(currentTrigger)
+	if targetTrigger == "" {
+		targetTrigger = models.ShopeeAutoSMLTriggerReadyToShip
+	}
+	if in.TriggerStatus != nil {
+		targetTrigger = models.NormalizeShopeeAutoSMLTriggerStatus(*in.TriggerStatus)
+		if targetTrigger == "" {
+			return nil, fmt.Errorf("trigger_status must be READY_TO_SHIP or PROCESSED")
 		}
-		res, err := tx.ExecContext(ctx, `
-			INSERT INTO shopee_auto_sml_settings
-			  (shop_id,enabled,eligible_after,route_signature,enabled_by,enabled_at,
-			   paused_reason,paused_at,consecutive_system_failures,updated_at)
-			SELECT shop_id,true,NOW(),$2,NULLIF($3,'')::uuid,NOW(),'',NULL,0,NOW()
-			  FROM shopee_api_connections WHERE shop_id=$1 AND disabled_at IS NULL
-			ON CONFLICT (shop_id) DO UPDATE
-			  SET enabled=true,eligible_after=NOW(),route_signature=EXCLUDED.route_signature,
-			      enabled_by=EXCLUDED.enabled_by,enabled_at=NOW(),paused_reason='',paused_at=NULL,
-			      consecutive_system_failures=0,updated_at=NOW()`, shopID, strings.TrimSpace(routeSignature), strings.TrimSpace(userID))
+	}
+	routeSignature := strings.TrimSpace(in.RouteSignature)
+	if in.Enabled && routeSignature == "" {
+		return nil, fmt.Errorf("route signature is required")
+	}
+	changed := currentEnabled != in.Enabled || currentTrigger != targetTrigger
+	if in.Enabled && (currentRoute != routeSignature || pausedReason != "") {
+		changed = true
+	}
+	if changed {
+		nextVersion := currentVersion + 1
+		if in.Enabled {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE shopee_auto_sml_settings
+				   SET enabled=true,trigger_status=$2,config_version=$3,
+				       eligible_after=CASE
+				         WHEN enabled=false OR trigger_status<>$2 OR route_signature<>$4 OR paused_reason<>'' THEN NOW()
+				         ELSE eligible_after
+				       END,
+				       route_signature=$4,enabled_by=NULLIF($5,'')::uuid,
+				       enabled_at=CASE WHEN enabled=false THEN NOW() ELSE enabled_at END,
+				       paused_reason='',paused_at=NULL,consecutive_system_failures=0,updated_at=NOW()
+				 WHERE shop_id=$1`, in.ShopID, targetTrigger, nextVersion, routeSignature, strings.TrimSpace(in.UserID))
+		} else {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE shopee_auto_sml_settings
+				   SET enabled=false,trigger_status=$2,config_version=$3,updated_at=NOW()
+				 WHERE shop_id=$1`, in.ShopID, targetTrigger, nextVersion)
+		}
 		if err != nil {
 			return nil, err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return nil, sql.ErrNoRows
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO shopee_auto_sml_settings (shop_id,enabled,updated_at)
-			SELECT shop_id,false,NOW() FROM shopee_api_connections WHERE shop_id=$1 AND disabled_at IS NULL
-			ON CONFLICT (shop_id) DO UPDATE SET enabled=false,updated_at=NOW()`, shopID); err != nil {
-			return nil, err
-		}
+	}
+	if !in.Enabled {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE shopee_auto_sml_jobs
 			   SET status='cancelled',lease_until=NULL,completed_at=NOW(),
 			       last_error_code='automation_disabled',
 			       last_error_message='ปิดการสร้างบิล SML อัตโนมัติแล้ว',updated_at=NOW()
-			 WHERE shop_id=$1 AND status IN ('queued','retry_wait')`, shopID); err != nil {
+			 WHERE shop_id=$1 AND status IN ('queued','retry_wait')`, in.ShopID); err != nil {
 			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return r.GetSetting(ctx, shopID)
+	return r.GetSetting(ctx, in.ShopID)
 }
 
-func (r *ShopeeAutoSMLRepo) Enqueue(ctx context.Context, shopID int64, orderSN string, createTime time.Time, updateTime *time.Time, readyToShipAt time.Time, routeSignature string) (bool, error) {
+func (r *ShopeeAutoSMLRepo) Enqueue(ctx context.Context, shopID int64, orderSN string, createTime time.Time, updateTime *time.Time, triggerTransitionAt time.Time, routeSignature, triggerStatus string, triggerConfigVersion int64) (bool, error) {
 	orderSN = strings.TrimSpace(orderSN)
-	if shopID <= 0 || orderSN == "" || createTime.IsZero() || readyToShipAt.IsZero() {
+	triggerStatus = models.NormalizeShopeeAutoSMLTriggerStatus(triggerStatus)
+	if shopID <= 0 || orderSN == "" || createTime.IsZero() || triggerTransitionAt.IsZero() || triggerStatus == "" || triggerConfigVersion <= 0 {
 		return false, nil
 	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO shopee_auto_sml_jobs
-		  (shop_id,order_sn,order_create_time,order_update_time,route_signature)
-		SELECT st.shop_id,$2,$3,$4,st.route_signature
+		  (shop_id,order_sn,order_create_time,order_update_time,route_signature,
+		   trigger_status_snapshot,trigger_transition_at,trigger_config_version)
+		SELECT st.shop_id,$2,$3,$4,st.route_signature,st.trigger_status,$5,st.config_version
 		  FROM shopee_auto_sml_settings st
 		  JOIN shopee_api_connections c ON c.shop_id=st.shop_id AND c.disabled_at IS NULL
 		 WHERE st.shop_id=$1 AND st.enabled=true AND st.paused_reason=''
 		   AND st.eligible_after IS NOT NULL AND $5 >= st.eligible_after
 		   AND st.route_signature=$6
+		   AND st.trigger_status=$7 AND st.config_version=$8
 		ON CONFLICT (shop_id,order_sn) DO NOTHING`,
-		shopID, orderSN, createTime, updateTime, readyToShipAt, strings.TrimSpace(routeSignature))
+		shopID, orderSN, createTime, updateTime, triggerTransitionAt, strings.TrimSpace(routeSignature), triggerStatus, triggerConfigVersion)
 	if err != nil {
 		return false, err
 	}
@@ -266,6 +324,7 @@ func (r *ShopeeAutoSMLRepo) LeaseJobs(ctx context.Context, limit int, lease time
 		  FROM picked WHERE j.id=picked.id
 		RETURNING j.id::text,j.shop_id,j.order_sn,j.bill_id::text,j.sml_doc_no,j.status,
 		          j.attempts,j.next_run_at,j.lease_until,j.order_create_time,j.order_update_time,
+		          j.trigger_status_snapshot,j.trigger_transition_at,j.trigger_config_version,
 		          j.bill_fingerprint,j.route_signature,j.document_time,j.last_error_code,j.last_error_message,
 		          j.started_at,j.completed_at,j.created_at,j.updated_at`, limit, int64(lease.Seconds()))
 	if err != nil {
@@ -290,9 +349,10 @@ type autoSMLJobScanner interface {
 func scanShopeeAutoSMLJob(s autoSMLJobScanner) (models.ShopeeAutoSMLJob, error) {
 	var out models.ShopeeAutoSMLJob
 	var billID sql.NullString
-	var leaseUntil, orderUpdate, startedAt, completedAt sql.NullTime
+	var leaseUntil, orderUpdate, triggerTransitionAt, startedAt, completedAt sql.NullTime
 	err := s.Scan(&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SMLDocNo, &out.Status,
 		&out.Attempts, &out.NextRunAt, &leaseUntil, &out.OrderCreateTime, &orderUpdate,
+		&out.TriggerStatusSnapshot, &triggerTransitionAt, &out.TriggerConfigVersion,
 		&out.BillFingerprint, &out.RouteSignature, &out.DocumentTime, &out.LastErrorCode, &out.LastErrorMessage,
 		&startedAt, &completedAt, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
@@ -307,6 +367,9 @@ func scanShopeeAutoSMLJob(s autoSMLJobScanner) (models.ShopeeAutoSMLJob, error) 
 	if orderUpdate.Valid {
 		out.OrderUpdateTime = &orderUpdate.Time
 	}
+	if triggerTransitionAt.Valid {
+		out.TriggerTransitionAt = &triggerTransitionAt.Time
+	}
 	if startedAt.Valid {
 		out.StartedAt = &startedAt.Time
 	}
@@ -319,7 +382,9 @@ func scanShopeeAutoSMLJob(s autoSMLJobScanner) (models.ShopeeAutoSMLJob, error) 
 func (r *ShopeeAutoSMLRepo) GetJob(ctx context.Context, shopID int64, orderSN string) (*models.ShopeeAutoSMLJob, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id::text,shop_id,order_sn,bill_id::text,sml_doc_no,status,attempts,next_run_at,
-		       lease_until,order_create_time,order_update_time,bill_fingerprint,route_signature,
+		       lease_until,order_create_time,order_update_time,
+		       trigger_status_snapshot,trigger_transition_at,trigger_config_version,
+		       bill_fingerprint,route_signature,
 		       document_time,last_error_code,last_error_message,started_at,completed_at,created_at,updated_at
 		  FROM shopee_auto_sml_jobs WHERE shop_id=$1 AND order_sn=$2`, shopID, strings.TrimSpace(orderSN))
 	job, err := scanShopeeAutoSMLJob(row)

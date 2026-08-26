@@ -143,6 +143,7 @@ type shopeeCreateDocumentOutcome struct {
 	DocNo         string
 	Message       string
 	Reason        string
+	ReasonCode    string
 	Route         gin.H
 	HTTPStatus    int
 }
@@ -712,10 +713,10 @@ func (h *ShopeeRealtimeHandler) createDocument(c *gin.Context, legacyConfirm str
 }
 
 func (h *ShopeeRealtimeHandler) createDocumentForOrder(ctx context.Context, shopID int64, orderSN, userID, traceID string, requestRaw json.RawMessage) shopeeCreateDocumentOutcome {
-	return h.createDocumentForOrderMode(ctx, shopID, orderSN, userID, traceID, requestRaw, false)
+	return h.createDocumentForOrderMode(ctx, shopID, orderSN, userID, traceID, requestRaw, "")
 }
 
-func (h *ShopeeRealtimeHandler) createDocumentForOrderMode(ctx context.Context, shopID int64, orderSN, userID, traceID string, requestRaw json.RawMessage, requireReadyToShip bool) shopeeCreateDocumentOutcome {
+func (h *ShopeeRealtimeHandler) createDocumentForOrderMode(ctx context.Context, shopID int64, orderSN, userID, traceID string, requestRaw json.RawMessage, autoTriggerStatus string) shopeeCreateDocumentOutcome {
 	orderSN = strings.TrimSpace(orderSN)
 	out := shopeeCreateDocumentOutcome{ShopID: shopID, OrderSN: orderSN, HTTPStatus: http.StatusOK}
 	action, actionState, err := h.repo.StartAction(ctx, shopID, orderSN, "create_document", userID, requestRaw)
@@ -775,24 +776,15 @@ func (h *ShopeeRealtimeHandler) createDocumentForOrderMode(ctx context.Context, 
 		out.HTTPStatus = http.StatusBadGateway
 		return out
 	}
-	if requireReadyToShip && strings.ToUpper(strings.TrimSpace(snap.OrderStatus)) != "READY_TO_SHIP" {
-		msg := "สถานะล่าสุดของ Shopee ไม่ใช่ READY_TO_SHIP จึงยกเลิกงานอัตโนมัติ"
-		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "status_changed"}, msg)
-		out.Status = "skipped"
-		out.OrderSN = snap.OrderSN
-		out.ERPStatus = snap.ERPStatus
-		out.Reason = msg
-		out.Message = msg
-		out.HTTPStatus = http.StatusConflict
-		return out
-	}
-	switch strings.ToUpper(snap.OrderStatus) {
+	orderStatus := strings.ToUpper(strings.TrimSpace(snap.OrderStatus))
+	switch orderStatus {
 	case "UNPAID":
 		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "unpaid"}, "order ยังไม่ชำระเงิน")
 		out.Status = "skipped"
 		out.OrderSN = snap.OrderSN
 		out.ERPStatus = snap.ERPStatus
 		out.Reason = "order ยังไม่ชำระเงิน จึงยังสร้างเอกสารไม่ได้"
+		out.ReasonCode = "unpaid"
 		out.Message = out.Reason
 		out.HTTPStatus = http.StatusBadRequest
 		return out
@@ -802,8 +794,22 @@ func (h *ShopeeRealtimeHandler) createDocumentForOrderMode(ctx context.Context, 
 		out.OrderSN = snap.OrderSN
 		out.ERPStatus = snap.ERPStatus
 		out.Reason = "order ถูกยกเลิกแล้ว จึงไม่ควรสร้างเอกสาร"
+		out.ReasonCode = "cancelled"
 		out.Message = out.Reason
 		out.HTTPStatus = http.StatusBadRequest
+		return out
+	}
+	if triggerStatus := models.NormalizeShopeeAutoSMLTriggerStatus(autoTriggerStatus); autoTriggerStatus != "" &&
+		(triggerStatus == "" || !models.ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, orderStatus)) {
+		msg := "สถานะล่าสุดของ Shopee ไม่อยู่ในช่วงที่ทำงานต่อจาก " + firstNonEmpty(triggerStatus, strings.TrimSpace(autoTriggerStatus))
+		completeAction("blocked", stringPtrValue(snap.BillID), snap.SMLDocNo, gin.H{"status": "blocked", "reason": "trigger_status_not_reached"}, msg)
+		out.Status = "skipped"
+		out.OrderSN = snap.OrderSN
+		out.ERPStatus = snap.ERPStatus
+		out.Reason = msg
+		out.ReasonCode = "trigger_status_not_reached"
+		out.Message = msg
+		out.HTTPStatus = http.StatusConflict
 		return out
 	}
 	cfg, routeDef, err := h.realtimeSaleConfig(ctx)
@@ -3101,6 +3107,10 @@ func (h *ShopeeRealtimeHandler) syncConnection(ctx context.Context, conn *Shopee
 	statusCounts := map[string]int{}
 	counts, _ := h.repo.Counts(ctx, conn.ShopID)
 	suppressNewOrderNotifications := counts.Total == 0
+	var autoSMLSetting *models.ShopeeAutoSMLSetting
+	if h.cfg != nil && h.cfg.ShopeeAutoSMLEnabled && h.autoSMLRepo != nil {
+		autoSMLSetting, _ = h.autoSMLRepo.GetSetting(ctx, conn.ShopID)
+	}
 	for _, status := range shopeeRealtimeSyncStatuses {
 		cursor := ""
 		for page := 0; page < shopeeRealtimeMaxSyncPages; page++ {
@@ -3165,7 +3175,7 @@ func (h *ShopeeRealtimeHandler) syncConnection(ctx context.Context, conn *Shopee
 			}
 			h.queuePaymentBreakdownIfEligible(ctx, d, after)
 			h.notifySnapshotChange(ctx, before, after, nil, suppressNewOrderNotifications)
-			h.maybeEnqueueAutoSML(ctx, d, before, after)
+			h.maybeEnqueueAutoSML(ctx, d, before, after, autoSMLSetting)
 			synced++
 		}
 	}
@@ -3195,6 +3205,10 @@ func (h *ShopeeRealtimeHandler) reconcileOrder(ctx context.Context, shopID int64
 	if len(detail.Response.OrderList) == 0 {
 		return nil, fmt.Errorf("Shopee ไม่ส่งรายละเอียด order %s กลับมา", strings.TrimSpace(orderSN))
 	}
+	var autoSMLSetting *models.ShopeeAutoSMLSetting
+	if h.cfg != nil && h.cfg.ShopeeAutoSMLEnabled && h.autoSMLRepo != nil {
+		autoSMLSetting, _ = h.autoSMLRepo.GetSetting(ctx, conn.ShopID)
+	}
 	var latest *models.ShopeeOrderSnapshot
 	for _, d := range detail.Response.OrderList {
 		if strings.TrimSpace(d.OrderSN) == "" {
@@ -3218,7 +3232,7 @@ func (h *ShopeeRealtimeHandler) reconcileOrder(ctx context.Context, shopID int64
 		}
 		payment := h.paymentBreakdownForNewOrderNotification(ctx, conn, d, before, after, suppressNewOrderNotifications)
 		h.notifySnapshotChange(ctx, before, after, payment, suppressNewOrderNotifications)
-		h.maybeEnqueueAutoSML(ctx, d, before, after)
+		h.maybeEnqueueAutoSML(ctx, d, before, after, autoSMLSetting)
 		latest = after
 	}
 	if latest == nil {

@@ -54,6 +54,13 @@ import {
 } from '@/components/ui/tooltip'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { useNotificationsStore } from '@/lib/notifications-store'
+import {
+  autoSMLTriggerDescription,
+  autoSMLTriggerLabel,
+  normalizeAutoSMLTriggerStatus,
+  requiredAutoSMLConfirmation,
+  type AutoSMLTriggerStatus,
+} from '@/lib/shopee-auto-sml-settings'
 import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
 import {
   cancellationDocumentTypeLabel,
@@ -172,6 +179,8 @@ type AutoSMLSetting = {
   shop_id: number
   shop_label?: string
   enabled: boolean
+  trigger_status: AutoSMLTriggerStatus
+  config_version: number
   eligible_after?: string
   paused_reason?: string
   paused_at?: string
@@ -185,6 +194,8 @@ type AutoSMLSetting = {
   operational_warning?: string
   updated_at: string
 }
+
+type AutoSMLDialogMode = 'enable' | 'change'
 
 type AutoSMLSettingsResponse = {
   global_enabled: boolean
@@ -502,6 +513,8 @@ export default function ShopeeOperations() {
   const [readiness, setReadiness] = useState<Readiness | null>(null)
   const [autoSML, setAutoSML] = useState<AutoSMLSettingsResponse | null>(null)
   const [autoSMLDialogOpen, setAutoSMLDialogOpen] = useState(false)
+  const [autoSMLDialogMode, setAutoSMLDialogMode] = useState<AutoSMLDialogMode>('enable')
+  const [autoSMLTriggerDraft, setAutoSMLTriggerDraft] = useState<AutoSMLTriggerStatus>('READY_TO_SHIP')
   const [autoSMLSaving, setAutoSMLSaving] = useState(false)
   const [autoSMLRetryingKey, setAutoSMLRetryingKey] = useState('')
   const [counts, setCounts] = useState<Counts>(emptyCounts)
@@ -858,18 +871,39 @@ export default function ShopeeOperations() {
     }
   }
 
-  const updateAutoSML = async (enabled: boolean) => {
-    if (shopID === ALL || autoSMLSaving) return
+  const openAutoSMLDialog = (mode: AutoSMLDialogMode) => {
+    if (!selectedAutoSMLSetting) return
+    setAutoSMLDialogMode(mode)
+    setAutoSMLTriggerDraft(normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting.trigger_status))
+    setAutoSMLDialogOpen(true)
+  }
+
+  const updateAutoSML = async (enabled: boolean, triggerStatus?: AutoSMLTriggerStatus) => {
+    if (shopID === ALL || autoSMLSaving || !selectedAutoSMLSetting) return
+    const nextTrigger = normalizeAutoSMLTriggerStatus(triggerStatus ?? selectedAutoSMLSetting.trigger_status)
+    const confirmation = requiredAutoSMLConfirmation(
+      selectedAutoSMLSetting.enabled,
+      selectedAutoSMLSetting.trigger_status,
+      enabled,
+      nextTrigger,
+    )
     setAutoSMLSaving(true)
     try {
       const res = await client.put(`/api/shopee-operations/shops/${shopID}/auto-sml`, {
         enabled,
-        confirm: enabled ? 'ENABLE_AUTO_SML' : '',
+        trigger_status: nextTrigger,
+        expected_config_version: selectedAutoSMLSetting.config_version,
+        confirm: confirmation,
       })
       toast.success(res.data.message || (enabled ? 'เปิด Auto SML แล้ว' : 'ปิด Auto SML แล้ว'))
       setAutoSMLDialogOpen(false)
       await Promise.all([loadAutoSMLSettings(), loadOrders()])
     } catch (e) {
+      if (axios.isAxiosError(e) && e.response?.status === 409 && e.response?.data?.code === 'auto_sml_config_changed') {
+        await loadAutoSMLSettings()
+        toast.error('การตั้งค่าถูกแก้ไขแล้ว ระบบโหลดค่าล่าสุดให้ กรุณาตรวจสอบก่อนบันทึกใหม่')
+        return
+      }
       toast.error((enabled ? 'เปิด' : 'ปิด') + ' Auto SML ไม่สำเร็จ: ' + apiError(e))
     } finally {
       setAutoSMLSaving(false)
@@ -1353,7 +1387,7 @@ export default function ShopeeOperations() {
                   'ติดตาม Order ที่ยกเลิก พร้อมประเภทเอกสาร เลขที่ SML วิธีสร้าง และผลคำนวณสต๊อกใหม่'
                 ) : (
                   <>
-                    ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อเป็น READY_TO_SHIP และข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
+                    ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อถึงสถานะที่ร้านกำหนดและข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
                     <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
                       <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
                     </Button>
@@ -1411,7 +1445,7 @@ export default function ShopeeOperations() {
                       checked={Boolean(selectedAutoSMLSetting?.enabled && !selectedAutoSMLSetting.paused_reason)}
                       disabled={!isAdmin || autoSMLSaving || !autoSML?.global_enabled || !selectedAutoSMLSetting}
                       onCheckedChange={(checked) => {
-                        if (checked) setAutoSMLDialogOpen(true)
+                        if (checked) openAutoSMLDialog('enable')
                         else void updateAutoSML(false)
                       }}
                     />
@@ -1428,6 +1462,28 @@ export default function ShopeeOperations() {
               </Button>
             </div>
           </div>
+
+          {shopID !== ALL && selectedAutoSMLSetting?.enabled && (
+            <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <span className="text-muted-foreground">เริ่มสร้างบิลอัตโนมัติเมื่อ </span>
+                <span className="font-medium text-foreground">{autoSMLTriggerLabel(selectedAutoSMLSetting.trigger_status)}</span>
+                <span className="ml-1 text-muted-foreground">{autoSMLTriggerDescription(selectedAutoSMLSetting.trigger_status)}</span>
+              </div>
+              {isAdmin && (
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto shrink-0 justify-start px-0 py-0 text-xs"
+                  onClick={() => openAutoSMLDialog('change')}
+                  disabled={autoSMLSaving}
+                >
+                  เปลี่ยนสถานะเริ่มสร้างบิล
+                </Button>
+              )}
+            </div>
+          )}
 
           {shopID !== ALL && selectedAutoSMLSetting?.operational_warning && (
             <div className="mt-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -1813,14 +1869,60 @@ export default function ShopeeOperations() {
         <Dialog open={autoSMLDialogOpen} onOpenChange={(open) => !autoSMLSaving && setAutoSMLDialogOpen(open)}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>เปิดสร้างบิล SML อัตโนมัติ?</DialogTitle>
+              <DialogTitle>{autoSMLDialogMode === 'change' ? 'เปลี่ยนสถานะเริ่มสร้างบิล SML' : 'เปิดสร้างบิล SML อัตโนมัติ?'}</DialogTitle>
               <DialogDescription>
-                ร้าน {selectedAutoSMLSetting?.shop_label || shopID} จะเริ่มเฉพาะออเดอร์ใหม่หลังยืนยันครั้งนี้
+                {autoSMLDialogMode === 'change'
+                  ? `ร้าน ${selectedAutoSMLSetting?.shop_label || shopID} จะใช้ค่าใหม่กับออเดอร์ที่เข้าสถานะหลังบันทึกเท่านั้น`
+                  : `ร้าน ${selectedAutoSMLSetting?.shop_label || shopID} จะเริ่มเฉพาะออเดอร์ที่เข้าสถานะหลังยืนยันครั้งนี้`}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-medium">เริ่มสร้างบิลเมื่อ</legend>
+                {([
+                  {
+                    value: 'READY_TO_SHIP' as const,
+                    title: 'รอจัดส่ง (READY_TO_SHIP)',
+                    description: 'เริ่มทันทีเมื่อ Shopee แจ้งว่าออเดอร์พร้อมให้ร้านเตรียมสินค้า',
+                    recommended: true,
+                  },
+                  {
+                    value: 'PROCESSED' as const,
+                    title: 'เตรียมจัดส่งแล้ว (PROCESSED)',
+                    description: 'รอร้านกดเตรียมจัดส่งใน Shopee แล้วจึงเริ่มสร้างบิล',
+                    recommended: false,
+                  },
+                ]).map((option) => {
+                  const selected = autoSMLTriggerDraft === option.value
+                  return (
+                    <label
+                      key={option.value}
+                      className={cn(
+                        'flex cursor-pointer gap-3 rounded-md border p-3 transition-colors',
+                        selected ? 'border-accentStrong/50 bg-primary/10' : 'border-border bg-background hover:bg-muted/40',
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="auto-sml-trigger-status"
+                        value={option.value}
+                        checked={selected}
+                        onChange={() => setAutoSMLTriggerDraft(option.value)}
+                        className="mt-1 h-4 w-4 accent-accentStrong"
+                      />
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2 font-medium">
+                          {option.title}
+                          {option.recommended && <Badge variant="outline" className="h-5 border-accentStrong/40 bg-primary/10 text-[10px] text-accentStrong">แนะนำ</Badge>}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{option.description}</span>
+                      </span>
+                    </label>
+                  )
+                })}
+              </fieldset>
               <div className="grid gap-2 rounded-md border border-border bg-muted/30 p-3 sm:grid-cols-2">
-                <AutoSMLFact label="สถานะที่ทำงาน" value="READY_TO_SHIP เท่านั้น" />
+                <AutoSMLFact label="สถานะที่เลือก" value={autoSMLTriggerLabel(autoSMLTriggerDraft)} />
                 <AutoSMLFact label="ออเดอร์ย้อนหลัง" value="ไม่ประมวลผล" />
                 <AutoSMLFact label="ปลายทาง SML" value={readiness?.sml.route || 'ยังไม่ตั้งค่า'} />
                 <AutoSMLFact label="ผู้รับ LINE" value={`${autoSML?.line.enabled_recipients ?? 0} ราย`} />
@@ -1833,14 +1935,17 @@ export default function ShopeeOperations() {
                 </AlertDescription>
               </Alert>
               <p className="text-xs text-muted-foreground">
-                การเปิดนี้ไม่จัดส่งสินค้า ไม่สร้างใบปะหน้า และไม่เปลี่ยนข้อมูลรับชำระ Shopee
+                งานที่เข้าคิวแล้วจะทำต่อด้วยสถานะเดิม การตั้งค่านี้ไม่จัดส่งสินค้า ไม่สร้างใบปะหน้า และไม่เปลี่ยนข้อมูลรับชำระ Shopee
               </p>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setAutoSMLDialogOpen(false)} disabled={autoSMLSaving}>ยกเลิก</Button>
-              <Button onClick={() => void updateAutoSML(true)} disabled={autoSMLSaving}>
+              <Button
+                onClick={() => void updateAutoSML(true, autoSMLTriggerDraft)}
+                disabled={autoSMLSaving || (autoSMLDialogMode === 'change' && normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting?.trigger_status) === autoSMLTriggerDraft)}
+              >
                 {autoSMLSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                ยืนยันและเริ่มจากออเดอร์ใหม่
+                {autoSMLDialogMode === 'change' ? 'บันทึกสถานะเริ่มสร้างบิล' : 'ยืนยันและเริ่มจากออเดอร์ใหม่'}
               </Button>
             </DialogFooter>
           </DialogContent>

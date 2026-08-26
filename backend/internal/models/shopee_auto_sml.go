@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	ShopeeAutoSMLQueued      = "queued"
@@ -10,12 +13,55 @@ const (
 	ShopeeAutoSMLSucceeded   = "succeeded"
 	ShopeeAutoSMLFailed      = "failed"
 	ShopeeAutoSMLCancelled   = "cancelled"
+
+	ShopeeAutoSMLTriggerReadyToShip = "READY_TO_SHIP"
+	ShopeeAutoSMLTriggerProcessed   = "PROCESSED"
 )
+
+func NormalizeShopeeAutoSMLTriggerStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case ShopeeAutoSMLTriggerReadyToShip:
+		return ShopeeAutoSMLTriggerReadyToShip
+	case ShopeeAutoSMLTriggerProcessed:
+		return ShopeeAutoSMLTriggerProcessed
+	default:
+		return ""
+	}
+}
+
+func ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, orderStatus string) bool {
+	triggerStatus = NormalizeShopeeAutoSMLTriggerStatus(triggerStatus)
+	orderStatus = strings.ToUpper(strings.TrimSpace(orderStatus))
+	switch triggerStatus {
+	case ShopeeAutoSMLTriggerReadyToShip:
+		switch orderStatus {
+		case "READY_TO_SHIP", "PROCESSED", "SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED":
+			return true
+		}
+	case ShopeeAutoSMLTriggerProcessed:
+		switch orderStatus {
+		case "PROCESSED", "SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED":
+			return true
+		}
+	}
+	return false
+}
+
+func ShopeeAutoSMLStopStatus(orderStatus string) bool {
+	switch strings.ToUpper(strings.TrimSpace(orderStatus)) {
+	case "UNPAID", "IN_CANCEL", "CANCELLED":
+		return true
+	default:
+		return false
+	}
+}
 
 type ShopeeAutoSMLSetting struct {
 	ShopID                    int64      `json:"shop_id"`
 	ShopLabel                 string     `json:"shop_label,omitempty"`
 	Enabled                   bool       `json:"enabled"`
+	TriggerStatus             string     `json:"trigger_status"`
+	ConfigVersion             int64      `json:"config_version"`
 	EligibleAfter             *time.Time `json:"eligible_after,omitempty"`
 	RouteSignature            string     `json:"-"`
 	EnabledBy                 *string    `json:"enabled_by,omitempty"`
@@ -34,26 +80,29 @@ type ShopeeAutoSMLSetting struct {
 }
 
 type ShopeeAutoSMLJob struct {
-	ID               string     `json:"id"`
-	ShopID           int64      `json:"shop_id"`
-	OrderSN          string     `json:"order_sn"`
-	BillID           *string    `json:"bill_id,omitempty"`
-	SMLDocNo         string     `json:"sml_doc_no,omitempty"`
-	Status           string     `json:"status"`
-	Attempts         int        `json:"attempts"`
-	NextRunAt        time.Time  `json:"next_run_at"`
-	LeaseUntil       *time.Time `json:"lease_until,omitempty"`
-	OrderCreateTime  time.Time  `json:"order_create_time"`
-	OrderUpdateTime  *time.Time `json:"order_update_time,omitempty"`
-	BillFingerprint  string     `json:"-"`
-	RouteSignature   string     `json:"-"`
-	DocumentTime     string     `json:"document_time,omitempty"`
-	LastErrorCode    string     `json:"last_error_code,omitempty"`
-	LastErrorMessage string     `json:"last_error_message,omitempty"`
-	StartedAt        *time.Time `json:"started_at,omitempty"`
-	CompletedAt      *time.Time `json:"completed_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ID                    string     `json:"id"`
+	ShopID                int64      `json:"shop_id"`
+	OrderSN               string     `json:"order_sn"`
+	BillID                *string    `json:"bill_id,omitempty"`
+	SMLDocNo              string     `json:"sml_doc_no,omitempty"`
+	Status                string     `json:"status"`
+	Attempts              int        `json:"attempts"`
+	NextRunAt             time.Time  `json:"next_run_at"`
+	LeaseUntil            *time.Time `json:"lease_until,omitempty"`
+	OrderCreateTime       time.Time  `json:"order_create_time"`
+	OrderUpdateTime       *time.Time `json:"order_update_time,omitempty"`
+	TriggerStatusSnapshot string     `json:"trigger_status_snapshot"`
+	TriggerTransitionAt   *time.Time `json:"trigger_transition_at,omitempty"`
+	TriggerConfigVersion  int64      `json:"trigger_config_version"`
+	BillFingerprint       string     `json:"-"`
+	RouteSignature        string     `json:"-"`
+	DocumentTime          string     `json:"document_time,omitempty"`
+	LastErrorCode         string     `json:"last_error_code,omitempty"`
+	LastErrorMessage      string     `json:"last_error_message,omitempty"`
+	StartedAt             *time.Time `json:"started_at,omitempty"`
+	CompletedAt           *time.Time `json:"completed_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type ShopeeAutoSMLJobView struct {
@@ -65,16 +114,17 @@ type ShopeeAutoSMLJobView struct {
 }
 
 type ShopeeAutoSMLNotification struct {
-	ShopID       int64
-	ShopLabel    string
-	OrderSN      string
-	BillID       string
-	SMLDocNo     string
-	TotalAmount  float64
-	ItemCount    int
-	Items        []ShopeeAutoSMLNotificationItem
-	ErrorCode    string
-	ErrorMessage string
+	ShopID        int64
+	ShopLabel     string
+	OrderSN       string
+	BillID        string
+	SMLDocNo      string
+	TotalAmount   float64
+	ItemCount     int
+	Items         []ShopeeAutoSMLNotificationItem
+	ShippingLines []ShopeeAutoSMLShippingLine
+	ErrorCode     string
+	ErrorMessage  string
 }
 
 // ShopeeAutoSMLNotificationItem contains only the non-PII order fields needed
@@ -84,4 +134,13 @@ type ShopeeAutoSMLNotificationItem struct {
 	Name    string
 	Variant string
 	Qty     float64
+}
+
+// ShopeeAutoSMLShippingLine is derived only from the immutable bill item sent
+// to SML. Shopee fee estimates are deliberately not part of this structure.
+type ShopeeAutoSMLShippingLine struct {
+	Amount   float64
+	ItemCode string
+	Qty      float64
+	UnitCode string
 }
