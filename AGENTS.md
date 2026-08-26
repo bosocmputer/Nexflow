@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `0f31748` (`fix: label SML document number preview accurately`),
+  `95a8c8d` (`Automate Shopee cancellation documents safely`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -289,6 +289,28 @@ Current AOY UAT scope:
     `pre-deploy-20260826-111132.sql.gz`; the Gateway source/runtime/image backups
     use the `pre-sml-cancel-20260826-1054` and `pre-42992f5-20260826-1059`
     prefixes. Demo and Lanboon remain on `82baa4a`.
+24. AOY-only automatic Shopee cancellation-after-SML is deployed and enabled at
+    `95a8c8d` with additive migration 089 and
+    `SHOPEE_AUTO_SML_CANCEL_ENABLED=true`. The current AOY destination remains
+    TRANS_FLAG 48 `รับคืนสินค้า/ลดหนี้` with format `CN`; TRANS_FLAG 45
+    `ยกเลิกขายสินค้าและบริการ` remains selectable by an admin. Only a newly
+    observed transition to exact Shopee `CANCELLED` can enqueue work; historical
+    cancelled snapshots are not backfilled and `IN_CANCEL` waits for the final
+    state. The worker snapshots the route, document number, and byte-stable SML
+    payload before the first external write, then uses bounded exact retries.
+    Successful document creation queues SML stock recalculation separately, so
+    a recalculation failure cannot resend the cancellation document. Manual and
+    automatic creation share one durable record and successful ownership to
+    prevent duplicates. Success and terminal-failure LINE notifications contain
+    no buyer PII. Production browser QA verified the two destinations, the
+    current CN format, disabled historical actions, and a clean console. After
+    more than four minutes live, the cancellation table remained empty and the
+    backend had no panic/fatal/error/5xx log. The AOY database backup is
+    `pre-deploy-20260826-115315.sql.gz`; the pre-flag runtime backup is
+    `.env.pre-auto-sml-cancel-20260826-115455`. Demo and Lanboon were not
+    recreated or enabled. A real new-order cancellation is still required to
+    complete the first external-write UAT; record the Order SN, generated CN,
+    LINE delivery, and post-recalculation stock evidence.
 
 Known deferred or incomplete validation:
 
@@ -299,6 +321,9 @@ Known deferred or incomplete validation:
   user removed 13 restored/legacy duplicate SML documents.
 - Shopee set-stock needs a future tenant/shop with a real set product before it
   can be declared production-validated end to end.
+- AOY automatic Shopee cancellation is deployed and enabled, but its first real
+  Shopee CANCELLED -> SML CN -> stock recalculation -> LINE end-to-end UAT is
+  pending a new controlled order from the user.
 - Demo and Lanboon currently run the older `82baa4a` application revision and
   may also have paid features or Shopee runtime flags disabled. Verify both the
   deployed revision and per-instance settings instead of assuming AOY behavior.
@@ -362,7 +387,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–084** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–089** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
