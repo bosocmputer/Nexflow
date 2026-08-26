@@ -275,17 +275,24 @@ chown -R {shlex.quote(remote_user)}:{shlex.quote(remote_user)} {shlex.quote(RELE
 
 
 def render_instance_override(target: Target) -> str:
+    extra_hosts = ""
     if target.backend_extra_hosts:
         host_lines = "\n".join(f'      - "{value}"' for value in target.backend_extra_hosts)
-        return (
-            "# Managed by scripts/deploy_nextstep_instances.py.\n"
-            "# Keeps tenant-specific upstream host routing stable across container rebuilds.\n"
-            "services:\n"
-            "  backend:\n"
-            "    extra_hosts:\n"
-            f"{host_lines}\n"
-        )
-    return ""
+        extra_hosts = f"    extra_hosts:\n{host_lines}\n"
+    return (
+        "# Managed by scripts/deploy_nextstep_instances.py.\n"
+        "# Keeps tenant-specific upstream routing stable across container rebuilds.\n"
+        "services:\n"
+        "  backend:\n"
+        f"{extra_hosts}"
+        "    networks:\n"
+        "      - default\n"
+        "      - shopee_gateway\n"
+        "networks:\n"
+        "  shopee_gateway:\n"
+        f"    name: {GATEWAY_NETWORK}\n"
+        "    external: true\n"
+    )
 
 
 def ensure_instance_compose(target: Target) -> None:
@@ -673,6 +680,8 @@ fi
 if ! docker inspect {shlex.quote(target.backend_container)} --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{GATEWAY_NETWORK}"'; then
   docker network connect {shlex.quote(GATEWAY_NETWORK)} {shlex.quote(target.backend_container)}
 fi
+docker exec {shlex.quote(target.backend_container)} sh -lc \
+  'wget -qO- http://{GATEWAY_CONTAINER}:8091/health' | grep -q '"status":"ok"'
 """
     sudo(script, label=f"connect {target.name} backend to Shopee gateway network", timeout=30)
 
