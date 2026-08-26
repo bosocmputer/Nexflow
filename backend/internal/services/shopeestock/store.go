@@ -968,24 +968,13 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 		GROUP BY item_id
 		ORDER BY item_id
 		LIMIT $%d
-	), aggregated AS (
-		SELECT p.item_id,MAX(p.item_name) AS item_name,MAX(p.item_sku) AS item_sku,COUNT(*)::int AS variant_count,
-		       COUNT(*) FILTER (WHERE m.excluded=false AND m.sml_item_code<>'' AND jsonb_array_length(m.warning_codes)=0)::int AS ready_count,
-		       COUNT(*) FILTER (WHERE m.excluded=false AND (m.sml_item_code='' OR jsonb_array_length(m.warning_codes)>0))::int AS fix_count,
-		       COUNT(*) FILTER (WHERE m.excluded=true)::int AS excluded_count,MAX(p.last_seen_at) AS updated_at,
-		       COUNT(*) FILTER (WHERE matched.model_id IS NOT NULL)::int AS summary_count,
-		       SUM(COALESCE(m.last_preview_sml_usable_qty,m.last_preview_balance)) FILTER (WHERE matched.model_id IS NOT NULL) AS sml_usable_raw_total,
-		       COUNT(COALESCE(m.last_preview_sml_usable_qty,m.last_preview_balance)) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_value_count,
-		       COUNT(NULLIF(m.sml_item_code,'')) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_mapped_count,
-		       COUNT(DISTINCT NULLIF(m.sml_item_code,'')) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_source_count,
-		       COALESCE(BOOL_OR(m.shared_pool_enabled) FILTER (WHERE matched.model_id IS NOT NULL),false) AS has_shared_pool,
-		       COUNT(DISTINCT NULLIF(base_unit.unit_code,'')) FILTER (WHERE matched.model_id IS NOT NULL)::int AS sml_base_unit_count,
-		       COALESCE(MAX(base_unit.unit_code) FILTER (WHERE matched.model_id IS NOT NULL),'') AS sml_base_unit_code,
-		       COALESCE(MAX(base_unit.unit_name) FILTER (WHERE matched.model_id IS NOT NULL),'') AS sml_base_unit_name,
-		       COALESCE(SUM(p.shopee_available) FILTER (WHERE matched.model_id IS NOT NULL),0)::bigint AS shopee_stock_total,
-		       SUM(m.last_preview_target) FILTER (WHERE matched.model_id IS NOT NULL) AS target_stock_raw_total,
-		       COUNT(m.last_preview_target) FILTER (WHERE matched.model_id IS NOT NULL)::int AS target_count,
-		       COUNT(*) FILTER (WHERE matched.model_id IS NOT NULL AND m.last_preview_target IS NOT NULL AND m.last_preview_target<>p.shopee_available)::int AS changed_count
+	), variant_facts AS (
+		SELECT p.item_id,p.model_id,p.item_name,p.item_sku,p.last_seen_at,p.shopee_available,
+		       m.excluded,m.sml_item_code,m.warning_codes,m.shared_pool_enabled,m.last_preview_target,
+		       COALESCE(m.last_preview_sml_usable_qty,m.last_preview_balance) AS sml_usable_qty,
+		       matched.model_id IS NOT NULL AS is_matched,
+		       COALESCE(base_unit.unit_code,'') AS base_unit_code,
+		       COALESCE(base_unit.unit_name,'') AS base_unit_name
 		FROM matched_items k
 		JOIN shopee_stock_products p ON p.shop_id=$1 AND p.item_id=k.item_id AND p.is_active=true
 		JOIN shopee_stock_mappings m
@@ -998,9 +987,49 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 		  ORDER BY COALESCE(NULLIF(unit->>'row_order','')::int,0),COALESCE(NULLIF(unit->>'line_number','')::int,0),COALESCE(unit->>'code','')
 		  LIMIT 1
 		) base_unit ON true
-		GROUP BY p.item_id
+	), source_totals AS (
+		-- A repeated SML item code is one physical source. Count it once and
+		-- conservatively keep the lowest stored quantity if old snapshots differ.
+		SELECT item_id,sml_item_code,base_unit_code,base_unit_name,
+		       MIN(sml_usable_qty)::float8 AS quantity
+		FROM variant_facts
+		WHERE is_matched AND sml_item_code<>'' AND sml_usable_qty IS NOT NULL
+		GROUP BY item_id,sml_item_code,base_unit_code,base_unit_name
+	), unit_grouped AS (
+		SELECT item_id,base_unit_code,base_unit_name,SUM(quantity)::float8 AS quantity,COUNT(*)::int AS source_count
+		FROM source_totals
+		GROUP BY item_id,base_unit_code,base_unit_name
+	), unit_totals AS (
+		SELECT item_id,jsonb_agg(jsonb_build_object(
+		         'unit_code',base_unit_code,
+		         'unit_name',base_unit_name,
+		         'quantity',quantity,
+		         'source_count',source_count
+		       ) ORDER BY COALESCE(NULLIF(base_unit_name,''),base_unit_code)) AS sml_unit_totals
+		FROM unit_grouped
+		GROUP BY item_id
+	), aggregated AS (
+		SELECT item_id,MAX(item_name) AS item_name,MAX(item_sku) AS item_sku,COUNT(*)::int AS variant_count,
+		       COUNT(*) FILTER (WHERE excluded=false AND sml_item_code<>'' AND jsonb_array_length(warning_codes)=0)::int AS ready_count,
+		       COUNT(*) FILTER (WHERE excluded=false AND (sml_item_code='' OR jsonb_array_length(warning_codes)>0))::int AS fix_count,
+		       COUNT(*) FILTER (WHERE excluded=true)::int AS excluded_count,MAX(last_seen_at) AS updated_at,
+		       COUNT(*) FILTER (WHERE is_matched)::int AS summary_count,
+		       SUM(sml_usable_qty) FILTER (WHERE is_matched) AS sml_usable_raw_total,
+		       COUNT(sml_usable_qty) FILTER (WHERE is_matched)::int AS sml_value_count,
+		       COUNT(NULLIF(sml_item_code,'')) FILTER (WHERE is_matched)::int AS sml_mapped_count,
+		       COUNT(DISTINCT NULLIF(sml_item_code,'')) FILTER (WHERE is_matched)::int AS sml_source_count,
+		       COALESCE(BOOL_OR(shared_pool_enabled) FILTER (WHERE is_matched),false) AS has_shared_pool,
+		       COUNT(DISTINCT NULLIF(base_unit_code,'')) FILTER (WHERE is_matched)::int AS sml_base_unit_count,
+		       COALESCE(MAX(base_unit_code) FILTER (WHERE is_matched),'') AS sml_base_unit_code,
+		       COALESCE(MAX(base_unit_name) FILTER (WHERE is_matched),'') AS sml_base_unit_name,
+		       COALESCE(SUM(shopee_available) FILTER (WHERE is_matched),0)::bigint AS shopee_stock_total,
+		       SUM(last_preview_target) FILTER (WHERE is_matched) AS target_stock_raw_total,
+		       COUNT(last_preview_target) FILTER (WHERE is_matched)::int AS target_count,
+		       COUNT(*) FILTER (WHERE is_matched AND last_preview_target IS NOT NULL AND last_preview_target<>shopee_available)::int AS changed_count
+		FROM variant_facts
+		GROUP BY item_id
 	)
-	SELECT item_id,item_name,item_sku,variant_count,ready_count,fix_count,excluded_count,updated_at,
+	SELECT aggregated.item_id,item_name,item_sku,variant_count,ready_count,fix_count,excluded_count,updated_at,
 	       summary_count,
 	       CASE WHEN sml_value_count=summary_count AND sml_mapped_count=summary_count AND sml_source_count=summary_count AND has_shared_pool=false AND sml_base_unit_count=1 THEN sml_usable_raw_total::float8 END,
 	       sml_base_unit_code,sml_base_unit_name,
@@ -1008,11 +1037,13 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 	            WHEN has_shared_pool OR sml_source_count<summary_count THEN 'shared_source'
 	            WHEN sml_base_unit_count<>1 THEN 'mixed_unit'
 	            ELSE 'ready' END,
+	       COALESCE(unit_totals.sml_unit_totals,'[]'::jsonb),
 	       shopee_stock_total,
 	       CASE WHEN target_count=summary_count THEN target_stock_raw_total::bigint END,
 	       target_count,changed_count
 	FROM aggregated
-	ORDER BY item_id`, strings.Join(matched, " AND "), len(args))
+	LEFT JOIN unit_totals USING(item_id)
+	ORDER BY aggregated.item_id`, strings.Join(matched, " AND "), len(args))
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, false, err
@@ -1021,12 +1052,16 @@ func (s *Store) ListProductGroups(ctx context.Context, shopID int64, filter Prod
 	groups := make([]ProductGroup, 0, filter.Limit+1)
 	for rows.Next() {
 		var group ProductGroup
+		var smlUnitTotals []byte
 		if err := rows.Scan(
 			&group.ItemID, &group.ItemName, &group.ItemSKU, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.ExcludedCount, &group.UpdatedAt,
 			&group.SummaryCount, &group.SMLUsableTotal, &group.SMLBaseUnitCode, &group.SMLBaseUnitName, &group.SMLTotalStatus,
-			&group.ShopeeStockTotal, &group.TargetStockTotal, &group.TargetCount, &group.ChangedCount,
+			&smlUnitTotals, &group.ShopeeStockTotal, &group.TargetStockTotal, &group.TargetCount, &group.ChangedCount,
 		); err != nil {
 			return nil, false, err
+		}
+		if err := json.Unmarshal(smlUnitTotals, &group.SMLUnitTotals); err != nil {
+			return nil, false, fmt.Errorf("decode Shopee stock product group SML unit totals for item %d: %w", group.ItemID, err)
 		}
 		groups = append(groups, group)
 	}

@@ -158,6 +158,12 @@ type ProductGroup = {
 	sml_usable_total?: number | null
 	sml_base_unit_code?: string
 	sml_base_unit_name?: string
+	sml_unit_totals: Array<{
+		unit_code?: string
+		unit_name?: string
+		quantity: number
+		source_count: number
+	}>
 	sml_total_status: string
 	shopee_stock_total: number
 	target_stock_total?: number | null
@@ -1276,18 +1282,12 @@ function GroupedShopeeProducts({ shopID, status, query, groups, previewStale, ca
 
 function GroupStockTotals({ group, previewStale }: { group: ProductGroup; previewStale: boolean }) {
 	const summary = buildShopeeStockGroupSummary(group, previewStale)
-	const smlHint = summary.smlStatusText === 'สต๊อกร่วม'
-		? 'มีตัวเลือกที่ใช้สต๊อก SML ก้อนเดียวกัน จึงไม่รวมยอดซ้ำ กดแสดงตัวเลือกเพื่อดูรายละเอียด'
-		: summary.smlStatusText === 'หลายหน่วย'
-			? 'ตัวเลือกใช้หน่วยฐานต่างกัน จึงไม่รวมเป็นตัวเลขเดียว กดแสดงตัวเลือกเพื่อดูรายละเอียด'
-			: summary.smlStatusText === 'ตรวจใหม่'
-				? 'ข้อมูลเปลี่ยนแล้ว กดบันทึกและตรวจสต๊อกเพื่อคำนวณยอดใหม่'
-				: 'ยังไม่มียอดจากการตรวจสต๊อก'
 	return (
 		<div className="col-span-2 row-start-3 grid grid-cols-3 gap-2 rounded-md bg-muted/30 p-2 lg:col-span-1 lg:col-start-3 lg:row-start-1 lg:bg-transparent lg:p-0" aria-label={`ยอดรวม ${formatNumber(group.summary_count)} ตัวเลือก`}>
-			<div className="min-w-0" title={summary.smlStatusText ? smlHint : `ยอด SML พร้อมใช้รวม ${formatNumber(summary.smlValue ?? 0)} ${summary.smlUnit}`}>
-				<p className="truncate text-[10px] text-muted-foreground">SML พร้อมใช้รวม</p>
-				<p className={cn('truncate text-sm font-semibold tabular-nums', summary.smlStatusText && 'text-muted-foreground')}>{summary.smlStatusText || formatNumber(summary.smlValue ?? 0)}{summary.smlValue != null && summary.smlUnit && <span className="ml-1 text-[10px] font-normal text-muted-foreground">{summary.smlUnit}</span>}</p>
+			<div className="min-w-0" title={summary.smlTitle}>
+				<p className="truncate text-[10px] text-muted-foreground">SML พร้อมใช้</p>
+				<p className="line-clamp-2 text-sm font-semibold leading-tight tabular-nums">{summary.smlText}</p>
+				{summary.smlWarningText && <p className="mt-0.5 line-clamp-2 text-[10px] leading-tight text-warning">{summary.smlWarningText}</p>}
 			</div>
 			<div className="min-w-0" title={`สต๊อก Shopee ปัจจุบันรวม ${formatNumber(summary.shopeeValue)}`}>
 				<p className="truncate text-[10px] text-muted-foreground">Shopee ปัจจุบันรวม</p>

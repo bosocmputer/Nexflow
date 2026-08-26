@@ -166,15 +166,15 @@ func TestListProductGroupsUsesShopeeItemKeyset(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)WITH matched_variants AS.*FROM shopee_stock_products matched_product.*JOIN shopee_stock_mappings matched_mapping.*matched_product.item_id>\$3.*matched_items AS.*GROUP BY.*item_id.*LIMIT \$4.*aggregated AS.*MAX\(p.last_seen_at\).*LEFT JOIN matched_variants.*SELECT item_id.*sml_value_count.*target_count`).
+	mock.ExpectQuery(`(?s)WITH matched_variants AS.*FROM shopee_stock_products matched_product.*JOIN shopee_stock_mappings matched_mapping.*matched_product.item_id>\$3.*matched_items AS.*GROUP BY.*item_id.*LIMIT \$4.*variant_facts AS.*source_totals AS.*unit_totals AS.*aggregated AS.*MAX\(last_seen_at\).*SELECT aggregated.item_id.*sml_unit_totals.*target_count`).
 		WithArgs(int64(42), "%milk%", int64(1000), 51).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"item_id", "item_name", "item_sku", "variant_count", "ready_count", "fix_count", "excluded_count", "updated_at",
 			"summary_count", "sml_usable_total", "sml_base_unit_code", "sml_base_unit_name", "sml_total_status",
-			"shopee_stock_total", "target_stock_total", "target_count", "changed_count",
+			"sml_unit_totals", "shopee_stock_total", "target_stock_total", "target_count", "changed_count",
 		}).AddRow(
 			int64(1100), "Milk product", "MILK-1", 3, 3, 0, 0, time.Now(),
-			3, 48.0, "PCS", "ชิ้น", "ready", int64(42), int64(48), 3, 2,
+			3, 48.0, "PCS", "ชิ้น", "ready", []byte(`[{"unit_code":"PCS","unit_name":"ชิ้น","quantity":48,"source_count":3}]`), int64(42), int64(48), 3, 2,
 		))
 
 	groups, more, err := NewStore(db).ListProductGroups(context.Background(), 42, ProductGroupFilter{Query: "milk", AfterItemID: 1000, Limit: 50})
@@ -184,6 +184,9 @@ func TestListProductGroupsUsesShopeeItemKeyset(t *testing.T) {
 	group := groups[0]
 	if group.SummaryCount != 3 || group.SMLUsableTotal == nil || *group.SMLUsableTotal != 48 || group.SMLBaseUnitName != "ชิ้น" || group.SMLTotalStatus != "ready" {
 		t.Fatalf("unexpected SML summary: %#v", group)
+	}
+	if len(group.SMLUnitTotals) != 1 || group.SMLUnitTotals[0].Quantity != 48 || group.SMLUnitTotals[0].SourceCount != 3 || group.SMLUnitTotals[0].UnitName != "ชิ้น" {
+		t.Fatalf("unexpected SML unit totals: %#v", group.SMLUnitTotals)
 	}
 	if group.ShopeeStockTotal != 42 || group.TargetStockTotal == nil || *group.TargetStockTotal != 48 || group.TargetCount != 3 || group.ChangedCount != 2 {
 		t.Fatalf("unexpected Shopee summary: %#v", group)
