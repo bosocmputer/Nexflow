@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"testing"
 	"time"
@@ -131,7 +132,7 @@ func TestPrepareSMLCancellationCreatePersistsAttemptBeforeWrite(t *testing.T) {
 	defer db.Close()
 	repo := NewShopeeRealtimeRepo(db)
 
-	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*cancel_sml_doc_no=\$2.*status='creating'`).
+	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*cancel_sml_doc_no=\$2.*request_payload=\$3::jsonb.*status='creating'`).
 		WithArgs("11111111-1111-1111-1111-111111111111", "CN26080002", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -143,6 +144,130 @@ func TestPrepareSMLCancellationCreatePersistsAttemptBeforeWrite(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("PrepareSMLCancellationCreate() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnqueueAutoSMLCancellationIsIdempotent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+
+	mock.ExpectExec(`(?s)INSERT INTO shopee_sml_cancellations.*trigger_source.*ON CONFLICT.*DO NOTHING`).
+		WithArgs(
+			int64(264993963), "ORDER-1", "11111111-1111-1111-1111-111111111111",
+			"BF-INV26080055", "/api/v1/ic/sale-invoices/:doc_no/cancel", sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	inserted, err := repo.EnqueueAutoSMLCancellation(context.Background(), ShopeeSMLCancellationInput{
+		ShopID: 264993963, OrderSN: "ORDER-1", BillID: "11111111-1111-1111-1111-111111111111",
+		SaleSMLDocNo: "BF-INV26080055", RouteEndpoint: "/api/v1/ic/sale-invoices/:doc_no/cancel",
+		RouteSignature: "route-signature",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("first final cancellation transition must enqueue")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSupersedeAutoSMLCancellationClosesOnlyRunningAutoAttempt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*status='superseded'.*trigger_source='auto'.*status='creating'`).
+		WithArgs("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := repo.SupersedeAutoSMLCancellation(context.Background(),
+		"11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompleteSMLCancellationStockRecalcRequiresOwnedRunningJob(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*stock_recalc_status='succeeded'.*stock_recalc_status='running'`).
+		WithArgs("11111111-1111-1111-1111-111111111111").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	if err := repo.CompleteSMLCancellationStockRecalc(context.Background(), "11111111-1111-1111-1111-111111111111"); err == nil {
+		t.Fatal("CompleteSMLCancellationStockRecalc() error = nil, want lost lease")
+	}
+}
+
+func TestStartSMLCancellationCreateResumesImmutableAttempt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewShopeeRealtimeRepo(db)
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	columns := []string{
+		"id", "shop_id", "order_sn", "bill_id", "sale_sml_doc_no",
+		"cancel_sml_doc_no", "status", "error", "response", "created_by",
+		"created_at", "updated_at", "completed_at", "request_payload",
+		"trigger_source", "route_endpoint", "route_signature", "error_code",
+		"attempts", "next_run_at", "lease_until",
+		"stock_recalc_status", "stock_recalc_error", "stock_recalc_attempts",
+		"stock_recalc_next_run_at", "stock_recalc_lease_until",
+	}
+	attempt := []driver.Value{
+		"11111111-1111-1111-1111-111111111111", int64(264993963), "ORDER-1",
+		"22222222-2222-2222-2222-222222222222", "BF-INV26080055", "CN26080001",
+		"failed", "timeout", []byte(`{"status":"unknown"}`), nil, now, now, now,
+		[]byte(`{"doc_no":"CN26080001"}`), "auto", "/api/v1/ic/sale-invoices/:doc_no/cancel",
+		"route-signature", "sml_cancel_transient", 3, now, nil,
+		"not_required", "", 0, nil, nil,
+	}
+	resumed := append([]driver.Value(nil), attempt...)
+	resumed[6] = "creating"
+	resumed[7] = ""
+	resumed[12] = nil
+	resumed[17] = ""
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`(?s)FROM shopee_sml_cancellations.*status IN`).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`(?s)FROM shopee_sml_cancellations.*status = 'creating'`).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`(?s)FROM shopee_sml_cancellations.*request_payload`).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(attempt...))
+	mock.ExpectQuery(`(?s)UPDATE shopee_sml_cancellations.*status='creating'.*RETURNING`).
+		WithArgs("11111111-1111-1111-1111-111111111111", "33333333-3333-3333-3333-333333333333").
+		WillReturnRows(sqlmock.NewRows(columns).AddRow(resumed...))
+	mock.ExpectCommit()
+
+	record, state, err := repo.StartSMLCancellationCreate(context.Background(), ShopeeSMLCancellationInput{
+		ShopID: 264993963, OrderSN: "ORDER-1", BillID: "22222222-2222-2222-2222-222222222222",
+		SaleSMLDocNo: "BF-INV26080055", CreatedBy: "33333333-3333-3333-3333-333333333333",
+		RouteEndpoint: "/api/v1/ic/sale-invoices/:doc_no/cancel", RouteSignature: "route-signature",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != "resumed" || record == nil || record.CancelSMLDocNo != "CN26080001" ||
+		string(record.RequestPayload) != `{"doc_no":"CN26080001"}` {
+		t.Fatalf("record=%+v state=%q, want immutable resumed attempt", record, state)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

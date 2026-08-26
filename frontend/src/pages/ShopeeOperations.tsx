@@ -130,6 +130,8 @@ type OrderSnapshot = {
   sml_cancel_doc_no?: string
   sml_cancel_status?: string
   sml_cancel_error?: string
+  sml_cancel_stock_recalc_status?: string
+  sml_cancel_stock_recalc_error?: string
   document_route?: string
   bill_source_flow?: string
   buyer_username?: string
@@ -2546,7 +2548,7 @@ function orderCancelledAfterSML(order: OrderSnapshot) {
     order.bill_id
     && order.sml_doc_no
     && order.erp_status === 'sent'
-    && (order.order_status === 'CANCELLED' || order.order_status === 'IN_CANCEL'),
+    && order.order_status === 'CANCELLED',
   )
 }
 
@@ -2557,7 +2559,7 @@ function shouldShowCancelSMLAction(order: OrderSnapshot) {
 function cancelSMLDisabledReason(order: OrderSnapshot) {
   if (!orderCancelledAfterSML(order)) return 'ใช้ได้เฉพาะ order ที่ยกเลิกหลังส่ง SML แล้ว'
   if (cancelSMLStatusDone(order.sml_cancel_status)) return 'มีเอกสารยกเลิก SML แล้ว'
-  if (order.sml_cancel_status === 'creating') return 'กำลังสร้างเอกสารยกเลิก SML อยู่'
+  if (order.sml_cancel_status === 'pending' || order.sml_cancel_status === 'creating') return 'ระบบอัตโนมัติกำลังสร้างเอกสารยกเลิก SML อยู่'
   return ''
 }
 
@@ -2565,15 +2567,34 @@ function cancelSMLBadge(order: OrderSnapshot) {
   if (!orderCancelledAfterSML(order) && !order.sml_cancel_status) return null
   if (cancelSMLStatusDone(order.sml_cancel_status)) {
     return (
-      <Badge variant="outline" className="mt-1 h-5 border-success/30 bg-success/10 px-1.5 text-[10px] text-success">
-        SML {order.sml_cancel_doc_no || 'สร้างแล้ว'}
+      <div className="flex flex-col items-start gap-1">
+        <Badge variant="outline" className="mt-1 h-5 border-success/30 bg-success/10 px-1.5 text-[10px] text-success">
+          SML {order.sml_cancel_doc_no || 'สร้างแล้ว'}
+        </Badge>
+        {(order.sml_cancel_stock_recalc_status === 'pending' || order.sml_cancel_stock_recalc_status === 'running' || order.sml_cancel_stock_recalc_status === 'failed') && (
+          <Badge variant="outline" className="h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info" title={order.sml_cancel_stock_recalc_error || undefined}>
+            {order.sml_cancel_stock_recalc_status === 'running' ? 'กำลังคำนวณสต๊อก SML' : order.sml_cancel_stock_recalc_status === 'failed' ? 'รอคำนวณสต๊อกใหม่' : 'รอคำนวณสต๊อก SML'}
+          </Badge>
+        )}
+        {order.sml_cancel_stock_recalc_status === 'manual_reconciliation' && (
+          <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_stock_recalc_error || undefined}>
+            ต้องตรวจการคำนวณสต๊อก
+          </Badge>
+        )}
+      </div>
+    )
+  }
+  if (order.sml_cancel_status === 'pending' || order.sml_cancel_status === 'creating') {
+    return (
+      <Badge variant="outline" className="mt-1 h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
+        {order.sml_cancel_status === 'pending' ? 'รอสร้าง SML อัตโนมัติ' : 'กำลังสร้าง SML อัตโนมัติ'}
       </Badge>
     )
   }
-  if (order.sml_cancel_status === 'failed') {
+  if (order.sml_cancel_status === 'failed' || order.sml_cancel_status === 'blocked') {
     return (
       <Badge variant="outline" className="mt-1 h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_error || undefined}>
-        เอกสารยกเลิกล้มเหลว
+        {order.sml_cancel_status === 'blocked' ? 'เอกสารยกเลิกต้องตรวจ' : 'เอกสารยกเลิกล้มเหลว'}
       </Badge>
     )
   }

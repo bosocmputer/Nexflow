@@ -95,6 +95,7 @@ type Config struct {
 	ShopeeRealtimeWebhookSecret        string
 	ShopeeRealtimeSyncIntervalSeconds  int
 	ShopeeAutoSMLEnabled               bool
+	ShopeeAutoSMLCancelEnabled         bool
 	LineMyShopEnabled                  bool
 	PurchaseFlowEnabled                bool
 
@@ -184,6 +185,7 @@ func Load() *Config {
 		ShopeeRealtimeWebhookSecret:         getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
 		ShopeeRealtimeSyncIntervalSeconds:   getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
 		ShopeeAutoSMLEnabled:                getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
+		ShopeeAutoSMLCancelEnabled:          getEnvBool("SHOPEE_AUTO_SML_CANCEL_ENABLED", false),
 		LineMyShopEnabled:                   getEnvBool("ENABLE_LINE_MYSHOP", true),
 		PurchaseFlowEnabled:                 false,
 		BackupCronHour:                      getEnvInt("BACKUP_CRON_HOUR", 0),

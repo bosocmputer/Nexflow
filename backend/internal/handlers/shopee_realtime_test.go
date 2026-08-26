@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -330,6 +331,121 @@ func TestShopeeOrderIsCancelledIncludesInCancel(t *testing.T) {
 	}
 	if shopeeOrderIsCancelled("READY_TO_SHIP") {
 		t.Fatal("READY_TO_SHIP should not be treated as cancelled")
+	}
+}
+
+func TestShouldEnqueueAutoSMLCancellationRequiresFinalCancellationTransition(t *testing.T) {
+	billID := "11111111-1111-1111-1111-111111111111"
+	base := &models.ShopeeOrderSnapshot{
+		ShopID: 264993963, OrderSN: "ORDER-1", OrderStatus: "SHIPPED",
+		BillID: &billID, SMLDocNo: "BF-INV26080055",
+	}
+	cancelled := *base
+	cancelled.OrderStatus = "CANCELLED"
+
+	if !shouldEnqueueAutoSMLCancellation(true, base, &cancelled) {
+		t.Fatal("final CANCELLED transition after SML must enqueue")
+	}
+	inCancel := cancelled
+	inCancel.OrderStatus = "IN_CANCEL"
+	if shouldEnqueueAutoSMLCancellation(true, base, &inCancel) {
+		t.Fatal("IN_CANCEL is not final and must not reverse SML")
+	}
+	if shouldEnqueueAutoSMLCancellation(false, base, &cancelled) {
+		t.Fatal("disabled automation must not enqueue")
+	}
+	if shouldEnqueueAutoSMLCancellation(true, nil, &cancelled) {
+		t.Fatal("historical first-seen cancelled orders must not be backfilled automatically")
+	}
+	alreadyCancelled := cancelled
+	if shouldEnqueueAutoSMLCancellation(true, &alreadyCancelled, &cancelled) {
+		t.Fatal("duplicate CANCELLED reconcile must not enqueue again")
+	}
+	missingDoc := cancelled
+	missingDoc.SMLDocNo = ""
+	if shouldEnqueueAutoSMLCancellation(true, base, &missingDoc) {
+		t.Fatal("orders without a sent SML document must not enqueue")
+	}
+	missingBill := cancelled
+	missingBill.BillID = nil
+	if shouldEnqueueAutoSMLCancellation(true, base, &missingBill) {
+		t.Fatal("orders without a linked Nexflow bill must not enqueue")
+	}
+}
+
+func TestClassifySMLCancellationFailure(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		err    error
+		want   string
+	}{
+		{name: "network", err: errors.New("connection reset"), want: "transient"},
+		{name: "timeout", status: http.StatusRequestTimeout, want: "transient"},
+		{name: "rate limit", status: http.StatusTooManyRequests, want: "transient"},
+		{name: "gateway", status: http.StatusBadGateway, want: "transient"},
+		{name: "validation", status: http.StatusBadRequest, want: "blocked"},
+		{name: "conflict", status: http.StatusConflict, want: "blocked"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifySMLCancellationFailure(tt.status, tt.err); got != tt.want {
+				t.Fatalf("classifySMLCancellationFailure(%d, %v) = %q, want %q", tt.status, tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAutoSMLCancellationRetryRestoresImmutablePayloadAndRouteKind(t *testing.T) {
+	h := &ShopeeRealtimeHandler{}
+	job := models.ShopeeSMLCancellation{
+		CancelSMLDocNo: "SIC26080002",
+		RouteEndpoint:  "/api/v1/ic/sale-invoices/:doc_no/void",
+		RequestPayload: json.RawMessage(`{"doc_no":"SIC26080002","doc_date":"2026-08-26","doc_time":"11:20","doc_format_code":"SIC"}`),
+	}
+	req, err := h.smlCancellationRequestForAttempt(context.Background(), &shopeeSMLCancelDocumentContext{}, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != sml.SaleInvoiceCancelKindVoid || req.DocNo != "SIC26080002" || req.DocTime != "11:20" {
+		t.Fatalf("restored request = %+v", req)
+	}
+
+	job.CancelSMLDocNo = "SIC26080003"
+	if _, err := h.smlCancellationRequestForAttempt(context.Background(), &shopeeSMLCancelDocumentContext{}, job); err == nil {
+		t.Fatal("mismatched persisted doc_no must fail closed")
+	}
+}
+
+func TestShopeeSMLCancellationRouteSignatureCoversImmutableRoutingFields(t *testing.T) {
+	base := &models.ChannelDefault{
+		Endpoint: "/api/v1/ic/sale-invoices/:doc_no/cancel", DocFormatCode: "CN",
+		DocPrefix: "CN", DocRunningFormat: "YYMM####",
+	}
+	want := shopeeSMLCancellationRouteSignature(base)
+	for _, mutate := range []func(*models.ChannelDefault){
+		func(v *models.ChannelDefault) { v.Endpoint = "/api/v1/ic/sale-invoices/:doc_no/void" },
+		func(v *models.ChannelDefault) { v.DocFormatCode = "CN-ONLINE" },
+		func(v *models.ChannelDefault) { v.DocPrefix = "SIC" },
+		func(v *models.ChannelDefault) { v.DocRunningFormat = "YYYYMM####" },
+	} {
+		changed := *base
+		mutate(&changed)
+		if got := shopeeSMLCancellationRouteSignature(&changed); got == want {
+			t.Fatalf("route signature did not change for %+v", changed)
+		}
+	}
+}
+
+func TestSMLCancellationItemCodesAreBoundedToUniqueMappedItems(t *testing.T) {
+	ah1, ah2 := " AH-0002 ", "AH-0001"
+	blank := " "
+	bill := &models.Bill{Items: []models.BillItem{
+		{ItemCode: &ah1}, {ItemCode: &ah2}, {ItemCode: &ah1}, {ItemCode: &blank}, {ItemCode: nil},
+	}}
+	got := smlCancellationItemCodes(bill)
+	want := []string{"AH-0001", "AH-0002"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("smlCancellationItemCodes() = %v, want %v", got, want)
 	}
 }
 

@@ -88,7 +88,7 @@ use `scripts/deploy_nextstep_instances.py`; see
 
 ## DB Schema
 
-Migrations available/applied on boot: **001–085** (all idempotent/re-runnable)
+Migrations available/applied on boot: **001–089** (all idempotent/re-runnable)
 
 Key recent migrations:
 
@@ -116,6 +116,10 @@ Key recent migrations:
 | 076 | Require exactly one SML warehouse/location pair per Shopee stock setting |
 | 077 | scoped Marketplace Product Master, bill item identities, stock mapping links, impact indexes |
 | 078 | SML set-product catalog/components, document validity and Shopee set-stock definition hashes |
+| 079–084 | Shopee Gateway, Realtime Auto SML, and production hardening |
+| 085–087 | Marketplace units/reservations and Shopee net stock from outstanding sales orders |
+| 088 | Selectable Shopee cancellation destinations: TRANS_FLAG 45 or 48 |
+| 089 | Durable final-CANCELLED SML document queue, immutable retries, and cancellation stock recalculation |
 | 079 | TikTok gross line amounts, durable amount review and one source artifact per import run |
 | 080 | Safe shared SML stock allocation across multiple active Shopee listings |
 | 081 | Persist excluded SML warehouse/location details per Shopee stock mapping |
@@ -146,6 +150,7 @@ ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
 ENABLE_LINE_MYSHOP=true
 SHOPEE_AUTO_SML_ENABLED=false
+SHOPEE_AUTO_SML_CANCEL_ENABLED=false
 Marketplace release gates (tenant-specific):
 demo:    grouped=false, unit_catalog=true,  conversion=off,    ledger=false, set_stock=false
 aoy:     grouped=true,  unit_catalog=true,  conversion=active, ledger=true,  set_stock=true
@@ -163,6 +168,15 @@ either to `false` to hide or disable the LINE MyShop integration during rollback
 `SHOPEE_AUTO_SML_ENABLED` defaults to `false`. A tenant-level value of `true`
 only starts the durable worker; each shop remains disabled until an admin passes
 the readiness check and confirms activation in `/shopee-operations`.
+
+`SHOPEE_AUTO_SML_CANCEL_ENABLED` defaults to `false`. When enabled, a verified
+transition to Shopee `CANCELLED` for an order whose SML sale was already sent is
+queued durably and processed using the current `shopee_realtime_cancel / sale`
+route. `IN_CANCEL` never creates an SML document. The first attempted `doc_no`,
+payload, route, and document format are immutable across retries; a route change
+or conflicting attempt stops for reconciliation instead of allocating a new
+document. A separate durable post-success job retries SML stock recalculation
+without resending the cancellation document.
 
 Marketplace conversion flags default to disabled. `MARKETPLACE_CONVERSION_MODE`
 accepts `off`, `shadow`, or `active`; `active` fails backend startup unless the
@@ -359,6 +373,9 @@ implementation notes; do not configure an inbox in the current release.
 - **Shopee cancelled after SML** — alerts and cancellation creation are enabled.
   `shopee_realtime_cancel / sale` can route to TRANS_FLAG 45 or 48 through
   `sml-api-bybos`; SML readiness must be OK before the create action is allowed.
+  Automatic creation is separately gated by `SHOPEE_AUTO_SML_CANCEL_ENABLED`,
+  accepts only final `CANCELLED`, retries the same immutable attempt, then runs a
+  separate durable stock recalculation job.
 - **Shopee LINE alerts** — `/settings/line-notifications` manages admin/team
   recipients separately from LINE chat. New-order Flex uses order snapshot data
   and cached payment breakdown when ready, shows times in Asia/Bangkok, and must

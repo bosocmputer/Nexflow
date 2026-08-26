@@ -167,6 +167,8 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		        COALESCE(c.cancel_sml_doc_no, '') AS sml_cancel_doc_no,
 		        COALESCE(c.status, '') AS sml_cancel_status,
 		        COALESCE(c.error, '') AS sml_cancel_error,
+		        COALESCE(c.stock_recalc_status, '') AS sml_cancel_stock_recalc_status,
+		        COALESCE(c.stock_recalc_error, '') AS sml_cancel_stock_recalc_error,
 		        COALESCE(b.document_route, '') AS document_route,
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
@@ -189,11 +191,11 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		          ON p.shop_id = s.shop_id
 		         AND p.order_sn = s.order_sn
 		   LEFT JOIN LATERAL (
-		     SELECT cancel_sml_doc_no, status, error
+		     SELECT cancel_sml_doc_no, status, error, stock_recalc_status, stock_recalc_error
 		       FROM shopee_sml_cancellations c
 		      WHERE c.shop_id = s.shop_id
 		        AND c.order_sn = s.order_sn
-		      ORDER BY c.updated_at DESC
+		      ORDER BY (c.status IN ('created','already_exists')) DESC, c.updated_at DESC
 		      LIMIT 1
 		   ) c ON TRUE `+where+`
 		  ORDER BY COALESCE(s.last_order_update_at, s.updated_at) DESC, s.updated_at DESC
@@ -262,6 +264,8 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		        COALESCE(c.cancel_sml_doc_no, '') AS sml_cancel_doc_no,
 		        COALESCE(c.status, '') AS sml_cancel_status,
 		        COALESCE(c.error, '') AS sml_cancel_error,
+		        COALESCE(c.stock_recalc_status, '') AS sml_cancel_stock_recalc_status,
+		        COALESCE(c.stock_recalc_error, '') AS sml_cancel_stock_recalc_error,
 		        COALESCE(b.document_route, '') AS document_route,
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
@@ -284,11 +288,11 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		          ON p.shop_id = s.shop_id
 		         AND p.order_sn = s.order_sn
 		   LEFT JOIN LATERAL (
-		     SELECT cancel_sml_doc_no, status, error
+		     SELECT cancel_sml_doc_no, status, error, stock_recalc_status, stock_recalc_error
 		       FROM shopee_sml_cancellations c
 		      WHERE c.shop_id = s.shop_id
 		        AND c.order_sn = s.order_sn
-		      ORDER BY c.updated_at DESC
+		      ORDER BY (c.status IN ('created','already_exists')) DESC, c.updated_at DESC
 		      LIMIT 1
 		   ) c ON TRUE
 		  WHERE s.shop_id = $1 AND s.order_sn = $2
@@ -860,6 +864,290 @@ type ShopeeSMLCancellationInput struct {
 	Error          string
 	Response       json.RawMessage
 	CreatedBy      string
+	RouteEndpoint  string
+	RouteSignature string
+}
+
+func (r *ShopeeRealtimeRepo) EnqueueAutoSMLCancellation(ctx context.Context, in ShopeeSMLCancellationInput) (bool, error) {
+	in = normalizeShopeeSMLCancellationInput(in)
+	if in.ShopID <= 0 || in.OrderSN == "" || in.BillID == "" || in.SaleSMLDocNo == "" || in.RouteEndpoint == "" || in.RouteSignature == "" {
+		return false, fmt.Errorf("shop_id, order_sn, bill_id, sale_sml_doc_no, and route are required")
+	}
+	res, err := r.db.ExecContext(ctx, `
+		INSERT INTO shopee_sml_cancellations
+		  (shop_id,order_sn,bill_id,sale_sml_doc_no,status,trigger_source,
+		   route_endpoint,route_signature,next_run_at)
+		VALUES ($1,$2,$3::uuid,$4,'pending','auto',$5,$6,NOW())
+		ON CONFLICT (shop_id,order_sn,sale_sml_doc_no)
+		  WHERE trigger_source='auto'
+		DO NOTHING`, in.ShopID, in.OrderSN, in.BillID, in.SaleSMLDocNo, in.RouteEndpoint, in.RouteSignature)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+func (r *ShopeeRealtimeRepo) RecoverStaleAutoSMLCancellations(ctx context.Context) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET status='pending',next_run_at=NOW(),lease_until=NULL,
+		       error_code='worker_lease_expired',
+		       error='กู้คืนงานยกเลิก SML หลัง worker หยุดทำงาน',updated_at=NOW()
+		 WHERE trigger_source='auto' AND status='creating' AND lease_until<NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (r *ShopeeRealtimeRepo) LeaseAutoSMLCancellations(ctx context.Context, limit int, lease time.Duration) ([]models.ShopeeSMLCancellation, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 2
+	}
+	if lease <= 0 {
+		lease = 2 * time.Minute
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		WITH picked AS (
+		  SELECT c.id
+		    FROM shopee_sml_cancellations c
+		   WHERE c.trigger_source='auto' AND c.status='pending' AND c.next_run_at<=NOW()
+		     AND NOT EXISTS (
+		       SELECT 1 FROM shopee_sml_cancellations same_attempt
+		        WHERE same_attempt.shop_id=c.shop_id AND same_attempt.order_sn=c.order_sn
+		          AND same_attempt.sale_sml_doc_no=c.sale_sml_doc_no AND same_attempt.status='creating'
+		          AND (
+		            (same_attempt.trigger_source='auto' AND same_attempt.lease_until>NOW()) OR
+		            (same_attempt.trigger_source='manual' AND same_attempt.updated_at>NOW()-INTERVAL '5 minutes')
+		          )
+		     )
+		     AND NOT EXISTS (
+		       SELECT 1 FROM shopee_sml_cancellations active
+		        WHERE active.shop_id=c.shop_id AND active.trigger_source='auto'
+		          AND active.status='creating' AND active.lease_until>NOW()
+		     )
+		     AND c.id=(
+		       SELECT next_job.id FROM shopee_sml_cancellations next_job
+		        WHERE next_job.shop_id=c.shop_id AND next_job.trigger_source='auto'
+		          AND next_job.status='pending' AND next_job.next_run_at<=NOW()
+		        ORDER BY next_job.next_run_at,next_job.created_at LIMIT 1
+		     )
+		   ORDER BY c.next_run_at,c.created_at
+		   LIMIT $1
+		   FOR UPDATE OF c SKIP LOCKED
+		)
+		UPDATE shopee_sml_cancellations c
+		   SET status='creating',attempts=attempts+1,
+		       lease_until=NOW()+($2*INTERVAL '1 second'),updated_at=NOW()
+		  FROM picked WHERE c.id=picked.id
+		RETURNING c.id::text,c.shop_id,c.order_sn,c.bill_id::text,c.sale_sml_doc_no,
+		          c.cancel_sml_doc_no,c.status,c.error,c.response,c.created_by::text,
+		          c.created_at,c.updated_at,c.completed_at,c.request_payload,
+		          c.trigger_source,c.route_endpoint,c.route_signature,c.error_code,
+		          c.attempts,c.next_run_at,c.lease_until,
+		          c.stock_recalc_status,c.stock_recalc_error,c.stock_recalc_attempts,
+		          c.stock_recalc_next_run_at,c.stock_recalc_lease_until`, limit, int64(lease.Seconds()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.ShopeeSMLCancellation{}
+	for rows.Next() {
+		row, err := scanAutoSMLCancellation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *ShopeeRealtimeRepo) MarkAutoSMLCancellationRetry(ctx context.Context, id, code, message string, maxAttempts int) (bool, error) {
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT attempts FROM shopee_sml_cancellations
+		 WHERE id=$1::uuid AND trigger_source='auto' AND status='creating' FOR UPDATE`, strings.TrimSpace(id)).Scan(&attempts); err != nil {
+		return false, err
+	}
+	terminal := attempts >= maxAttempts
+	status := "pending"
+	if terminal {
+		status = "failed"
+	}
+	delay := autoSMLCancellationRetryDelay(attempts)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET status=$2,next_run_at=NOW()+($3*INTERVAL '1 second'),lease_until=NULL,
+		       error_code=$4,error=$5,
+		       completed_at=CASE WHEN $2='failed' THEN NOW() ELSE NULL END,updated_at=NOW()
+		 WHERE id=$1::uuid AND trigger_source='auto' AND status='creating'`, strings.TrimSpace(id), status,
+		int64(delay.Seconds()), truncateDBText(code, 100), truncateDBText(message, 800)); err != nil {
+		return false, err
+	}
+	return terminal, tx.Commit()
+}
+
+func (r *ShopeeRealtimeRepo) BlockAutoSMLCancellation(ctx context.Context, id, code, message string, response json.RawMessage) error {
+	resp := jsonForDB(response)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET status='blocked',lease_until=NULL,error_code=$2,error=$3,
+		       response=COALESCE(NULLIF($4,'')::jsonb,response),completed_at=NOW(),updated_at=NOW()
+		 WHERE id=$1::uuid AND trigger_source='auto' AND status='creating'`, strings.TrimSpace(id),
+		truncateDBText(code, 100), truncateDBText(message, 800), resp)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("auto SML cancellation attempt changed before block")
+	}
+	return nil
+}
+
+func (r *ShopeeRealtimeRepo) SupersedeAutoSMLCancellation(ctx context.Context, id, successfulAttemptID string) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET status='superseded',lease_until=NULL,error_code='covered_by_existing_success',
+		       error='มีเอกสารยกเลิก SML สำเร็จจาก attempt อื่นแล้ว',
+		       response=jsonb_build_object('successful_attempt_id',$2),completed_at=NOW(),updated_at=NOW()
+		 WHERE id=$1::uuid AND trigger_source='auto' AND status='creating'`,
+		strings.TrimSpace(id), strings.TrimSpace(successfulAttemptID))
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("auto SML cancellation attempt changed before supersede")
+	}
+	return nil
+}
+
+func (r *ShopeeRealtimeRepo) RecoverStaleSMLCancellationStockRecalcs(ctx context.Context) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET stock_recalc_status='failed',stock_recalc_next_run_at=NOW(),
+		       stock_recalc_lease_until=NULL,
+		       stock_recalc_error='กู้คืนงานคำนวณสต๊อกหลัง worker หยุดทำงาน',updated_at=NOW()
+		 WHERE stock_recalc_status='running' AND stock_recalc_lease_until<NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (r *ShopeeRealtimeRepo) LeaseSMLCancellationStockRecalcs(ctx context.Context, limit int, lease time.Duration) ([]models.ShopeeSMLCancellation, error) {
+	if limit <= 0 || limit > 10 {
+		limit = 1
+	}
+	if lease <= 0 {
+		lease = 2 * time.Minute
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		WITH picked AS (
+		  SELECT id FROM shopee_sml_cancellations
+		   WHERE status IN ('created','already_exists')
+		     AND stock_recalc_status IN ('pending','failed')
+		     AND stock_recalc_next_run_at<=NOW()
+		     AND (stock_recalc_lease_until IS NULL OR stock_recalc_lease_until<NOW())
+		   ORDER BY stock_recalc_next_run_at,created_at,id
+		   LIMIT $1 FOR UPDATE SKIP LOCKED
+		)
+		UPDATE shopee_sml_cancellations c
+		   SET stock_recalc_status='running',stock_recalc_attempts=stock_recalc_attempts+1,
+		       stock_recalc_lease_until=NOW()+($2*INTERVAL '1 second'),updated_at=NOW()
+		  FROM picked WHERE c.id=picked.id
+		RETURNING c.id::text,c.shop_id,c.order_sn,c.bill_id::text,c.sale_sml_doc_no,
+		          c.cancel_sml_doc_no,c.status,c.error,c.response,c.created_by::text,
+		          c.created_at,c.updated_at,c.completed_at,c.request_payload,
+		          c.trigger_source,c.route_endpoint,c.route_signature,c.error_code,
+		          c.attempts,c.next_run_at,c.lease_until,
+		          c.stock_recalc_status,c.stock_recalc_error,c.stock_recalc_attempts,
+		          c.stock_recalc_next_run_at,c.stock_recalc_lease_until`, limit, int64(lease.Seconds()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.ShopeeSMLCancellation{}
+	for rows.Next() {
+		row, err := scanAutoSMLCancellation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (r *ShopeeRealtimeRepo) CompleteSMLCancellationStockRecalc(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE shopee_sml_cancellations
+		   SET stock_recalc_status='succeeded',stock_recalc_error='',
+		       stock_recalc_lease_until=NULL,updated_at=NOW()
+		 WHERE id=$1::uuid AND stock_recalc_status='running'`, strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return fmt.Errorf("SML cancellation stock recalculation lease was lost")
+	}
+	return nil
+}
+
+func (r *ShopeeRealtimeRepo) FailSMLCancellationStockRecalc(ctx context.Context, id, message string, maxAttempts int) (bool, error) {
+	if maxAttempts <= 0 {
+		maxAttempts = 10
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var attempts int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT stock_recalc_attempts FROM shopee_sml_cancellations
+		 WHERE id=$1::uuid AND stock_recalc_status='running' FOR UPDATE`, strings.TrimSpace(id)).Scan(&attempts); err != nil {
+		return false, err
+	}
+	terminal := attempts >= maxAttempts
+	delaySeconds := int64(15 * (1 << min(attempts, 8)))
+	if delaySeconds > 3600 {
+		delaySeconds = 3600
+	}
+	status := "failed"
+	nextRunAt := "NOW()+($3*INTERVAL '1 second')"
+	if terminal {
+		status = "manual_reconciliation"
+		nextRunAt = "NULL"
+	}
+	query := `UPDATE shopee_sml_cancellations
+		SET stock_recalc_status=$2,stock_recalc_error=$4,stock_recalc_lease_until=NULL,
+		    stock_recalc_next_run_at=` + nextRunAt + `,updated_at=NOW()
+		WHERE id=$1::uuid AND stock_recalc_status='running'`
+	if _, err := tx.ExecContext(ctx, query, strings.TrimSpace(id), status, delaySeconds, truncateDBText(message, 800)); err != nil {
+		return false, err
+	}
+	return terminal, tx.Commit()
+}
+
+func autoSMLCancellationRetryDelay(attempt int) time.Duration {
+	switch attempt {
+	case 1:
+		return time.Minute
+	case 2:
+		return 5 * time.Minute
+	default:
+		return 15 * time.Minute
+	}
 }
 
 func (r *ShopeeRealtimeRepo) LatestSMLCancellation(ctx context.Context, shopID int64, orderSN, saleSMLDocNo string) (*models.ShopeeSMLCancellation, error) {
@@ -877,11 +1165,15 @@ func (r *ShopeeRealtimeRepo) LatestSMLCancellation(ctx context.Context, shopID i
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
 		        cancel_sml_doc_no, status, error, response, created_by::text,
-		        created_at, updated_at, completed_at
+		        created_at, updated_at, completed_at, request_payload,
+		        trigger_source, route_endpoint, route_signature, error_code,
+		        attempts, next_run_at, lease_until,
+		        stock_recalc_status, stock_recalc_error, stock_recalc_attempts,
+		        stock_recalc_next_run_at, stock_recalc_lease_until
 		   FROM shopee_sml_cancellations
 		  WHERE shop_id = $1
 		    AND order_sn = $2`+whereSale+`
-		  ORDER BY updated_at DESC
+		  ORDER BY (status IN ('created','already_exists')) DESC, updated_at DESC
 		  LIMIT 1`,
 		args...,
 	)
@@ -892,7 +1184,7 @@ func (r *ShopeeRealtimeRepo) LatestSMLCancellation(ctx context.Context, shopID i
 	if !rows.Next() {
 		return nil, nil
 	}
-	row, err := scanShopeeSMLCancellation(rows)
+	row, err := scanAutoSMLCancellation(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -970,28 +1262,61 @@ func (r *ShopeeRealtimeRepo) StartSMLCancellationCreate(ctx context.Context, in 
 		rollback = false
 		return running, "running", nil
 	}
+	if attempted, err := latestAttemptedSMLCancellationTx(ctx, tx, in.ShopID, in.OrderSN, in.SaleSMLDocNo); err != nil {
+		return nil, "", err
+	} else if attempted != nil {
+		if in.RouteEndpoint == "" || in.RouteSignature == "" ||
+			attempted.RouteEndpoint != in.RouteEndpoint || attempted.RouteSignature != in.RouteSignature {
+			if err := tx.Commit(); err != nil {
+				return nil, "", err
+			}
+			rollback = false
+			return attempted, "reconciliation", nil
+		}
+		row := tx.QueryRowContext(ctx, `
+			UPDATE shopee_sml_cancellations
+			   SET status='creating',error='',error_code='',completed_at=NULL,
+			       lease_until=CASE WHEN trigger_source='auto' THEN NOW()+INTERVAL '2 minutes' ELSE NULL END,
+			       created_by=COALESCE(NULLIF($2,'')::uuid,created_by),updated_at=NOW()
+			 WHERE id=$1::uuid
+			 RETURNING id::text,shop_id,order_sn,bill_id::text,sale_sml_doc_no,
+			           cancel_sml_doc_no,status,error,response,created_by::text,
+			           created_at,updated_at,completed_at,request_payload,
+			           trigger_source,route_endpoint,route_signature,error_code,
+			           attempts,next_run_at,lease_until,
+			           stock_recalc_status,stock_recalc_error,stock_recalc_attempts,
+			           stock_recalc_next_run_at,stock_recalc_lease_until`, attempted.ID, in.CreatedBy)
+		resumed, err := scanAutoSMLCancellation(row)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, "", err
+		}
+		rollback = false
+		return &resumed, "resumed", nil
+	}
 
 	resp := jsonForDB(in.Response)
 	var out models.ShopeeSMLCancellation
-	var billID, createdBy sql.NullString
-	var completedAt sql.NullTime
-	err = tx.QueryRowContext(ctx,
+	row := tx.QueryRowContext(ctx,
 		`INSERT INTO shopee_sml_cancellations
 		  (shop_id, order_sn, bill_id, sale_sml_doc_no, cancel_sml_doc_no,
-		   status, error, response, created_by)
+		   status, error, response, created_by, trigger_source, route_endpoint, route_signature, next_run_at)
 		 VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5,
 		         'creating', '', COALESCE(NULLIF($6, '')::jsonb, '{}'::jsonb),
-		         NULLIF($7, '')::uuid)
+		         NULLIF($7, '')::uuid, 'manual', $8, $9, NOW())
 		 RETURNING id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
 		           cancel_sml_doc_no, status, error, response, created_by::text,
-		           created_at, updated_at, completed_at`,
+		           created_at, updated_at, completed_at, request_payload,
+		           trigger_source, route_endpoint, route_signature, error_code,
+		           attempts, next_run_at, lease_until,
+		           stock_recalc_status, stock_recalc_error, stock_recalc_attempts,
+		           stock_recalc_next_run_at, stock_recalc_lease_until`,
 		in.ShopID, in.OrderSN, in.BillID, in.SaleSMLDocNo, in.CancelSMLDocNo,
-		resp, in.CreatedBy,
-	).Scan(
-		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
-		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
-		&out.CreatedAt, &out.UpdatedAt, &completedAt,
+		resp, in.CreatedBy, in.RouteEndpoint, in.RouteSignature,
 	)
+	out, err = scanAutoSMLCancellation(row)
 	if err != nil {
 		return nil, "", err
 	}
@@ -999,7 +1324,6 @@ func (r *ShopeeRealtimeRepo) StartSMLCancellationCreate(ctx context.Context, in 
 		return nil, "", err
 	}
 	rollback = false
-	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
 	return &out, "started", nil
 }
 
@@ -1009,31 +1333,58 @@ func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, st
 		return nil, nil
 	}
 	resp := jsonForDB(response)
-	var out models.ShopeeSMLCancellation
-	var billID, createdBy sql.NullString
-	var completedAt sql.NullTime
-	err := r.db.QueryRowContext(ctx,
-		`UPDATE shopee_sml_cancellations
+	row := r.db.QueryRowContext(ctx,
+		`UPDATE shopee_sml_cancellations AS target
 		    SET status = $2,
 		        cancel_sml_doc_no = COALESCE(NULLIF($3, ''), cancel_sml_doc_no),
 		        response = COALESCE(NULLIF($4, '')::jsonb, response),
 		        error = $5,
+		        error_code = CASE WHEN $2 IN ('created','already_exists') THEN '' ELSE error_code END,
+		        lease_until = NULL,
+		        stock_recalc_status = CASE
+		          WHEN $2 IN ('created','already_exists')
+		           AND target.stock_recalc_status NOT IN ('pending','running','succeeded')
+		           AND NOT EXISTS (
+		             SELECT 1 FROM shopee_sml_cancellations other
+		              WHERE other.id<>target.id AND other.shop_id=target.shop_id
+		                AND other.order_sn=target.order_sn AND other.sale_sml_doc_no=target.sale_sml_doc_no
+		                AND other.status IN ('created','already_exists')
+		                AND other.stock_recalc_status IN ('pending','running','succeeded')
+		           ) THEN 'pending'
+		          ELSE target.stock_recalc_status
+		        END,
+		        stock_recalc_next_run_at = CASE
+		          WHEN $2 IN ('created','already_exists')
+		           AND target.stock_recalc_status NOT IN ('pending','running','succeeded')
+		           AND NOT EXISTS (
+		             SELECT 1 FROM shopee_sml_cancellations other
+		              WHERE other.id<>target.id AND other.shop_id=target.shop_id
+		                AND other.order_sn=target.order_sn AND other.sale_sml_doc_no=target.sale_sml_doc_no
+		                AND other.status IN ('created','already_exists')
+		                AND other.stock_recalc_status IN ('pending','running','succeeded')
+		           ) THEN NOW()
+		          ELSE target.stock_recalc_next_run_at
+		        END,
 		        updated_at = NOW(),
 		        completed_at = CASE WHEN $2 IN ('created','already_exists','failed','blocked') THEN NOW() ELSE completed_at END
 		  WHERE id = $1::uuid
+		    AND (
+		      ($2 IN ('created','already_exists') AND status IN ('creating','created','already_exists'))
+		      OR ($2 IN ('failed','blocked') AND status='creating')
+		    )
 		  RETURNING id::text, shop_id, order_sn, bill_id::text, sale_sml_doc_no,
 		            cancel_sml_doc_no, status, error, response, created_by::text,
-		            created_at, updated_at, completed_at`,
+		            created_at, updated_at, completed_at, request_payload,
+		            trigger_source, route_endpoint, route_signature, error_code,
+		            attempts, next_run_at, lease_until,
+		            stock_recalc_status, stock_recalc_error, stock_recalc_attempts,
+		            stock_recalc_next_run_at, stock_recalc_lease_until`,
 		id, strings.TrimSpace(status), strings.TrimSpace(cancelSMLDocNo), resp, truncateDBText(errMsg, 800),
-	).Scan(
-		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
-		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
-		&out.CreatedAt, &out.UpdatedAt, &completedAt,
 	)
+	out, err := scanAutoSMLCancellation(row)
 	if err != nil {
 		return nil, err
 	}
-	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
 	return &out, nil
 }
 
@@ -1046,7 +1397,7 @@ func (r *ShopeeRealtimeRepo) PrepareSMLCancellationCreate(ctx context.Context, i
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE shopee_sml_cancellations
 		   SET cancel_sml_doc_no=$2,
-		       response=$3::jsonb,
+		       request_payload=$3::jsonb,
 		       updated_at=NOW()
 		 WHERE id=$1::uuid
 		   AND status='creating'`, id, cancelSMLDocNo, request)
@@ -1543,7 +1894,12 @@ func (r *ShopeeRealtimeRepo) orderERPMilestones(ctx context.Context, snap *model
 			cancelAt = &t
 		case "creating":
 			cancelState = "current"
-			cancelDetail = "กำลังสร้างเอกสารยกเลิก SML"
+			cancelDetail = "กำลังสร้างเอกสารยกเลิก SML อัตโนมัติ"
+			t := cancelRow.UpdatedAt
+			cancelAt = &t
+		case "pending":
+			cancelState = "current"
+			cancelDetail = "รอระบบสร้างเอกสารยกเลิก SML อัตโนมัติ"
 			t := cancelRow.UpdatedAt
 			cancelAt = &t
 		default:
@@ -2057,6 +2413,42 @@ func latestRunningSMLCancellationTx(ctx context.Context, tx txQueryer, shopID in
 	return &row, rows.Err()
 }
 
+// latestAttemptedSMLCancellationTx returns an attempt whose immutable payload
+// may already have reached SML. Callers must either replay this exact attempt or
+// stop for reconciliation; allocating another doc_no would risk a duplicate.
+func latestAttemptedSMLCancellationTx(ctx context.Context, tx txQueryer, shopID int64, orderSN, saleSMLDocNo string) (*models.ShopeeSMLCancellation, error) {
+	orderSN = strings.TrimSpace(orderSN)
+	saleSMLDocNo = strings.TrimSpace(saleSMLDocNo)
+	if shopID <= 0 || orderSN == "" || saleSMLDocNo == "" {
+		return nil, nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id::text,shop_id,order_sn,bill_id::text,sale_sml_doc_no,
+		       cancel_sml_doc_no,status,error,response,created_by::text,
+		       created_at,updated_at,completed_at,request_payload,
+		       trigger_source,route_endpoint,route_signature,error_code,
+		       attempts,next_run_at,lease_until,
+		       stock_recalc_status,stock_recalc_error,stock_recalc_attempts,
+		       stock_recalc_next_run_at,stock_recalc_lease_until
+		  FROM shopee_sml_cancellations
+		 WHERE shop_id=$1 AND order_sn=$2 AND sale_sml_doc_no=$3
+		   AND status IN ('failed','blocked')
+		   AND cancel_sml_doc_no<>'' AND request_payload<>'{}'::jsonb
+		 ORDER BY updated_at DESC LIMIT 1`, shopID, orderSN, saleSMLDocNo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	row, err := scanAutoSMLCancellation(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &row, rows.Err()
+}
+
 func scanShopeeSMLCancellation(rows snapshotScanner) (models.ShopeeSMLCancellation, error) {
 	var out models.ShopeeSMLCancellation
 	var billID, createdBy sql.NullString
@@ -2069,6 +2461,37 @@ func scanShopeeSMLCancellation(rows snapshotScanner) (models.ShopeeSMLCancellati
 		return out, err
 	}
 	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	return out, nil
+}
+
+func scanAutoSMLCancellation(rows snapshotScanner) (models.ShopeeSMLCancellation, error) {
+	var out models.ShopeeSMLCancellation
+	var billID, createdBy sql.NullString
+	var completedAt, nextRunAt, leaseUntil, stockNextRunAt, stockLeaseUntil sql.NullTime
+	if err := rows.Scan(
+		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
+		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
+		&out.CreatedAt, &out.UpdatedAt, &completedAt, &out.RequestPayload,
+		&out.TriggerSource, &out.RouteEndpoint, &out.RouteSignature, &out.ErrorCode,
+		&out.Attempts, &nextRunAt, &leaseUntil,
+		&out.StockRecalcStatus, &out.StockRecalcError, &out.StockRecalcAttempts,
+		&stockNextRunAt, &stockLeaseUntil,
+	); err != nil {
+		return out, err
+	}
+	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	if nextRunAt.Valid {
+		out.NextRunAt = nextRunAt.Time
+	}
+	if leaseUntil.Valid {
+		out.LeaseUntil = &leaseUntil.Time
+	}
+	if stockNextRunAt.Valid {
+		out.StockRecalcNextRunAt = &stockNextRunAt.Time
+	}
+	if stockLeaseUntil.Valid {
+		out.StockRecalcLeaseUntil = &stockLeaseUntil.Time
+	}
 	return out, nil
 }
 
@@ -2095,6 +2518,8 @@ func normalizeShopeeSMLCancellationInput(in ShopeeSMLCancellationInput) ShopeeSM
 	in.Status = strings.TrimSpace(in.Status)
 	in.Error = strings.TrimSpace(in.Error)
 	in.CreatedBy = strings.TrimSpace(in.CreatedBy)
+	in.RouteEndpoint = strings.TrimSpace(in.RouteEndpoint)
+	in.RouteSignature = strings.TrimSpace(in.RouteSignature)
 	return in
 }
 
@@ -2120,6 +2545,7 @@ func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error
 	if err := rows.Scan(
 		&out.ID, &connID, &out.ShopID, &out.ShopLabel, &out.OrderSN, &out.OrderStatus,
 		&out.ERPStatus, &billID, &out.SMLDocNo, &out.SMLCancelDocNo, &out.SMLCancelStatus, &out.SMLCancelError,
+		&out.SMLCancelStockRecalcStatus, &out.SMLCancelStockRecalcError,
 		&out.DocumentRoute, &out.BillSourceFlow, &out.BuyerUsername, &out.TotalAmount,
 		&out.Currency, &out.ItemCount, &out.PackageNumber, &out.LogisticsStatus,
 		&out.TrackingNumber, &out.ShippingCarrier, &out.PaymentMethod, &out.PaymentBreakdownStatus, &out.RawDetail,

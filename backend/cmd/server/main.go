@@ -265,6 +265,7 @@ func main() {
 		zap.Bool("sml_set_product_expansion_enabled", cfg.SMLSetProductExpansionEnabled),
 		zap.Bool("shopee_set_stock_enabled", cfg.ShopeeSetStockEnabled),
 		zap.Bool("shopee_auto_sml_enabled", cfg.ShopeeAutoSMLEnabled),
+		zap.Bool("shopee_auto_sml_cancel_enabled", cfg.ShopeeAutoSMLCancelEnabled),
 		zap.String("product_mapping_master_mode", mappingMode),
 	)
 
@@ -703,6 +704,9 @@ func main() {
 	}
 	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeAutoSMLEnabled {
 		shopeeRealtimeH.StartAutoSMLWorker(appCtx)
+	}
+	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeSMLCancelDocumentsEnabled {
+		shopeeRealtimeH.StartSMLCancellationWorkers(appCtx)
 	}
 	if cfg.ShopeeRealtimeOpsEnabled && cfg.ShopeeOrderEscrowEnrichmentEnabled {
 		go shopeeRealtimeH.StartPaymentBreakdownWorker(appCtx, 10*time.Second, 5)
