@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `40ac450` (`fix: close Shopee order timeline in one action`),
+  `6f6f74f` (`feat: show items in Shopee Auto SML alerts`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `7723a0b`
   (`fix: block ambiguous SML sales order identities`).
@@ -199,6 +199,22 @@ Current AOY UAT scope:
     cleanup, and a clean console. AOY health remained HTTP 200 with no recent
     backend 500/panic/fatal errors. The pre-deploy AOY backup is
     `pre-deploy-20260826-044708.sql.gz`. Demo and Lanboon were not deployed.
+19. AOY Auto SML order `260826C78TFM12` was reconciled end to end on
+    2026-08-26. The READY_TO_SHIP push produced exactly one Auto SML job, one
+    active bill `5d78fcab-8b50-4a66-a5e8-33073328618e`, and one immutable SML
+    attempt for `BF-INV26080055`; it succeeded on the first attempt. SML returned
+    HTTP 201 and the durable stock-recalculation job subsequently verified exact
+    `AH-0003` stock-movement evidence before incorporating the reservation. LINE
+    sent the new-order and Auto SML success notifications once to each of two
+    enabled recipients, with no failed delivery. AOY-only commit `6f6f74f` now
+    adds a bounded `รายการสินค้า` section to future Auto SML Flex and text
+    notifications: up to five Marketplace product/variant lines with Marketplace
+    quantity, excluding the synthetic Shopee shipping line and all buyer PII;
+    longer orders show the remaining line count. The historical notification was
+    intentionally not resent. Post-deploy health, Gateway connectivity, Auto SML
+    enabled/unpaused state, and recent error logs passed. The pre-deploy AOY
+    backup is `pre-deploy-20260826-060440.sql.gz`. Demo and Lanboon remain on
+    `82baa4a`.
 
 Known deferred or incomplete validation:
 
@@ -445,4 +461,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-25 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-26 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
