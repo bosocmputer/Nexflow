@@ -70,6 +70,30 @@ func TestStockSyncClientLoadsAvailabilityCapabilities(t *testing.T) {
 	}
 }
 
+func TestStockSyncClientDemandEvidenceBatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/ic/stock-demand-evidence/batch" || r.Method != http.MethodPost {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var req StockDemandEvidenceBatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if len(req.Lines) != 1 || req.Lines[0].ExpectedBaseQtyExact != "48" {
+			t.Fatalf("request=%+v", req)
+		}
+		_, _ = w.Write([]byte(`{"success":true,"data":{"schema_version":"stock-demand-evidence-v1","source_semantics_fingerprint":"sha256:test","source_snapshot_at":"2026-08-26T03:00:00Z","lines":[{"evidence_id":"r1:A","doc_no":"SO1","route":"saleorder","item_code":"A","warehouse_code":"W1","location_code":"S1","expected_base_qty_exact":"48","actual_base_qty_exact":"48","status":"verified","evidence_hash":"sha256:evidence"}]}}`))
+	}))
+	defer server.Close()
+	client := NewStockSyncClient(PartyConfig{BaseURL: server.URL, GUID: "guid", Database: "demo"})
+	result, err := client.DemandEvidenceBatch(context.Background(), StockDemandEvidenceBatchRequest{Lines: []StockDemandEvidenceRequestLine{{
+		EvidenceID: "r1:A", DocNo: "SO1", Route: "saleorder", ItemCode: "A", WarehouseCode: "W1", LocationCode: "S1", ExpectedBaseQtyExact: "48",
+	}}})
+	if err != nil || len(result.Lines) != 1 || result.Lines[0].Status != "verified" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func TestStockSyncClientCatalogRangeUsesOverlapWindow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/ic/stock-catalog" || r.URL.Query().Get("page") != "2" || r.URL.Query().Get("size") != "500" {

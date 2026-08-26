@@ -250,6 +250,41 @@ type StockCapabilities struct {
 	MaxItemCodes               int      `json:"max_item_codes"`
 }
 
+type StockDemandEvidenceRequestLine struct {
+	EvidenceID           string `json:"evidence_id"`
+	DocNo                string `json:"doc_no"`
+	Route                string `json:"route"`
+	ItemCode             string `json:"item_code"`
+	WarehouseCode        string `json:"warehouse_code"`
+	LocationCode         string `json:"location_code"`
+	ExpectedBaseQtyExact string `json:"expected_base_qty_exact"`
+}
+
+type StockDemandEvidenceBatchRequest struct {
+	Lines []StockDemandEvidenceRequestLine `json:"lines"`
+}
+
+type StockDemandEvidenceResultLine struct {
+	EvidenceID           string `json:"evidence_id"`
+	DocNo                string `json:"doc_no"`
+	Route                string `json:"route"`
+	ItemCode             string `json:"item_code"`
+	WarehouseCode        string `json:"warehouse_code"`
+	LocationCode         string `json:"location_code"`
+	ExpectedBaseQtyExact string `json:"expected_base_qty_exact"`
+	ActualBaseQtyExact   string `json:"actual_base_qty_exact"`
+	Status               string `json:"status"`
+	Reason               string `json:"reason"`
+	EvidenceHash         string `json:"evidence_hash"`
+}
+
+type StockDemandEvidenceBatchResponse struct {
+	SchemaVersion              string                          `json:"schema_version"`
+	SourceSemanticsFingerprint string                          `json:"source_semantics_fingerprint"`
+	SourceSnapshotAt           string                          `json:"source_snapshot_at"`
+	Lines                      []StockDemandEvidenceResultLine `json:"lines"`
+}
+
 type stockAPIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -278,6 +313,14 @@ func (c *StockSyncClient) Locations(ctx context.Context, asOfDate string) (*Stoc
 func (c *StockSyncClient) StockCapabilities(ctx context.Context) (*StockCapabilities, error) {
 	var envelope stockAPIEnvelope[StockCapabilities]
 	if err := c.do(ctx, http.MethodGet, "/api/v1/ic/stock-capabilities", nil, &envelope); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (c *StockSyncClient) DemandEvidenceBatch(ctx context.Context, request StockDemandEvidenceBatchRequest) (*StockDemandEvidenceBatchResponse, error) {
+	var envelope stockAPIEnvelope[StockDemandEvidenceBatchResponse]
+	if err := c.do(ctx, http.MethodPost, "/api/v1/ic/stock-demand-evidence/batch", request, &envelope); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil

@@ -74,6 +74,37 @@ func CalculateTargetExact(balance, pending, stockPct, unitFactor string) (int64,
 	return integer.Int64(), nil
 }
 
+func decimalFromFloat(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func exactSubtractClamp(balance, pending string) string {
+	left, ok := new(big.Rat).SetString(strings.TrimSpace(balance))
+	if !ok {
+		return ""
+	}
+	right, ok := new(big.Rat).SetString(strings.TrimSpace(pending))
+	if !ok {
+		return ""
+	}
+	left.Sub(left, right)
+	if left.Sign() <= 0 {
+		return "0"
+	}
+	return left.FloatString(maxExactDecimalPlaces(balance, pending))
+}
+
+func maxExactDecimalPlaces(values ...string) int {
+	places := 0
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if dot := strings.IndexByte(value, '.'); dot >= 0 {
+			places = max(places, len(value)-dot-1)
+		}
+	}
+	return places
+}
+
 func validateAvailabilityCapabilities(capability *sml.StockCapabilities, expectedFingerprint string) error {
 	if capability == nil {
 		return fmt.Errorf("SML stock capability is missing")
@@ -93,6 +124,67 @@ func validateAvailabilityCapabilities(capability *sml.StockCapabilities, expecte
 		return fmt.Errorf("SML stock source fingerprint is not approved")
 	}
 	return nil
+}
+
+func validateNetAvailabilityResponse(response *sml.StockBalanceBatchResponse, expectedFingerprint string) (*time.Time, error) {
+	if response == nil || response.ModeApplied != "net_sale_order_v1" || response.SchemaVersion != "stock-availability-v1" {
+		return nil, fmt.Errorf("SML stock response did not apply approved net availability semantics")
+	}
+	expectedFingerprint = strings.TrimSpace(expectedFingerprint)
+	if expectedFingerprint == "" || response.SourceSemanticsFingerprint != expectedFingerprint {
+		return nil, fmt.Errorf("SML stock response fingerprint changed")
+	}
+	snapshot, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(response.SourceSnapshotAt))
+	if err != nil {
+		return nil, fmt.Errorf("SML stock source snapshot is invalid: %w", err)
+	}
+	return &snapshot, nil
+}
+
+func validateNetAvailabilityItem(item sml.StockBalanceItem) error {
+	if strings.TrimSpace(item.AvailabilityStatus) != "ready" {
+		reason := strings.TrimSpace(item.AvailabilityReason)
+		if reason == "" {
+			reason = "availability_not_ready"
+		}
+		return fmt.Errorf("%s", reason)
+	}
+	physical, ok := new(big.Rat).SetString(strings.TrimSpace(item.PhysicalBalanceQtyExact))
+	if !ok || physical.Sign() < 0 {
+		return fmt.Errorf("invalid physical stock evidence")
+	}
+	outstanding, ok := new(big.Rat).SetString(strings.TrimSpace(item.OutstandingSalesOrderQtyExact))
+	if !ok || outstanding.Sign() < 0 {
+		return fmt.Errorf("invalid outstanding sales order evidence")
+	}
+	available, ok := new(big.Rat).SetString(strings.TrimSpace(item.AvailableBalanceQtyExact))
+	if !ok || available.Sign() < 0 {
+		return fmt.Errorf("invalid usable stock evidence")
+	}
+	balance, ok := new(big.Rat).SetString(strings.TrimSpace(item.BalanceQtyExact))
+	if !ok || balance.Sign() < 0 {
+		return fmt.Errorf("invalid balance stock evidence")
+	}
+	expected := new(big.Rat).Sub(physical, outstanding)
+	if expected.Sign() < 0 {
+		expected.SetInt64(0)
+	}
+	if available.Cmp(expected) != 0 || balance.Cmp(available) != 0 {
+		return fmt.Errorf("SML stock exact availability is inconsistent")
+	}
+	return nil
+}
+
+func stockLinesSourceFresh(lines []PreviewLine, now time.Time, maxAge time.Duration) bool {
+	if len(lines) == 0 || maxAge <= 0 {
+		return false
+	}
+	for _, line := range lines {
+		if line.SourceSnapshotAt == nil || line.SourceSnapshotAt.After(now.Add(time.Minute)) || now.Sub(*line.SourceSnapshotAt) > maxAge {
+			return false
+		}
+	}
+	return true
 }
 
 func previewExcludedLocations(itemCode string, items []sml.StockBalanceLocation) []ExcludedStockLocation {
@@ -171,10 +263,11 @@ func mergePreviewExcludedLocations(groups ...[]ExcludedStockLocation) []Excluded
 }
 
 type SharedPoolAllocation struct {
-	ItemID        int64
-	ModelID       int64
-	UnitFactor    float64
-	AllocationPct float64
+	ItemID          int64
+	ModelID         int64
+	UnitFactor      float64
+	UnitFactorExact string
+	AllocationPct   float64
 }
 
 func stockProductKey(itemID, modelID int64) string {
@@ -211,6 +304,75 @@ func CalculateSharedPoolTargets(
 	for _, member := range members {
 		allocatedBase := float64(poolBaseTarget) * member.AllocationPct / 100
 		targets[stockProductKey(member.ItemID, member.ModelID)] = int64(math.Floor(allocatedBase / member.UnitFactor))
+	}
+	return targets, poolBaseTarget, nil
+}
+
+func CalculateSharedPoolTargetsExact(
+	balance, pendingBase, stockPct string,
+	members []SharedPoolAllocation,
+) (map[string]int64, int64, []string) {
+	targets := make(map[string]int64, len(members))
+	if len(members) < 2 {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	available, ok := new(big.Rat).SetString(strings.TrimSpace(balance))
+	if !ok || available.Sign() < 0 {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	pending, ok := new(big.Rat).SetString(strings.TrimSpace(pendingBase))
+	if !ok || pending.Sign() < 0 {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	stockPercentage, ok := new(big.Rat).SetString(strings.TrimSpace(stockPct))
+	if !ok || stockPercentage.Sign() <= 0 || stockPercentage.Cmp(big.NewRat(100, 1)) > 0 {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	seen := make(map[string]struct{}, len(members))
+	allocations := make([]*big.Rat, len(members))
+	factors := make([]*big.Rat, len(members))
+	totalAllocation := new(big.Rat)
+	for index, member := range members {
+		key := stockProductKey(member.ItemID, member.ModelID)
+		if _, exists := seen[key]; exists {
+			return targets, 0, []string{"shared_pool_invalid"}
+		}
+		seen[key] = struct{}{}
+		allocation, allocationOK := new(big.Rat).SetString(decimalFromFloat(member.AllocationPct))
+		factorExact := strings.TrimSpace(member.UnitFactorExact)
+		if factorExact == "" {
+			factorExact = decimalFromFloat(member.UnitFactor)
+		}
+		factor, factorOK := new(big.Rat).SetString(factorExact)
+		if !allocationOK || !factorOK || allocation.Sign() <= 0 || allocation.Cmp(big.NewRat(100, 1)) > 0 || factor.Sign() <= 0 {
+			return targets, 0, []string{"shared_pool_invalid"}
+		}
+		allocations[index], factors[index] = allocation, factor
+		totalAllocation.Add(totalAllocation, allocation)
+	}
+	if totalAllocation.Cmp(big.NewRat(100, 1)) != 0 {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	available.Sub(available, pending)
+	if available.Sign() < 0 {
+		available.SetInt64(0)
+	}
+	poolTarget := new(big.Rat).Mul(available, stockPercentage)
+	poolTarget.Quo(poolTarget, big.NewRat(100, 1))
+	poolInteger := new(big.Int).Quo(poolTarget.Num(), poolTarget.Denom())
+	if !poolInteger.IsInt64() {
+		return targets, 0, []string{"shared_pool_invalid"}
+	}
+	poolBaseTarget := poolInteger.Int64()
+	for index, member := range members {
+		allocated := new(big.Rat).Mul(new(big.Rat).SetInt64(poolBaseTarget), allocations[index])
+		allocated.Quo(allocated, big.NewRat(100, 1))
+		allocated.Quo(allocated, factors[index])
+		quantity := new(big.Int).Quo(allocated.Num(), allocated.Denom())
+		if !quantity.IsInt64() {
+			return map[string]int64{}, 0, []string{"shared_pool_invalid"}
+		}
+		targets[stockProductKey(member.ItemID, member.ModelID)] = quantity.Int64()
 	}
 	return targets, poolBaseTarget, nil
 }

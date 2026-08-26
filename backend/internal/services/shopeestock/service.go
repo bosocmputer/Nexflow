@@ -52,6 +52,8 @@ type Config struct {
 	ReservationLedgerEnabled bool
 	GroupedUIEnabled         bool
 	ConversionMode           string
+	AvailabilityMode         string
+	SourceFingerprint        string
 	Environment              string
 	InstanceID               string
 }
@@ -99,6 +101,9 @@ func NewService(store *Store, smlClient *sml.StockSyncClient, shopeeClient shope
 	}
 	if strings.TrimSpace(cfg.InstanceID) == "" {
 		cfg.InstanceID = fmt.Sprintf("nexflow-%d", time.Now().UnixNano())
+	}
+	if strings.TrimSpace(cfg.AvailabilityMode) == "" {
+		cfg.AvailabilityMode = "physical_v1"
 	}
 	return &Service{store: store, sml: smlClient, shopee: shopeeClient, cfg: cfg, log: log}
 }
@@ -744,6 +749,22 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 		return nil, cause
 	}
+	configuredAvailabilityMode := strings.ToLower(strings.TrimSpace(s.cfg.AvailabilityMode))
+	requestAvailabilityMode := "physical_v1"
+	netAvailabilityActive := configuredAvailabilityMode == "net_sale_order_v1"
+	if netAvailabilityActive && !s.cfg.ReservationLedgerEnabled {
+		return fail(errors.New("SML net stock availability requires the normalized reservation ledger"))
+	}
+	if configuredAvailabilityMode == "shadow" || netAvailabilityActive {
+		capabilities, capabilityErr := s.sml.StockCapabilities(ctx)
+		if capabilityErr != nil {
+			return fail(fmt.Errorf("load SML stock capability: %w", capabilityErr))
+		}
+		if capabilityErr := validateAvailabilityCapabilities(capabilities, s.cfg.SourceFingerprint); capabilityErr != nil {
+			return fail(capabilityErr)
+		}
+		requestAvailabilityMode = "net_sale_order_v1"
+	}
 	locations, _, err := s.cachedLocations(ctx, true)
 	if err != nil {
 		return fail(err)
@@ -889,6 +910,9 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	}
 	sort.Strings(itemCodes)
 	balanceMap := map[string]sml.StockBalanceItem{}
+	sourceBalanceMap := map[string]sml.StockBalanceItem{}
+	sourceSnapshotByItem := map[string]*time.Time{}
+	var sourceSnapshotMinAt, sourceSnapshotMaxAt *time.Time
 	pendingExceedsBalance := map[string]bool{}
 	excludedLocations := []ExcludedStockLocation{}
 	excludedItems := []ExcludedStockLocation{}
@@ -900,7 +924,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			if end > len(itemCodes) {
 				end = len(itemCodes)
 			}
-			request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, Scopes: []sml.StockBalanceScopeRequest{{
+			request := sml.StockBalanceBatchRequest{AsOfDate: asOfDate, AvailabilityMode: requestAvailabilityMode, Scopes: []sml.StockBalanceScopeRequest{{
 				ScopeID: "shop:" + strconv.FormatInt(shopID, 10), ItemCodes: itemCodes[start:end], ScopeMode: settings.ScopeMode,
 				IncludeItemExcludedLocations: true,
 			}}}
@@ -914,9 +938,52 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			if len(balances.Scopes) != 1 {
 				return fail(errors.New("SML stock response ไม่มี scope ที่ร้องขอ"))
 			}
+			var sourceSnapshot *time.Time
+			if requestAvailabilityMode == "net_sale_order_v1" {
+				sourceSnapshot, balanceErr = validateNetAvailabilityResponse(balances, s.cfg.SourceFingerprint)
+				if balanceErr != nil {
+					return fail(balanceErr)
+				}
+				if sourceSnapshotMinAt == nil || sourceSnapshot.Before(*sourceSnapshotMinAt) {
+					copySnapshot := *sourceSnapshot
+					sourceSnapshotMinAt = &copySnapshot
+				}
+				if sourceSnapshotMaxAt == nil || sourceSnapshot.After(*sourceSnapshotMaxAt) {
+					copySnapshot := *sourceSnapshot
+					sourceSnapshotMaxAt = &copySnapshot
+				}
+			}
 			scope := balances.Scopes[0]
 			for _, item := range scope.Items {
+				if requestAvailabilityMode == "net_sale_order_v1" {
+					if itemErr := validateNetAvailabilityItem(item); itemErr != nil {
+						item.AvailabilityStatus = "blocked"
+						if strings.TrimSpace(item.AvailabilityReason) == "" {
+							item.AvailabilityReason = "availability_evidence_invalid"
+						}
+					}
+					if configuredAvailabilityMode == "shadow" {
+						item.BalanceQty = item.PhysicalBalanceQty
+						item.BalanceQtyExact = item.PhysicalBalanceQtyExact
+					} else {
+						item.BalanceQty = item.AvailableBalanceQty
+						item.BalanceQtyExact = item.AvailableBalanceQtyExact
+					}
+				} else {
+					item.PhysicalBalanceQty = item.BalanceQty
+					item.AvailableBalanceQty = item.BalanceQty
+					item.PhysicalBalanceQtyExact = decimalFromFloat(item.BalanceQty)
+					item.OutstandingSalesOrderQtyExact = "0"
+					item.AvailableBalanceQtyExact = item.PhysicalBalanceQtyExact
+					item.BalanceQtyExact = item.PhysicalBalanceQtyExact
+					item.AvailabilityStatus = "ready"
+				}
+				sourceBalanceMap[item.ItemCode] = item
 				balanceMap[item.ItemCode] = item
+				if sourceSnapshot != nil {
+					copySnapshot := *sourceSnapshot
+					sourceSnapshotByItem[item.ItemCode] = &copySnapshot
+				}
 			}
 			excludedLocations = mergePreviewExcludedLocations(excludedLocations, previewExcludedLocations("", scope.ExcludedLocations))
 			itemExcludedLocations := previewItemExcludedLocations(scope.Items)
@@ -950,6 +1017,8 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	}
 	result := &PreviewResult{
 		RunID: runID, ShopID: shopID, AsOfDate: asOfDate,
+		AvailabilityMode: configuredAvailabilityMode, AvailabilityVersion: requestAvailabilityMode,
+		SourceFingerprint: s.cfg.SourceFingerprint, SourceSnapshotMinAt: sourceSnapshotMinAt, SourceSnapshotMaxAt: sourceSnapshotMaxAt,
 		ExcludedLocations: excludedLocations, ExcludedItems: excludedItems, ExcludedItemsTotal: excludedItemsTotal,
 		ExcludedNegativeItemsTotal: excludedNegativeItemsTotal,
 		Lines:                      make([]PreviewLine, 0, len(products)),
@@ -971,10 +1040,24 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		line := PreviewLine{
 			ItemID: product.ItemID, ModelID: product.ModelID, ProductName: product.ItemName, VariantName: product.ModelName,
 			SMLItemCode: product.SMLItemCode, SMLUnitCode: product.SMLUnitCode,
-			UnitFactor: product.UnitFactor, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved,
+			UnitFactor: product.UnitFactor, UnitFactorExact: product.UnitFactorExact, CurrentStock: product.ShopeeAvailable, ReservedStock: product.ShopeeReserved,
 			PendingNexflowQty: pendingDemand.SourceQty, PendingBaseQty: pendingDemand.BaseQty, WarningCodes: append([]string(nil), product.WarningCodes...),
 			ItemType: product.SMLItemType, SetDefinitionHash: product.SetDefinitionHash,
 			SharedPoolEnabled: product.SharedPoolEnabled, PoolAllocationPct: product.PoolAllocationPct,
+			AvailabilityVersion: requestAvailabilityMode, SourceFingerprint: s.cfg.SourceFingerprint,
+		}
+		if source, ok := sourceBalanceMap[product.SMLItemCode]; ok {
+			line.SMLPhysicalQty = source.PhysicalBalanceQty
+			line.SMLOutstandingSOQty = source.OutstandingSalesOrderQty
+			line.SMLUsableQty = source.AvailableBalanceQty
+			line.SMLPhysicalQtyExact = source.PhysicalBalanceQtyExact
+			line.SMLOutstandingSOQtyExact = source.OutstandingSalesOrderQtyExact
+			line.SMLUsableQtyExact = source.AvailableBalanceQtyExact
+			line.AvailabilityReason = source.AvailabilityReason
+			line.SourceSnapshotAt = sourceSnapshotByItem[product.SMLItemCode]
+			if source.AvailabilityStatus != "ready" {
+				line.WarningCodes = appendUnique(line.WarningCodes, "sml_availability_blocked")
+			}
 		}
 		if s.cfg.ReservationLedgerEnabled && product.SMLItemType != 3 {
 			line.PendingBaseQty = pendingBaseByItem[product.SMLItemCode].Value
@@ -992,6 +1075,9 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 		}
 		if product.SMLItemType == 3 {
+			if netAvailabilityActive {
+				line.WarningCodes = appendUnique(line.WarningCodes, "set_net_availability_unverified")
+			}
 			if !s.cfg.SetStockEnabled {
 				line.WarningCodes = appendUnique(line.WarningCodes, "set_stock_feature_disabled")
 			} else if definition, ok := liveSetDefinitions[product.SMLItemCode]; !ok {
@@ -1036,6 +1122,15 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				line.WarningCodes = appendUnique(line.WarningCodes, "stock_balance_missing")
 			}
 			line.ScopeBalance = balance.BalanceQty
+			line.CalculationUsableQty = balance.BalanceQty
+			pendingExact := "0"
+			if demand, ok := pendingBaseByItem[product.SMLItemCode]; ok && strings.TrimSpace(demand.Exact) != "" {
+				pendingExact = demand.Exact
+			}
+			line.CalculationUsableQtyExact = exactSubtractClamp(line.SMLUsableQtyExact, pendingExact)
+			if configuredAvailabilityMode == "shadow" {
+				line.CalculationUsableQtyExact = exactSubtractClamp(line.SMLPhysicalQtyExact, pendingExact)
+			}
 			line.ExcludedBalance = balance.ExcludedBalanceQty
 			line.ExcludedLocations = previewExcludedLocations(product.SMLItemCode, balance.ExcludedLocations)
 			line.MinQty = balance.MinQty
@@ -1049,6 +1144,20 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 				calculationPending = 0
 			}
 			line.TargetStock = CalculateTarget(math.Max(line.ScopeBalance-calculationPending, 0), settings.StockPct, line.UnitFactor)
+			if netAvailabilityActive && !hasBlockingStockWarnings(line.WarningCodes, savePreview) {
+				unitFactorExact := strings.TrimSpace(line.UnitFactorExact)
+				if unitFactorExact == "" {
+					unitFactorExact = decimalFromFloat(line.UnitFactor)
+				}
+				target, exactErr := CalculateTargetExact(line.SMLUsableQtyExact, pendingExact, decimalFromFloat(settings.StockPct), unitFactorExact)
+				if exactErr != nil {
+					line.WarningCodes = appendUnique(line.WarningCodes, "sml_availability_exact_invalid")
+					line.AvailabilityReason = "exact_target_invalid"
+					line.TargetStock = 0
+				} else {
+					line.TargetStock = target
+				}
+			}
 		}
 		lineIndex[key] = len(result.Lines)
 		result.Lines = append(result.Lines, line)
@@ -1058,6 +1167,8 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		allocations := make([]SharedPoolAllocation, 0, len(members))
 		pendingBase := 0.0
 		poolBalance := 0.0
+		poolSMLUsableExact := ""
+		poolPendingExact := "0"
 		for _, member := range members {
 			key := stockProductKey(member.ItemID, member.ModelID)
 			index, ok := lineIndex[key]
@@ -1066,12 +1177,18 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			}
 			line := result.Lines[index]
 			poolBalance = line.ScopeBalance
+			if poolSMLUsableExact == "" {
+				poolSMLUsableExact = line.SMLUsableQtyExact
+			}
+			if demand, ok := pendingBaseByItem[member.SMLItemCode]; ok && strings.TrimSpace(demand.Exact) != "" {
+				poolPendingExact = demand.Exact
+			}
 			// Every member of a proven shared pool points at the same SML base
 			// item and therefore receives the same tenant-wide demand aggregate.
 			// Count that aggregate once; summing members would reserve it twice.
 			pendingBase = math.Max(pendingBase, line.PendingBaseQty)
 			allocations = append(allocations, SharedPoolAllocation{
-				ItemID: member.ItemID, ModelID: member.ModelID, UnitFactor: member.UnitFactor, AllocationPct: member.PoolAllocationPct,
+				ItemID: member.ItemID, ModelID: member.ModelID, UnitFactor: member.UnitFactor, UnitFactorExact: member.UnitFactorExact, AllocationPct: member.PoolAllocationPct,
 			})
 		}
 		calculationPending := pendingBase
@@ -1079,6 +1196,9 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			calculationPending = 0
 		}
 		targets, poolBaseTarget, warnings := CalculateSharedPoolTargets(poolBalance, calculationPending, settings.StockPct, allocations)
+		if netAvailabilityActive {
+			targets, poolBaseTarget, warnings = CalculateSharedPoolTargetsExact(poolSMLUsableExact, poolPendingExact, decimalFromFloat(settings.StockPct), allocations)
+		}
 		for _, member := range members {
 			key := stockProductKey(member.ItemID, member.ModelID)
 			index, ok := lineIndex[key]
@@ -1288,6 +1408,13 @@ func (s *Service) updateItemStock(ctx context.Context, settings *Settings, runID
 	var response *shopeeapi.UpdateStockResponse
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
+		if strings.EqualFold(strings.TrimSpace(s.cfg.AvailabilityMode), "net_sale_order_v1") && !stockLinesSourceFresh(lines, time.Now(), 5*time.Minute) {
+			for _, line := range lines {
+				_ = s.store.SaveSyncAttempt(context.Background(), runID, settings.ShopID, line, "blocked", "stale_source_snapshot", "SML stock snapshot is older than the live-write safety window", "")
+			}
+			out.errors = len(lines)
+			return
+		}
 		valid, validateErr := s.store.RenewAndValidateLiveWrite(ctx, runID, settings.ShopID, leaseOwner, fencingToken, 2*time.Minute)
 		if validateErr != nil || !valid {
 			message := "stock configuration changed before write"

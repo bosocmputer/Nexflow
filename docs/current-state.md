@@ -169,6 +169,14 @@ accepts `off`, `shadow`, or `active`; `active` fails backend startup unless the
 unit generation, mapping backfill, and reservation ledger are ready. Set-stock
 remains a separate per-tenant release gate.
 
+SML stock availability defaults to `physical_v1`. `shadow` and
+`net_sale_order_v1` require an approved per-tenant
+`SML_STOCK_SOURCE_FINGERPRINT`. Net mode stores physical balance, active SML
+sales-order outstanding, SML usable, Nexflow calculation usable, source
+snapshot, and fingerprint per Shopee stock run line. Reservations are not
+released after `processstockrequest` until exact immutable-document evidence is
+persisted.
+
 ---
 
 ## SML Config

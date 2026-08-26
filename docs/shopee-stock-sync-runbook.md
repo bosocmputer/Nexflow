@@ -10,7 +10,9 @@ proven incorporated in a successful SML stock recalculation.
 Target stock:
 
 ```text
-floor(max(SML scope balance - pending base demand, 0) * stock percentage / 100 / unit factor)
+SML usable = max(SML physical - active SML sales-order outstanding, 0)
+calculation usable = max(SML usable - pending Nexflow base demand, 0)
+target = floor(calculation usable * stock percentage / 100 / unit factor)
 ```
 
 When multiple active Shopee listings intentionally use the same SML item,
@@ -61,7 +63,13 @@ percentage and parent unit factor. Components are never mapped manually.
 - `UNPAID` does not reserve. `IN_CANCEL` continues to reserve until Shopee
   reports a completed cancellation. A sent reservation remains reserved in
   `awaiting_stock_recalc` until `processstockrequest` succeeds and a later SML
-  balance read is verified; uncertainty pauses outbound stock fail-closed.
+  balance read is verified. It is released only after the immutable SML document
+  is also verified by doc no, route, item, warehouse, location, and exact base
+  quantity; uncertainty pauses outbound stock fail-closed.
+- `net_sale_order_v1` requires the tenant capability fingerprint configured in
+  `SML_STOCK_SOURCE_FINGERPRINT`. A changed SML function/query fingerprint,
+  malformed decimal, inconsistent formula, or source snapshot older than five
+  minutes blocks writes instead of falling back to physical stock.
 - Pending demand is aggregated by physical SML item/component across every
   Marketplace channel and shop in the tenant. An unproved reservation blocks
   outbound stock rather than falling back to zero demand.
@@ -89,7 +97,11 @@ percentage and parent unit factor. Components are never mapped manually.
 ## Activation Checklist
 
 1. Confirm the tenant uses `SHOPEE_OPEN_API_MODE=gateway` and has an active shop.
-2. Deploy `sml-api-bybos`, then the gateway, then Nexflow.
+2. Deploy `sml-api-bybos`, then the gateway, then Nexflow. Read
+   `/api/v1/ic/stock-capabilities`, pin its fingerprint in
+   `SML_STOCK_SOURCE_FINGERPRINT`, start with
+   `SML_STOCK_AVAILABILITY_MODE=shadow`, and compare physical/outstanding/usable
+   values before changing the tenant to `net_sale_order_v1`.
 3. Open `/settings/shopee-stock` and run **Update Catalog**.
 4. Resolve SKU/unit warnings for every model that should sync. Exact item code
    and barcode matching are case-sensitive; Nexflow does not guess units from
@@ -119,7 +131,9 @@ or explicitly acknowledge **keep current stock and manage manually**. The latter
 cannot share an SML pool with managed listings without a proven allocation. For
 an instance-wide stop, set
 `SHOPEE_OPEN_API_ENABLED=false` and restart only that Nexflow instance. Database
-migrations do not need to be rolled back.
+migrations do not need to be rolled back. For an immediate calculation rollback,
+set `SML_STOCK_AVAILABILITY_MODE=physical_v1`; preserve the additive evidence
+columns and reservation evidence.
 
 ## Set Product Release Gate
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
@@ -298,6 +299,30 @@ type StockRecalcDemand struct {
 	ItemCodes []string
 	Warehouse string
 	Location  string
+	Lines     []StockRecalcDemandLine
+}
+
+type StockRecalcDemandLine struct {
+	EvidenceID           string
+	ReservationID        string
+	SMLAttemptID         string
+	DocNo                string
+	Route                string
+	ItemCode             string
+	Warehouse            string
+	Location             string
+	ExpectedBaseQtyExact string
+	EvidenceKind         string
+}
+
+type VerifiedStockEvidence struct {
+	StockRecalcDemandLine
+	EvidenceGroupID                   string
+	DocumentScopeExpectedBaseQtyExact string
+	ActualBaseQtyExact                string
+	SourceFingerprint                 string
+	EvidenceHash                      string
+	VerifiedSourceSnapshotAt          time.Time
 }
 
 func (r *BillRepo) ClaimStockRecalcJob(ctx context.Context, leaseOwner string, leaseDuration time.Duration) (*StockRecalcJob, error) {
@@ -339,20 +364,22 @@ func (r *BillRepo) ClaimStockRecalcJob(ctx context.Context, leaseOwner string, l
 }
 
 func (r *BillRepo) StockRecalcDemand(ctx context.Context, jobID string) (StockRecalcDemand, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT demand.item_code,demand.warehouse_code,demand.location_code
+	rows, err := r.db.QueryContext(ctx, `SELECT r.id::text,j.sml_attempt_id::text,a.doc_no,a.route,
+		demand.item_code,demand.warehouse_code,demand.location_code,demand.base_qty::text
 		FROM marketplace_stock_recalc_jobs j
+		JOIN bill_sml_attempts a ON a.id=j.sml_attempt_id
 		JOIN marketplace_stock_reservations r ON r.bill_id=j.bill_id
 		JOIN LATERAL (
-		  SELECT c.component_item_code AS item_code,c.warehouse_code,c.location_code
+		  SELECT c.component_item_code AS item_code,c.warehouse_code,c.location_code,c.component_base_qty AS base_qty
 		    FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id
 		  UNION ALL
-		  SELECT r.sml_item_code,r.warehouse_code,r.location_code
+		  SELECT r.sml_item_code,r.warehouse_code,r.location_code,r.base_qty
 		   WHERE r.sml_item_code<>'' AND NOT EXISTS (
 		     SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id
 		   )
 		) demand ON true
 		WHERE j.id=$1 AND r.state='awaiting_stock_recalc'
-		ORDER BY demand.item_code`, jobID)
+		ORDER BY r.id,demand.item_code,demand.warehouse_code,demand.location_code`, jobID)
 	if err != nil {
 		return StockRecalcDemand{}, err
 	}
@@ -360,10 +387,22 @@ func (r *BillRepo) StockRecalcDemand(ctx context.Context, jobID string) (StockRe
 	result := StockRecalcDemand{}
 	seen := map[string]struct{}{}
 	for rows.Next() {
-		var code, warehouse, location string
-		if err := rows.Scan(&code, &warehouse, &location); err != nil {
+		var line StockRecalcDemandLine
+		if err := rows.Scan(&line.ReservationID, &line.SMLAttemptID, &line.DocNo, &line.Route,
+			&line.ItemCode, &line.Warehouse, &line.Location, &line.ExpectedBaseQtyExact); err != nil {
 			return StockRecalcDemand{}, err
 		}
+		line.Route = strings.ToLower(strings.TrimSpace(line.Route))
+		switch line.Route {
+		case "saleorder":
+			line.EvidenceKind = "sale_order_demand"
+		case "saleinvoice":
+			line.EvidenceKind = "stock_movement"
+		default:
+			return StockRecalcDemand{}, fmt.Errorf("unsupported stock evidence route %q", line.Route)
+		}
+		line.EvidenceID = strings.Join([]string{line.ReservationID, line.ItemCode, line.Warehouse, line.Location}, ":")
+		warehouse, location, code := line.Warehouse, line.Location, line.ItemCode
 		if result.Warehouse == "" && result.Location == "" {
 			result.Warehouse, result.Location = warehouse, location
 		} else if result.Warehouse != warehouse || result.Location != location {
@@ -373,6 +412,7 @@ func (r *BillRepo) StockRecalcDemand(ctx context.Context, jobID string) (StockRe
 			seen[code] = struct{}{}
 			result.ItemCodes = append(result.ItemCodes, code)
 		}
+		result.Lines = append(result.Lines, line)
 	}
 	return result, rows.Err()
 }
@@ -390,12 +430,83 @@ func (r *BillRepo) MarkStockRecalcProcessed(ctx context.Context, jobID, leaseOwn
 	return nil
 }
 
-func (r *BillRepo) CompleteStockRecalcJob(ctx context.Context, jobID, leaseOwner string) error {
+func (r *BillRepo) CompleteStockRecalcJob(ctx context.Context, jobID, leaseOwner string, evidence []VerifiedStockEvidence) error {
+	if len(evidence) == 0 {
+		return errors.New("verified stock representation evidence is required")
+	}
+	approvedFingerprint := strings.TrimSpace(evidence[0].SourceFingerprint)
+	for _, item := range evidence {
+		if strings.TrimSpace(item.SourceFingerprint) == "" || strings.TrimSpace(item.EvidenceHash) == "" || item.VerifiedSourceSnapshotAt.IsZero() ||
+			strings.TrimSpace(item.ActualBaseQtyExact) == "" || strings.TrimSpace(item.ExpectedBaseQtyExact) == "" ||
+			strings.TrimSpace(item.EvidenceGroupID) == "" || strings.TrimSpace(item.DocumentScopeExpectedBaseQtyExact) == "" {
+			return errors.New("verified stock representation evidence is incomplete")
+		}
+		if strings.TrimSpace(item.SourceFingerprint) != approvedFingerprint {
+			return errors.New("verified stock representation evidence uses mixed source fingerprints")
+		}
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	for _, item := range evidence {
+		result, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_representation_evidence
+			(reservation_id,sml_attempt_id,doc_no,route,warehouse_code,location_code,item_code,
+			 expected_base_qty,evidence_group_id,document_scope_expected_base_qty,actual_base_qty,
+			 evidence_kind,status,source_semantics_fingerprint,evidence_hash,
+			 verified_source_snapshot_at,verified_at,retry_count,last_reason,updated_at)
+			SELECT $3::uuid,j.sml_attempt_id,$4,$5,$6,$7,$8,$9::numeric,$10,$11::numeric,$12::numeric,$13,'verified',$14,$15,$16,NOW(),1,'',NOW()
+			FROM marketplace_stock_recalc_jobs j
+			JOIN marketplace_stock_reservations r ON r.id=$3::uuid AND r.bill_id=j.bill_id AND r.state='awaiting_stock_recalc'
+			WHERE j.id=$1 AND j.lease_owner=$2 AND j.status='running' AND j.processstock_succeeded_at IS NOT NULL
+			  AND j.sml_attempt_id=$17::uuid
+			ON CONFLICT (reservation_id,sml_attempt_id,warehouse_code,location_code,item_code,evidence_kind)
+			DO UPDATE SET evidence_group_id=EXCLUDED.evidence_group_id,
+			 document_scope_expected_base_qty=EXCLUDED.document_scope_expected_base_qty,
+			 actual_base_qty=EXCLUDED.actual_base_qty,status='verified',
+			 source_semantics_fingerprint=EXCLUDED.source_semantics_fingerprint,evidence_hash=EXCLUDED.evidence_hash,
+			 verified_source_snapshot_at=EXCLUDED.verified_source_snapshot_at,verified_at=NOW(),
+			 retry_count=marketplace_stock_representation_evidence.retry_count+1,last_reason='',updated_at=NOW()`,
+			jobID, leaseOwner, item.ReservationID, item.DocNo, item.Route, item.Warehouse, item.Location, item.ItemCode,
+			item.ExpectedBaseQtyExact, item.EvidenceGroupID, item.DocumentScopeExpectedBaseQtyExact, item.ActualBaseQtyExact,
+			item.EvidenceKind, item.SourceFingerprint, item.EvidenceHash, item.VerifiedSourceSnapshotAt, item.SMLAttemptID)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return ErrSMLAttemptLeaseLost
+		}
+	}
+	var missingEvidence int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM marketplace_stock_recalc_jobs j
+		JOIN marketplace_stock_reservations r ON r.bill_id=j.bill_id AND r.state='awaiting_stock_recalc'
+		JOIN bill_sml_attempts a ON a.id=j.sml_attempt_id
+		JOIN LATERAL (
+		  SELECT c.component_item_code AS item_code,c.warehouse_code,c.location_code,c.component_base_qty AS base_qty,
+		         CASE WHEN lower(a.route)='saleorder' THEN 'sale_order_demand' ELSE 'stock_movement' END AS evidence_kind
+		  FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id
+		  UNION ALL
+		  SELECT r.sml_item_code,r.warehouse_code,r.location_code,r.base_qty,
+		         CASE WHEN lower(a.route)='saleorder' THEN 'sale_order_demand' ELSE 'stock_movement' END
+		  WHERE r.sml_item_code<>'' AND NOT EXISTS (
+		    SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id
+		  )
+		) demand ON true
+		WHERE j.id=$1 AND j.lease_owner=$2 AND j.status='running'
+		  AND NOT EXISTS (
+		    SELECT 1 FROM marketplace_stock_representation_evidence e
+		    WHERE e.reservation_id=r.id AND e.sml_attempt_id=j.sml_attempt_id
+		      AND e.item_code=demand.item_code AND e.warehouse_code=demand.warehouse_code AND e.location_code=demand.location_code
+		      AND e.evidence_kind=demand.evidence_kind AND e.expected_base_qty=demand.base_qty AND e.status='verified'
+		      AND e.source_semantics_fingerprint=$3 AND e.evidence_group_id<>''
+		      AND e.document_scope_expected_base_qty=e.actual_base_qty
+		  )`, jobID, leaseOwner, approvedFingerprint).Scan(&missingEvidence); err != nil {
+		return err
+	}
+	if missingEvidence != 0 {
+		return fmt.Errorf("stock representation evidence missing for %d demand lines", missingEvidence)
+	}
 	var billID string
 	err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_recalc_jobs
 		SET status='completed',balance_verified_at=NOW(),lease_owner='',lease_until=NULL,error_message='',updated_at=NOW()

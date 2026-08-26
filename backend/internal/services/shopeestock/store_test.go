@@ -256,6 +256,7 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
+	snapshot := time.Date(2026, 8, 26, 9, 10, 11, 0, time.FixedZone("Asia/Bangkok", 7*60*60))
 
 	mock.ExpectBegin()
 	mock.ExpectExec(`DELETE FROM shopee_stock_run_lines WHERE run_id=\$1::uuid`).
@@ -266,11 +267,12 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 	mock.ExpectExec(`DELETE FROM shopee_stock_attempts.*result IN \('changed','blocked'\)`).
 		WithArgs("00000000-0000-0000-0000-000000000001").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`(?s)UPDATE shopee_stock_mappings SET.*last_preview_excluded_locations=\$14::jsonb`).
+	mock.ExpectExec(`(?s)UPDATE shopee_stock_mappings SET.*last_preview_excluded_locations=\$14::jsonb.*last_preview_sml_physical_qty=\$15::numeric.*last_preview_availability_reason=\$22`).
 		WithArgs(
 			int64(42), int64(1001), int64(2001),
 			7.0, -2.0, 0.0, 0.0, int64(5),
 			0, false, "", 24.0, int64(0), sqlmock.AnyArg(),
+			"31", "8", "23", "7", "net_sale_order_v1", &snapshot, "sha256:approved", "",
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE shopee_stock_settings SET dry_run_required=false`).
@@ -281,6 +283,8 @@ func TestSavePreviewPersistsExcludedWarehouseLocations(t *testing.T) {
 	result := &PreviewResult{RunID: "00000000-0000-0000-0000-000000000001", Lines: []PreviewLine{{
 		ItemID: 1001, ModelID: 2001, ScopeBalance: 7, ExcludedBalance: -2, TargetStock: 5,
 		PendingNexflowQty: 2, PendingBaseQty: 24,
+		SMLPhysicalQtyExact: "31", SMLOutstandingSOQtyExact: "8", SMLUsableQtyExact: "23", CalculationUsableQtyExact: "7",
+		AvailabilityVersion: "net_sale_order_v1", SourceSnapshotAt: &snapshot, SourceFingerprint: "sha256:approved",
 		ExcludedLocations: []ExcludedStockLocation{{
 			ItemCode: "AH-0006", WarehouseCode: "AB-2", WarehouseName: "คลังสำรอง",
 			LocationCode: "002", LocationName: "หลังร้าน", UnitCode: "กล่อง", BalanceQty: -2,

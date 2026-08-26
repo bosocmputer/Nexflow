@@ -134,6 +134,14 @@ type ProductRow = {
   last_preview_target?: number
   last_preview_pending_qty?: number
   last_preview_pool_base_target?: number
+  last_preview_sml_physical_qty?: number
+  last_preview_sml_outstanding_so_qty?: number
+  last_preview_sml_usable_qty?: number
+  last_preview_calculation_usable_qty?: number
+  last_preview_availability_version?: string
+  last_preview_source_snapshot_at?: string
+  last_preview_source_fingerprint?: string
+  last_preview_availability_reason?: string
   last_success_target?: number
   updated_at: string
 }
@@ -230,6 +238,11 @@ type Preview = {
   excluded_items_total?: number
   excluded_negative_items_total?: number
   circuit_breaker?: string
+  availability_mode?: string
+  availability_version?: string
+  source_fingerprint?: string
+  source_snapshot_min_at?: string
+  source_snapshot_max_at?: string
   lines: Array<{
     item_id: number
     model_id: number
@@ -242,6 +255,14 @@ type Preview = {
     unit_factor: number
     current_stock: number
     reserved_stock: number
+    pending_base_qty: number
+    sml_physical_qty: number
+    sml_outstanding_so_qty: number
+    sml_usable_qty: number
+    calculation_usable_qty: number
+    availability_version?: string
+    source_snapshot_at?: string
+    availability_reason?: string
     target_stock: number
     blocked: boolean
     warning_codes: string[]
@@ -272,7 +293,7 @@ const STATUS_TABS = [
 ] as const
 
 const STOCK_COLUMN_LABELS = {
-  sml: 'สต๊อก SML',
+  sml: 'SML พร้อมใช้',
   shopee: 'สต๊อก Shopee',
   target: 'สต๊อกที่จะส่งไป Shopee',
 } as const
@@ -310,6 +331,9 @@ const WARNING_LABEL: Record<string, string> = {
   stock_policy_manual_unmanaged: 'ผู้ใช้เลือกจัดการ stock เอง',
   manual_unmanaged_shared_stock: 'ใช้ stock เดียวกับ listing ที่ผู้ใช้จัดการเอง',
   set_product_schema_unsupported: 'ฐานข้อมูล SML นี้ยังไม่รองรับข้อมูลสินค้าชุด',
+  sml_availability_blocked: 'ข้อมูลยอดค้างส่ง SML ยังพิสูจน์ไม่ได้',
+  sml_availability_exact_invalid: 'จำนวนสต๊อก SML ไม่ผ่านการตรวจสอบ',
+  set_net_availability_unverified: 'สินค้าชุดยังรอตรวจรูปแบบยอดค้างส่งใน SML',
 }
 
 function errorText(error: unknown) {
@@ -1201,7 +1225,7 @@ function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap
 function StockColumnLabels() {
   return (
     <>
-      <span title="ยอดคงเหลือจากคลังและพื้นที่เก็บ SML ที่เลือก">{STOCK_COLUMN_LABELS.sml}</span>
+      <span title="ยอดคงเหลือ SML หลังหักใบสั่งขายค้างส่ง และก่อนแปลงเป็นหน่วยขาย Shopee">{STOCK_COLUMN_LABELS.sml}</span>
       <span title="ยอดสต๊อกปัจจุบันที่อ่านจาก Shopee">{STOCK_COLUMN_LABELS.shopee}</span>
       <span title="ยอดสต๊อกปลายทางที่ Nexflow จะตั้งใน Shopee เมื่อกดซิงก์">{STOCK_COLUMN_LABELS.target}</span>
     </>
@@ -1223,6 +1247,8 @@ function ProductLine({ product, canManage, onMap, onPool, nested = false }: { pr
   const shopeeIdentity = `SKU ${sku} · Item ${product.item_id}${product.model_id ? ` / Model ${product.model_id}` : ''}`
   const canManagePool = product.sml_item_code && (product.shared_pool_enabled || product.warning_codes.includes('duplicate_sml_item'))
   const excludedLocations = product.last_preview_excluded_locations ?? []
+  const smlUsable = product.last_preview_sml_usable_qty ?? product.last_preview_balance
+  const hasSMLAvailabilityBreakdown = product.last_preview_sml_physical_qty != null && product.last_preview_sml_outstanding_so_qty != null
   return (
     <>
 	<div className={cn('grid gap-x-3 gap-y-2 px-3 py-2 xl:grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] xl:items-center', nested && 'pl-8')}>
@@ -1252,7 +1278,9 @@ function ProductLine({ product, canManage, onMap, onPool, nested = false }: { pr
       <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 xl:bg-transparent xl:p-0">
         <div className="min-w-0 text-left xl:text-right">
 		  <p className="text-[11px] text-muted-foreground xl:hidden">{STOCK_COLUMN_LABELS.sml}</p>
-          <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</span>{product.last_preview_balance != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
+          <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{smlUsable == null ? 'รอตรวจ' : formatNumber(smlUsable)}</span>{smlUsable != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
+          {hasSMLAvailabilityBreakdown && <p className="mt-0.5 whitespace-nowrap text-[10px] text-muted-foreground" title="ยอดคงเหลือ SML ลบยอดใบสั่งขายที่ยังค้างส่ง">คงเหลือ {formatNumber(product.last_preview_sml_physical_qty)}{baseUnit ? ` ${baseUnit}` : ''} − ค้างส่ง {formatNumber(product.last_preview_sml_outstanding_so_qty)}{baseUnit ? ` ${baseUnit}` : ''}</p>}
+          {(product.last_preview_pending_qty ?? 0) > 0 && <p className="whitespace-nowrap text-[10px] text-muted-foreground" title="ออเดอร์ที่ Nexflow สำรองไว้แต่ SML ยังไม่รับภาระ">Nexflow สำรอง {formatNumber(product.last_preview_pending_qty)}{baseUnit ? ` ${baseUnit}` : ''} · ใช้คำนวณ {formatNumber(product.last_preview_calculation_usable_qty)}{baseUnit ? ` ${baseUnit}` : ''}</p>}
         </div>
         <div className="min-w-0 text-left xl:text-right">
 		  <p className="text-[11px] text-muted-foreground xl:hidden">{STOCK_COLUMN_LABELS.shopee}</p>

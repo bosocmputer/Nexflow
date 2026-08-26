@@ -94,6 +94,32 @@ func TestMigration085IsAdditiveAndSchemaOnly(t *testing.T) {
 	}
 }
 
+func TestMigration087IsAdditiveAndSchemaOnly(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/087_shopee_stock_outstanding_sales_orders.sql")
+	if err != nil {
+		t.Fatalf("read migration 087: %v", err)
+	}
+	sqlText := string(data)
+	for _, required := range []string{
+		"last_preview_sml_physical_qty NUMERIC",
+		"sml_outstanding_so_qty NUMERIC",
+		"CREATE TABLE IF NOT EXISTS marketplace_stock_representation_evidence",
+		"reservation_id UUID NOT NULL REFERENCES marketplace_stock_reservations(id) ON DELETE RESTRICT",
+		"expected_base_qty NUMERIC NOT NULL CHECK (expected_base_qty > 0)",
+		"UNIQUE (reservation_id, sml_attempt_id, warehouse_code, location_code, item_code, evidence_kind)",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Errorf("migration 087 missing %q", required)
+		}
+	}
+	for _, line := range strings.Split(sqlText, "\n") {
+		trimmed := strings.ToUpper(strings.TrimSpace(line))
+		if strings.HasPrefix(trimmed, "UPDATE ") || strings.HasPrefix(trimmed, "DELETE ") {
+			t.Errorf("migration 087 must not perform startup backfill: %q", line)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

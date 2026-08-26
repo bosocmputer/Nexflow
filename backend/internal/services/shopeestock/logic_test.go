@@ -139,6 +139,56 @@ func TestValidateAvailabilityCapabilitiesFailsClosed(t *testing.T) {
 	}
 }
 
+func TestValidateNetAvailabilityResponseRequiresExactConsistentEvidence(t *testing.T) {
+	response := &sml.StockBalanceBatchResponse{
+		ModeApplied: "net_sale_order_v1", SchemaVersion: "stock-availability-v1",
+		SourceSemanticsFingerprint: "sha256:approved", SourceSnapshotAt: "2026-08-26T09:10:11+07:00",
+	}
+	if _, err := validateNetAvailabilityResponse(response, "sha256:approved"); err != nil {
+		t.Fatalf("valid response rejected: %v", err)
+	}
+	item := sml.StockBalanceItem{
+		AvailabilityStatus: "ready", PhysicalBalanceQtyExact: "2500", OutstandingSalesOrderQtyExact: "48",
+		AvailableBalanceQtyExact: "2452", BalanceQtyExact: "2452",
+	}
+	if err := validateNetAvailabilityItem(item); err != nil {
+		t.Fatalf("valid item rejected: %v", err)
+	}
+	item.AvailableBalanceQtyExact = "2453"
+	if err := validateNetAvailabilityItem(item); err == nil {
+		t.Fatal("inconsistent exact availability must fail closed")
+	}
+}
+
+func TestValidateNetAvailabilityResponseRejectsWrongModeOrFingerprint(t *testing.T) {
+	base := sml.StockBalanceBatchResponse{
+		ModeApplied: "physical_v1", SchemaVersion: "stock-availability-v1",
+		SourceSemanticsFingerprint: "sha256:approved", SourceSnapshotAt: "2026-08-26T09:10:11+07:00",
+	}
+	if _, err := validateNetAvailabilityResponse(&base, "sha256:approved"); err == nil {
+		t.Fatal("wrong applied mode must fail")
+	}
+	base.ModeApplied = "net_sale_order_v1"
+	if _, err := validateNetAvailabilityResponse(&base, "sha256:different"); err == nil {
+		t.Fatal("wrong source fingerprint must fail")
+	}
+}
+
+func TestStockLinesSourceFreshFailsClosed(t *testing.T) {
+	now := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC)
+	fresh := now.Add(-2 * time.Minute)
+	stale := now.Add(-6 * time.Minute)
+	if !stockLinesSourceFresh([]PreviewLine{{SourceSnapshotAt: &fresh}}, now, 5*time.Minute) {
+		t.Fatal("fresh snapshot rejected")
+	}
+	if stockLinesSourceFresh([]PreviewLine{{SourceSnapshotAt: &stale}}, now, 5*time.Minute) {
+		t.Fatal("stale snapshot accepted")
+	}
+	if stockLinesSourceFresh([]PreviewLine{{}}, now, 5*time.Minute) {
+		t.Fatal("missing snapshot accepted")
+	}
+}
+
 func TestPreviewExcludedLocationsPreservesSMLWarehouseDetails(t *testing.T) {
 	got := previewExcludedLocations("AH-0001", []sml.StockBalanceLocation{{
 		WarehouseCode: "W2", WarehouseName: "คลังสำรอง",
@@ -392,6 +442,17 @@ func TestCalculateSharedPoolTargetsNeverOvercommitsDifferentSellingUnits(t *test
 	allocatedBase := targets[stockProductKey(10, 101)] + targets[stockProductKey(20, 201)]*6
 	if allocatedBase > poolBaseTarget {
 		t.Fatalf("allocated base %d exceeds pool target %d", allocatedBase, poolBaseTarget)
+	}
+}
+
+func TestCalculateSharedPoolTargetsExactUsesDecimalAuthority(t *testing.T) {
+	members := []SharedPoolAllocation{
+		{ItemID: 1, ModelID: 11, UnitFactor: 12, AllocationPct: 60},
+		{ItemID: 2, ModelID: 22, UnitFactor: 1, AllocationPct: 40},
+	}
+	targets, poolBaseTarget, warnings := CalculateSharedPoolTargetsExact("101", "1", "80", members)
+	if len(warnings) > 0 || poolBaseTarget != 80 || targets["1:11"] != 4 || targets["2:22"] != 32 {
+		t.Fatalf("targets=%v pool=%d warnings=%v", targets, poolBaseTarget, warnings)
 	}
 }
 

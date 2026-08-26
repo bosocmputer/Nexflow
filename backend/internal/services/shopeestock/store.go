@@ -1020,11 +1020,16 @@ func (s *Store) ListProductGroupVariants(ctx context.Context, shopID int64, filt
 	args = append(args, filter.Limit+1)
 	rows, err := s.db.QueryContext(ctx, `SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
 	       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
-	       COALESCE(c.units,'[]'::jsonb),m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
+	       COALESCE(c.units,'[]'::jsonb),m.unit_factor::float8,m.unit_factor::text,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
 	       COALESCE(a.id::text,''),a.updated_at,COALESCE(a.conversion_status,'needs_review'),
 	       COALESCE(a.stock_policy,'blocked'),COALESCE(a.sales_enabled,false),COALESCE(a.quantity_multiplier,1),m.excluded,m.warning_codes,
 	       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,COALESCE(m.last_preview_excluded_locations,'[]'::jsonb),
-	       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,m.last_success_target,m.updated_at,
+	       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,
+	       m.last_preview_sml_physical_qty::float8,m.last_preview_sml_outstanding_so_qty::float8,
+	       m.last_preview_sml_usable_qty::float8,m.last_preview_calculation_usable_qty::float8,
+	       COALESCE(m.last_preview_availability_version,''),m.last_preview_source_snapshot_at,
+	       COALESCE(m.last_preview_source_fingerprint,''),COALESCE(m.last_preview_availability_reason,''),
+	       m.last_success_target,m.updated_at,
 	       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
 	       COALESCE(c.set_document_valid,true),COALESCE(c.set_stock_valid,true),COALESCE(c.set_components,'[]'::jsonb)
 	FROM shopee_stock_products p
@@ -1127,13 +1132,18 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 		SELECT p.shop_id,p.item_id,p.model_id,p.item_name,p.model_name,p.item_sku,p.model_sku,
 		       p.shopee_available,p.shopee_reserved,m.sml_item_code,COALESCE(c.item_name,''),m.sml_unit_code,
 		       COALESCE(c.units,'[]'::jsonb),
-		       m.unit_factor::float8,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
+		       m.unit_factor::float8,m.unit_factor::text,m.manual_unit_factor::float8,m.match_source,m.shared_pool_enabled,m.pool_allocation_pct::float8,
 		       COALESCE(a.id::text,''),a.updated_at,COALESCE(a.conversion_status,'needs_review'),
 		       COALESCE(a.stock_policy,'blocked'),COALESCE(a.sales_enabled,false),COALESCE(a.quantity_multiplier,1),m.excluded,m.warning_codes,
 		       m.last_preview_balance::float8,m.last_preview_excluded_balance::float8,
 		       COALESCE(m.last_preview_excluded_locations,'[]'::jsonb),
 		       m.last_preview_min_qty::float8,m.last_preview_max_qty::float8,
-		       m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,m.last_success_target,m.updated_at,
+		       m.last_preview_target,m.last_preview_pending_qty::float8,m.last_preview_pool_base_target,
+		       m.last_preview_sml_physical_qty::float8,m.last_preview_sml_outstanding_so_qty::float8,
+		       m.last_preview_sml_usable_qty::float8,m.last_preview_calculation_usable_qty::float8,
+		       COALESCE(m.last_preview_availability_version,''),m.last_preview_source_snapshot_at,
+		       COALESCE(m.last_preview_source_fingerprint,''),COALESCE(m.last_preview_availability_reason,''),
+		       m.last_success_target,m.updated_at,
 		       COALESCE(c.item_type,0),COALESCE(c.set_component_count,0),COALESCE(c.set_definition_hash,''),COALESCE(m.set_definition_hash,''),
 		       COALESCE(c.set_document_valid,true),COALESCE(c.set_stock_valid,true),COALESCE(c.set_components,'[]'::jsonb)
 		  FROM shopee_stock_products p
@@ -1160,17 +1170,22 @@ func (s *Store) listProducts(ctx context.Context, shopID int64, filter ProductFi
 	products := []ProductRow{}
 	for rows.Next() {
 		var item ProductRow
+		var unitFactorExact string
 		var warnings, unitsJSON, componentsJSON, excludedLocationsJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
-			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
+			&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &unitFactorExact, &item.ManualUnitFactor,
 			&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt,
 			&item.MarketplaceConversionStatus, &item.MarketplaceStockPolicy, &item.MarketplaceSalesEnabled, &item.MarketplaceQuantityMultiplier, &item.Excluded, &warnings,
 			&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &excludedLocationsJSON, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
-			&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
+			&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget,
+			&item.LastPreviewSMLPhysicalQty, &item.LastPreviewSMLOutstandingSOQty, &item.LastPreviewSMLUsableQty, &item.LastPreviewCalculationUsableQty,
+			&item.LastPreviewAvailabilityVersion, &item.LastPreviewSourceSnapshotAt, &item.LastPreviewSourceFingerprint, &item.LastPreviewAvailabilityReason,
+			&item.LastSuccessTarget, &item.UpdatedAt,
 			&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
 			&item.SetDocumentValid, &item.SetStockValid, &componentsJSON); err != nil {
 			return nil, 0, ProductCounts{}, err
 		}
+		item.UnitFactorExact = unitFactorExact
 		_ = json.Unmarshal(warnings, &item.WarningCodes)
 		_ = json.Unmarshal(excludedLocationsJSON, &item.LastPreviewExcludedLocations)
 		var units []sml.StockCatalogUnit
@@ -1190,17 +1205,22 @@ type stockProductScanner interface {
 
 func scanStockProductRow(row stockProductScanner) (ProductRow, error) {
 	var item ProductRow
+	var unitFactorExact string
 	var warnings, unitsJSON, componentsJSON, excludedLocationsJSON []byte
 	if err := row.Scan(&item.ShopID, &item.ItemID, &item.ModelID, &item.ItemName, &item.ModelName, &item.ItemSKU, &item.ModelSKU,
-		&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &item.ManualUnitFactor,
+		&item.ShopeeAvailable, &item.ShopeeReserved, &item.SMLItemCode, &item.SMLItemName, &item.SMLUnitCode, &unitsJSON, &item.UnitFactor, &unitFactorExact, &item.ManualUnitFactor,
 		&item.MatchSource, &item.SharedPoolEnabled, &item.PoolAllocationPct, &item.MarketplaceAliasID, &item.MarketplaceAliasUpdatedAt,
 		&item.MarketplaceConversionStatus, &item.MarketplaceStockPolicy, &item.MarketplaceSalesEnabled, &item.MarketplaceQuantityMultiplier, &item.Excluded, &warnings,
 		&item.LastPreviewBalance, &item.LastPreviewExcludedBalance, &excludedLocationsJSON, &item.LastPreviewMinQty, &item.LastPreviewMaxQty,
-		&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget, &item.LastSuccessTarget, &item.UpdatedAt,
+		&item.LastPreviewTarget, &item.LastPreviewPendingQty, &item.LastPreviewPoolBaseTarget,
+		&item.LastPreviewSMLPhysicalQty, &item.LastPreviewSMLOutstandingSOQty, &item.LastPreviewSMLUsableQty, &item.LastPreviewCalculationUsableQty,
+		&item.LastPreviewAvailabilityVersion, &item.LastPreviewSourceSnapshotAt, &item.LastPreviewSourceFingerprint, &item.LastPreviewAvailabilityReason,
+		&item.LastSuccessTarget, &item.UpdatedAt,
 		&item.SMLItemType, &item.SetComponentCount, &item.SetDefinitionHash, &item.MappingSetDefinitionHash,
 		&item.SetDocumentValid, &item.SetStockValid, &componentsJSON); err != nil {
 		return ProductRow{}, err
 	}
+	item.UnitFactorExact = unitFactorExact
 	_ = json.Unmarshal(warnings, &item.WarningCodes)
 	_ = json.Unmarshal(excludedLocationsJSON, &item.LastPreviewExcludedLocations)
 	var units []sml.StockCatalogUnit
@@ -1800,7 +1820,10 @@ func (s *Store) ListRunLines(ctx context.Context, shopID int64, runID, status st
 	}
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, `SELECT id::text,item_id,model_id,parent_key,product_name,variant_name,sml_item_code,sml_unit_code,
-		status,previous_stock,target_stock,available_base_qty::float8,pending_base_qty::float8,reason_code,message,line_order,detail
+		status,previous_stock,target_stock,available_base_qty::float8,pending_base_qty::float8,
+		sml_physical_qty::float8,sml_outstanding_so_qty::float8,sml_usable_qty::float8,calculation_usable_qty::float8,
+		availability_version,source_snapshot_at,source_fingerprint,availability_reason,
+		reason_code,message,line_order,detail
 		FROM shopee_stock_run_lines WHERE run_id=$1::uuid AND shop_id=$2 AND line_order>$3`+whereStatus+`
 		ORDER BY line_order,id LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
@@ -1812,7 +1835,10 @@ func (s *Store) ListRunLines(ctx context.Context, shopID int64, runID, status st
 		var line RunLine
 		if err := rows.Scan(&line.ID, &line.ItemID, &line.ModelID, &line.ParentKey, &line.ProductName, &line.VariantName,
 			&line.SMLItemCode, &line.SMLUnitCode, &line.Status, &line.PreviousStock, &line.TargetStock,
-			&line.AvailableBaseQty, &line.PendingBaseQty, &line.ReasonCode, &line.Message, &line.LineOrder, &line.Detail); err != nil {
+			&line.AvailableBaseQty, &line.PendingBaseQty,
+			&line.SMLPhysicalQty, &line.SMLOutstandingSOQty, &line.SMLUsableQty, &line.CalculationUsableQty,
+			&line.AvailabilityVersion, &line.SourceSnapshotAt, &line.SourceFingerprint, &line.AvailabilityReason,
+			&line.ReasonCode, &line.Message, &line.LineOrder, &line.Detail); err != nil {
 			return nil, false, err
 		}
 		lines = append(lines, line)
@@ -1874,11 +1900,18 @@ func (s *Store) savePreview(ctx context.Context, shopID int64, result *PreviewRe
 			last_preview_max_qty=$7,last_preview_target=$8,last_preview_pending_qty=$12,
 			last_preview_pool_base_target=NULLIF($13,0),
 			last_preview_excluded_locations=$14::jsonb,
+			last_preview_sml_physical_qty=$15::numeric,last_preview_sml_outstanding_so_qty=$16::numeric,
+			last_preview_sml_usable_qty=$17::numeric,last_preview_calculation_usable_qty=$18::numeric,
+			last_preview_availability_version=$19,last_preview_source_snapshot_at=$20,
+			last_preview_source_fingerprint=$21,last_preview_availability_reason=$22,
 			set_definition_hash=CASE WHEN $9=3 AND $10=false THEN $11 ELSE set_definition_hash END,
 			updated_at=updated_at
 			WHERE shop_id=$1 AND item_id=$2 AND model_id=$3`, shopID, line.ItemID, line.ModelID,
 			line.ScopeBalance, line.ExcludedBalance, line.MinQty, line.MaxQty, line.TargetStock,
-			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingBaseQty, line.PoolBaseTarget, excludedLocationsJSON); err != nil {
+			line.ItemType, line.Blocked, line.SetDefinitionHash, line.PendingBaseQty, line.PoolBaseTarget, excludedLocationsJSON,
+			nullExactDecimal(line.SMLPhysicalQtyExact), nullExactDecimal(line.SMLOutstandingSOQtyExact),
+			nullExactDecimal(line.SMLUsableQtyExact), nullExactDecimal(line.CalculationUsableQtyExact),
+			line.AvailabilityVersion, line.SourceSnapshotAt, line.SourceFingerprint, line.AvailabilityReason); err != nil {
 			return err
 		}
 		if !line.Changed && !line.Blocked {
@@ -1923,7 +1956,7 @@ func saveStockRunLinesTx(ctx context.Context, tx *sql.Tx, shopID int64, result *
 		if end > len(result.Lines) {
 			end = len(result.Lines)
 		}
-		args := make([]any, 0, (end-start)*18)
+		args := make([]any, 0, (end-start)*26)
 		values := make([]string, 0, end-start)
 		for index := start; index < end; index++ {
 			line := result.Lines[index]
@@ -1938,7 +1971,7 @@ func saveStockRunLinesTx(ctx context.Context, tx *sql.Tx, shopID int64, result *
 				return err
 			}
 			base := len(args)
-			placeholders := make([]string, 18)
+			placeholders := make([]string, 26)
 			for offset := range placeholders {
 				placeholders[offset] = "$" + strconv.Itoa(base+offset+1)
 			}
@@ -1946,17 +1979,30 @@ func saveStockRunLinesTx(ctx context.Context, tx *sql.Tx, shopID int64, result *
 			args = append(args, result.RunID, shopID, line.ItemID, line.ModelID, strconv.FormatInt(line.ItemID, 10),
 				line.ProductName, line.VariantName, line.SMLItemCode, line.SMLUnitCode, status,
 				line.CurrentStock, line.TargetStock, line.ScopeBalance, line.PendingBaseQty,
-				firstWarning(line.WarningCodes), strings.Join(line.WarningCodes, ","), index+1, detail)
+				firstWarning(line.WarningCodes), strings.Join(line.WarningCodes, ","), index+1, detail,
+				nullExactDecimal(line.SMLPhysicalQtyExact), nullExactDecimal(line.SMLOutstandingSOQtyExact),
+				nullExactDecimal(line.SMLUsableQtyExact), nullExactDecimal(line.CalculationUsableQtyExact),
+				line.AvailabilityVersion, line.SourceSnapshotAt, line.SourceFingerprint, line.AvailabilityReason)
 		}
 		query := `INSERT INTO shopee_stock_run_lines
 			(run_id,shop_id,item_id,model_id,parent_key,product_name,variant_name,sml_item_code,sml_unit_code,status,
-			 previous_stock,target_stock,available_base_qty,pending_base_qty,reason_code,message,line_order,detail)
+			 previous_stock,target_stock,available_base_qty,pending_base_qty,reason_code,message,line_order,detail,
+			 sml_physical_qty,sml_outstanding_so_qty,sml_usable_qty,calculation_usable_qty,
+			 availability_version,source_snapshot_at,source_fingerprint,availability_reason)
 			VALUES ` + strings.Join(values, ",")
 		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func nullExactDecimal(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *Store) SaveSyncAttempt(ctx context.Context, runID string, shopID int64, line PreviewLine, result, reason, message, requestID string) error {

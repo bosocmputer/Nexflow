@@ -128,7 +128,14 @@ func TestCompleteStockRecalcReleasesReservationOnlyAfterVerification(t *testing.
 		t.Fatal(err)
 	}
 	defer db.Close()
+	snapshot := time.Date(2026, 8, 26, 3, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_representation_evidence.*JOIN marketplace_stock_reservations.*ON CONFLICT`).
+		WithArgs("job-1", "worker-1", "reservation-1", "SO1", "saleorder", "W1", "S1", "A", "48", "group-1", "48", "48", "sale_order_demand", "sha256:approved", "sha256:evidence", snapshot, "attempt-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*marketplace_stock_representation_evidence`).
+		WithArgs("job-1", "worker-1", "sha256:approved").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`(?s)UPDATE marketplace_stock_recalc_jobs.*balance_verified_at=NOW.*lease_owner=\$2.*RETURNING bill_id`).
 		WithArgs("job-1", "worker-1").
 		WillReturnRows(sqlmock.NewRows([]string{"bill_id"}).AddRow("bill-1"))
@@ -143,11 +150,36 @@ func TestCompleteStockRecalcReleasesReservationOnlyAfterVerification(t *testing.
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := NewBillRepo(db).CompleteStockRecalcJob(context.Background(), "job-1", "worker-1"); err != nil {
+	if err := NewBillRepo(db).CompleteStockRecalcJob(context.Background(), "job-1", "worker-1", []VerifiedStockEvidence{{
+		StockRecalcDemandLine: StockRecalcDemandLine{
+			ReservationID: "reservation-1", SMLAttemptID: "attempt-1", DocNo: "SO1", Route: "saleorder",
+			Warehouse: "W1", Location: "S1", ItemCode: "A", ExpectedBaseQtyExact: "48", EvidenceKind: "sale_order_demand",
+		},
+		EvidenceGroupID: "group-1", DocumentScopeExpectedBaseQtyExact: "48", ActualBaseQtyExact: "48",
+		SourceFingerprint: "sha256:approved", EvidenceHash: "sha256:evidence", VerifiedSourceSnapshotAt: snapshot,
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCompleteStockRecalcRejectsMixedEvidenceFingerprintsBeforeTransaction(t *testing.T) {
+	snapshot := time.Date(2026, 8, 26, 3, 0, 0, 0, time.UTC)
+	item := VerifiedStockEvidence{
+		StockRecalcDemandLine: StockRecalcDemandLine{
+			ReservationID: "reservation-1", SMLAttemptID: "attempt-1", DocNo: "SO1", Route: "saleorder",
+			Warehouse: "W1", Location: "S1", ItemCode: "A", ExpectedBaseQtyExact: "48", EvidenceKind: "sale_order_demand",
+		},
+		EvidenceGroupID: "group-1", DocumentScopeExpectedBaseQtyExact: "48", ActualBaseQtyExact: "48",
+		SourceFingerprint: "sha256:approved", EvidenceHash: "sha256:evidence", VerifiedSourceSnapshotAt: snapshot,
+	}
+	changed := item
+	changed.ReservationID = "reservation-2"
+	changed.SourceFingerprint = "sha256:changed"
+	if err := (&BillRepo{}).CompleteStockRecalcJob(context.Background(), "job-1", "worker-1", []VerifiedStockEvidence{item, changed}); err == nil {
+		t.Fatal("mixed source fingerprints must fail before opening a database transaction")
 	}
 }
 

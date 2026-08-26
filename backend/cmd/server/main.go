@@ -378,6 +378,8 @@ func main() {
 		ReservationLedgerEnabled: cfg.MarketplaceReservationLedgerEnabled,
 		GroupedUIEnabled:         cfg.MarketplaceGroupedUIEnabled,
 		ConversionMode:           cfg.MarketplaceConversionMode,
+		AvailabilityMode:         cfg.SMLStockAvailabilityMode,
+		SourceFingerprint:        cfg.SMLStockSourceFingerprint,
 		Environment:              cfg.ShopeeOpenAPIEnv,
 		InstanceID:               cfg.ShopeeGatewayTenant,
 	}, logger)
