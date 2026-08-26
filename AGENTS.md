@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `6f6f74f` (`feat: show items in Shopee Auto SML alerts`),
+  `0a1a616` (`fix: merge successful Auto SML status row`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `7723a0b`
   (`fix: block ambiguous SML sales order identities`).
@@ -215,6 +215,17 @@ Current AOY UAT scope:
     enabled/unpaused state, and recent error logs passed. The pre-deploy AOY
     backup is `pre-deploy-20260826-060440.sql.gz`. Demo and Lanboon remain on
     `82baa4a`.
+20. AOY-only Shopee Operations Auto SML status cleanup is deployed at
+    `0a1a616`. A successful automatic send with a persisted SML document now
+    renders as exactly two lines: `ส่ง SML แล้ว (AUTO)` and the SML document
+    number. Queued, running, retry, needs-review, failed, manual-send, and
+    missing-document cases remain separate so operational failures are not
+    hidden. Production browser QA on order `260826C78TFM12` verified one merged
+    badge, `BF-INV26080055`, no duplicate `Auto: ส่ง SML แล้ว` label, and a clean
+    console. Frontend regression tests, lint with zero errors, production build,
+    sales-only guard, deployment health, and Gateway health passed. The
+    pre-deploy AOY backup is `pre-deploy-20260826-061917.sql.gz`. Demo and
+    Lanboon remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
