@@ -55,7 +55,12 @@ import {
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { useNotificationsStore } from '@/lib/notifications-store'
 import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
-import { shouldMergeAutoSMLSuccessStatus } from '@/lib/shopee-operations-status'
+import {
+  cancellationDocumentTypeLabel,
+  cancellationStockRecalcLabel,
+  cancellationTriggerLabel,
+  shouldMergeAutoSMLSuccessStatus,
+} from '@/lib/shopee-operations-status'
 import { shouldOpenTimelineFromQuery } from '@/lib/shopee-timeline-dialog'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
@@ -132,6 +137,8 @@ type OrderSnapshot = {
   sml_cancel_error?: string
   sml_cancel_stock_recalc_status?: string
   sml_cancel_stock_recalc_error?: string
+  sml_cancel_trigger_source?: string
+  sml_cancel_document_type?: string
   document_route?: string
   bill_source_flow?: string
   buyer_username?: string
@@ -1328,20 +1335,30 @@ export default function ShopeeOperations() {
           <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0 space-y-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <h1 className="text-lg font-semibold tracking-normal">คำสั่งซื้อ Shopee</h1>
+                <h1 className="text-lg font-semibold tracking-normal">
+                  {statusGroup === 'cancelled' ? 'เอกสารยกเลิก/รับคืน Shopee' : 'คำสั่งซื้อ Shopee'}
+                </h1>
                 <Badge className="h-6 border-[#EE4D2D] bg-[#EE4D2D] px-2 text-[11px] text-white hover:bg-[#EE4D2D]">เรียลไทม์</Badge>
                 <span
                   className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground"
                   title="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
                 >
-                  {readiness?.sml.doc_format_code || 'route'} · {readiness?.sml.route || 'ยังไม่ตั้งค่า'}
+                  {statusGroup === 'cancelled'
+                    ? 'เอกสารหลังยกเลิก SML'
+                    : `${readiness?.sml.doc_format_code || 'route'} · ${readiness?.sml.route || 'ยังไม่ตั้งค่า'}`}
                 </span>
               </div>
               <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-                ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อเป็น READY_TO_SHIP และข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
-                <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
-                  <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
-                </Button>
+                {statusGroup === 'cancelled' ? (
+                  'ติดตาม Order ที่ยกเลิก พร้อมประเภทเอกสาร เลขที่ SML วิธีสร้าง และผลคำนวณสต๊อกใหม่'
+                ) : (
+                  <>
+                    ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อเป็น READY_TO_SHIP และข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
+                    <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
+                      <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
+                    </Button>
+                  </>
+                )}
               </p>
               <OperationsHealthLine readiness={readiness} />
             </div>
@@ -1579,9 +1596,11 @@ export default function ShopeeOperations() {
                   </th>
                   <th className="px-3 py-2 text-left">
                     <StatusColumnHelp
-                      label="เอกสาร Nexflow / SML"
+                      label={statusGroup === 'cancelled' ? 'ใบขาย / เอกสารหลังยกเลิก' : 'เอกสาร Nexflow / SML'}
                       title="ความหมายสถานะเอกสาร"
-                      description="เป็นสถานะการสร้างเอกสารใน Nexflow และการบันทึกเข้า SML ไม่ใช่สถานะจัดส่งของ Shopee"
+                      description={statusGroup === 'cancelled'
+                        ? 'แสดงใบขายเดิมและเอกสารยกเลิกขายหรือรับคืนสินค้า/ลดหนี้ที่สร้างตามเส้นทาง SML'
+                        : 'เป็นสถานะการสร้างเอกสารใน Nexflow และการบันทึกเข้า SML ไม่ใช่สถานะจัดส่งของ Shopee'}
                       items={ERP_STATUS_HELP}
                     />
                   </th>
@@ -2565,20 +2584,26 @@ function cancelSMLDisabledReason(order: OrderSnapshot) {
 
 function cancelSMLBadge(order: OrderSnapshot) {
   if (!orderCancelledAfterSML(order) && !order.sml_cancel_status) return null
+  const documentType = cancellationDocumentTypeLabel(order.sml_cancel_document_type)
+  const trigger = cancellationTriggerLabel(order.sml_cancel_trigger_source)
+  const stockRecalc = cancellationStockRecalcLabel(order.sml_cancel_stock_recalc_status)
   if (cancelSMLStatusDone(order.sml_cancel_status)) {
     return (
-      <div className="flex flex-col items-start gap-1">
-        <Badge variant="outline" className="mt-1 h-5 border-success/30 bg-success/10 px-1.5 text-[10px] text-success">
-          SML {order.sml_cancel_doc_no || 'สร้างแล้ว'}
-        </Badge>
-        {(order.sml_cancel_stock_recalc_status === 'pending' || order.sml_cancel_stock_recalc_status === 'running' || order.sml_cancel_stock_recalc_status === 'failed') && (
-          <Badge variant="outline" className="h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info" title={order.sml_cancel_stock_recalc_error || undefined}>
-            {order.sml_cancel_stock_recalc_status === 'running' ? 'กำลังคำนวณสต๊อก SML' : order.sml_cancel_stock_recalc_status === 'failed' ? 'รอคำนวณสต๊อกใหม่' : 'รอคำนวณสต๊อก SML'}
-          </Badge>
-        )}
-        {order.sml_cancel_stock_recalc_status === 'manual_reconciliation' && (
-          <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_stock_recalc_error || undefined}>
-            ต้องตรวจการคำนวณสต๊อก
+      <div className="mt-1.5 flex max-w-[240px] flex-col items-start gap-1 border-t border-border pt-1.5 text-xs">
+        <div className="font-medium text-foreground">{documentType}{trigger ? ` (${trigger})` : ''}</div>
+        <code className="text-[11px] text-muted-foreground">{order.sml_cancel_doc_no || 'SML สร้างแล้ว'}</code>
+        {stockRecalc && (
+          <Badge
+            variant="outline"
+            className={cn(
+              'h-5 px-1.5 text-[10px]',
+              stockRecalc.tone === 'success' && 'border-success/30 bg-success/10 text-success',
+              stockRecalc.tone === 'info' && 'border-info/40 bg-info/10 text-info',
+              stockRecalc.tone === 'danger' && 'border-destructive/40 bg-destructive/10 text-destructive',
+            )}
+            title={order.sml_cancel_stock_recalc_error || undefined}
+          >
+            {stockRecalc.label}
           </Badge>
         )}
       </div>
@@ -2586,16 +2611,22 @@ function cancelSMLBadge(order: OrderSnapshot) {
   }
   if (order.sml_cancel_status === 'pending' || order.sml_cancel_status === 'creating') {
     return (
-      <Badge variant="outline" className="mt-1 h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
-        {order.sml_cancel_status === 'pending' ? 'รอสร้าง SML อัตโนมัติ' : 'กำลังสร้าง SML อัตโนมัติ'}
-      </Badge>
+      <div className="mt-1.5 flex max-w-[240px] flex-col items-start gap-1 border-t border-border pt-1.5 text-xs">
+        <div className="font-medium text-foreground">{documentType}{trigger ? ` (${trigger})` : ''}</div>
+        <Badge variant="outline" className="h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
+          {order.sml_cancel_status === 'pending' ? 'รอสร้างเอกสาร SML' : 'กำลังสร้างเอกสาร SML'}
+        </Badge>
+      </div>
     )
   }
   if (order.sml_cancel_status === 'failed' || order.sml_cancel_status === 'blocked') {
     return (
-      <Badge variant="outline" className="mt-1 h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_error || undefined}>
-        {order.sml_cancel_status === 'blocked' ? 'เอกสารยกเลิกต้องตรวจ' : 'เอกสารยกเลิกล้มเหลว'}
-      </Badge>
+      <div className="mt-1.5 flex max-w-[240px] flex-col items-start gap-1 border-t border-border pt-1.5 text-xs">
+        <div className="font-medium text-foreground">{documentType}{trigger ? ` (${trigger})` : ''}</div>
+        <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_error || undefined}>
+          {order.sml_cancel_status === 'blocked' ? 'เอกสารต้องตรวจ' : 'สร้างเอกสารไม่สำเร็จ'}
+        </Badge>
+      </div>
     )
   }
   return (

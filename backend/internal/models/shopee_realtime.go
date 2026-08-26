@@ -21,6 +21,8 @@ type ShopeeOrderSnapshot struct {
 	SMLCancelError             string                        `json:"sml_cancel_error,omitempty"`
 	SMLCancelStockRecalcStatus string                        `json:"sml_cancel_stock_recalc_status,omitempty"`
 	SMLCancelStockRecalcError  string                        `json:"sml_cancel_stock_recalc_error,omitempty"`
+	SMLCancelTriggerSource     string                        `json:"sml_cancel_trigger_source,omitempty"`
+	SMLCancelDocumentType      string                        `json:"sml_cancel_document_type,omitempty"`
 	DocumentRoute              string                        `json:"document_route,omitempty"`
 	BillSourceFlow             string                        `json:"bill_source_flow,omitempty"`
 	BuyerUsername              string                        `json:"buyer_username,omitempty"`

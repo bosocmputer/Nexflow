@@ -9,7 +9,12 @@ const vite = await createServer({
   server: { middlewareMode: true },
 })
 
-const { shouldMergeAutoSMLSuccessStatus } = await vite.ssrLoadModule(
+const {
+  cancellationDocumentTypeLabel,
+  cancellationStockRecalcLabel,
+  cancellationTriggerLabel,
+  shouldMergeAutoSMLSuccessStatus,
+} = await vite.ssrLoadModule(
   '/src/lib/shopee-operations-status.ts',
 )
 
@@ -28,4 +33,31 @@ test('keeps non-success Auto SML states as a separate status row', () => {
 
 test('does not claim Auto SML completion without an SML document number', () => {
   assert.equal(shouldMergeAutoSMLSuccessStatus('sent', '', 'succeeded'), false)
+})
+
+test('labels the two verified SML cancellation document types', () => {
+  assert.equal(cancellationDocumentTypeLabel('sale_cancel'), 'ยกเลิกขายสินค้าและบริการ')
+  assert.equal(cancellationDocumentTypeLabel('credit_note'), 'รับคืนสินค้า/ลดหนี้')
+  assert.equal(cancellationDocumentTypeLabel(''), 'รอสร้างตามเส้นทางที่ตั้งไว้')
+})
+
+test('labels automatic and manual cancellation creation without exposing implementation terms', () => {
+  assert.equal(cancellationTriggerLabel('auto'), 'AUTO')
+  assert.equal(cancellationTriggerLabel('manual'), 'ผู้ใช้สร้าง')
+  assert.equal(cancellationTriggerLabel(''), '')
+})
+
+test('shows the durable SML stock recalculation result', () => {
+  assert.deepEqual(cancellationStockRecalcLabel('succeeded'), {
+    label: 'คำนวณสต๊อก SML แล้ว',
+    tone: 'success',
+  })
+  assert.deepEqual(cancellationStockRecalcLabel('running'), {
+    label: 'กำลังคำนวณสต๊อก SML',
+    tone: 'info',
+  })
+  assert.deepEqual(cancellationStockRecalcLabel('manual_reconciliation'), {
+    label: 'ต้องตรวจการคำนวณสต๊อก',
+    tone: 'danger',
+  })
 })

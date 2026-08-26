@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,45 @@ import (
 
 	"nexflow/internal/models"
 )
+
+type snapshotScannerFunc func(dest ...interface{}) error
+
+func (f snapshotScannerFunc) Scan(dest ...interface{}) error { return f(dest...) }
+
+func TestScanShopeeSnapshotIncludesCancellationPresentationMetadata(t *testing.T) {
+	scanner := snapshotScannerFunc(func(dest ...interface{}) error {
+		if len(dest) != 36 {
+			return fmt.Errorf("scan destinations = %d, want 36", len(dest))
+		}
+		*dest[14].(*string) = "auto"
+		*dest[15].(*string) = "/api/v1/ic/sale-invoices/:doc_no/cancel"
+		return nil
+	})
+
+	snapshot, err := scanShopeeSnapshot(scanner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.SMLCancelTriggerSource != "auto" {
+		t.Fatalf("trigger source = %q, want auto", snapshot.SMLCancelTriggerSource)
+	}
+	if snapshot.SMLCancelDocumentType != "credit_note" {
+		t.Fatalf("document type = %q, want credit_note", snapshot.SMLCancelDocumentType)
+	}
+}
+
+func TestSMLCancellationDocumentTypeUsesVerifiedRouteSemantics(t *testing.T) {
+	tests := map[string]string{
+		"/api/v1/ic/sale-invoices/:doc_no/void":   "sale_cancel",
+		"/api/v1/ic/sale-invoices/:doc_no/cancel": "credit_note",
+		"": "",
+	}
+	for endpoint, want := range tests {
+		if got := smlCancellationDocumentType(endpoint); got != want {
+			t.Fatalf("smlCancellationDocumentType(%q) = %q, want %q", endpoint, got, want)
+		}
+	}
+}
 
 func TestInsertPushEventNormalizesEmptyJSONHeaders(t *testing.T) {
 	db, mock, err := sqlmock.New()

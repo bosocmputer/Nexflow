@@ -22,6 +22,11 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
   const crumbs = useCrumbs()
   const location = useLocation()
   const toggleMobileNav = useUIStore((s) => s.toggleMobileNav)
+  const isShopeeCancellationQueue = location.pathname.startsWith('/shopee-operations')
+    && new URLSearchParams(location.search).get('status_group') === 'cancelled'
+  const shopeeOperationsChip = isShopeeCancellationQueue
+    ? 'เอกสารยกเลิก/รับคืน Shopee'
+    : 'คำสั่งซื้อ Shopee'
 
   const routeChip =
     location.pathname.startsWith('/sale-invoices')
@@ -33,7 +38,7 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
         : location.pathname.startsWith('/nextstep-marketplace')
           ? 'NextStep Marketplace'
         : location.pathname.startsWith('/shopee-operations')
-          ? 'คำสั่งซื้อ Shopee'
+          ? shopeeOperationsChip
           : location.pathname.startsWith('/dashboard')
             ? 'Operations Console'
             : location.pathname.startsWith('/setup')

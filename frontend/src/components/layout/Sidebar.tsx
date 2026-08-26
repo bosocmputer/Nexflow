@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import {
   ChevronsLeft,
   ChevronsRight,
@@ -40,7 +40,7 @@ import { useUIStore } from '@/lib/ui-store'
 import { cn } from '@/lib/utils'
 import { WORK_QUEUE_CHANGED_EVENT } from '@/lib/work-queue-events'
 import { ENABLE_SALES_ORDERS } from '@/lib/featureFlags'
-import { visibleNavGroups, type NavGroup } from '@/lib/navigation'
+import { isNavItemActive, visibleNavGroups, type NavGroup } from '@/lib/navigation'
 import client from '@/api/client'
 
 async function countDocumentQueue(base: Record<string, string>) {
@@ -94,6 +94,7 @@ function navBadgeCount(
 export default function Sidebar() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const collapsed = useUIStore((s) => s.sidebarCollapsed)
   const toggle = useUIStore((s) => s.toggleSidebar)
   const mobileOpen = useUIStore((s) => s.mobileNavOpen)
@@ -261,6 +262,7 @@ export default function Sidebar() {
                   item.hasBadge === true ? 'bills' : item.hasBadge || null
                 const badgeCount = navBadgeCount(badgeKind, queueCounts, unreadBySource)
                 const showBadge = !!badgeKind && badgeCount > 0
+                const active = isNavItemActive(item, location.pathname, location.search)
 
                 const linkInner = (active: boolean) => (
                   <span
@@ -311,7 +313,7 @@ export default function Sidebar() {
 
                 const link = (
                   <NavLink key={item.to} to={item.to} end={item.end}>
-                    {({ isActive }) => linkInner(isActive)}
+                    {() => linkInner(active)}
                   </NavLink>
                 )
 
@@ -428,6 +430,7 @@ function MobileNavDrawer({
   userInitials: string
   onLogout: () => void
 }) {
+  const location = useLocation()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="flex w-[min(92vw,380px)] flex-col gap-0 bg-sidebar p-0 text-sidebar-foreground sm:max-w-sm">
@@ -460,10 +463,10 @@ function MobileNavDrawer({
                       to={item.to}
                       end={item.end}
                       onClick={() => onOpenChange(false)}
-                      className={({ isActive }) =>
+                      className={() =>
                         cn(
                           'flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors',
-                          isActive
+                          isNavItemActive(item, location.pathname, location.search)
                             ? 'bg-primary text-primary-foreground shadow-sm'
                             : 'text-sidebar-foreground/78 hover:bg-sidebar-accent hover:text-sidebar-foreground',
                         )

@@ -7,6 +7,7 @@ import {
   Bell,
   ReceiptText,
   RadioTower,
+  RotateCcw,
   ScrollText,
   Send,
   Settings2,
@@ -98,6 +99,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'ออเดอร์และเอกสาร',
     items: [
       { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'bulk_send_jobs', to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },
@@ -172,6 +174,21 @@ export function visibleNavItems(userOrRole?: User | string | null): NavItem[] {
 
 export function firstVisibleNavPath(userOrRole?: User | string | null): string {
   return visibleNavItems(userOrRole)[0]?.to ?? '/dashboard'
+}
+
+export function isNavItemActive(item: NavItem | undefined, pathname: string, search: string): boolean {
+  if (!item) return false
+  const [itemPath, itemSearch = ''] = item.to.split('?', 2)
+  const pathMatches = item.end
+    ? pathname === itemPath
+    : pathname === itemPath || pathname.startsWith(`${itemPath}/`)
+  if (!pathMatches) return false
+
+  const itemStatusGroup = new URLSearchParams(itemSearch).get('status_group')
+  const currentStatusGroup = new URLSearchParams(search).get('status_group')
+  if (itemStatusGroup) return currentStatusGroup === itemStatusGroup
+  if (itemPath === '/shopee-operations') return currentStatusGroup !== 'cancelled'
+  return true
 }
 
 export function canViewMenu(userOrRole: User | string | null | undefined, menuKey: string): boolean {

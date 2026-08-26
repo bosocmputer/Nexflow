@@ -133,7 +133,7 @@ export function useDynamicCrumb(key: string, label: string | undefined | null) {
 }
 
 export function useCrumbs(): Crumb[] {
-  const { pathname } = useLocation()
+  const { pathname, search } = useLocation()
   const ctx = useContext(Ctx)
 
   return useMemo(() => {
@@ -141,6 +141,13 @@ export function useCrumbs(): Crumb[] {
       const match = matchPath(r.pattern, pathname)
       if (!match) continue
       return r.crumbs.map((c) => {
+        if (
+          r.pattern === '/shopee-operations'
+          && c.label === 'คำสั่งซื้อ Shopee'
+          && new URLSearchParams(search).get('status_group') === 'cancelled'
+        ) {
+          return { label: 'เอกสารยกเลิก/รับคืน Shopee' }
+        }
         if (!c.dynamic) return { label: c.label, href: c.href }
         const key = c.label.replace(':', '')
         const dynLabel =
@@ -149,5 +156,5 @@ export function useCrumbs(): Crumb[] {
       })
     }
     return []
-  }, [pathname, ctx])
+  }, [pathname, search, ctx])
 }

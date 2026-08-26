@@ -169,6 +169,8 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		        COALESCE(c.error, '') AS sml_cancel_error,
 		        COALESCE(c.stock_recalc_status, '') AS sml_cancel_stock_recalc_status,
 		        COALESCE(c.stock_recalc_error, '') AS sml_cancel_stock_recalc_error,
+		        COALESCE(c.trigger_source, '') AS sml_cancel_trigger_source,
+		        COALESCE(c.route_endpoint, '') AS sml_cancel_route_endpoint,
 		        COALESCE(b.document_route, '') AS document_route,
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
@@ -191,7 +193,8 @@ func (r *ShopeeRealtimeRepo) ListSnapshots(ctx context.Context, f models.ShopeeO
 		          ON p.shop_id = s.shop_id
 		         AND p.order_sn = s.order_sn
 		   LEFT JOIN LATERAL (
-		     SELECT cancel_sml_doc_no, status, error, stock_recalc_status, stock_recalc_error
+		     SELECT cancel_sml_doc_no, status, error, stock_recalc_status, stock_recalc_error,
+		            trigger_source, route_endpoint
 		       FROM shopee_sml_cancellations c
 		      WHERE c.shop_id = s.shop_id
 		        AND c.order_sn = s.order_sn
@@ -266,6 +269,8 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		        COALESCE(c.error, '') AS sml_cancel_error,
 		        COALESCE(c.stock_recalc_status, '') AS sml_cancel_stock_recalc_status,
 		        COALESCE(c.stock_recalc_error, '') AS sml_cancel_stock_recalc_error,
+		        COALESCE(c.trigger_source, '') AS sml_cancel_trigger_source,
+		        COALESCE(c.route_endpoint, '') AS sml_cancel_route_endpoint,
 		        COALESCE(b.document_route, '') AS document_route,
 		        COALESCE(b.raw_data->>'flow', '') AS bill_source_flow,
 		        s.buyer_username, s.total_amount::float8, s.currency, s.item_count,
@@ -288,7 +293,8 @@ func (r *ShopeeRealtimeRepo) FindSnapshot(ctx context.Context, shopID int64, ord
 		          ON p.shop_id = s.shop_id
 		         AND p.order_sn = s.order_sn
 		   LEFT JOIN LATERAL (
-		     SELECT cancel_sml_doc_no, status, error, stock_recalc_status, stock_recalc_error
+		     SELECT cancel_sml_doc_no, status, error, stock_recalc_status, stock_recalc_error,
+		            trigger_source, route_endpoint
 		       FROM shopee_sml_cancellations c
 		      WHERE c.shop_id = s.shop_id
 		        AND c.order_sn = s.order_sn
@@ -2542,10 +2548,12 @@ func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error
 	var out models.ShopeeOrderSnapshot
 	var connID, billID sql.NullString
 	var lastOrderUpdate sql.NullTime
+	var cancelRouteEndpoint string
 	if err := rows.Scan(
 		&out.ID, &connID, &out.ShopID, &out.ShopLabel, &out.OrderSN, &out.OrderStatus,
 		&out.ERPStatus, &billID, &out.SMLDocNo, &out.SMLCancelDocNo, &out.SMLCancelStatus, &out.SMLCancelError,
 		&out.SMLCancelStockRecalcStatus, &out.SMLCancelStockRecalcError,
+		&out.SMLCancelTriggerSource, &cancelRouteEndpoint,
 		&out.DocumentRoute, &out.BillSourceFlow, &out.BuyerUsername, &out.TotalAmount,
 		&out.Currency, &out.ItemCount, &out.PackageNumber, &out.LogisticsStatus,
 		&out.TrackingNumber, &out.ShippingCarrier, &out.PaymentMethod, &out.PaymentBreakdownStatus, &out.RawDetail,
@@ -2563,8 +2571,21 @@ func scanShopeeSnapshot(rows snapshotScanner) (models.ShopeeOrderSnapshot, error
 	if lastOrderUpdate.Valid {
 		out.LastOrderUpdateAt = &lastOrderUpdate.Time
 	}
+	out.SMLCancelDocumentType = smlCancellationDocumentType(cancelRouteEndpoint)
 	decorateShopeeSnapshotShippingMetadata(&out)
 	return out, nil
+}
+
+func smlCancellationDocumentType(endpoint string) string {
+	normalized := strings.ToLower(strings.TrimSpace(endpoint))
+	switch {
+	case strings.Contains(normalized, "/void"), strings.Contains(normalized, "saleinvoicecancel"):
+		return "sale_cancel"
+	case strings.Contains(normalized, "/cancel"), strings.Contains(normalized, "creditnote"):
+		return "credit_note"
+	default:
+		return ""
+	}
 }
 
 func decorateShopeeSnapshotShippingMetadata(out *models.ShopeeOrderSnapshot) {
