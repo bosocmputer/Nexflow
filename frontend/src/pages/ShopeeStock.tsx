@@ -271,6 +271,12 @@ const STATUS_TABS = [
   { key: 'history', label: 'ประวัติ' },
 ] as const
 
+const STOCK_COLUMN_LABELS = {
+  sml: 'สต๊อก SML',
+  shopee: 'สต๊อก Shopee',
+  target: 'สต๊อกที่จะส่งไป Shopee',
+} as const
+
 const WARNING_LABEL: Record<string, string> = {
   sku_not_found: 'ไม่พบ SKU ใน SML',
   unit_factor_missing: 'หน่วยนับไม่มีอัตราส่วน',
@@ -1016,9 +1022,7 @@ export default function ShopeeStock() {
               <span>สินค้า Shopee</span>
               <span>สินค้าที่จับคู่ใน SML</span>
               <div className="grid grid-cols-3 gap-3 text-right">
-                <span>คงเหลือ SML</span>
-                <span>Shopee ตอนนี้</span>
-                <span>จะส่ง Shopee</span>
+				<StockColumnLabels />
               </div>
               <span />
 			</div>}
@@ -1181,11 +1185,27 @@ function GroupedShopeeProducts({ shopID, status, query, groups, canManage, onMap
 				{state?.loading && state.rows.length === 0 && <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดตัวเลือก</div>}
 				{state?.error && <div className="flex items-center justify-between gap-3 px-4 py-4 text-sm text-destructive"><span>{state.error}</span><Button variant="outline" size="sm" onClick={() => void loadChildren(group)}>ลองใหม่</Button></div>}
 				{state && !state.loading && !state.error && state.rows.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">ไม่พบตัวเลือกที่ตรงกับตัวกรอง</div>}
+				{state && state.rows.length > 0 && <div className="hidden grid-cols-[minmax(280px,1.4fr)_minmax(220px,1fr)_minmax(280px,auto)_148px] gap-3 border-b bg-muted/30 py-1.5 pl-8 pr-3 text-[11px] font-medium text-muted-foreground lg:grid">
+					<span>ตัวเลือก Shopee</span>
+					<span>สินค้าที่จับคู่ใน SML</span>
+					<div className="grid grid-cols-3 gap-3 text-right"><StockColumnLabels /></div>
+					<span />
+				</div>}
 				<div className="divide-y">{state?.rows.map((product) => <ProductLine key={`${product.item_id}:${product.model_id}`} product={product} canManage={canManage} nested onMap={() => onMap(product)} onPool={() => onPool(product)} />)}</div>
 				{state?.nextCursor && <div className="flex justify-center border-t py-2"><Button variant="outline" size="sm" disabled={state.loading} onClick={() => void loadChildren(group, true)}>{state.loading && <Loader2 className="h-4 w-4 animate-spin" />}โหลดตัวเลือกเพิ่ม</Button></div>}
 			</div>}
 		</div>
 	})}</div>
+}
+
+function StockColumnLabels() {
+  return (
+    <>
+      <span title="ยอดคงเหลือจากคลังและพื้นที่เก็บ SML ที่เลือก">{STOCK_COLUMN_LABELS.sml}</span>
+      <span title="ยอดสต๊อกปัจจุบันที่อ่านจาก Shopee">{STOCK_COLUMN_LABELS.shopee}</span>
+      <span title="ยอดสต๊อกปลายทางที่ Nexflow จะตั้งใน Shopee เมื่อกดซิงก์">{STOCK_COLUMN_LABELS.target}</span>
+    </>
+  )
 }
 
 function ProductLine({ product, canManage, onMap, onPool, nested = false }: { product: ProductRow; canManage: boolean; onMap: () => void; onPool: () => void; nested?: boolean }) {
@@ -1231,16 +1251,16 @@ function ProductLine({ product, canManage, onMap, onPool, nested = false }: { pr
       </div>
       <div className="grid grid-cols-3 gap-3 rounded-md bg-muted/30 p-2 lg:bg-transparent lg:p-0">
         <div className="min-w-0 text-left lg:text-right">
-          <p className="text-[11px] text-muted-foreground lg:hidden">คงเหลือ SML</p>
+		  <p className="text-[11px] text-muted-foreground lg:hidden">{STOCK_COLUMN_LABELS.sml}</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_balance == null ? 'รอตรวจ' : formatNumber(product.last_preview_balance)}</span>{product.last_preview_balance != null && baseUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{baseUnit}</span>}</p>
         </div>
         <div className="min-w-0 text-left lg:text-right">
-          <p className="text-[11px] text-muted-foreground lg:hidden">Shopee ตอนนี้</p>
+		  <p className="text-[11px] text-muted-foreground lg:hidden">{STOCK_COLUMN_LABELS.shopee}</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{formatNumber(product.shopee_available)}</span>{sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
           {product.shopee_reserved > 0 && <p className="text-[11px] text-warning">จอง {formatNumber(product.shopee_reserved)}</p>}
         </div>
         <div className="min-w-0 text-left lg:text-right">
-          <p className="text-[11px] text-muted-foreground lg:hidden">จะส่ง Shopee</p>
+		  <p className="text-[11px] text-muted-foreground lg:hidden">{STOCK_COLUMN_LABELS.target}</p>
           <p className="whitespace-nowrap text-sm font-medium"><span className="font-mono">{product.last_preview_target == null ? 'รอตรวจ' : formatNumber(product.last_preview_target)}</span>{product.last_preview_target != null && sellingUnit && <span className="ml-1 text-[11px] font-normal text-muted-foreground">{sellingUnit}</span>}</p>
         </div>
       </div>
