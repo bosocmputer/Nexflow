@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `1cd9af0` (`feat: deduct SML outstanding sales orders from Shopee stock`),
+  `9bebf3e` (`fix: preserve Shopee gateway network on backend recreate`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `7723a0b`
   (`fix: block ambiguous SML sales order identities`).
@@ -175,6 +175,18 @@ Current AOY UAT scope:
     pre-deploy database backup is `pre-deploy-20260826-041945.sql.gz`; runtime
     `.env` backups with `pre-stock-net` prefixes are retained in the AOY folder.
     Demo and Lanboon application/runtime modes were not changed.
+17. AOY Shopee catalog sync connectivity incident is resolved at `9bebf3e`.
+    Recreating only `nexflow-aoy-backend` had removed its manually attached
+    `nexflow-shopee-gateway_default` network, causing Docker DNS lookup failures
+    and HTTP 500 from `/api/settings/shopee-stock/264993963/catalog-sync`. The
+    managed Compose override now declares both the tenant default network and
+    the external Shopee Gateway network, so future backend recreates preserve
+    connectivity. The deployment script also probes Gateway health from inside
+    the fresh backend and fails the deploy if DNS/connectivity is unavailable.
+    Post-deploy browser QA called the same catalog-sync endpoint successfully:
+    HTTP 200 in 2.217 seconds, 45 stored products / 44 active, and no browser
+    console or recent backend errors. The pre-deploy AOY backup is
+    `pre-deploy-20260826-043401.sql.gz`. Demo and Lanboon were not deployed.
 
 Known deferred or incomplete validation:
 
