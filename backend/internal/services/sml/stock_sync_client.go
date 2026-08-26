@@ -190,21 +190,31 @@ type StockBalanceScopeRequest struct {
 }
 
 type StockBalanceBatchRequest struct {
-	AsOfDate string                     `json:"as_of_date"`
-	Scopes   []StockBalanceScopeRequest `json:"scopes"`
+	AsOfDate         string                     `json:"as_of_date"`
+	AvailabilityMode string                     `json:"availability_mode,omitempty"`
+	Scopes           []StockBalanceScopeRequest `json:"scopes"`
 }
 
 type StockBalanceItem struct {
-	ItemCode           string                 `json:"item_code"`
-	ItemName           string                 `json:"item_name"`
-	UnitCode           string                 `json:"unit_code"`
-	RawBalanceQty      float64                `json:"raw_balance_qty"`
-	BalanceQty         float64                `json:"balance_qty"`
-	ExcludedBalanceQty float64                `json:"excluded_balance_qty"`
-	ExcludedLocations  []StockBalanceLocation `json:"excluded_locations"`
-	MinQty             float64                `json:"min_qty"`
-	MaxQty             float64                `json:"max_qty"`
-	NegativeClamped    bool                   `json:"negative_clamped"`
+	ItemCode                      string                 `json:"item_code"`
+	ItemName                      string                 `json:"item_name"`
+	UnitCode                      string                 `json:"unit_code"`
+	RawBalanceQty                 float64                `json:"raw_balance_qty"`
+	BalanceQty                    float64                `json:"balance_qty"`
+	PhysicalBalanceQty            float64                `json:"physical_balance_qty"`
+	OutstandingSalesOrderQty      float64                `json:"outstanding_sales_order_qty"`
+	AvailableBalanceQty           float64                `json:"available_balance_qty"`
+	PhysicalBalanceQtyExact       string                 `json:"physical_balance_qty_exact"`
+	OutstandingSalesOrderQtyExact string                 `json:"outstanding_sales_order_qty_exact"`
+	AvailableBalanceQtyExact      string                 `json:"available_balance_qty_exact"`
+	BalanceQtyExact               string                 `json:"balance_qty_exact"`
+	AvailabilityStatus            string                 `json:"availability_status"`
+	AvailabilityReason            string                 `json:"availability_reason"`
+	ExcludedBalanceQty            float64                `json:"excluded_balance_qty"`
+	ExcludedLocations             []StockBalanceLocation `json:"excluded_locations"`
+	MinQty                        float64                `json:"min_qty"`
+	MaxQty                        float64                `json:"max_qty"`
+	NegativeClamped               bool                   `json:"negative_clamped"`
 }
 
 type StockBalanceLocation struct {
@@ -223,9 +233,21 @@ type StockBalanceScopeResult struct {
 }
 
 type StockBalanceBatchResponse struct {
-	AsOfDate  string                    `json:"as_of_date"`
-	Scopes    []StockBalanceScopeResult `json:"scopes"`
-	CheckedAt string                    `json:"checked_at"`
+	AsOfDate                   string                    `json:"as_of_date"`
+	Scopes                     []StockBalanceScopeResult `json:"scopes"`
+	CheckedAt                  string                    `json:"checked_at"`
+	ModeApplied                string                    `json:"mode_applied"`
+	SchemaVersion              string                    `json:"schema_version"`
+	SourceSnapshotAt           string                    `json:"source_snapshot_at"`
+	SourceSemanticsFingerprint string                    `json:"source_semantics_fingerprint"`
+}
+
+type StockCapabilities struct {
+	AvailabilityModes          []string `json:"availability_modes"`
+	SchemaVersion              string   `json:"schema_version"`
+	SourceSemanticsFingerprint string   `json:"source_semantics_fingerprint"`
+	DecimalQuantityFormat      string   `json:"decimal_quantity_format"`
+	MaxItemCodes               int      `json:"max_item_codes"`
 }
 
 type stockAPIError struct {
@@ -248,6 +270,14 @@ func (c *StockSyncClient) Locations(ctx context.Context, asOfDate string) (*Stoc
 	var envelope stockAPIEnvelope[StockLocationsResponse]
 	path := "/api/v1/ic/stock-locations?as_of_date=" + url.QueryEscape(strings.TrimSpace(asOfDate))
 	if err := c.do(ctx, http.MethodGet, path, nil, &envelope); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
+}
+
+func (c *StockSyncClient) StockCapabilities(ctx context.Context) (*StockCapabilities, error) {
+	var envelope stockAPIEnvelope[StockCapabilities]
+	if err := c.do(ctx, http.MethodGet, "/api/v1/ic/stock-capabilities", nil, &envelope); err != nil {
 		return nil, err
 	}
 	return &envelope.Data, nil
@@ -346,6 +376,10 @@ func (c *StockSyncClient) do(ctx context.Context, method, path string, payload a
 	}
 	switch envelope := out.(type) {
 	case *stockAPIEnvelope[StockLocationsResponse]:
+		if !envelope.Success {
+			return stockEnvelopeError(envelope.Error)
+		}
+	case *stockAPIEnvelope[StockCapabilities]:
 		if !envelope.Success {
 			return stockEnvelopeError(envelope.Error)
 		}

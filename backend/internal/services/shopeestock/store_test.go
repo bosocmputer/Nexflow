@@ -232,16 +232,17 @@ func TestPendingReservationBaseDemandExpandsSetsOnceAcrossChannels(t *testing.T)
 		t.Fatalf("sqlmock.New: %v", err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)SELECT demand.item_code,SUM\(demand.base_qty\).*marketplace_stock_reservations r.*NOT EXISTS.*UNION ALL.*marketplace_stock_reservation_components c`).
+	mock.ExpectQuery(`(?s)SELECT demand.item_code,SUM\(demand.base_qty\)::text.*marketplace_stock_reservations r.*warehouse_code.*UNION ALL.*marketplace_stock_reservation_components c.*warehouse_code`).
+		WithArgs("W1", "S1").
 		WillReturnRows(sqlmock.NewRows([]string{"item_code", "base_qty"}).
-			AddRow("NORMAL-1", 8.0).
-			AddRow("COMPONENT-1", 24.0))
+			AddRow("NORMAL-1", "8.000").
+			AddRow("COMPONENT-1", "24"))
 
-	demand, err := NewStore(db).PendingReservationBaseDemand(context.Background())
+	demand, err := NewStore(db).PendingReservationBaseDemand(context.Background(), "W1", "S1")
 	if err != nil {
 		t.Fatalf("PendingReservationBaseDemand: %v", err)
 	}
-	if demand["NORMAL-1"] != 8 || demand["COMPONENT-1"] != 24 {
+	if demand["NORMAL-1"].Value != 8 || demand["NORMAL-1"].Exact != "8.000" || demand["COMPONENT-1"].Value != 24 {
 		t.Fatalf("demand=%v", demand)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

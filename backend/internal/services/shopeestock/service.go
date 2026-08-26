@@ -783,11 +783,12 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 	}
 	var pendingReservations map[string]ReservationDemand
-	pendingBaseByItem := map[string]float64{}
+	pendingBaseByItem := map[string]ExactDemand{}
 	if s.cfg.ReservationLedgerEnabled {
 		pendingReservations, err = s.store.PendingShopeeReservationLedger(ctx, shopID)
 		if err == nil {
-			pendingBaseByItem, err = s.store.PendingReservationBaseDemand(ctx)
+			selected := settings.Locations[0]
+			pendingBaseByItem, err = s.store.PendingReservationBaseDemand(ctx, selected.Warehouse, selected.Location)
 		}
 	} else {
 		pendingReservations, err = s.store.PendingShopeeReservationsLegacy(ctx, shopID)
@@ -934,11 +935,12 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 		}
 	}
 	if s.cfg.ReservationLedgerEnabled {
-		for itemCode, pendingBase := range pendingBaseByItem {
+		for itemCode, pendingDemand := range pendingBaseByItem {
 			balance, exists := balanceMap[itemCode]
 			if !exists {
 				continue
 			}
+			pendingBase := pendingDemand.Value
 			if pendingBase > balance.BalanceQty {
 				pendingExceedsBalance[itemCode] = true
 			}
@@ -975,7 +977,7 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 			SharedPoolEnabled: product.SharedPoolEnabled, PoolAllocationPct: product.PoolAllocationPct,
 		}
 		if s.cfg.ReservationLedgerEnabled && product.SMLItemType != 3 {
-			line.PendingBaseQty = pendingBaseByItem[product.SMLItemCode]
+			line.PendingBaseQty = pendingBaseByItem[product.SMLItemCode].Value
 		}
 		if _, pooled := sharedPools[product.SMLItemCode]; pooled {
 			line.WarningCodes = removeWarning(line.WarningCodes, "duplicate_sml_item")

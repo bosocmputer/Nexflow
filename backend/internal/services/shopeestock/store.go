@@ -758,34 +758,45 @@ func (s *Store) PendingShopeeReservationLedger(ctx context.Context, shopID int64
 	return reservations, rows.Err()
 }
 
+type ExactDemand struct {
+	Value float64
+	Exact string
+}
+
 // PendingReservationBaseDemand aggregates unsent demand by the physical SML
-// item/component it consumes. It intentionally spans every Marketplace source
-// and shop in the tenant DB; the SML balance is shared even when sales entered
-// through different channels.
-func (s *Store) PendingReservationBaseDemand(ctx context.Context) (map[string]float64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT demand.item_code,SUM(demand.base_qty)::float8 FROM (
+// item/component it consumes within the selected stock scope. Reservations made
+// before a scope was recorded are conservatively assigned to the shop's sole
+// selected scope; reservations explicitly assigned elsewhere are excluded.
+func (s *Store) PendingReservationBaseDemand(ctx context.Context, warehouseCode, locationCode string) (map[string]ExactDemand, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT demand.item_code,SUM(demand.base_qty)::text FROM (
 		SELECT r.sml_item_code AS item_code,r.base_qty
 		FROM marketplace_stock_reservations r
 		WHERE r.state IN ('active','sending_sml','awaiting_stock_recalc') AND r.base_qty>0 AND r.sml_item_code<>''
+		  AND ((r.warehouse_code=$1 AND r.location_code=$2) OR (r.warehouse_code='' AND r.location_code=''))
 		  AND NOT EXISTS(SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
 		UNION ALL
 		SELECT c.component_item_code,c.component_base_qty
 		FROM marketplace_stock_reservation_components c
 		JOIN marketplace_stock_reservations r ON r.id=c.reservation_id
 		WHERE r.state IN ('active','sending_sml','awaiting_stock_recalc') AND c.component_base_qty>0
-	) demand WHERE demand.item_code<>'' GROUP BY demand.item_code`)
+		  AND ((c.warehouse_code=$1 AND c.location_code=$2) OR (c.warehouse_code='' AND c.location_code=''))
+	) demand WHERE demand.item_code<>'' GROUP BY demand.item_code`, warehouseCode, locationCode)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := map[string]float64{}
+	result := map[string]ExactDemand{}
 	for rows.Next() {
 		var itemCode string
-		var baseQty float64
-		if err := rows.Scan(&itemCode, &baseQty); err != nil {
+		var exact string
+		if err := rows.Scan(&itemCode, &exact); err != nil {
 			return nil, err
 		}
-		result[itemCode] = baseQty
+		value, err := strconv.ParseFloat(exact, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse pending base demand for %s: %w", itemCode, err)
+		}
+		result[itemCode] = ExactDemand{Value: value, Exact: exact}
 	}
 	return result, rows.Err()
 }

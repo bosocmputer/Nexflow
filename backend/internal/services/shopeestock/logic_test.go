@@ -92,6 +92,53 @@ func TestCalculateTarget(t *testing.T) {
 	}
 }
 
+func TestCalculateTargetExactFloorsOnlyAtFinalSellingUnit(t *testing.T) {
+	got, err := CalculateTargetExact("2452", "5", "80", "12")
+	if err != nil {
+		t.Fatalf("CalculateTargetExact: %v", err)
+	}
+	if got != 163 {
+		t.Fatalf("target = %d, want floor((2452-5)*0.8/12)=163", got)
+	}
+}
+
+func TestCalculateTargetExactRejectsInvalidOrOverflowingQuantity(t *testing.T) {
+	for _, input := range [][4]string{
+		{"NaN", "0", "80", "1"},
+		{"10", "0", "101", "1"},
+		{"10", "0", "80", "0"},
+		{"999999999999999999999999999999", "0", "100", "1"},
+	} {
+		if _, err := CalculateTargetExact(input[0], input[1], input[2], input[3]); err == nil {
+			t.Fatalf("input %v must fail", input)
+		}
+	}
+}
+
+func TestValidateAvailabilityCapabilitiesFailsClosed(t *testing.T) {
+	valid := &sml.StockCapabilities{
+		AvailabilityModes: []string{"physical_v1", "net_sale_order_v1"},
+		SchemaVersion:     "stock-availability-v1", SourceSemanticsFingerprint: "sha256:approved",
+		DecimalQuantityFormat: "string", MaxItemCodes: 5000,
+	}
+	if err := validateAvailabilityCapabilities(valid, "sha256:approved"); err != nil {
+		t.Fatalf("valid capability rejected: %v", err)
+	}
+	for name, capability := range map[string]*sml.StockCapabilities{
+		"missing":     nil,
+		"mode":        {AvailabilityModes: []string{"physical_v1"}, SchemaVersion: "stock-availability-v1", SourceSemanticsFingerprint: "sha256:approved", DecimalQuantityFormat: "string", MaxItemCodes: 5000},
+		"schema":      {AvailabilityModes: valid.AvailabilityModes, SchemaVersion: "v2", SourceSemanticsFingerprint: "sha256:approved", DecimalQuantityFormat: "string", MaxItemCodes: 5000},
+		"decimal":     {AvailabilityModes: valid.AvailabilityModes, SchemaVersion: "stock-availability-v1", SourceSemanticsFingerprint: "sha256:approved", DecimalQuantityFormat: "number", MaxItemCodes: 5000},
+		"fingerprint": {AvailabilityModes: valid.AvailabilityModes, SchemaVersion: "stock-availability-v1", SourceSemanticsFingerprint: "sha256:changed", DecimalQuantityFormat: "string", MaxItemCodes: 5000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAvailabilityCapabilities(capability, "sha256:approved"); err == nil {
+				t.Fatal("expected fail-closed capability error")
+			}
+		})
+	}
+}
+
 func TestPreviewExcludedLocationsPreservesSMLWarehouseDetails(t *testing.T) {
 	got := previewExcludedLocations("AH-0001", []sml.StockBalanceLocation{{
 		WarehouseCode: "W2", WarehouseName: "คลังสำรอง",

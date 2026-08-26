@@ -1,7 +1,9 @@
 package shopeestock
 
 import (
+	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +46,53 @@ func CalculateTarget(balance, stockPct, unitFactor float64) int64 {
 		return 0
 	}
 	return int64(math.Floor(balance * stockPct / 100 / unitFactor))
+}
+
+func CalculateTargetExact(balance, pending, stockPct, unitFactor string) (int64, error) {
+	values := make([]*big.Rat, 4)
+	for index, raw := range []string{balance, pending, stockPct, unitFactor} {
+		value, ok := new(big.Rat).SetString(strings.TrimSpace(raw))
+		if !ok {
+			return 0, fmt.Errorf("invalid exact stock quantity %q", raw)
+		}
+		values[index] = value
+	}
+	if values[0].Sign() < 0 || values[1].Sign() < 0 || values[2].Sign() <= 0 || values[2].Cmp(big.NewRat(100, 1)) > 0 || values[3].Sign() <= 0 {
+		return 0, fmt.Errorf("exact stock quantities are outside safe bounds")
+	}
+	available := new(big.Rat).Sub(values[0], values[1])
+	if available.Sign() <= 0 {
+		return 0, nil
+	}
+	target := new(big.Rat).Mul(available, values[2])
+	target.Quo(target, big.NewRat(100, 1))
+	target.Quo(target, values[3])
+	integer := new(big.Int).Quo(target.Num(), target.Denom())
+	if !integer.IsInt64() {
+		return 0, fmt.Errorf("exact stock target exceeds int64")
+	}
+	return integer.Int64(), nil
+}
+
+func validateAvailabilityCapabilities(capability *sml.StockCapabilities, expectedFingerprint string) error {
+	if capability == nil {
+		return fmt.Errorf("SML stock capability is missing")
+	}
+	supported := false
+	for _, mode := range capability.AvailabilityModes {
+		if mode == "net_sale_order_v1" {
+			supported = true
+			break
+		}
+	}
+	if !supported || capability.SchemaVersion != "stock-availability-v1" || capability.DecimalQuantityFormat != "string" || capability.MaxItemCodes < 1 {
+		return fmt.Errorf("SML stock net capability is unsupported")
+	}
+	expectedFingerprint = strings.TrimSpace(expectedFingerprint)
+	if expectedFingerprint == "" || capability.SourceSemanticsFingerprint != expectedFingerprint {
+		return fmt.Errorf("SML stock source fingerprint is not approved")
+	}
+	return nil
 }
 
 func previewExcludedLocations(itemCode string, items []sml.StockBalanceLocation) []ExcludedStockLocation {

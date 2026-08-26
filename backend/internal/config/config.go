@@ -68,6 +68,8 @@ type Config struct {
 	MarketplaceUnitCatalogEnabled       bool
 	MarketplaceConversionMode           string
 	MarketplaceReservationLedgerEnabled bool
+	SMLStockAvailabilityMode            string
+	SMLStockSourceFingerprint           string
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
@@ -119,6 +121,10 @@ func Load() *Config {
 	if err != nil {
 		log.Fatal(err)
 	}
+	stockAvailabilityMode, err := parseSMLStockAvailabilityMode(getEnv("SML_STOCK_AVAILABILITY_MODE", "physical_v1"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	c := &Config{
 		Port:                                getEnv("PORT", "8090"),
@@ -154,6 +160,8 @@ func Load() *Config {
 		MarketplaceUnitCatalogEnabled:       getEnvBool("MARKETPLACE_UNIT_CATALOG_ENABLED", false),
 		MarketplaceConversionMode:           conversionMode,
 		MarketplaceReservationLedgerEnabled: getEnvBool("MARKETPLACE_RESERVATION_LEDGER_ENABLED", false),
+		SMLStockAvailabilityMode:            stockAvailabilityMode,
+		SMLStockSourceFingerprint:           strings.TrimSpace(getEnv("SML_STOCK_SOURCE_FINGERPRINT", "")),
 		ShopeeOpenAPIEnabled:                getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
 		ShopeeOpenAPIEnv:                    getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
 		ShopeeOpenAPIBaseURL:                getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
@@ -210,6 +218,16 @@ func parseMarketplaceConversionMode(raw string) (string, error) {
 		return mode, nil
 	default:
 		return "", fmt.Errorf("MARKETPLACE_CONVERSION_MODE must be off, shadow, or active; got %q", raw)
+	}
+}
+
+func parseSMLStockAvailabilityMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "physical_v1", "shadow", "net_sale_order_v1":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("SML_STOCK_AVAILABILITY_MODE must be physical_v1, shadow, or net_sale_order_v1; got %q", raw)
 	}
 }
 
