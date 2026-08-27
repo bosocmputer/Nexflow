@@ -10,6 +10,7 @@ services:
       - nexflow_default
       - nexflow-aoy_default
       - nexflow-lanboon_default
+      - nexflow-ploy_default
       - nexflow-shopee-gateway_default
     restart: unless-stopped
 
@@ -19,6 +20,8 @@ networks:
   nexflow-aoy_default:
     external: true
   nexflow-lanboon_default:
+    external: true
+  nexflow-ploy_default:
     external: true
   nexflow-shopee-gateway_default:
     external: true

@@ -50,6 +50,26 @@
       "sml_host": "chk562595.totddns.com",
       "sml_port": 12831,
       "sml_database": "lbk63"
+    },
+    {
+      "name": "ploy",
+      "hostname": "nexflow-ploy.nextstep-soft.com",
+      "folder": "nexflow-ploy",
+      "frontend_container": "nexflow-ploy-frontend",
+      "backend_container": "nexflow-ploy-backend",
+      "postgres_container": "nexflow-ploy-postgres",
+      "frontend_debug_port": 16326,
+      "previous_frontend_port": 16326,
+      "backend_port": 8113,
+      "postgres_port": 5443,
+      "public_url": "https://nexflow-ploy.nextstep-soft.com",
+      "sml_tenant": "ploy",
+      "sml_host": "postgresql",
+      "sml_port": 5432,
+      "sml_database": "ploy",
+      "backend_extra_hosts": [
+        "nextstep.iszai.com:10.121.20.83"
+      ]
     }
   ]
 }
