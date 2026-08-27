@@ -110,7 +110,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             patch.object(deploy, "provision_target_gateway_identity"),
             patch.object(deploy, "connect_target_to_gateway"),
             patch.object(deploy, "snapshot_target_sales_counts"),
-            patch.object(deploy, "ssh", return_value='{"status":"ok"}'),
+            patch.object(deploy, "ssh", return_value='{"status":"ok"}') as ssh,
         ):
             sudo.return_value = "1|0|0|0|0"
             deploy.bootstrap_target_runtime(target)
@@ -121,6 +121,8 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("docker volume inspect nexflow-aoy_pgdata", prepare_script)
         self.assertIn("chmod 600 /srv/nexflow-aoy/.env", prepare_script)
         self.assertIn("docker compose config", prepare_script)
+        health_script = ssh.call_args.args[0]
+        self.assertIn("seq 1 60", health_script)
 
 
 if __name__ == "__main__":

@@ -409,9 +409,14 @@ docker compose config >/dev/null
     )
     connect_target_to_gateway(target)
     health = ssh(
-        f"curl -s -m 10 http://127.0.0.1:{target.backend_port}/health",
+        "last=''; "
+        "for attempt in $(seq 1 60); do "
+        f"last=$(curl -s -m 5 http://127.0.0.1:{target.backend_port}/health || true); "
+        "if printf %s \"$last\" | grep -q '\"status\":\"ok\"'; then printf %s \"$last\"; exit 0; fi; "
+        "sleep 1; "
+        "done; printf %s \"$last\"",
         label=f"bootstrap backend health {target.name}",
-        timeout=30,
+        timeout=90,
     )
     if '"status":"ok"' not in health:
         sudo(
