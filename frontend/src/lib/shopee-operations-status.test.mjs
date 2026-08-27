@@ -10,6 +10,7 @@ const vite = await createServer({
 })
 
 const {
+  cancellationDocumentSummary,
   cancellationDocumentTypeLabel,
   cancellationStockRecalcLabel,
   cancellationTriggerLabel,
@@ -68,6 +69,53 @@ test('shows the durable SML stock recalculation result', () => {
   })
   assert.deepEqual(cancellationStockRecalcLabel('manual_reconciliation'), {
     label: 'ต้องตรวจการคำนวณสต๊อก',
+    tone: 'danger',
+  })
+})
+
+test('compresses a successful automatic credit note into two readable lines', () => {
+  assert.deepEqual(cancellationDocumentSummary({
+    status: 'created',
+    documentType: 'credit_note',
+    triggerSource: 'auto',
+    saleDocNo: 'BF-INV26080060',
+    cancelDocNo: 'CN26080002',
+  }), {
+    headline: 'รับคืนสินค้า/ลดหนี้แล้ว (AUTO)',
+    documentLine: 'BF-INV26080060 → CN26080002',
+    tone: 'danger',
+  })
+})
+
+test('keeps pending and failed cancellation work actionable without adding rows', () => {
+  assert.deepEqual(cancellationDocumentSummary({
+    status: 'creating',
+    documentType: 'sale_cancel',
+    triggerSource: 'manual',
+    saleDocNo: 'BF-INV26080061',
+  }), {
+    headline: 'กำลังสร้างยกเลิกขายสินค้าและบริการ (ผู้ใช้สร้าง)',
+    documentLine: 'BF-INV26080061 → รอเลขเอกสาร',
+    tone: 'info',
+  })
+  assert.deepEqual(cancellationDocumentSummary({
+    status: 'failed',
+    documentType: 'credit_note',
+    triggerSource: 'auto',
+    saleDocNo: 'BF-INV26080062',
+  }), {
+    headline: 'สร้างรับคืนสินค้า/ลดหนี้ไม่สำเร็จ (AUTO)',
+    documentLine: 'BF-INV26080062 → รอเลขเอกสาร',
+    tone: 'danger',
+  })
+})
+
+test('uses a plain pending label before the cancellation route is resolved', () => {
+  assert.deepEqual(cancellationDocumentSummary({
+    saleDocNo: 'BF-INV26080063',
+  }), {
+    headline: 'รอสร้างเอกสารหลังยกเลิก',
+    documentLine: 'BF-INV26080063 → รอเลขเอกสาร',
     tone: 'danger',
   })
 })

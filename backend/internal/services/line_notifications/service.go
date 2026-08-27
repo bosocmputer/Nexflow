@@ -138,16 +138,36 @@ func (s *Service) EnqueueShopeeSMLCancellationCreated(
 	}
 	title := "สร้าง" + documentLabel + "สำเร็จ"
 	message := BuildShopeeSMLCancellationCreatedLineText(snap, cancelDocNo, documentLabel, s.publicBaseURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := BuildShopeeSMLCancellationCreatedLineFlex(snap, cancelDocNo, documentLabel); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText, flexPayload, payloadVersion = alt, raw, 1
+			} else if s.logger != nil {
+				s.logger.Warn("line SML cancellation flex marshal failed",
+					zap.Int64("shop_id", snap.ShopID),
+					zap.String("order_sn", snap.OrderSN),
+					zap.String("cancel_doc_no", cancelDocNo),
+					zap.Error(err),
+				)
+			}
+		}
+	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
-		Source:      "shopee_realtime",
-		Severity:    "info",
-		Title:       title,
-		Body:        strings.Join(filterNonEmpty([]string{strings.TrimSpace(snap.OrderSN), strings.TrimSpace(cancelDocNo)}), " · "),
-		ActionURL:   ShopeeOrderActionURL(s.publicBaseURL, snap.OrderSN),
-		EntityType:  "shopee_order",
-		EntityID:    fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
-		DedupeKey:   dedupeKey,
-		MessageText: message,
+		Source:         "shopee_realtime",
+		Severity:       "info",
+		Title:          title,
+		Body:           strings.Join(filterNonEmpty([]string{strings.TrimSpace(snap.OrderSN), strings.TrimSpace(cancelDocNo)}), " · "),
+		ActionURL:      ShopeeOrderActionURL(s.publicBaseURL, snap.OrderSN),
+		EntityType:     "shopee_order",
+		EntityID:       fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
+		DedupeKey:      dedupeKey,
+		MessageText:    message,
+		AltText:        altText,
+		FlexPayload:    flexPayload,
+		PayloadVersion: payloadVersion,
 	})
 }
 
@@ -229,7 +249,7 @@ func buildShopeeAutoSMLText(title string, in models.ShopeeAutoSMLNotification, a
 	return strings.Join(lines, "\n")
 }
 
-func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotification, actionURL string) (string, map[string]any) {
+func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotification, _ string) (string, map[string]any) {
 	color := "#16A34A"
 	if kind == "review" {
 		color = "#D97706"
@@ -280,9 +300,6 @@ func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotificat
 	contents := map[string]any{
 		"type": "bubble", "size": "mega",
 		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
-	}
-	if isAbsoluteHTTPURL(actionURL) {
-		contents["footer"] = flexButtonFooter("เปิดใน Nexflow", actionURL)
 	}
 	return strings.Join(filterNonEmpty([]string{title, shop, in.OrderSN}), " · "), contents
 }
@@ -636,10 +653,6 @@ func BuildShopeeNewOrderLineFlex(job models.LineNotificationDeliveryJob) (string
 	if title == "-" {
 		title = "มีออเดอร์ Shopee ใหม่"
 	}
-	actionURL := strings.TrimSpace(job.ActionURL)
-	if actionURL == "" {
-		actionURL = parts.URL
-	}
 	amount := fallbackDash(parts.Amount)
 	shop := fallbackDash(parts.Shop)
 	orderSN := fallbackDash(parts.OrderSN)
@@ -747,25 +760,6 @@ func BuildShopeeNewOrderLineFlex(job models.LineNotificationDeliveryJob) (string
 			"contents": bodyContents,
 		},
 	}
-	if isAbsoluteHTTPURL(actionURL) {
-		contents["footer"] = map[string]any{
-			"type":   "box",
-			"layout": "vertical",
-			"contents": []map[string]any{
-				{
-					"type":   "button",
-					"style":  "primary",
-					"color":  "#2563EB",
-					"height": "sm",
-					"action": map[string]any{
-						"type":  "uri",
-						"label": "เปิดใน Nexflow",
-						"uri":   actionURL,
-					},
-				},
-			},
-		}
-	}
 	return alt, contents
 }
 
@@ -773,7 +767,7 @@ func BuildShopeeNewOrderRichLineFlex(snap *models.ShopeeOrderSnapshot, publicBas
 	return BuildShopeeNewOrderRichLineFlexWithPayment(snap, nil, publicBaseURL)
 }
 
-func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, publicBaseURL string) (string, map[string]any) {
+func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, _ string) (string, map[string]any) {
 	if snap == nil {
 		return "มีออเดอร์ Shopee ใหม่", nil
 	}
@@ -788,7 +782,6 @@ func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot
 		total = detail.TotalAmount
 	}
 	paymentLabel := shopeePaymentLabel(snap.PaymentMethod, detail.PaymentMethod, detail.COD)
-	actionURL := ShopeeOrderActionURL(publicBaseURL, orderSN)
 	amountLabel := formatLineMoneyValue(total)
 	title := "ออเดอร์ Shopee ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, shop, amountLabel}), " · ")
@@ -829,9 +822,6 @@ func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot
 			"spacing":  "sm",
 			"contents": body,
 		},
-	}
-	if isAbsoluteHTTPURL(actionURL) {
-		contents["footer"] = flexButtonFooter("เปิดใน Nexflow", actionURL)
 	}
 	return alt, contents
 }
@@ -1760,6 +1750,63 @@ func BuildShopeeSMLCancellationCreatedLineText(snap *models.ShopeeOrderSnapshot,
 		parts = append(parts, "เปิดใน Nexflow: "+url)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func BuildShopeeSMLCancellationCreatedLineFlex(
+	snap *models.ShopeeOrderSnapshot,
+	cancelDocNo string,
+	documentLabel string,
+) (string, map[string]any) {
+	documentLabel = strings.TrimSpace(documentLabel)
+	if documentLabel == "" {
+		documentLabel = "เอกสารยกเลิก SML"
+	}
+	title := "สร้าง" + documentLabel + "สำเร็จ"
+	if snap == nil {
+		return title, nil
+	}
+	shop := strings.TrimSpace(snap.ShopLabel)
+	if shop == "" && snap.ShopID > 0 {
+		shop = fmt.Sprintf("shop_id %d", snap.ShopID)
+	}
+	body := []map[string]any{
+		flexText(title, "lg", "bold", "#991B1B", "", true),
+		flexText(fallbackDash(shop), "sm", "", "#64748B", "", true),
+	}
+	if snap.TotalAmount > 0 {
+		body = append(body, flexAmountRow("ยอดเอกสารเดิม", formatLineMoneyValue(snap.TotalAmount), "#DC2626"))
+	}
+	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
+		{"Order SN", strings.TrimSpace(snap.OrderSN)},
+		{"ใบขาย SML", strings.TrimSpace(snap.SMLDocNo)},
+		{documentLabel, strings.TrimSpace(cancelDocNo)},
+	})
+
+	detail := parseShopeeRawOrderDetail(snap.RawDetail)
+	items := shopeeRichItemRows(detail.Items, snap.ItemCount, autoSMLNotificationItemLimit)
+	if len(items) > 0 {
+		body = append(body,
+			map[string]any{"type": "separator", "margin": "md"},
+			flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+		)
+		for _, item := range items {
+			body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
+		}
+	}
+
+	contents := map[string]any{
+		"type": "bubble",
+		"size": "mega",
+		"body": map[string]any{
+			"type":            "box",
+			"layout":          "vertical",
+			"spacing":         "sm",
+			"backgroundColor": "#FFF7F7",
+			"contents":        body,
+		},
+	}
+	alt := strings.Join(filterNonEmpty([]string{title, shop, strings.TrimSpace(cancelDocNo)}), " · ")
+	return alt, contents
 }
 
 func shopeeCancelledAfterSMLBody(snap *models.ShopeeOrderSnapshot) string {

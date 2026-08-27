@@ -62,18 +62,13 @@ import {
   type AutoSMLTriggerStatus,
 } from '@/lib/shopee-auto-sml-settings'
 import { SHOPEE_ORDER_STATUS_DEFINITIONS, shopeeOrderStatusDefinition } from '@/lib/shopee-order-status'
-import {
-  cancellationDocumentTypeLabel,
-  cancellationStockRecalcLabel,
-  cancellationTriggerLabel,
-  shouldMergeAutoSMLSuccessStatus,
-  shouldShowAutoSMLStatusBadge,
-} from '@/lib/shopee-operations-status'
+import { shouldMergeAutoSMLSuccessStatus, shouldShowAutoSMLStatusBadge } from '@/lib/shopee-operations-status'
 import { shouldOpenTimelineFromQuery } from '@/lib/shopee-timeline-dialog'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
 import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
+import { ShopeeCancellationDocumentCell } from './ShopeeCancellationDocumentCell'
 
 type Connection = {
   id: string
@@ -1704,6 +1699,7 @@ export default function ShopeeOperations() {
                     order.auto_sml?.status,
                     mergeAutoSMLSuccess,
                   )
+                  const showCancellationDocument = shouldShowCancellationDocument(order)
                   return (
                     <tr
                       key={order.id}
@@ -1752,12 +1748,17 @@ export default function ShopeeOperations() {
                       )}
                     </td>
                     <td className="px-3 py-2 align-top">
-                      <ERPStatusBadge status={order.erp_status} automatic={mergeAutoSMLSuccess} />
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
-                      </div>
-                      {showAutoSMLStatus && <AutoSMLStatusBadge job={order.auto_sml} />}
-                      {cancelSMLBadge(order)}
+                      {showCancellationDocument ? (
+                        <ShopeeCancellationDocumentCell order={order} />
+                      ) : (
+                        <>
+                          <ERPStatusBadge status={order.erp_status} automatic={mergeAutoSMLSuccess} />
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
+                          </div>
+                          {showAutoSMLStatus && <AutoSMLStatusBadge job={order.auto_sml} />}
+                        </>
+                      )}
                     </td>
                     <td className="px-3 py-2 align-top">
                       <PaymentBreakdownBadge status={order.payment_breakdown_status} />
@@ -2680,6 +2681,10 @@ function orderCancelledAfterSML(order: OrderSnapshot) {
   )
 }
 
+function shouldShowCancellationDocument(order: OrderSnapshot) {
+  return orderCancelledAfterSML(order) || Boolean(order.sml_cancel_status?.trim())
+}
+
 function shouldShowCancelSMLAction(order: OrderSnapshot) {
   return orderCancelledAfterSML(order)
 }
@@ -2689,60 +2694,6 @@ function cancelSMLDisabledReason(order: OrderSnapshot) {
   if (cancelSMLStatusDone(order.sml_cancel_status)) return 'มีเอกสารยกเลิก SML แล้ว'
   if (order.sml_cancel_status === 'pending' || order.sml_cancel_status === 'creating') return 'ระบบอัตโนมัติกำลังสร้างเอกสารยกเลิก SML อยู่'
   return ''
-}
-
-function cancelSMLBadge(order: OrderSnapshot) {
-  if (!orderCancelledAfterSML(order) && !order.sml_cancel_status) return null
-  const documentType = cancellationDocumentTypeLabel(order.sml_cancel_document_type)
-  const trigger = cancellationTriggerLabel(order.sml_cancel_trigger_source)
-  const stockRecalc = cancellationStockRecalcLabel(order.sml_cancel_stock_recalc_status)
-  if (cancelSMLStatusDone(order.sml_cancel_status)) {
-    return (
-      <div className="mt-1.5 flex max-w-[240px] flex-col items-start gap-1 border-t border-border pt-1.5 text-xs">
-        <div className="font-medium text-foreground">{documentType}{trigger ? ` (${trigger})` : ''}</div>
-        <code className="text-[11px] text-muted-foreground">{order.sml_cancel_doc_no || 'SML สร้างแล้ว'}</code>
-        {stockRecalc && (
-          <Badge
-            variant="outline"
-            className={cn(
-              'h-5 px-1.5 text-[10px]',
-              stockRecalc.tone === 'success' && 'border-success/30 bg-success/10 text-success',
-              stockRecalc.tone === 'info' && 'border-info/40 bg-info/10 text-info',
-              stockRecalc.tone === 'danger' && 'border-destructive/40 bg-destructive/10 text-destructive',
-            )}
-            title={order.sml_cancel_stock_recalc_error || undefined}
-          >
-            {stockRecalc.label}
-          </Badge>
-        )}
-      </div>
-    )
-  }
-  if (order.sml_cancel_status === 'pending' || order.sml_cancel_status === 'creating') {
-    return (
-      <div className="mt-1.5 flex max-w-[240px] flex-col items-start gap-1 border-t border-border pt-1.5 text-xs">
-        <div className="font-medium text-foreground">{documentType}{trigger ? ` (${trigger})` : ''}</div>
-        <Badge variant="outline" className="h-5 border-info/40 bg-info/10 px-1.5 text-[10px] text-info">
-          {order.sml_cancel_status === 'pending' ? 'รอสร้างเอกสาร SML' : 'กำลังสร้างเอกสาร SML'}
-        </Badge>
-      </div>
-    )
-  }
-  if (order.sml_cancel_status === 'failed' || order.sml_cancel_status === 'blocked') {
-    return (
-      <div className="mt-1.5 flex max-w-[240px] flex-col items-start gap-1 border-t border-border pt-1.5 text-xs">
-        <div className="font-medium text-foreground">{documentType}{trigger ? ` (${trigger})` : ''}</div>
-        <Badge variant="outline" className="h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive" title={order.sml_cancel_error || undefined}>
-          {order.sml_cancel_status === 'blocked' ? 'เอกสารต้องตรวจ' : 'สร้างเอกสารไม่สำเร็จ'}
-        </Badge>
-      </div>
-    )
-  }
-  return (
-    <Badge variant="outline" className="mt-1 h-5 border-destructive/40 bg-destructive/10 px-1.5 text-[10px] text-destructive">
-      ต้องสร้างเอกสารยกเลิก SML
-    </Badge>
-  )
 }
 
 function cancelSMLCreateDisabledTitle(preview: CancelSMLDocumentPreview, confirmed: boolean) {

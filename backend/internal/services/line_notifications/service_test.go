@@ -110,6 +110,9 @@ func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
 			t.Fatalf("auto SML flex missing %q: %s", want, buf)
 		}
 	}
+	if _, ok := flex["footer"]; ok || strings.Contains(string(buf), "เปิดใน Nexflow") {
+		t.Fatalf("auto SML flex must not contain an open-Nexflow button: %s", buf)
+	}
 }
 
 func TestBuildShopeeAutoSMLMessagesOmitShippingSectionWithoutFinalBillLine(t *testing.T) {
@@ -246,6 +249,88 @@ func TestBuildShopeeSMLCancellationCreatedLineText(t *testing.T) {
 	}
 }
 
+func TestBuildShopeeSMLCancellationCreatedLineFlexIsRedAndOmitsActionButton(t *testing.T) {
+	snap := &models.ShopeeOrderSnapshot{
+		ShopID: 264993963, ShopLabel: "Henna.milkford", OrderSN: "260827ECCFMCSC",
+		SMLDocNo: "BF-INV26080060", TotalAmount: 167, ItemCount: 1,
+		BuyerUsername: "buyer-secret",
+		RawDetail: []byte(`{
+		  "buyer_username":"buyer-secret",
+		  "recipient_address":{"name":"secret-name","phone":"0999999999"},
+		  "item_list":[{"item_name":"ดินสอเขียนคิ้ว","model_name":"3.น้ำตาลเข้ม","model_quantity_purchased":1}]
+		}`),
+	}
+	alt, flex := BuildShopeeSMLCancellationCreatedLineFlex(snap, "CN26080002", "เอกสารรับคืนสินค้า/ลดหนี้")
+	if !strings.Contains(alt, "CN26080002") || flex == nil {
+		t.Fatalf("unexpected cancellation flex alt=%q payload=%#v", alt, flex)
+	}
+	buf, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatalf("marshal cancellation flex: %v", err)
+	}
+	body := string(buf)
+	for _, want := range []string{
+		"สร้างเอกสารรับคืนสินค้า/ลดหนี้สำเร็จ",
+		"Henna.milkford",
+		"260827ECCFMCSC",
+		"BF-INV26080060",
+		"CN26080002",
+		"167.00",
+		"ดินสอเขียนคิ้ว (3.น้ำตาลเข้ม) x1",
+		"#DC2626",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("cancellation flex missing %q: %s", want, body)
+		}
+	}
+	if _, ok := flex["footer"]; ok || strings.Contains(body, "เปิดใน Nexflow") {
+		t.Fatalf("cancellation flex must not contain an open-Nexflow button: %s", body)
+	}
+	for _, leak := range []string{"buyer-secret", "secret-name", "0999999999"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("cancellation flex leaked %q: %s", leak, body)
+		}
+	}
+}
+
+func TestEnqueueShopeeSMLCancellationCreatedStoresImmutableFlexPayload(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
+		WithArgs(
+			"shopee_realtime", "info", "สร้างเอกสารรับคืนสินค้า/ลดหนี้สำเร็จ",
+			"260827ECCFMCSC · CN26080002",
+			"https://nexflow-aoy.nextstep-soft.com/shopee-operations?order=260827ECCFMCSC",
+			"shopee_order", "264993963:260827ECCFMCSC",
+			"shopee:sml_cancel_created:264993963:260827ECCFMCSC:CN26080002",
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("delivery-1"))
+
+	svc := &Service{
+		repo:            repository.NewLineNotificationRepo(db),
+		publicBaseURL:   "https://nexflow-aoy.nextstep-soft.com",
+		richFlexEnabled: true,
+	}
+	inserted, err := svc.EnqueueShopeeSMLCancellationCreated(t.Context(), &models.ShopeeOrderSnapshot{
+		ShopID: 264993963, ShopLabel: "Henna.milkford", OrderSN: "260827ECCFMCSC",
+		SMLDocNo: "BF-INV26080060", TotalAmount: 167, ItemCount: 1,
+	}, "CN26080002", "เอกสารรับคืนสินค้า/ลดหนี้", "")
+	if err != nil {
+		t.Fatalf("EnqueueShopeeSMLCancellationCreated: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted = %d, want 1", inserted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}
+
 func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 	msg := BuildShopeeNewOrderLineText(&models.ShopeeOrderSnapshot{
 		ShopLabel:     "Henna.milkford",
@@ -290,12 +375,13 @@ func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 		"165.00",
 		"สีเฟ้นคิ้วเฮนน่า",
 		"เก็บเงินปลายทาง",
-		"เปิดใน Nexflow",
-		"https://animal-galvanize-tameness.ngrok-free.dev/shopee-operations?order=26060232BJHG4E",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("flex missing %q:\n%s", want, body)
 		}
+	}
+	if _, ok := flex["footer"]; ok || strings.Contains(body, "เปิดใน Nexflow") {
+		t.Fatalf("new-order flex must not contain an open-Nexflow button: %s", body)
 	}
 	if strings.Contains(body, "buyer-secret") || strings.Contains(body, "สถานะ Shopee") || strings.Contains(body, "สถานะ ERP") {
 		t.Fatalf("flex leaked PII or noisy status:\n%s", body)
@@ -343,11 +429,13 @@ func TestBuildShopeeNewOrderRichLineFlexShowsPaymentShippingAndOmitsPII(t *testi
 		"EMS - Thailand Post",
 		"OFG235736492235190",
 		"ชุดใหญ่ 10 กรัม",
-		"เปิดใน Nexflow",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("rich flex missing %q:\n%s", want, body)
 		}
+	}
+	if _, ok := flex["footer"]; ok || strings.Contains(body, "เปิดใน Nexflow") {
+		t.Fatalf("rich new-order flex must not contain an open-Nexflow button: %s", body)
 	}
 	for _, leak := range []string{"buyer-secret", "secret-name", "0999999999", "secret-address"} {
 		if strings.Contains(body, leak) {

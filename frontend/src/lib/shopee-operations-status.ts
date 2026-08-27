@@ -54,3 +54,45 @@ export function cancellationStockRecalcLabel(status?: string) {
       return null
   }
 }
+
+type CancellationDocumentSummaryInput = {
+  status?: string
+  documentType?: string
+  triggerSource?: string
+  saleDocNo?: string
+  cancelDocNo?: string
+}
+
+export function cancellationDocumentSummary(input: CancellationDocumentSummaryInput) {
+  const status = input.status?.trim().toLowerCase() ?? ''
+  const normalizedDocumentType = input.documentType?.trim().toLowerCase() ?? ''
+  const documentType = normalizedDocumentType === 'sale_cancel' || normalizedDocumentType === 'credit_note'
+    ? cancellationDocumentTypeLabel(normalizedDocumentType)
+    : 'เอกสารหลังยกเลิก'
+  const trigger = cancellationTriggerLabel(input.triggerSource)
+  const triggerSuffix = trigger ? ` (${trigger})` : ''
+
+  let headline = `รอสร้าง${documentType}${triggerSuffix}`
+  let tone: 'danger' | 'info' = 'danger'
+  if (status === 'created' || status === 'already_exists') {
+    headline = `${documentType}แล้ว${triggerSuffix}`
+  } else if (status === 'creating') {
+    headline = `กำลังสร้าง${documentType}${triggerSuffix}`
+    tone = 'info'
+  } else if (status === 'pending' || status === 'previewed') {
+    headline = `รอสร้าง${documentType}${triggerSuffix}`
+    tone = 'info'
+  } else if (status === 'failed') {
+    headline = `สร้าง${documentType}ไม่สำเร็จ${triggerSuffix}`
+  } else if (status === 'blocked') {
+    headline = `${documentType}ต้องตรวจ${triggerSuffix}`
+  }
+
+  const saleDocNo = input.saleDocNo?.trim() || 'ไม่มีเลขใบขาย'
+  const cancelDocNo = input.cancelDocNo?.trim() || 'รอเลขเอกสาร'
+  return {
+    headline,
+    documentLine: `${saleDocNo} → ${cancelDocNo}`,
+    tone,
+  }
+}
