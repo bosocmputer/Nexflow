@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-08-26
+Updated: 2026-08-27
 
 Production capability mode is **sales-only and deterministic**. AI, OCR,
 embedding, Daily Insight, IMAP ingestion, LINE chat, and purchase workflows are
@@ -9,11 +9,11 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 ## Production UAT Status
 
 - Application baseline is intentionally split during AOY UAT. AOY runs
-  `5e8ac44`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
+  `17da3da`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
   settings, credentials, channel routes, and feature flags remain isolated.
   Central SML Gateway baseline: `42992f5`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
-  200 with database status `ok` on 2026-08-25.
+  200 with database status `ok` on 2026-08-27.
 - Migration 085 is installed on every tenant. AOY has grouped UI, versioned unit
   Catalog, active conversion, and the reservation ledger enabled after readiness
   validation. Demo has only the versioned unit Catalog enabled. Lanboon retains
@@ -32,6 +32,14 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   on successful manual sends. Manual rows show `ส่ง SML แล้ว`; automatic rows
   continue to show `ส่ง SML แล้ว (AUTO)`. Actionable Auto SML states remain
   visible.
+- AOY order `260827ECCFMCSC` passed the first real automatic cancellation UAT:
+  `BF-INV26080060` produced exactly one TRANS_FLAG 48 credit note
+  `CN26080002`, followed by successful SML stock recalculation and LINE delivery.
+  Cancelled document cells now use two compact lines plus an accessible details
+  popover. Future cancellation notifications use a red Flex payload; future
+  Shopee new-order, Auto SML, and cancellation-document Flex messages omit the
+  Nexflow footer button. Text fallbacks retain their recovery URL. Amount/VAT
+  calculation and `vat_type` behavior are unchanged.
 - Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
   Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
   Lazada UAT while preserving tenant isolation.

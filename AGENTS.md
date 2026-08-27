@@ -9,12 +9,12 @@
 
 ---
 
-## 0. Current UAT Handoff (2026-08-26)
+## 0. Current UAT Handoff (2026-08-27)
 
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `5e8ac44` (`fix: hide redundant manual Auto SML status`),
+  `17da3da` (`feat: clarify Shopee cancellation status and LINE alerts`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -369,6 +369,30 @@ Current AOY UAT scope:
     backend error scan passed. The AOY pre-deploy backup is
     `pre-deploy-20260826-151707.sql.gz`. No migration or runtime configuration
     changed; Demo and Lanboon were not deployed and remain on `82baa4a`.
+28. AOY's first real automatic cancellation-after-SML UAT completed for Shopee
+    order `260827ECCFMCSC`. READY_TO_SHIP Auto SML created exactly one bill and
+    immutable sale attempt for `BF-INV26080060`; the later exact `CANCELLED`
+    transition created exactly one TRANS_FLAG 48 `รับคืนสินค้า/ลดหนี้` document
+    `CN26080002`, then completed the separate SML stock-recalculation job. The
+    order, bill, sale attempt, cancellation record, CN, reservation, and LINE
+    outbox showed no duplicates or failed delivery. AOY-only commit `17da3da`
+    compacts the cancelled order's document cell to two visible lines:
+    `รับคืนสินค้า/ลดหนี้แล้ว (AUTO)` and
+    `BF-INV26080060 → CN26080002`; an accessible info button shows the document
+    type, trigger, both document numbers, create result, stock-recalculation
+    result, and any error. Future cancellation-document notifications are stored
+    as immutable red Flex payloads with a bounded Marketplace item list and no
+    buyer PII. Future Shopee new-order, Auto SML, and cancellation-document Flex
+    messages omit the `เปิดใน Nexflow` footer button; text fallbacks retain the
+    URL for delivery recovery. Already-sent historical LINE messages are not
+    rewritten or resent. This change does not modify SML amounts, VAT, routes,
+    `vat_type`, Auto SML settings, or automatic-cancellation settings. Production
+    browser QA verified the compact row and details popover on the real order,
+    with no console warning/error. Frontend tests/lint/build, Go tests/race/vet,
+    sales-only guard, deploy health, Gateway health, and the backend error scan
+    passed. The AOY pre-deploy backup is
+    `pre-deploy-20260827-024219.sql.gz`. Demo and Lanboon were not deployed and
+    remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
@@ -379,9 +403,10 @@ Known deferred or incomplete validation:
   user removed 13 restored/legacy duplicate SML documents.
 - Shopee set-stock needs a future tenant/shop with a real set product before it
   can be declared production-validated end to end.
-- AOY automatic Shopee cancellation is deployed and enabled, but its first real
-  Shopee CANCELLED -> SML CN -> stock recalculation -> LINE end-to-end UAT is
-  pending a new controlled order from the user.
+- AOY automatic Shopee cancellation has passed its first real
+  Shopee CANCELLED -> SML CN -> stock recalculation -> LINE end-to-end UAT on
+  order `260827ECCFMCSC`; broader route coverage for TRANS_FLAG 45 still needs a
+  future controlled case if AOY changes destinations.
 - Demo and Lanboon currently run the older `82baa4a` application revision and
   may also have paid features or Shopee runtime flags disabled. Verify both the
   deployed revision and per-instance settings instead of assuming AOY behavior.
