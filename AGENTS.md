@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `0470b3c` (`fix: localize Shopee SML audit history`),
+  `966b027` (`fix: restore marketplace master conversion safely`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -445,6 +445,27 @@ Current AOY UAT scope:
     `pre-deploy-20260827-040005.sql.gz`. Go tests, frontend lint/build,
     sales-only guard, health, Gateway connectivity, bill/log browser QA, and
     exact production reconciliation passed. Demo and Lanboon were not deployed.
+32. AOY-only Marketplace bill no-op edit protection and self-service recovery
+    are deployed at `966b027` (prevention commit `aed3d28`). The bill-item API
+    now removes unchanged item/unit fields before applying manual overrides, so
+    saving an unchanged mapping cannot create
+    `manual_conversion_review_required`. A new revision-checked
+    `ใช้ Product Master` action lets Admin/Staff clear only item/unit overrides
+    on a never-attempted bill and refreshes its exact reservation atomically;
+    true manual item/unit changes still fail closed for review. The repository
+    rechecks the active alias revision under a database lock before mutation and
+    records `bill_item_marketplace_master_applied` with actor, bill, item,
+    alias, revision, and cleared fields. AOY TikTok bill
+    `5c8818d4-4326-4a0d-977a-557c88b3cfff` was repaired through this production
+    endpoint: its item remains `AH-0001 / กล่อง`, multiplier and unit ratio stay
+    1, alias revision stays 2, conversion issue/overrides are cleared, the exact
+    reservation remains active at base quantity 1, and no SML attempt or
+    document was created. The production frontend asset contains the new Thai
+    warning/action; interactive browser QA was blocked only by an expired test
+    browser session, while authenticated API, audit, database, health, Gateway,
+    build, lint, Go tests, sales-only guard, and post-mutation error scan passed.
+    The AOY pre-deploy backup is `pre-deploy-20260827-045844.sql.gz`. Demo and
+    Lanboon were not deployed and remain on `82baa4a`.
 
 Known deferred or incomplete validation:
 
