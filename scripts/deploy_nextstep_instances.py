@@ -26,6 +26,7 @@ Usage:
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target aoy
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target lanboon
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target gateway
+  NX_PASS=... python scripts/deploy_nextstep_instances.py --target <newshop> --bootstrap-runtime
   NX_PASS=... python scripts/deploy_nextstep_instances.py --ref d52de63
   python scripts/deploy_nextstep_instances.py --list-targets
 """
@@ -43,6 +44,21 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    from scripts.bootstrap_nextstep_runtime import (
+        BootstrapSecrets,
+        generate_bootstrap_secrets,
+        render_fresh_instance_compose as render_bootstrap_compose,
+        render_fresh_instance_env,
+    )
+except ModuleNotFoundError:
+    from bootstrap_nextstep_runtime import (  # type: ignore[no-redef]
+        BootstrapSecrets,
+        generate_bootstrap_secrets,
+        render_fresh_instance_compose as render_bootstrap_compose,
+        render_fresh_instance_env,
+    )
 
 
 DEFAULT_HOST = "10.121.20.83"
@@ -78,6 +94,10 @@ class Target:
     folder: str
     sml_tenant: str
     backend_extra_hosts: tuple[str, ...]
+
+
+def render_fresh_instance_compose(target: Target) -> str:
+    return render_bootstrap_compose(target, RELEASE_DIR)
 
 
 def fail(message: str) -> None:
@@ -347,6 +367,79 @@ elif override_path.exists() and override_path.read_text().startswith(managed_hea
 PY
 """
     sudo(script, label=f"ensure instance compose {target.name}", timeout=60)
+
+
+def bootstrap_target_runtime(target: Target) -> None:
+    runtime = generate_bootstrap_secrets()
+    compose_b64 = base64.b64encode(render_fresh_instance_compose(target).encode()).decode()
+    env_b64 = base64.b64encode(render_fresh_instance_env(target, runtime).encode()).decode()
+    override_b64 = base64.b64encode(render_instance_override(target).encode()).decode()
+    volume_name = f"{target.folder}_pgdata"
+    ports = (target.postgres_port, target.backend_port, target.frontend_debug_port)
+    port_checks = "\n".join(
+        f"if ss -ltnH | awk '{{print $4}}' | grep -Eq '[:.]{port}$'; then echo 'port {port} is already in use' >&2; exit 1; fi"
+        for port in ports
+    )
+    prepare = f"""
+set -euo pipefail
+test ! -e {shlex.quote(target.remote)} || {{ echo 'runtime folder already exists: {target.remote}' >&2; exit 1; }}
+if docker inspect {shlex.quote(target.postgres_container)} >/dev/null 2>&1; then echo 'container already exists: {target.postgres_container}' >&2; exit 1; fi
+if docker inspect {shlex.quote(target.backend_container)} >/dev/null 2>&1; then echo 'container already exists: {target.backend_container}' >&2; exit 1; fi
+if docker inspect {shlex.quote(target.frontend_container)} >/dev/null 2>&1; then echo 'container already exists: {target.frontend_container}' >&2; exit 1; fi
+if docker volume inspect {shlex.quote(volume_name)} >/dev/null 2>&1; then echo 'volume already exists: {volume_name}' >&2; exit 1; fi
+{port_checks}
+available_kb=$(df -Pk {shlex.quote(SERVER_ROOT)} | awk 'NR==2 {{print $4}}')
+if [ "$available_kb" -lt 8388608 ]; then echo 'less than 8 GiB free; refusing new tenant bootstrap' >&2; exit 1; fi
+umask 077
+install -d -m 700 {shlex.quote(target.remote)} {shlex.quote(target.remote)}/backups {shlex.quote(target.remote)}/artifacts
+printf %s {shlex.quote(compose_b64)} | base64 -d > {shlex.quote(target.remote)}/docker-compose.yml
+printf %s {shlex.quote(env_b64)} | base64 -d > {shlex.quote(target.remote)}/.env
+printf %s {shlex.quote(override_b64)} | base64 -d > {shlex.quote(target.remote)}/docker-compose.override.yml
+chmod 600 {shlex.quote(target.remote)}/.env
+chmod 644 {shlex.quote(target.remote)}/docker-compose.yml {shlex.quote(target.remote)}/docker-compose.override.yml
+cd {shlex.quote(target.remote)}
+docker compose config >/dev/null
+"""
+    sudo(prepare, label=f"prepare fresh isolated runtime {target.name}", timeout=60)
+    provision_target_gateway_identity(target)
+    sudo(
+        f"cd {shlex.quote(target.remote)} && docker compose up -d --build",
+        label=f"bootstrap containers {target.name}",
+        timeout=1200,
+    )
+    connect_target_to_gateway(target)
+    health = ssh(
+        f"curl -s -m 10 http://127.0.0.1:{target.backend_port}/health",
+        label=f"bootstrap backend health {target.name}",
+        timeout=30,
+    )
+    if '"status":"ok"' not in health:
+        sudo(
+            f"docker logs {shlex.quote(target.backend_container)} --tail=160",
+            label=f"bootstrap backend logs {target.name}",
+            timeout=30,
+        )
+        fail(f"{target.name} bootstrap health check failed")
+    isolation = sudo(
+        f"docker exec {shlex.quote(target.postgres_container)} "
+        "psql -U nexflow -d nexflow -Atc \""
+        "SELECT (SELECT COUNT(*) FROM users),"
+        "(SELECT COUNT(*) FROM bills),"
+        "(SELECT COUNT(*) FROM shopee_api_connections),"
+        "(SELECT COUNT(*) FROM marketplace_item_aliases),"
+        "(SELECT COUNT(*) FROM sml_catalog);\"",
+        label=f"verify fresh tenant isolation {target.name}",
+        timeout=30,
+    )
+    if isolation.strip().splitlines()[-1:] != ["1|0|0|0|0"]:
+        fail(f"{target.name} bootstrap isolation check failed: {isolation!r}")
+    snapshot_target_sales_counts(target, "bootstrap")
+    sudo(
+        f"docker logs {shlex.quote(target.backend_container)} --since=5m 2>&1 "
+        "| grep -iE 'fatal|panic|5xx' | tail -30 || true",
+        label=f"bootstrap severe log scan {target.name}",
+        timeout=30,
+    )
 
 
 def edge_network_name(target: Target) -> str:
@@ -757,6 +850,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--print-edge-nginx", action="store_true", help="render edge nginx.conf from registry and exit")
     parser.add_argument("--print-edge-compose", action="store_true", help="render edge docker-compose.yml from registry and exit")
     parser.add_argument("--list-targets", action="store_true", help="list deploy targets from registry and exit")
+    parser.add_argument(
+        "--bootstrap-runtime",
+        action="store_true",
+        help="create one registered tenant runtime from scratch; refuses existing folders, containers, volumes, or ports",
+    )
     return parser.parse_args()
 
 
@@ -774,11 +872,22 @@ def main() -> None:
             print(f"{target.name}\t{target.hostname}\t{target.remote}\t{target.sml_tenant}")
         return
 
+    if args.bootstrap_runtime and args.target in {"all", "gateway"}:
+        fail("--bootstrap-runtime requires one registered tenant target")
+
     run_sales_only_release_guard()
     require_tool("sshpass")
     selected = list(TARGETS.values()) if args.target == "all" else ([] if args.target == "gateway" else [TARGETS[args.target]])
     deployed_commit = ensure_release_clone(args.ref)
     print(f"Deploying commit: {deployed_commit}")
+    if args.bootstrap_runtime:
+        target = selected[0]
+        bootstrap_target_runtime(target)
+        ensure_edge_config()
+        start_edge()
+        smoke_edge(list(TARGETS.values()))
+        print(f"\nBootstrap complete: {target.public_url}")
+        return
     if args.target in {"all", "gateway"}:
         deploy_gateway()
     for target in selected:

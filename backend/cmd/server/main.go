@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -71,7 +72,9 @@ func main() {
 	appCtx, stopBackgroundJobs := context.WithCancel(context.Background())
 	defer stopBackgroundJobs()
 
-	seedAdminUser(db, logger)
+	if err := seedAdminUser(db, cfg.Env, logger); err != nil {
+		logger.Fatal("bootstrap admin", zap.Error(err))
+	}
 
 	tenantKey := strings.TrimSpace(cfg.ShopeeGatewayTenant)
 	if tenantKey == "" {
@@ -800,30 +803,70 @@ func main() {
 	logger.Info("server stopped")
 }
 
-// seedAdminUser creates a default admin if no users exist
-func seedAdminUser(db *sql.DB, logger *zap.Logger) {
-	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
-		logger.Error("seed: count users", zap.Error(err))
-		return
+const (
+	bootstrapAdminMinPasswordLength = 16
+	bootstrapAdminBcryptCost        = 12
+)
+
+type bootstrapAdminCredentials struct {
+	Email    string
+	Name     string
+	Password string
+}
+
+func resolveBootstrapAdminCredentials(environment string, lookup func(string) string) (bootstrapAdminCredentials, error) {
+	email := strings.TrimSpace(lookup("BOOTSTRAP_ADMIN_EMAIL"))
+	if email == "" {
+		email = "admin@nexflow.local"
 	}
-	if count > 0 {
-		return
+	name := strings.TrimSpace(lookup("BOOTSTRAP_ADMIN_NAME"))
+	if name == "" {
+		name = "Admin"
+	}
+	password := lookup("BOOTSTRAP_ADMIN_PASSWORD")
+
+	if !strings.EqualFold(strings.TrimSpace(environment), "production") && password == "" {
+		password = "admin1234"
+	}
+	if password == "" {
+		return bootstrapAdminCredentials{}, fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD is required when an empty production database is initialized")
+	}
+	if len([]rune(strings.TrimSpace(password))) < bootstrapAdminMinPasswordLength &&
+		strings.EqualFold(strings.TrimSpace(environment), "production") {
+		return bootstrapAdminCredentials{}, fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD must be at least %d characters in production", bootstrapAdminMinPasswordLength)
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte("admin1234"), bcrypt.DefaultCost)
+	return bootstrapAdminCredentials{Email: email, Name: name, Password: password}, nil
+}
+
+// seedAdminUser creates a bootstrap admin only when no users exist. Production
+// credentials must be injected by the deployment runtime and are never logged.
+func seedAdminUser(db *sql.DB, environment string, logger *zap.Logger) error {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
+		return fmt.Errorf("count users: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	credentials, err := resolveBootstrapAdminCredentials(environment, os.Getenv)
 	if err != nil {
-		logger.Error("seed: bcrypt", zap.Error(err))
-		return
+		return err
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(credentials.Password), bootstrapAdminBcryptCost)
+	if err != nil {
+		return fmt.Errorf("hash bootstrap password: %w", err)
 	}
 
 	_, err = db.Exec(
 		`INSERT INTO users (email, name, role, password_hash) VALUES ($1, $2, $3, $4)`,
-		"admin@nexflow.local", "Admin", "admin", string(hash),
+		credentials.Email, credentials.Name, "admin", string(hash),
 	)
 	if err != nil {
-		logger.Error("seed: insert admin", zap.Error(err))
-		return
+		return fmt.Errorf("insert bootstrap admin: %w", err)
 	}
-	logger.Info("seeded default admin: admin@nexflow.local / admin1234")
+	logger.Info("seeded bootstrap admin", zap.String("email", credentials.Email))
+	return nil
 }
