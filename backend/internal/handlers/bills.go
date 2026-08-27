@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -3896,6 +3897,35 @@ type updateItemRequest struct {
 	RememberMappingImpactDigest   string   `json:"remember_mapping_impact_digest"`
 }
 
+var (
+	errMarketplaceMasterMissing         = errors.New("marketplace Product Master is missing")
+	errMarketplaceMasterRevisionChanged = errors.New("marketplace Product Master revision changed")
+	errMarketplaceMasterNotReady        = errors.New("marketplace Product Master conversion is not ready")
+)
+
+func validateMarketplaceMasterReapply(item *models.BillItem, alias *models.MarketplaceItemAlias, expectedRevision int64) error {
+	if item == nil || item.MarketplaceAliasID == nil || alias == nil || strings.TrimSpace(alias.ID) == "" ||
+		strings.TrimSpace(*item.MarketplaceAliasID) != strings.TrimSpace(alias.ID) {
+		return errMarketplaceMasterMissing
+	}
+	if alias.MappingRevision != expectedRevision {
+		return errMarketplaceMasterRevisionChanged
+	}
+	positiveDecimal := func(value *string) bool {
+		if value == nil {
+			return false
+		}
+		parsed, ok := new(big.Rat).SetString(strings.TrimSpace(*value))
+		return ok && parsed.Sign() > 0
+	}
+	if !alias.ScopeConfirmed || alias.ConversionStatus != "ready" || !alias.SalesEnabled ||
+		!positiveDecimal(alias.UnitStandValue) || !positiveDecimal(alias.UnitDivideValue) ||
+		alias.UnitCatalogGeneration == nil || strings.TrimSpace(*alias.UnitCatalogGeneration) == "" {
+		return errMarketplaceMasterNotReady
+	}
+	return nil
+}
+
 // dropUnchangedMarketplaceItemFields keeps old and new clients from turning a
 // no-op edit into a durable manual conversion override. Product and unit
 // overrides must represent a real value change, not just a JSON field that was
@@ -4094,8 +4124,8 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 	}
 	if committedMaster != nil {
 		if err := h.billRepo.ApplyMarketplaceMasterToBillItem(billID, itemID, committedMaster, h.conversionModeForBill(bill) == "active", c.GetString("user_id")); err != nil {
-			if errors.Is(err, repository.ErrBillMutationConflict) {
-				c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือถูกแก้ระหว่างบันทึก Product Master กรุณารีเฟรช"})
+			if errors.Is(err, repository.ErrBillMutationConflict) || errors.Is(err, repository.ErrMarketplaceAliasConflict) {
+				c.JSON(http.StatusConflict, gin.H{"error": "บิลหรือ Product Master ถูกแก้ระหว่างบันทึก กรุณารีเฟรช"})
 				return
 			}
 			h.log.Error("UpdateItem: apply committed marketplace master", zap.String("bill_id", billID), zap.Error(err))
@@ -4105,6 +4135,96 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "item updated", "master_saved": req.RememberMapping})
+}
+
+type useMarketplaceMasterRequest struct {
+	ExpectedMappingRevision int64 `json:"expected_mapping_revision"`
+}
+
+// UseMarketplaceMaster discards only the item/unit manual override and
+// refreshes this never-attempted bill item from its already-approved Product
+// Master. It never mutates or increments the Product Master itself.
+func (h *BillHandler) UseMarketplaceMaster(c *gin.Context) {
+	billID := c.Param("id")
+	itemID := c.Param("item_id")
+	if h.marketplaceAliasRepo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ระบบ Product Master ยังไม่พร้อม กรุณาลองใหม่"})
+		return
+	}
+	bill, err := h.billRepo.FindByID(billID)
+	if err != nil || bill == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบบิลนี้"})
+		return
+	}
+	if h.blockPurchaseFlow(c, bill.BillType) {
+		return
+	}
+	if !isMarketplaceSource(bill.Source) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "บิลนี้ไม่ได้มาจาก Marketplace"})
+		return
+	}
+	if bill.Status == "sent" || bill.CurrentSMLAttemptID != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือส่ง SML แล้ว จึงเปลี่ยน Product Master ไม่ได้"})
+		return
+	}
+	var item *models.BillItem
+	for i := range bill.Items {
+		if bill.Items[i].ID == itemID {
+			item = &bill.Items[i]
+			break
+		}
+	}
+	if item == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบรายการสินค้าในบิลนี้"})
+		return
+	}
+	var req useMarketplaceMasterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูล revision ของ Product Master ไม่ถูกต้อง กรุณารีเฟรช"})
+		return
+	}
+	if item.MarketplaceAliasID == nil || strings.TrimSpace(*item.MarketplaceAliasID) == "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "รายการนี้ยังไม่มี Product Master กรุณาจับคู่สินค้าก่อน"})
+		return
+	}
+	alias, err := h.marketplaceAliasRepo.GetByID(*item.MarketplaceAliasID)
+	if err != nil {
+		h.log.Error("UseMarketplaceMaster: load alias", zap.String("bill_id", billID), zap.String("item_id", itemID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่าน Product Master ไม่สำเร็จ กรุณาลองใหม่"})
+		return
+	}
+	if alias == nil || alias.Source != bill.Source || alias.AccountKey != bill.SourceAccountKey {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Product Master ของรายการนี้ไม่อยู่ในขอบเขตร้านเดียวกับบิล กรุณาจับคู่ใหม่"})
+		return
+	}
+	if err := validateMarketplaceMasterReapply(item, alias, req.ExpectedMappingRevision); err != nil {
+		switch {
+		case errors.Is(err, errMarketplaceMasterRevisionChanged):
+			c.JSON(http.StatusConflict, gin.H{"error": "Product Master เปลี่ยนแล้ว กรุณารีเฟรชและตรวจสินค้าอีกครั้ง"})
+		case errors.Is(err, errMarketplaceMasterNotReady):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Product Master ของสินค้านี้ยังไม่พร้อม กรุณาตรวจสินค้า หน่วย และจำนวนที่ตัด"})
+		default:
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "รายการนี้ยังไม่มี Product Master ที่ใช้งานได้ กรุณาจับคู่สินค้าใหม่"})
+		}
+		return
+	}
+	if err := h.billRepo.ApplyMarketplaceMasterToBillItem(billID, itemID, alias, h.conversionModeForBill(bill) == "active", c.GetString("user_id")); err != nil {
+		if errors.Is(err, repository.ErrMarketplaceAliasConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "Product Master เปลี่ยนแล้ว กรุณารีเฟรชและตรวจสินค้าอีกครั้ง"})
+			return
+		}
+		if errors.Is(err, repository.ErrBillMutationConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือถูกแก้โดยผู้ใช้อื่น กรุณารีเฟรช"})
+			return
+		}
+		h.log.Error("UseMarketplaceMaster: apply alias", zap.String("bill_id", billID), zap.String("item_id", itemID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ใช้ค่าจาก Product Master ไม่สำเร็จ กรุณาลองใหม่"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "ใช้ค่าจาก Product Master แล้ว",
+		"item_code": alias.ItemCode, "unit_code": alias.UnitCode, "mapping_revision": alias.MappingRevision,
+	})
 }
 
 // ─── Source artifact endpoints ────────────────────────────────────────────────

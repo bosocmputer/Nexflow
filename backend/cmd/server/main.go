@@ -487,6 +487,7 @@ func main() {
 		api.POST("/bills/:id/restore", middleware.RequireRole("admin", "staff"), billH.Restore)
 		api.DELETE("/bills/:id", middleware.RequireRole("admin"), billH.Delete)
 		api.PUT("/bills/:id/items/:item_id", middleware.RequireRole("admin", "staff"), billH.UpdateItem)
+		api.POST("/bills/:id/items/:item_id/use-marketplace-master", middleware.RequireRole("admin", "staff"), billH.UseMarketplaceMaster)
 		api.POST("/bills/:id/items", middleware.RequireRole("admin", "staff"), billH.AddItem)
 		api.DELETE("/bills/:id/items/:item_id", middleware.RequireRole("admin", "staff"), billH.DeleteItemRow)
 		api.GET("/bills/:id/artifacts", billH.ListArtifacts)

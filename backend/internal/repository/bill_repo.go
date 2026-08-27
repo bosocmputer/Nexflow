@@ -963,6 +963,18 @@ func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias
 	if err := lockBillForManualMutation(tx, billID); err != nil {
 		return err
 	}
+	var currentAliasRevision int64
+	err = tx.QueryRow(`SELECT mapping_revision FROM marketplace_item_aliases
+		WHERE id=$1::uuid AND is_active=true FOR SHARE`, alias.ID).Scan(&currentAliasRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrMarketplaceAliasConflict
+	}
+	if err != nil {
+		return err
+	}
+	if currentAliasRevision != alias.MappingRevision {
+		return ErrMarketplaceAliasConflict
+	}
 	setHash := ""
 	_ = tx.QueryRow(`SELECT set_definition_hash FROM sml_catalog WHERE item_code=$1`, alias.ItemCode).Scan(&setHash)
 	stand, divide, generation := "", "", ""
@@ -1030,7 +1042,7 @@ func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias
 	if _, err := tx.Exec(`INSERT INTO audit_logs(action,user_id,source,level,target_id,revision,detail)
 		VALUES('bill_item_marketplace_master_applied',NULLIF($1,'')::uuid,$2,'info',$3::uuid,$4,
 		  jsonb_build_object('item_id',$5::text,'alias_id',$6::text,'item_code',$7::text,'unit_code',$8::text,
-		    'cleared_override_fields',jsonb_build_array('item_code','unit_code')))`,
+		    'mapping_revision',$4::bigint,'cleared_override_fields',jsonb_build_array('item_code','unit_code')))`,
 		actorID, alias.Source, billID, alias.MappingRevision, itemID, alias.ID, alias.ItemCode, alias.UnitCode); err != nil {
 		return err
 	}

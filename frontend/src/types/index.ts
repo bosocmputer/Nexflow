@@ -163,6 +163,9 @@ export interface BillItem {
   source_item_id?: string
   source_variant_id?: string
   marketplace_alias_id?: string | null
+  mapping_revision_snapshot?: number | null
+  conversion_override_fields?: Record<string, boolean>
+  conversion_issue_code?: string
   source_image_url?: string
   item_code?: string | null
   has_hidden_chars?: boolean

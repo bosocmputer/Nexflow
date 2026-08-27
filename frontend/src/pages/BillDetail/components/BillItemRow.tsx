@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import axios from 'axios'
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, Edit, Info, Trash2, X } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, Edit, Info, RefreshCcw, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -93,6 +93,7 @@ export function BillItemRow({
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [restoringMaster, setRestoringMaster] = useState(false)
   const [showMapModal, setShowMapModal] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [pickedMatch, setPickedMatch] = useState<CatalogMatch | null>(null)
@@ -104,6 +105,11 @@ export function BillItemRow({
     !(source === 'shopee' && sourceAccountKey === 'default' && !item.source_item_id),
   )
   const [rememberMapping, setRememberMapping] = useState(false)
+  const canRestoreMarketplaceMaster = Boolean(
+    item.conversion_issue_code === 'manual_conversion_review_required' &&
+    item.marketplace_alias_id &&
+    item.mapping_revision_snapshot != null,
+  )
   const [draft, setDraft] = useState({
     item_code: item.item_code ?? '',
     unit_code: item.unit_code ?? '',
@@ -205,10 +211,16 @@ export function BillItemRow({
     if (!item.item_code) return
     setConfirming(true)
     try {
-      await api.put(`/api/bills/${billId}/items/${item.id}`, {
-        item_code: item.item_code,
-        unit_code: item.unit_code ?? undefined,
-      })
+      if (item.marketplace_alias_id && item.mapping_revision_snapshot != null) {
+        await api.post(`/api/bills/${billId}/items/${item.id}/use-marketplace-master`, {
+          expected_mapping_revision: item.mapping_revision_snapshot,
+        })
+      } else {
+        await api.post(`/api/bills/${billId}/items/${item.id}/confirm-match`, {
+          item_code: item.item_code,
+          unit_code: item.unit_code ?? undefined,
+        })
+      }
       await onRefresh()
       notifyWorkQueueChanged()
       toast.success('ยืนยันการจับคู่สินค้าแล้ว', {
@@ -219,6 +231,28 @@ export function BillItemRow({
       toast.error('ยืนยันสินค้าไม่สำเร็จ')
     } finally {
       setConfirming(false)
+    }
+  }
+
+  const handleUseMarketplaceMaster = async () => {
+    setRestoringMaster(true)
+    try {
+      await api.post(`/api/bills/${billId}/items/${item.id}/use-marketplace-master`, {
+        expected_mapping_revision: item.mapping_revision_snapshot,
+      })
+      await onRefresh()
+      notifyWorkQueueChanged()
+      toast.success('ใช้ค่าจาก Product Master แล้ว', {
+        description: 'ล้างสถานะแก้สินค้า/หน่วยด้วยมือแล้ว บิลพร้อมตรวจและส่ง SML อีกครั้ง',
+      })
+    } catch (err) {
+      console.error('restore marketplace master failed', err)
+      const message = axios.isAxiosError(err)
+        ? String(err.response?.data?.error || err.message)
+        : 'ใช้ค่าจาก Product Master ไม่สำเร็จ'
+      toast.error('ใช้ค่าจาก Product Master ไม่สำเร็จ', { description: message })
+    } finally {
+      setRestoringMaster(false)
     }
   }
 
@@ -377,6 +411,20 @@ export function BillItemRow({
           </TableCell>
           {editable && (
             <TableCell className="text-center whitespace-nowrap">
+              {canRestoreMarketplaceMaster && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-success"
+                  onClick={handleUseMarketplaceMaster}
+                  disabled={restoringMaster}
+                  title="ล้างค่าที่เคยแก้ด้วยมือ แล้วใช้สินค้า หน่วย และจำนวนตัดจาก Product Master"
+                >
+                  <RefreshCcw className="h-3.5 w-3.5" />
+                  {restoringMaster ? 'กำลังใช้...' : 'ใช้ Product Master'}
+                </Button>
+              )}
               {needsConfirm && (
                 <Button
                   type="button"

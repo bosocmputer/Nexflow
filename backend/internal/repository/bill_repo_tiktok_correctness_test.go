@@ -116,6 +116,9 @@ func TestApplyMarketplaceMasterRefreshesExactReservationInSameTransaction(t *tes
 	mock.ExpectQuery(`(?s)SELECT status, archived_at, current_sml_attempt_id::text.*FROM bills WHERE id=\$1 FOR UPDATE`).
 		WithArgs("00000000-0000-0000-0000-000000000001").
 		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("needs_review", nil, nil))
+	mock.ExpectQuery(`SELECT mapping_revision FROM marketplace_item_aliases`).
+		WithArgs("00000000-0000-0000-0000-000000000010").
+		WillReturnRows(sqlmock.NewRows([]string{"mapping_revision"}).AddRow(1))
 	mock.ExpectQuery(`SELECT set_definition_hash FROM sml_catalog`).
 		WithArgs("AH-0009").
 		WillReturnRows(sqlmock.NewRows([]string{"set_definition_hash"}).AddRow(""))
@@ -147,6 +150,43 @@ func TestApplyMarketplaceMasterRefreshesExactReservationInSameTransaction(t *tes
 	)
 	if err != nil {
 		t.Fatalf("ApplyMarketplaceMasterToBillItem: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyMarketplaceMasterRejectsRevisionChangedInsideTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stand, divide, generation := "1", "1", "00000000-0000-0000-0000-000000000099"
+	alias := &models.MarketplaceItemAlias{
+		ID: "00000000-0000-0000-0000-000000000010", ItemCode: "AH-0001", UnitCode: "กล่อง",
+		QuantityMultiplier: 1, MappingRevision: 2, UnitStandValue: &stand, UnitDivideValue: &divide,
+		UnitCatalogGeneration: &generation, ConversionStatus: "ready", SalesEnabled: true,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT status, archived_at, current_sml_attempt_id::text.*FROM bills WHERE id=\$1 FOR UPDATE`).
+		WithArgs("00000000-0000-0000-0000-000000000001").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("pending", nil, nil))
+	mock.ExpectQuery(`SELECT mapping_revision FROM marketplace_item_aliases`).
+		WithArgs("00000000-0000-0000-0000-000000000010").
+		WillReturnRows(sqlmock.NewRows([]string{"mapping_revision"}).AddRow(3))
+	mock.ExpectRollback()
+
+	err = NewBillRepo(db).ApplyMarketplaceMasterToBillItem(
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000002",
+		alias,
+		true,
+		"00000000-0000-0000-0000-000000000003",
+	)
+	if !errors.Is(err, ErrMarketplaceAliasConflict) {
+		t.Fatalf("error = %v, want ErrMarketplaceAliasConflict", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

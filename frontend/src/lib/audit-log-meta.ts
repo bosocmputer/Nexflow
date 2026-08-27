@@ -41,6 +41,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   bill_restored: { label: 'กู้คืนบิล', emoji: '♻️', tone: 'info' },
   bill_item_added: { label: 'เพิ่มรายการในบิล', emoji: '➕', tone: 'info' },
   bill_item_deleted: { label: 'ลบรายการในบิล', emoji: '➖', tone: 'muted' },
+  bill_item_marketplace_master_applied: { label: 'ใช้ค่าจาก Product Master', emoji: '↩️', tone: 'success' },
   bill_doc_no_regenerated: { label: 'ออกเลขเอกสารใหม่', emoji: '🔢', tone: 'primary' },
   bill_doc_no_regenerate_failed: { label: 'ออกเลขเอกสารใหม่ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   bill_doc_no_preview_failed: { label: 'ดึงเลขล่าสุดไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
@@ -396,6 +397,8 @@ export function summarize(log: AuditLog): string {
     case 'marketplace_alias_updated':
     case 'marketplace_alias_deactivated':
       return [d.raw_name, '→', d.item_code, d.applied_items ? `ใช้กับ ${d.applied_items} รายการ` : ''].filter(Boolean).join(' ')
+    case 'bill_item_marketplace_master_applied':
+      return [d.item_code, d.unit_code, d.mapping_revision != null ? `revision ${d.mapping_revision}` : ''].filter(Boolean).join(' · ')
     case 'marketplace_mapping_job_retried':
       return d.job_id ? `งาน ${String(d.job_id)}` : 'นำงานที่ล้มเหลวกลับเข้าคิวแล้ว'
     case 'marketplace_mapping_reconcile_completed':
