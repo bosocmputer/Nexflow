@@ -9,7 +9,7 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 ## Production UAT Status
 
 - Application baseline is intentionally split during AOY UAT. AOY runs
-  `17da3da`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
+  `0470b3c`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
   settings, credentials, channel routes, and feature flags remain isolated.
   Central SML Gateway baseline: `42992f5`.
 - Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
@@ -40,6 +40,13 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   Shopee new-order, Auto SML, and cancellation-document Flex messages omit the
   Nexflow footer button. Text fallbacks retain their recovery URL. Amount/VAT
   calculation and `vat_type` behavior are unchanged.
+- AOY `/logs` and bill timelines now share Thai labels and concise summaries
+  for Auto SML and cancelled-after-SML business milestones. The real
+  `BF-INV26080060 → CN26080002` history shows Order SN, automatic-send method,
+  cancellation document transition, and the two recalculated SML item codes;
+  the SML quick view includes both Shopee cancellation events. Raw audit action
+  keys and existing rows are unchanged. Internal leases/retry counters remain
+  in durable job tables rather than adding noisy user-facing audit rows.
 - Demo has no Shopee shop and is not a Marketplace functional-test tenant. Use
   Demo for Catalog/SML-unit checks; use AOY for controlled Shopee, TikTok, and
   Lazada UAT while preserving tenant isolation.

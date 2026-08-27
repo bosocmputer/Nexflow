@@ -14,7 +14,7 @@
 Read this section first when resuming work in a new session.
 
 - Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `17da3da` (`feat: clarify Shopee cancellation status and LINE alerts`),
+  `0470b3c` (`fix: localize Shopee SML audit history`),
   while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
   quantity setup`). The Central SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -393,6 +393,27 @@ Current AOY UAT scope:
     passed. The AOY pre-deploy backup is
     `pre-deploy-20260827-024219.sql.gz`. Demo and Lanboon were not deployed and
     remain on `82baa4a`.
+29. AOY-only Thai Auto SML/cancellation audit presentation is deployed at
+    `0470b3c`. The raw immutable action keys and historical audit rows are
+    unchanged, but the shared UI metadata used by `/logs` and each bill
+    timeline now renders the Auto SML setting, manual/automatic cancellation
+    creation, terminal failure, and post-cancellation stock-recalculation
+    events in Thai. Shopee realtime creation shows Order SN/item count;
+    successful Auto SML shows `ส่งอัตโนมัติจาก Shopee`; cancellation history
+    shows the exact sale-to-cancel document transition and item-code count.
+    The `/logs` SML quick view now includes `shopee_sml_*` and
+    `shopee_auto_sml_*` actions, so the real AOY `BF-INV26080060 → CN26080002`
+    lifecycle appears without raw technical event names. Business milestones
+    and terminal errors belong in `audit_logs`; queue leases, retry counters,
+    and worker internals remain in their durable job tables to avoid noisy or
+    misleading user-facing history. Production browser QA verified the four
+    existing events on bill `67b51c10-5790-4205-8fca-74fa59813383`, all 15
+    current SML quick-view rows including both cancellation events, and a clean
+    console. Frontend regression tests, lint, production build, sales-only
+    guard, deploy health, Gateway health, and recent backend error scan passed.
+    The AOY pre-deploy backup is `pre-deploy-20260827-030228.sql.gz`. No
+    migration, audit backfill, VAT/amount logic, runtime setting, Demo, or
+    Lanboon deployment changed.
 
 Known deferred or incomplete validation:
 
@@ -644,4 +665,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-26 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-27 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
