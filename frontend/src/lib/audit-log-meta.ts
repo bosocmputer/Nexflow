@@ -51,6 +51,15 @@ export const ACTION_META: Record<string, ActionMeta> = {
   sml_readiness_blocked: { label: 'SML ยังไม่พร้อม', emoji: '⚠️', tone: 'warning' },
   sml_stock_recalc_ok: { label: 'คำนวณต้นทุนสต๊อก', emoji: '📊', tone: 'success' },
   sml_stock_recalc_failed: { label: 'คำนวณต้นทุนสต๊อกล้มเหลว', emoji: '⚠️', tone: 'warning' },
+  // Shopee Auto SML and cancelled-after-SML lifecycle
+  shopee_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่าส่ง SML อัตโนมัติ', emoji: '⚙️', tone: 'info' },
+  shopee_sml_cancel_payload_failed: { label: 'เตรียมเอกสารยกเลิก/รับคืนไม่สำเร็จ', emoji: '❌', tone: 'danger' },
+  shopee_sml_cancel_failed: { label: 'สร้างเอกสารยกเลิก/รับคืนไม่สำเร็จ', emoji: '❌', tone: 'danger' },
+  shopee_sml_cancel_created: { label: 'สร้างเอกสารยกเลิก/รับคืนแล้ว', emoji: '↩️', tone: 'success' },
+  shopee_sml_cancel_created_auto: { label: 'สร้างเอกสารยกเลิก/รับคืนอัตโนมัติแล้ว', emoji: '↩️', tone: 'success' },
+  shopee_sml_cancel_auto_failed: { label: 'สร้างเอกสารยกเลิก/รับคืนอัตโนมัติไม่สำเร็จ', emoji: '❌', tone: 'danger' },
+  shopee_sml_cancel_stock_recalc_ok: { label: 'คำนวณสต๊อกหลังยกเลิกสำเร็จ', emoji: '📊', tone: 'success' },
+  shopee_sml_cancel_stock_recalc_failed: { label: 'คำนวณสต๊อกหลังยกเลิกไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   // Mappings
   mapping_feedback: { label: 'ยืนยัน mapping', emoji: '🎯', tone: 'primary' },
   marketplace_alias_confirmed: { label: 'ยืนยันสินค้าจาก Marketplace', emoji: '🎯', tone: 'primary' },
@@ -149,6 +158,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   channel_defaults: 'ตั้งค่าเอกสาร',
   catalog: 'สินค้า SML',
   shopee_api: 'Shopee API',
+  shopee_realtime: 'Shopee API',
   shopee_settlement: 'รับชำระ Shopee',
   line_myshop: 'LINE MyShop',
 }
@@ -170,6 +180,7 @@ export const SOURCE_TONE: Record<string, string> = {
   settings: 'bg-muted text-muted-foreground',
   ui: 'bg-primary/10 text-accent-strong',
   shopee_api: 'bg-warning/10 text-warning',
+  shopee_realtime: 'bg-warning/10 text-warning',
   shopee_settlement: 'bg-success/10 text-success',
   line_myshop: 'bg-info/10 text-info',
 }
@@ -196,14 +207,22 @@ export function smlRouteLabel(route: unknown): string {
   return map[normalized] ?? text
 }
 
-function auditViaLabel(value: unknown): string {
+export function auditViaLabel(value: unknown): string {
   const text = String(value ?? '')
   const map: Record<string, string> = {
     retry: 'ส่งจากหน้าบิล',
     bulk_job: 'ส่งแบบกลุ่ม',
     import: 'ส่งตอนนำเข้า',
+    shopee_auto_sml: 'ส่งอัตโนมัติจาก Shopee',
   }
   return map[text] ?? text
+}
+
+export function isSMLAuditLog(log: AuditLog): boolean {
+  return log.action.startsWith('sml_') ||
+    log.action.startsWith('shopee_sml_') ||
+    log.action.startsWith('shopee_auto_sml_') ||
+    log.source === 'sml'
 }
 
 export function humanizeAuditError(value: unknown): string {
@@ -258,7 +277,14 @@ export function summarize(log: AuditLog): string {
   const d = log.detail ?? {}
   switch (log.action) {
     case 'bill_created':
-      if (d.flow === 'shopee_email' || d.flow === 'shopee_excel' || d.flow === 'tiktok_excel' || d.shopee_order_id || d.tiktok_order_id) {
+      if (
+        d.flow === 'shopee_email' ||
+        d.flow === 'shopee_excel' ||
+        d.flow === 'tiktok_excel' ||
+        d.via === 'shopee_realtime' ||
+        d.shopee_order_id ||
+        d.tiktok_order_id
+      ) {
         const items = d.items_count ?? d.items ?? ''
         const id = d.order_id ?? d.shopee_order_id ?? d.tiktok_order_id ?? ''
         return `ออเดอร์ ${id}${items ? ` · ${items} รายการ` : ''}`
@@ -279,6 +305,43 @@ export function summarize(log: AuditLog): string {
     }
     case 'sml_readiness_blocked':
       return [d.via ? auditViaLabel(d.via) : '', d.tenant ? `ฐานข้อมูล ${d.tenant}` : '', d.message].filter(Boolean).join(' · ')
+    case 'shopee_sml_cancel_created':
+    case 'shopee_sml_cancel_created_auto':
+      return [
+        d.order_sn ? `ออเดอร์ ${d.order_sn}` : '',
+        cancellationDocumentTransition(d),
+        cancellationTriggerLabel(d.trigger_source, log.action),
+      ].filter(Boolean).join(' · ')
+    case 'shopee_sml_cancel_payload_failed':
+    case 'shopee_sml_cancel_failed':
+    case 'shopee_sml_cancel_auto_failed':
+      return [
+        d.order_sn ? `ออเดอร์ ${d.order_sn}` : '',
+        d.sale_sml_doc_no,
+        humanizeAuditError(d.error),
+      ].filter(Boolean).join(' · ')
+    case 'shopee_sml_cancel_stock_recalc_ok':
+      return [
+        d.cancel_doc_no,
+        d.item_count != null ? `${Number(d.item_count).toLocaleString('th-TH')} รหัสสินค้า` : '',
+        d.order_sn ? `ออเดอร์ ${d.order_sn}` : '',
+      ].filter(Boolean).join(' · ')
+    case 'shopee_sml_cancel_stock_recalc_failed':
+      return [
+        d.cancel_doc_no,
+        d.order_sn ? `ออเดอร์ ${d.order_sn}` : '',
+        humanizeAuditError(d.error),
+      ].filter(Boolean).join(' · ')
+    case 'shopee_auto_sml_setting_updated': {
+      const before = d.before ?? {}
+      const after = d.after ?? {}
+      const state = after.enabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน'
+      const trigger = after.trigger_status ? `เริ่มเมื่อ ${autoSMLTriggerStatusLabel(after.trigger_status)}` : ''
+      const changedTrigger = before.trigger_status && after.trigger_status && before.trigger_status !== after.trigger_status
+        ? `${autoSMLTriggerStatusLabel(before.trigger_status)} → ${autoSMLTriggerStatusLabel(after.trigger_status)}`
+        : ''
+      return [state, changedTrigger || trigger, after.config_version != null ? `รุ่นตั้งค่า ${after.config_version}` : ''].filter(Boolean).join(' · ')
+    }
     case 'bill_doc_no_regenerated':
       return [d.doc_no, d.route ? smlRouteLabel(d.route) : ''].filter(Boolean).join(' · ')
     case 'bill_doc_no_regenerate_failed':
@@ -478,6 +541,27 @@ export function summarize(log: AuditLog): string {
 
 function settlementShopLabel(d: Record<string, any>): string {
   return [d.shop_label, d.shop_id ? `ร้าน ${d.shop_id}` : ''].filter(Boolean).join(' · ')
+}
+
+function cancellationDocumentTransition(d: Record<string, any>): string {
+  const saleDocNo = String(d.sale_sml_doc_no ?? '').trim()
+  const cancelDocNo = String(d.cancel_sml_doc_no ?? d.cancel_doc_no ?? '').trim()
+  if (saleDocNo && cancelDocNo) return `${saleDocNo} → ${cancelDocNo}`
+  return saleDocNo || cancelDocNo
+}
+
+function cancellationTriggerLabel(value: unknown, action: string): string {
+  const trigger = String(value ?? '').trim().toLowerCase()
+  if (trigger === 'auto' || action === 'shopee_sml_cancel_created_auto') return 'อัตโนมัติ'
+  if (trigger === 'manual') return 'ผู้ใช้สร้าง'
+  return ''
+}
+
+function autoSMLTriggerStatusLabel(value: unknown): string {
+  const status = String(value ?? '').trim().toUpperCase()
+  if (status === 'READY_TO_SHIP') return 'รอจัดส่ง'
+  if (status === 'PROCESSED') return 'เตรียมจัดส่งแล้ว'
+  return status
 }
 
 function settlementReleaseRange(d: Record<string, any>): string {

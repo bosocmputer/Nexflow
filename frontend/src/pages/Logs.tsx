@@ -52,9 +52,10 @@ import {
   SOURCE_LABELS,
   SOURCE_TONE,
   TONE_DOT,
+  auditViaLabel,
   humanizeAuditError,
+  isSMLAuditLog,
   smlRouteLabel,
-  type ActionMeta,
   type AuditLog,
   type Tone,
   summarize,
@@ -91,16 +92,6 @@ const ROLE_LABELS: Record<string, string> = {
   user: 'ผู้ใช้',
   worker: 'งานอัตโนมัติ',
   system: 'ระบบ',
-}
-
-function viaLabel(value: unknown): string {
-  const text = String(value ?? '')
-  const map: Record<string, string> = {
-    retry: 'ส่งจากหน้าบิล',
-    bulk_job: 'ส่งแบบกลุ่ม',
-    import: 'ส่งตอนนำเข้า',
-  }
-  return map[text] ?? text
 }
 
 function isShopeeSettlementLog(log: AuditLog): boolean {
@@ -443,7 +434,7 @@ function makeFacts(log: AuditLog): LogFact[] {
     const route = d.route ?? parsedError.route
     facts.push({ label: 'ปลายทาง SML', value: smlRouteLabel(route), mono: false })
   }
-  if (d.via) facts.push({ label: 'วิธีส่ง', value: viaLabel(d.via), mono: false })
+  if (d.via) facts.push({ label: 'วิธีส่ง', value: auditViaLabel(d.via), mono: false })
   if (d.raw_name) facts.push({ label: 'ชื่อจากบิล', value: compact(d.raw_name, 140) })
   if (d.item_code ?? d.code) facts.push({ label: 'รหัสสินค้า', value: d.item_code ?? d.code, mono: true, copyValue: String(d.item_code ?? d.code) })
   if (d.unit_code) facts.push({ label: 'หน่วย', value: d.unit_code })
@@ -1145,7 +1136,7 @@ function quickViewMatch(log: AuditLog, quickView: QuickView): boolean {
     case 'actionable':
       return log.level === 'error' || log.level === 'warn' || hasDocNoQualityIssue(log)
     case 'sml':
-      return log.action.startsWith('sml_') || log.action === 'sml_failed' || log.source === 'sml'
+      return isSMLAuditLog(log)
     case 'imports':
       return isImportLog(log)
     case 'settings':
