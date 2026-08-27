@@ -1393,9 +1393,15 @@ func (h *BillHandler) ConfirmAmountReview(c *gin.Context) {
 		}
 		_ = h.auditRepo.Log(models.AuditEntry{Action: "marketplace_amount_review_confirmed", TargetID: &bill.ID,
 			UserID: uid, Source: bill.Source, Level: "info", TraceID: c.GetString("trace_id"),
-			Detail: map[string]interface{}{"fingerprint": fingerprint}})
+			Detail: marketplaceAmountReviewAuditDetail(bill, fingerprint)})
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "ยืนยันยอดต่างแล้ว", "amount_review_fingerprint": fingerprint})
+	detail := marketplaceAmountReviewAuditDetail(bill, fingerprint)
+	c.JSON(http.StatusOK, gin.H{
+		"message":                   "บันทึกการรับทราบส่วนต่างแล้ว ระบบจะใช้ยอดตามรายการในบิลส่ง SML",
+		"amount_review_fingerprint": fingerprint,
+		"sml_document_amount":       detail["sml_document_amount"],
+		"unallocated_amount":        detail["unallocated_marketplace_amount"],
+	})
 }
 
 func (h *BillHandler) RegenerateDocNo(c *gin.Context) {
@@ -1670,7 +1676,7 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 			fingerprint := tikTokAmountFingerprint(bill.Items)
 			if bill.AmountReviewedAt == nil || bill.AmountReviewFingerprint != fingerprint {
 				return retrySendResult{HTTPStatus: http.StatusConflict,
-					Error: "ยอดจาก Marketplace มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อนส่ง SML", Skipped: true}
+					Error: "ยอดจาก Marketplace มีส่วนที่ยังไม่มีรายการรองรับ กรุณาตรวจและรับทราบว่าจะใช้ยอดตามรายการในบิลก่อนส่ง SML", Skipped: true}
 			}
 		}
 	}
@@ -4024,7 +4030,11 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		commitResult, err := h.marketplaceAliasRepo.CommitMutation(c.Request.Context(), proposal)
 		if err != nil {
 			if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
-				c.JSON(http.StatusConflict, gin.H{"error": "การจับคู่นี้ถูกแก้ไขหรือมีข้อมูลซ้ำ กรุณารีเฟรชแล้วลองใหม่"})
+				c.JSON(http.StatusConflict, gin.H{
+					"code":   "marketplace_mapping_changed",
+					"error":  "Product Master ของสินค้านี้เปลี่ยนระหว่างบันทึก กรุณากดบันทึกอีกครั้งเพื่อตรวจผลกระทบล่าสุด ระบบจะใช้รายการเดิมโดยไม่สร้างซ้ำ",
+					"action": "refresh_impact",
+				})
 				return
 			}
 			h.log.Error("UpdateItem: save marketplace master", zap.String("bill_id", billID), zap.Error(err))

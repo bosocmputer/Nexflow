@@ -264,7 +264,11 @@ func (h *MarketplaceAliasHandler) Confirm(c *gin.Context) {
 		ConfirmedBy: userID, ExpectedRevision: req.ExpectedRevision, ExpectedImpactDigest: req.ImpactDigest,
 	})
 	if errors.Is(err, repository.ErrMarketplaceAliasConflict) || errors.Is(err, repository.ErrMarketplaceImpactChanged) {
-		c.JSON(http.StatusConflict, gin.H{"error": "สินค้าต้นทางนี้มีการจับคู่ในขอบเขตร้านแล้ว กรุณารีเฟรชและตรวจรายการเดิม"})
+		c.JSON(http.StatusConflict, gin.H{
+			"code":   "marketplace_mapping_changed",
+			"error":  "Product Master ของสินค้านี้เปลี่ยนระหว่างบันทึก กรุณาตรวจผลกระทบใหม่ ระบบจะนำรายการเดิมกลับมาใช้โดยไม่สร้างซ้ำ",
+			"action": "refresh_impact",
+		})
 		return
 	}
 	if writeMarketplaceStockPolicyError(c, err) {

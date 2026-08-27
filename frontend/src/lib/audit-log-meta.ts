@@ -63,6 +63,12 @@ export const ACTION_META: Record<string, ActionMeta> = {
   // Mappings
   mapping_feedback: { label: 'ยืนยัน mapping', emoji: '🎯', tone: 'primary' },
   marketplace_alias_confirmed: { label: 'ยืนยันสินค้าจาก Marketplace', emoji: '🎯', tone: 'primary' },
+  marketplace_alias_updated: { label: 'แก้ไข Product Master', emoji: '✏️', tone: 'info' },
+  marketplace_alias_deactivated: { label: 'ปิด Product Master', emoji: '⏸️', tone: 'warning' },
+  marketplace_mapping_job_retried: { label: 'ลองปรับรายการจาก Product Master อีกครั้ง', emoji: '🔄', tone: 'info' },
+  marketplace_mapping_reconcile_completed: { label: 'ปรับ Product Master กับรายการเปิดสำเร็จ', emoji: '✅', tone: 'success' },
+  marketplace_mapping_reconcile_failed: { label: 'ปรับ Product Master กับรายการเปิดไม่สำเร็จ', emoji: '❌', tone: 'danger' },
+  marketplace_amount_review_confirmed: { label: 'รับทราบส่วนต่างยอด Marketplace', emoji: '✅', tone: 'warning' },
   // Email/Shopee receive
   shopee_email_received: { label: 'รับอีเมล Shopee Order', emoji: '📧', tone: 'info' },
   shopee_shipped_received: { label: 'รับอีเมล Shopee Shipped', emoji: '📦', tone: 'info' },
@@ -145,6 +151,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   email: 'Email',
   lazada: 'Lazada',
   tiktok: 'TikTok Excel',
+  marketplace: 'Marketplace',
   shopee: 'Shopee',
   shopee_email: 'Shopee Email',
   shopee_excel: 'Shopee Excel',
@@ -172,6 +179,7 @@ export const SOURCE_TONE: Record<string, string> = {
   shopee_shipped: 'bg-warning/10 text-warning',
   lazada: 'bg-info/10 text-info',
   tiktok: 'bg-muted text-foreground',
+  marketplace: 'bg-info/10 text-info',
   sml: 'bg-primary/10 text-accent-strong',
   system: 'bg-muted text-muted-foreground',
   setup: 'bg-warning/10 text-warning',
@@ -385,7 +393,28 @@ export function summarize(log: AuditLog): string {
     case 'user_deleted':
       return [d.email, d.role].filter(Boolean).join(' · ')
     case 'marketplace_alias_confirmed':
+    case 'marketplace_alias_updated':
+    case 'marketplace_alias_deactivated':
       return [d.raw_name, '→', d.item_code, d.applied_items ? `ใช้กับ ${d.applied_items} รายการ` : ''].filter(Boolean).join(' ')
+    case 'marketplace_mapping_job_retried':
+      return d.job_id ? `งาน ${String(d.job_id)}` : 'นำงานที่ล้มเหลวกลับเข้าคิวแล้ว'
+    case 'marketplace_mapping_reconcile_completed':
+      return [
+        d.processed_count != null ? `ปรับ ${Number(d.processed_count).toLocaleString('th-TH')} รายการ` : '',
+        d.attempt_count != null ? `ครั้งที่ ${Number(d.attempt_count).toLocaleString('th-TH')}` : '',
+      ].filter(Boolean).join(' · ')
+    case 'marketplace_mapping_reconcile_failed':
+      return [
+        d.processed_count != null ? `ปรับแล้ว ${Number(d.processed_count).toLocaleString('th-TH')} รายการ` : '',
+        humanizeAuditError(d.error),
+      ].filter(Boolean).join(' · ')
+    case 'marketplace_amount_review_confirmed':
+      return [
+        d.marketplace_order_amount != null ? `Order Amount ฿${Number(d.marketplace_order_amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+        d.marketplace_itemized_amount != null ? `แจกแจงได้ ฿${Number(d.marketplace_itemized_amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+        d.sml_document_amount != null ? `ส่ง SML ฿${Number(d.sml_document_amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+        d.unallocated_marketplace_amount != null ? `${d.unallocated_amount_kind === 'tiktok_buyer_protection_or_unitemized_charge' ? 'TikTok เรียกเก็บเพิ่มจากผู้ซื้อ' : 'ส่วนที่ไฟล์ไม่แจกแจง'} ${Number(d.unallocated_marketplace_amount) >= 0 ? '+' : ''}฿${Number(d.unallocated_marketplace_amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+      ].filter(Boolean).join(' · ')
     case 'shopee_api_connection_updated':
       return [d.shop_id ? `ร้าน ${d.shop_id}` : '', d.label, d.disabled ? 'ปิดใช้งาน' : 'เปิดใช้งาน'].filter(Boolean).join(' · ')
     case 'shopee_api_preview_requested':

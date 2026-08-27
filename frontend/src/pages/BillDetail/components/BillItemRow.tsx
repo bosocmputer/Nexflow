@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import axios from 'axios'
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Edit, Info, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -166,7 +167,10 @@ export function BillItemRow({
       notifyWorkQueueChanged()
     } catch (err) {
       console.error('update item failed', err)
-      toast.error('บันทึกไม่สำเร็จ')
+      const message = axios.isAxiosError(err)
+        ? String(err.response?.data?.error || err.message)
+        : 'บันทึกสินค้าไม่สำเร็จ'
+      toast.error('บันทึกสินค้าไม่สำเร็จ', { description: message })
     } finally {
       setSaving(false)
     }

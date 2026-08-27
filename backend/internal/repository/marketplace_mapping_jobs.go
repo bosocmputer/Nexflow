@@ -40,6 +40,12 @@ const (
 		warning_codes=(warning_codes-'master_revision_pending'-'conversion_needs_review'-'conversion_stale'-'conversion_blocked'-
 		  'stock_policy_blocked'-'stock_policy_manual_unmanaged'-'stock_policy_zeroing'-'stock_policy_disabled_zero') || $9::jsonb,
 		updated_at=NOW() WHERE marketplace_alias_id=$1::uuid`
+	marketplaceReservationReconcileUpdateSQL = `UPDATE marketplace_stock_reservations SET
+		marketplace_alias_id=$2::uuid,mapping_revision=$3,quantity_multiplier=$4::bigint,unit_code=$5,
+		unit_stand_value=NULLIF($6,'')::numeric,unit_divide_value=NULLIF($7,'')::numeric,
+		base_qty=CASE WHEN $6<>'' AND $7<>'' THEN source_qty*$4::bigint*$6::numeric/$7::numeric ELSE NULL END,
+		sml_item_code=$8,set_definition_hash=$9,state=$10,state_reason=$11,demand_revision=demand_revision+1,updated_at=NOW()
+		WHERE bill_id=ANY($1::uuid[]) AND state IN ('active','blocked_mapping')`
 )
 
 type MarketplaceAliasProposal struct {
@@ -239,6 +245,13 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 	if proposal.ItemCode == "" && !proposal.Deactivate {
 		return proposal, marketplaceAliasCurrent{}, marketplaceMutationTarget{}, fmt.Errorf("item code is required")
 	}
+	if proposal.AliasID == "" {
+		existingID, err := findActiveMarketplaceAliasID(ctx, q, proposal.Identity)
+		if err != nil {
+			return proposal, marketplaceAliasCurrent{}, marketplaceMutationTarget{}, err
+		}
+		proposal.AliasID = existingID
+	}
 	current := marketplaceAliasCurrent{QuantityMultiplier: 1, SalesEnabled: true, StockPolicy: "blocked", IsActive: true}
 	if proposal.AliasID != "" {
 		var stand, divide, generation sql.NullString
@@ -342,6 +355,21 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 	return proposal, current, target, nil
 }
 
+func findActiveMarketplaceAliasID(ctx context.Context, q marketplaceImpactQueryer, identity models.MarketplaceAliasIdentity) (string, error) {
+	identity = normalizeAliasIdentity(identity)
+	if identity.Source == "" || identity.AccountKey == "" ||
+		(identity.ExternalItemID == "" && identity.ExternalVariantID == "" && identity.SourceSKU == "" && identity.NormalizedKey == "") {
+		return "", nil
+	}
+	where, args := aliasIdentityWhere(identity)
+	var id string
+	err := q.QueryRowContext(ctx, `SELECT id::text FROM marketplace_item_aliases a WHERE `+where+` AND a.is_active=true LIMIT 1`, args...).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal MarketplaceAliasProposal) (*MarketplaceAliasCommitResult, error) {
 	preliminary, err := r.PreviewMutation(ctx, proposal)
 	if err != nil {
@@ -378,6 +406,13 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 		if err != nil {
 			return nil, err
 		}
+	}
+	if proposal.AliasID == "" {
+		existingID, findErr := findActiveMarketplaceAliasID(ctx, tx, proposal.Identity)
+		if findErr != nil {
+			return nil, findErr
+		}
+		proposal.AliasID = existingID
 	}
 	if proposal.AliasID != "" {
 		var locked string
@@ -885,12 +920,7 @@ func reconcileMappingReservationsTx(ctx context.Context, tx *sql.Tx, job *claime
 	} else if ready {
 		state, reason = "active", ""
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_reservations SET
-		marketplace_alias_id=$2::uuid,mapping_revision=$3,quantity_multiplier=$4,unit_code=$5,
-		unit_stand_value=NULLIF($6,'')::numeric,unit_divide_value=NULLIF($7,'')::numeric,
-		base_qty=CASE WHEN $6<>'' AND $7<>'' THEN source_qty*$4::numeric*$6::numeric/$7::numeric ELSE NULL END,
-		sml_item_code=$8,set_definition_hash=$9,state=$10,state_reason=$11,demand_revision=demand_revision+1,updated_at=NOW()
-		WHERE bill_id=ANY($1::uuid[]) AND state IN ('active','blocked_mapping')`, pq.Array(billIDs), job.AliasID,
+	if _, err := tx.ExecContext(ctx, marketplaceReservationReconcileUpdateSQL, pq.Array(billIDs), job.AliasID,
 		job.TargetRevision, job.Snapshot.QuantityMultiplier, job.Snapshot.UnitCode, job.Snapshot.StandValue,
 		job.Snapshot.DivideValue, job.Snapshot.ItemCode, job.Snapshot.SetDefinitionHash, state, reason); err != nil {
 		return err
@@ -965,6 +995,14 @@ func (r *MarketplaceAliasRepo) completeMappingJob(ctx context.Context, job *clai
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrMarketplaceImpactChanged
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs
+		(action,source,level,target_id,tenant_key,revision,job_id,detail)
+		SELECT 'marketplace_mapping_reconcile_completed','marketplace','info',$2::uuid,$3,$4,$1::uuid,
+		  jsonb_build_object('processed_count',processed_count,'affected_shop_ids',$5::jsonb,'attempt_count',attempt_count)
+		FROM marketplace_mapping_jobs WHERE id=$1::uuid`, job.ID, job.AliasID, r.tenantKey,
+		job.TargetRevision, mustJSON(job.Snapshot.AffectedShopIDs)); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -987,9 +1025,18 @@ func (r *MarketplaceAliasRepo) failMappingJob(ctx context.Context, job *claimedM
 	if cause != nil {
 		message = cause.Error()
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE marketplace_mapping_jobs SET status='failed',failed_count=failed_count+1,
-		error_message=$3,lease_owner='',lease_until=NULL,finished_at=NOW(),updated_at=NOW()
-		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'`, job.ID, job.LeaseOwner, message)
+	_, err := r.db.ExecContext(ctx, `WITH failed AS (
+		UPDATE marketplace_mapping_jobs SET status='failed',failed_count=failed_count+1,
+		  error_message=$3,lease_owner='',lease_until=NULL,finished_at=NOW(),updated_at=NOW()
+		WHERE id=$1::uuid AND lease_owner=$2 AND status='running'
+		RETURNING processed_count,failed_count,attempt_count
+	)
+	INSERT INTO audit_logs(action,source,level,target_id,tenant_key,revision,job_id,detail)
+	SELECT 'marketplace_mapping_reconcile_failed','marketplace','error',$4::uuid,$5,$6,$1::uuid,
+	  jsonb_build_object('processed_count',processed_count,'failed_count',failed_count,'attempt_count',attempt_count,
+	    'error',$3::text,'affected_shop_ids',$7::jsonb)
+	FROM failed`, job.ID, job.LeaseOwner, message, job.AliasID, r.tenantKey, job.TargetRevision,
+		mustJSON(job.Snapshot.AffectedShopIDs))
 	return err
 }
 

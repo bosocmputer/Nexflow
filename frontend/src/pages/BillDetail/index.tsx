@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { AlertTriangle, ArrowLeft, RefreshCw } from 'lucide-react'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import client from '@/api/client'
 import { Button } from '@/components/ui/button'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DetailPageSkeleton } from '@/components/common/LoadingSkeleton'
 import type { BillItem } from '@/types'
@@ -21,6 +20,7 @@ import { ArtifactList } from './components/ArtifactList'
 import { SmlPayloadSection } from './components/SmlPayloadSection'
 import { SendPurchaseDialog } from './components/SendPurchaseDialog'
 import { SMLSendProgressDialog, type SMLSendProgressStatus } from './components/SMLSendProgressDialog'
+import { MarketplaceAmountReviewAlert } from './components/MarketplaceAmountReviewAlert'
 import { validateForSML } from './utils/validation'
 import type { RetryBillPayload } from '@/hooks/useBills'
 import { useSMLReadiness } from '@/hooks/useSMLReadiness'
@@ -168,7 +168,7 @@ export default function BillDetail() {
     }
     if (isMarketplaceSale(bill) && bill?.raw_data?.amount_review_required === true && !bill.amount_reviewed_at) {
       toast.error('ยังส่ง SML ไม่ได้', {
-        description: `ยอดจาก ${marketplaceLabel(bill?.source)} มีส่วนต่าง กรุณาตรวจและกดยืนยันยอดก่อน`,
+        description: `ยอดจาก ${marketplaceLabel(bill?.source)} มีส่วนที่ยังไม่มีรายการรองรับ กรุณาตรวจและรับทราบว่าจะใช้ยอดตามรายการในบิลส่ง SML`,
       })
       return
     }
@@ -191,7 +191,9 @@ export default function BillDetail() {
       await client.post(`/api/bills/${bill.id}/amount-review`)
       await reloadBill()
       notifyWorkQueueChanged()
-      toast.success('ยืนยันยอดต่างแล้ว')
+      toast.success('บันทึกการรับทราบส่วนต่างแล้ว', {
+        description: 'ระบบจะใช้ยอดตามรายการในบิลส่ง SML',
+      })
     } catch (err) {
       const message = axios.isAxiosError(err)
         ? err.response?.data?.error || err.message
@@ -333,22 +335,15 @@ export default function BillDetail() {
       />
 
       {isMarketplaceSale(bill) && bill.raw_data?.amount_review_required === true && (
-        <Alert className="border-warning/35 bg-warning/10">
-          <AlertTriangle className="h-4 w-4 text-warning" />
-          <AlertTitle>ยอดจาก {marketplaceLabel(bill.source)} มีส่วนต่างที่ต้องตรวจ</AlertTitle>
-          <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {String(bill.raw_data?.amount_review_reason || 'Order Amount ไม่ตรงกับยอดสินค้าและค่าใช้จ่าย')}
-              {' · '}ส่วนต่าง {Number(bill.raw_data?.amount_difference || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
-              {bill.amount_reviewed_at ? ' · ยืนยันแล้ว' : ' · ต้องยืนยันก่อนส่ง SML'}
-            </span>
-            {!bill.amount_reviewed_at && canEdit && (
-              <Button type="button" size="sm" variant="outline" onClick={handleConfirmAmountReview} disabled={confirmingAmount}>
-                {confirmingAmount ? 'กำลังบันทึก...' : 'ยืนยันยอดนี้'}
-              </Button>
-            )}
-          </AlertDescription>
-        </Alert>
+        <MarketplaceAmountReviewAlert
+          sourceLabel={marketplaceLabel(bill.source)}
+          rawData={bill.raw_data}
+          smlDocumentAmount={total}
+          reviewed={Boolean(bill.amount_reviewed_at)}
+          canConfirm={canEdit}
+          confirming={confirmingAmount}
+          onConfirm={handleConfirmAmountReview}
+        />
       )}
 
       {canRecreateDocumentRoute && (

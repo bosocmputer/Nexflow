@@ -44,6 +44,64 @@ func TestMarketplaceMappingCompletionReadyQueryHasContiguousParameters(t *testin
 	}
 }
 
+func TestMarketplaceReservationReconcileUsesOnePostgresTypeForMultiplier(t *testing.T) {
+	if !strings.Contains(marketplaceReservationReconcileUpdateSQL, "quantity_multiplier=$4::bigint") {
+		t.Fatal("reservation multiplier assignment must explicitly use bigint")
+	}
+	if !strings.Contains(marketplaceReservationReconcileUpdateSQL, "source_qty*$4::bigint") {
+		t.Fatal("reservation base quantity must reuse the bigint multiplier type")
+	}
+	if strings.Contains(marketplaceReservationReconcileUpdateSQL, "$4::numeric") {
+		t.Fatal("casting the same parameter as numeric and bigint makes PostgreSQL reject the statement")
+	}
+}
+
+func TestResolveMarketplaceMutationReusesExistingTikTokVariant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	aliasID := "00000000-0000-0000-0000-000000000001"
+	mock.ExpectQuery(`(?s)SELECT id::text FROM marketplace_item_aliases a.*a.source=\$1.*a.account_key=\$2.*a.external_item_id=''.*a.external_variant_id=\$3.*a.is_active=true`).
+		WithArgs("tiktok", "default", "1729429119889017310").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(aliasID))
+	mock.ExpectQuery(`(?s)SELECT id::text,source,account_key.*FROM marketplace_item_aliases WHERE id=\$1::uuid`).
+		WithArgs(aliasID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "account_key", "external_item_id", "external_variant_id", "source_sku", "raw_name", "normalized_key",
+			"item_code", "unit_code", "quantity_multiplier", "stand", "divide", "generation", "conversion_status",
+			"sales_enabled", "stock_policy", "scope_confirmed", "mapping_revision", "is_active",
+		}).AddRow(aliasID, "tiktok", "default", "", "1729429119889017310", "", "สินค้า / ตัวเลือก", "สินค้า / ตัวเลือก",
+			"AH-0006", "แท่ง", 1, "1", "1", "00000000-0000-0000-0000-000000000099", "ready",
+			true, "blocked", true, 1, true))
+	mock.ExpectQuery(`SELECT is_active,unit_code,item_type,set_document_valid,set_definition_hash`).
+		WithArgs("AH-0006").
+		WillReturnRows(sqlmock.NewRows([]string{"is_active", "unit_code", "item_type", "set_document_valid", "set_definition_hash"}).
+			AddRow(true, "แท่ง", 0, true, ""))
+	mock.ExpectQuery(`(?s)SELECT r.id::text,u.stand_value::text,u.divide_value::text.*u.item_code=\$1.*u.unit_code=\$2`).
+		WithArgs("AH-0006", "แท่ง").
+		WillReturnRows(sqlmock.NewRows([]string{"generation", "stand", "divide"}).
+			AddRow("00000000-0000-0000-0000-000000000099", "1", "1"))
+
+	proposal, current, _, err := resolveMarketplaceMutation(context.Background(), db, MarketplaceAliasProposal{
+		Identity: models.MarketplaceAliasIdentity{
+			Source: "tiktok", AccountKey: "default", ExternalVariantID: "1729429119889017310", RawName: "สินค้า / ตัวเลือก",
+		},
+		BillType: "sale", ItemCode: "AH-0006", UnitCode: "แท่ง",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.AliasID != aliasID || current.ID != aliasID || current.MappingRevision != 1 {
+		t.Fatalf("existing alias was not reused: proposal=%+v current=%+v", proposal, current)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMarketplaceImpactDigestIsStableButIncludesPolicy(t *testing.T) {
 	impact := models.MarketplaceAliasImpact{
 		CurrentMappingRevision: 7,
