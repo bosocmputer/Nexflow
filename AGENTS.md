@@ -414,6 +414,37 @@ Current AOY UAT scope:
     The AOY pre-deploy backup is `pre-deploy-20260827-030228.sql.gz`. No
     migration, audit backfill, VAT/amount logic, runtime setting, Demo, or
     Lanboon deployment changed.
+30. AOY-only Marketplace mapping reconciliation and buyer-charge explanation
+    are deployed at `be5f7e7` (feature commit `6f5ff04`). TikTok bill
+    `c06503f9-335d-40ef-9eb5-fb8604b88e07`, order
+    `585684843131602849`, now reuses the existing exact scoped alias
+    `ea24e04c-86ec-43f5-a9d8-d1e0635eea1c` for `AH-0006 / แท่ง` instead of
+    attempting a duplicate insert. The failed mapping job
+    `69d3af4f-32dd-46e3-a6ad-7b45998d7932` was retried successfully after
+    correcting the PostgreSQL quantity-multiplier parameter type. Reservation
+    reconciliation is scoped to the exact bill item and also runs inside the
+    bill-item mapping transaction, closing the handler/worker race without
+    changing unrelated items in the same bill. Historical Lazada reservation
+    `b47ad062-424c-467c-aaff-e9672c57bb9e` was repaired from immutable bill and
+    SML attempt evidence; its existing recalculation job verified the exact
+    `BF-INV26080064` / `AH-0009` stock movement before incorporation. Current
+    reservation evidence is 13/13 verified with no blocked mapping.
+31. The same AOY rollout explains TikTok's unitemized buyer charge without
+    manufacturing an SML sale line. For the controlled bill, TikTok Order
+    Amount `256.42` equals itemized product revenue `250.00` plus buyer-paid
+    protection/insurance `6.42` that is absent from the Excel detail. The bill
+    UI and Thai audit history therefore show Order Amount as reconciliation
+    evidence while the SML document authority remains the final bill items,
+    totaling `250.00`. `vat_type` only splits that SML line amount into taxable
+    base and VAT; it does not add the platform-collected `6.42`. AOY dry-run
+    `d7357a2c-f224-4187-a02f-98bddf8cb40a` then checked all 44 Shopee listings:
+    12 would change, 32 were unchanged, and 0 were blocked or errored. Automatic
+    stock sync for shop `264993963` was restored to its prior five-minute
+    setting after the successful dry-run; no manual sync endpoint was called.
+    Backups are `pre-deploy-20260827-034901.sql.gz` and
+    `pre-deploy-20260827-040005.sql.gz`. Go tests, frontend lint/build,
+    sales-only guard, health, Gateway connectivity, bill/log browser QA, and
+    exact production reconciliation passed. Demo and Lanboon were not deployed.
 
 Known deferred or incomplete validation:
 
