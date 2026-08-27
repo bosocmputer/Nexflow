@@ -40,12 +40,16 @@ const (
 		warning_codes=(warning_codes-'master_revision_pending'-'conversion_needs_review'-'conversion_stale'-'conversion_blocked'-
 		  'stock_policy_blocked'-'stock_policy_manual_unmanaged'-'stock_policy_zeroing'-'stock_policy_disabled_zero') || $9::jsonb,
 		updated_at=NOW() WHERE marketplace_alias_id=$1::uuid`
-	marketplaceReservationReconcileUpdateSQL = `UPDATE marketplace_stock_reservations SET
+	marketplaceReservationReconcileUpdateSQL = `UPDATE marketplace_stock_reservations r SET
 		marketplace_alias_id=$2::uuid,mapping_revision=$3,quantity_multiplier=$4::bigint,unit_code=$5,
 		unit_stand_value=NULLIF($6,'')::numeric,unit_divide_value=NULLIF($7,'')::numeric,
 		base_qty=CASE WHEN $6<>'' AND $7<>'' THEN source_qty*$4::bigint*$6::numeric/$7::numeric ELSE NULL END,
 		sml_item_code=$8,set_definition_hash=$9,state=$10,state_reason=$11,demand_revision=demand_revision+1,updated_at=NOW()
-		WHERE bill_id=ANY($1::uuid[]) AND state IN ('active','blocked_mapping')`
+		WHERE r.bill_id=ANY($1::uuid[]) AND r.state IN ('active','blocked_mapping')
+		  AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($12::uuid[]) AND bi.bill_id=r.bill_id
+		    AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+		    AND r.external_item_id=COALESCE(bi.source_item_id,'')
+		    AND r.external_variant_id=COALESCE(bi.source_variant_id,''))`
 )
 
 type MarketplaceAliasProposal struct {
@@ -868,7 +872,7 @@ func (r *MarketplaceAliasRepo) processMappingJobBatch(ctx context.Context, job *
 		return 0, err
 	}
 	if reconcileReservations {
-		if err := reconcileMappingReservationsTx(ctx, tx, job, billIDs); err != nil {
+		if err := reconcileMappingReservationsTx(ctx, tx, job, billIDs, itemIDs); err != nil {
 			return 0, err
 		}
 	}
@@ -893,24 +897,30 @@ func (r *MarketplaceAliasRepo) processMappingJobBatch(ctx context.Context, job *
 	return len(itemIDs), nil
 }
 
-func reconcileMappingReservationsTx(ctx context.Context, tx *sql.Tx, job *claimedMarketplaceMappingJob, billIDs []string) error {
-	if len(billIDs) == 0 {
+func reconcileMappingReservationsTx(ctx context.Context, tx *sql.Tx, job *claimedMarketplaceMappingJob, billIDs, itemIDs []string) error {
+	if len(billIDs) == 0 || len(itemIDs) == 0 {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
 		SELECT DISTINCT r.warehouse_code,r.location_code,r.sml_item_code,1
 		FROM marketplace_stock_reservations r WHERE r.bill_id=ANY($1::uuid[]) AND r.state IN ('active','blocked_mapping')
+		  AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($2::uuid[]) AND bi.bill_id=r.bill_id
+		    AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+		    AND r.external_item_id=COALESCE(bi.source_item_id,'') AND r.external_variant_id=COALESCE(bi.source_variant_id,''))
 		  AND r.sml_item_code<>'' AND NOT EXISTS (SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
 		ON CONFLICT (warehouse_code,location_code,item_code) DO UPDATE
-		SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, pq.Array(billIDs)); err != nil {
+		SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, pq.Array(billIDs), pq.Array(itemIDs)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_demand_versions(warehouse_code,location_code,item_code,revision)
 		SELECT DISTINCT c.warehouse_code,c.location_code,c.component_item_code,1
 		FROM marketplace_stock_reservations r JOIN marketplace_stock_reservation_components c ON c.reservation_id=r.id
 		WHERE r.bill_id=ANY($1::uuid[]) AND r.state IN ('active','blocked_mapping')
+		  AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($2::uuid[]) AND bi.bill_id=r.bill_id
+		    AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+		    AND r.external_item_id=COALESCE(bi.source_item_id,'') AND r.external_variant_id=COALESCE(bi.source_variant_id,''))
 		ON CONFLICT (warehouse_code,location_code,item_code) DO UPDATE
-		SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, pq.Array(billIDs)); err != nil {
+		SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, pq.Array(billIDs), pq.Array(itemIDs)); err != nil {
 		return err
 	}
 	ready := job.Snapshot.ConversionStatus == "ready" && !job.Snapshot.Deactivate
@@ -922,12 +932,16 @@ func reconcileMappingReservationsTx(ctx context.Context, tx *sql.Tx, job *claime
 	}
 	if _, err := tx.ExecContext(ctx, marketplaceReservationReconcileUpdateSQL, pq.Array(billIDs), job.AliasID,
 		job.TargetRevision, job.Snapshot.QuantityMultiplier, job.Snapshot.UnitCode, job.Snapshot.StandValue,
-		job.Snapshot.DivideValue, job.Snapshot.ItemCode, job.Snapshot.SetDefinitionHash, state, reason); err != nil {
+		job.Snapshot.DivideValue, job.Snapshot.ItemCode, job.Snapshot.SetDefinitionHash, state, reason, pq.Array(itemIDs)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM marketplace_stock_reservation_components c
 		USING marketplace_stock_reservations r WHERE c.reservation_id=r.id AND r.bill_id=ANY($1::uuid[])
-		  AND r.state IN ('active','blocked_mapping')`, pq.Array(billIDs)); err != nil {
+		  AND r.state IN ('active','blocked_mapping')
+		  AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($2::uuid[]) AND bi.bill_id=r.bill_id
+		    AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+		    AND r.external_item_id=COALESCE(bi.source_item_id,'') AND r.external_variant_id=COALESCE(bi.source_variant_id,''))`,
+		pq.Array(billIDs), pq.Array(itemIDs)); err != nil {
 		return err
 	}
 	if ready && job.Snapshot.SetDefinitionHash != "" {
@@ -937,10 +951,13 @@ func reconcileMappingReservationsTx(ctx context.Context, tx *sql.Tx, job *claime
 			FROM marketplace_stock_reservations r JOIN sml_catalog_set_components c
 			  ON c.parent_item_code=r.sml_item_code AND c.definition_hash=$2 AND c.is_active=true AND c.unit_valid=true
 			WHERE r.bill_id=ANY($1::uuid[]) AND r.state='active'
+			  AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($3::uuid[]) AND bi.bill_id=r.bill_id
+			    AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+			    AND r.external_item_id=COALESCE(bi.source_item_id,'') AND r.external_variant_id=COALESCE(bi.source_variant_id,''))
 			GROUP BY r.id,c.component_item_code,r.warehouse_code,r.location_code
 			ON CONFLICT (reservation_id,component_item_code,warehouse_code,location_code) DO UPDATE
 			SET component_base_qty=EXCLUDED.component_base_qty,set_definition_hash=EXCLUDED.set_definition_hash`,
-			pq.Array(billIDs), job.Snapshot.SetDefinitionHash); err != nil {
+			pq.Array(billIDs), job.Snapshot.SetDefinitionHash, pq.Array(itemIDs)); err != nil {
 			return err
 		}
 	}
@@ -948,13 +965,19 @@ func reconcileMappingReservationsTx(ctx context.Context, tx *sql.Tx, job *claime
 		SELECT DISTINCT demand.warehouse_code,demand.location_code,demand.item_code,1 FROM (
 		  SELECT r.warehouse_code,r.location_code,r.sml_item_code AS item_code
 		  FROM marketplace_stock_reservations r WHERE r.bill_id=ANY($1::uuid[]) AND r.state='active'
+		    AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($2::uuid[]) AND bi.bill_id=r.bill_id
+		      AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+		      AND r.external_item_id=COALESCE(bi.source_item_id,'') AND r.external_variant_id=COALESCE(bi.source_variant_id,''))
 		    AND NOT EXISTS (SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
 		  UNION SELECT c.warehouse_code,c.location_code,c.component_item_code
 		  FROM marketplace_stock_reservations r JOIN marketplace_stock_reservation_components c ON c.reservation_id=r.id
 		  WHERE r.bill_id=ANY($1::uuid[]) AND r.state='active'
+		    AND EXISTS (SELECT 1 FROM bill_items bi WHERE bi.id=ANY($2::uuid[]) AND bi.bill_id=r.bill_id
+		      AND r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)
+		      AND r.external_item_id=COALESCE(bi.source_item_id,'') AND r.external_variant_id=COALESCE(bi.source_variant_id,''))
 		) demand WHERE demand.item_code<>''
 		ON CONFLICT (warehouse_code,location_code,item_code) DO UPDATE
-		SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, pq.Array(billIDs)); err != nil {
+		SET revision=marketplace_stock_demand_versions.revision+1,updated_at=NOW()`, pq.Array(billIDs), pq.Array(itemIDs)); err != nil {
 		return err
 	}
 	return nil

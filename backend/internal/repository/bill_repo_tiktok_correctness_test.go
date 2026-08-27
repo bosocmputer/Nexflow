@@ -98,3 +98,54 @@ func TestUpdateBillItemFieldsRejectsMutationAfterSMLAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestApplyMarketplaceMasterRefreshesExactReservationInSameTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	stand, divide, generation := "1", "1", "00000000-0000-0000-0000-000000000099"
+	alias := &models.MarketplaceItemAlias{
+		ID: "00000000-0000-0000-0000-000000000010", ItemCode: "AH-0009", UnitCode: "แท่ง",
+		QuantityMultiplier: 1, MappingRevision: 1, UnitStandValue: &stand, UnitDivideValue: &divide,
+		UnitCatalogGeneration: &generation, ConversionStatus: "ready", SalesEnabled: true,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT status, archived_at, current_sml_attempt_id::text.*FROM bills WHERE id=\$1 FOR UPDATE`).
+		WithArgs("00000000-0000-0000-0000-000000000001").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "archived_at", "current_sml_attempt_id"}).AddRow("needs_review", nil, nil))
+	mock.ExpectQuery(`SELECT set_definition_hash FROM sml_catalog`).
+		WithArgs("AH-0009").
+		WillReturnRows(sqlmock.NewRows([]string{"set_definition_hash"}).AddRow(""))
+	mock.ExpectExec(`(?s)UPDATE bill_items SET marketplace_alias_id=.*WHERE bill_id=\$1::uuid AND id=\$2::uuid`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*FROM marketplace_stock_reservations r.*bi.id=ANY\(\$2::uuid\[\]\)`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservation_components.*bi.id=ANY\(\$2::uuid\[\]\)`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`(?s)UPDATE marketplace_stock_reservations r SET.*bi.id=ANY\(\$12::uuid\[\]\)`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)DELETE FROM marketplace_stock_reservation_components.*bi.id=ANY\(\$2::uuid\[\]\)`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*SELECT DISTINCT demand.*bi.id=ANY\(\$2::uuid\[\]\)`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE bills b SET mutation_revision=mutation_revision\+1`).
+		WithArgs("00000000-0000-0000-0000-000000000001", "").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = NewBillRepo(db).ApplyMarketplaceMasterToBillItem(
+		"00000000-0000-0000-0000-000000000001",
+		"00000000-0000-0000-0000-000000000002",
+		alias,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("ApplyMarketplaceMasterToBillItem: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

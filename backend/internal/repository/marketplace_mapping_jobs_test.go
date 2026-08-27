@@ -54,6 +54,10 @@ func TestMarketplaceReservationReconcileUsesOnePostgresTypeForMultiplier(t *test
 	if strings.Contains(marketplaceReservationReconcileUpdateSQL, "$4::numeric") {
 		t.Fatal("casting the same parameter as numeric and bigint makes PostgreSQL reject the statement")
 	}
+	if !strings.Contains(marketplaceReservationReconcileUpdateSQL, "bi.id=ANY($12::uuid[])") ||
+		!strings.Contains(marketplaceReservationReconcileUpdateSQL, "r.source_line_id=COALESCE(NULLIF(bi.source_line_id,''),bi.id::text)") {
+		t.Fatal("reservation reconciliation must be scoped to the exact selected bill items")
+	}
 }
 
 func TestResolveMarketplaceMutationReusesExistingTikTokVariant(t *testing.T) {

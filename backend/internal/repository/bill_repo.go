@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1000,6 +1001,24 @@ func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrBillMutationConflict
+	}
+	reservationJob := &claimedMarketplaceMappingJob{
+		AliasID:        alias.ID,
+		TargetRevision: alias.MappingRevision,
+		Snapshot: marketplaceMutationTarget{
+			ItemCode: alias.ItemCode, UnitCode: alias.UnitCode, QuantityMultiplier: alias.QuantityMultiplier,
+			StandValue: stand, DivideValue: divide, CatalogGeneration: generation,
+			ConversionStatus: alias.ConversionStatus, SalesEnabled: alias.SalesEnabled,
+			SetDefinitionHash: setHash,
+		},
+	}
+	// CommitMutation enqueues a durable batch before this handler updates the
+	// current row. If that worker wins the race and completes with zero rows,
+	// refresh this exact reservation inside the bill lock so it cannot remain a
+	// shop-wide stock circuit breaker. The selected bill item identity prevents
+	// another product in the same bill from being changed.
+	if err := reconcileMappingReservationsTx(context.Background(), tx, reservationJob, []string{billID}, []string{itemID}); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`UPDATE bills b SET mutation_revision=mutation_revision+1,
 		status=CASE WHEN EXISTS (SELECT 1 FROM bill_items bi WHERE bi.bill_id=b.id AND bi.mapped IS DISTINCT FROM true)
