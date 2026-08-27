@@ -951,7 +951,7 @@ func (r *BillRepo) UpdateBillItemFields(billID, itemID string, itemCode, unitCod
 // after the operator explicitly confirmed the Product Master impact. The bill
 // lock and current_sml_attempt predicate keep this update on never-attempted
 // documents only.
-func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias *models.MarketplaceItemAlias, enforceConversion bool) error {
+func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias *models.MarketplaceItemAlias, enforceConversion bool, actorID string) error {
 	if alias == nil || strings.TrimSpace(alias.ID) == "" {
 		return errors.New("marketplace alias is required")
 	}
@@ -1025,6 +1025,13 @@ func (r *BillRepo) ApplyMarketplaceMasterToBillItem(billID, itemID string, alias
 		  THEN 'needs_review' WHEN status='needs_review' THEN 'pending' ELSE status END,
 		error_msg=CASE WHEN $2='' THEN NULL ELSE $2 END
 		WHERE id=$1::uuid AND current_sml_attempt_id IS NULL AND archived_at IS NULL`, billID, issue); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO audit_logs(action,user_id,source,level,target_id,revision,detail)
+		VALUES('bill_item_marketplace_master_applied',NULLIF($1,'')::uuid,$2,'info',$3::uuid,$4,
+		  jsonb_build_object('item_id',$5::text,'alias_id',$6::text,'item_code',$7::text,'unit_code',$8::text,
+		    'cleared_override_fields',jsonb_build_array('item_code','unit_code')))`,
+		actorID, alias.Source, billID, alias.MappingRevision, itemID, alias.ID, alias.ItemCode, alias.UnitCode); err != nil {
 		return err
 	}
 	return tx.Commit()

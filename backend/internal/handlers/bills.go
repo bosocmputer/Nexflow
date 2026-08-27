@@ -3896,6 +3896,40 @@ type updateItemRequest struct {
 	RememberMappingImpactDigest   string   `json:"remember_mapping_impact_digest"`
 }
 
+// dropUnchangedMarketplaceItemFields keeps old and new clients from turning a
+// no-op edit into a durable manual conversion override. Product and unit
+// overrides must represent a real value change, not just a JSON field that was
+// posted back unchanged.
+func dropUnchangedMarketplaceItemFields(existing *models.BillItem, req *updateItemRequest) {
+	if existing == nil || req == nil {
+		return
+	}
+	if req.ItemCode != nil {
+		trimmed := strings.TrimSpace(*req.ItemCode)
+		current := ""
+		if existing.ItemCode != nil {
+			current = strings.TrimSpace(*existing.ItemCode)
+		}
+		if trimmed == current {
+			req.ItemCode = nil
+		} else {
+			*req.ItemCode = trimmed
+		}
+	}
+	if req.UnitCode != nil {
+		trimmed := strings.TrimSpace(*req.UnitCode)
+		current := ""
+		if existing.UnitCode != nil {
+			current = strings.TrimSpace(*existing.UnitCode)
+		}
+		if trimmed == current {
+			req.UnitCode = nil
+		} else {
+			*req.UnitCode = trimmed
+		}
+	}
+}
+
 func (h *BillHandler) UpdateItem(c *gin.Context) {
 	billID := c.Param("id")
 	itemID := c.Param("item_id")
@@ -3976,6 +4010,7 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 			return
 		}
 	}
+	dropUnchangedMarketplaceItemFields(existingItem, &req)
 
 	// If user is changing item_code, fill unit_code from catalog if not provided.
 	// This makes the F1 feedback richer and the SML payload more correct.
@@ -4058,7 +4093,7 @@ func (h *BillHandler) UpdateItem(c *gin.Context) {
 		return
 	}
 	if committedMaster != nil {
-		if err := h.billRepo.ApplyMarketplaceMasterToBillItem(billID, itemID, committedMaster, h.conversionModeForBill(bill) == "active"); err != nil {
+		if err := h.billRepo.ApplyMarketplaceMasterToBillItem(billID, itemID, committedMaster, h.conversionModeForBill(bill) == "active", c.GetString("user_id")); err != nil {
 			if errors.Is(err, repository.ErrBillMutationConflict) {
 				c.JSON(http.StatusConflict, gin.H{"error": "บิลเริ่มส่งหรือถูกแก้ระหว่างบันทึก Product Master กรุณารีเฟรช"})
 				return

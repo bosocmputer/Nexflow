@@ -119,7 +119,7 @@ func TestApplyMarketplaceMasterRefreshesExactReservationInSameTransaction(t *tes
 	mock.ExpectQuery(`SELECT set_definition_hash FROM sml_catalog`).
 		WithArgs("AH-0009").
 		WillReturnRows(sqlmock.NewRows([]string{"set_definition_hash"}).AddRow(""))
-	mock.ExpectExec(`(?s)UPDATE bill_items SET marketplace_alias_id=.*WHERE bill_id=\$1::uuid AND id=\$2::uuid`).
+	mock.ExpectExec(`(?s)UPDATE bill_items SET marketplace_alias_id=.*conversion_issue_code=\$13.*conversion_override_fields=.*-'item_code'-'unit_code'.*WHERE bill_id=\$1::uuid AND id=\$2::uuid`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*FROM marketplace_stock_reservations r.*bi.id=ANY\(\$2::uuid\[\]\)`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -134,6 +134,8 @@ func TestApplyMarketplaceMasterRefreshesExactReservationInSameTransaction(t *tes
 	mock.ExpectExec(`(?s)UPDATE bills b SET mutation_revision=mutation_revision\+1`).
 		WithArgs("00000000-0000-0000-0000-000000000001", "").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO audit_logs.*bill_item_marketplace_master_applied`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	err = NewBillRepo(db).ApplyMarketplaceMasterToBillItem(
@@ -141,6 +143,7 @@ func TestApplyMarketplaceMasterRefreshesExactReservationInSameTransaction(t *tes
 		"00000000-0000-0000-0000-000000000002",
 		alias,
 		true,
+		"00000000-0000-0000-0000-000000000003",
 	)
 	if err != nil {
 		t.Fatalf("ApplyMarketplaceMasterToBillItem: %v", err)
