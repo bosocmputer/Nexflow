@@ -35,6 +35,12 @@ Each Nexflow instance has its own `.env`, Docker Compose file, Postgres volume,
 `app_settings`, LINE/Shopee settings, and user data. Code should normally be the
 same commit on all production instances.
 
+Current application feature baseline (2026-08-27): Demo, AOY, and Lanboon run
+`966b027`; each tenant keeps its own feature flags and configuration. Ploy runs
+its isolated bootstrap commit `5497558`. The shared release/edge checkout is
+`c74ec6a` because it contains the complete four-tenant registry. A shared code
+baseline does not authorize copying or enabling another tenant's settings.
+
 ## Diagram
 
 ```mermaid
@@ -143,6 +149,9 @@ cd /mnt/data/nextstep-node-2/nexflow-aoy
 docker compose up -d --build backend frontend
 
 cd /mnt/data/nextstep-node-2/nexflow-lanboon
+docker compose up -d --build backend frontend
+
+cd /mnt/data/nextstep-node-2/nexflow-ploy
 docker compose up -d --build backend frontend
 
 cd /mnt/data/nextstep-node-2/nexflow-edge
@@ -389,6 +398,7 @@ sudo docker ps --format '{{.Names}} {{.Status}} {{.Ports}}' | grep -E 'nexflow|s
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow.nextstep-soft.com' http://localhost:6323/login
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow-aoy.nextstep-soft.com' http://localhost:6323/login
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nextflow-lanboon.nextstep-soft.com' http://localhost:6323/login
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: nexflow-ploy.nextstep-soft.com' http://localhost:6323/login
 
 # Demo debug/direct
 curl -s http://localhost:8110/health
@@ -402,10 +412,15 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16324/login
 curl -s http://localhost:8112/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16325/login
 
+# Ploy debug/direct
+curl -s http://localhost:8113/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16326/login
+
 # SML gateway
 curl -s -H 'x-tenant: demo' http://localhost:8200/health/ready
 curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
 curl -s -H 'x-tenant: lbk63' http://localhost:8200/health/ready
+curl -s -H 'x-tenant: ploy' http://localhost:8200/health/ready
 ```
 
 ## Cloudflare / IT Routing
@@ -418,6 +433,7 @@ server/router. All hostnames should route to the same origin:
 | `nexflow.nextstep-soft.com` | `http://10.121.20.83:6323` |
 | `nexflow-aoy.nextstep-soft.com` | `http://10.121.20.83:6323` |
 | `nextflow-lanboon.nextstep-soft.com` | `http://10.121.20.83:6323` |
+| `nexflow-ploy.nextstep-soft.com` | `http://10.121.20.83:6323` |
 
 If Cloudflare returns 525, the origin/proxy SSL mode is wrong for the origin.
 Keep Cloudflare public HTTPS, but proxy to the internal HTTP port above unless

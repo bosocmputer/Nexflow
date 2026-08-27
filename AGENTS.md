@@ -3,7 +3,7 @@
 > อ่านไฟล์นี้ให้ครบก่อนเริ่ม code ทุกครั้ง — ห้าม assume สิ่งที่ไม่ได้ระบุ
 > **local workspace:** `/Users/nontawatwongnuk/dev_bos/Nexflow`
 > **production server:** `10.121.20.83` (`ubuntu`)
-> **production folders:** `/mnt/data/nextstep-node-2/nexflow` (demo), `/mnt/data/nextstep-node-2/nexflow-aoy` (aoy), `/mnt/data/nextstep-node-2/nexflow-lanboon` (lanboon)
+> **production folders:** `/mnt/data/nextstep-node-2/nexflow` (demo), `/mnt/data/nextstep-node-2/nexflow-aoy` (aoy), `/mnt/data/nextstep-node-2/nexflow-lanboon` (lanboon), `/mnt/data/nextstep-node-2/nexflow-ploy` (ploy)
 > **deploy flow:** ดู [docs/nextstep-server-deploy-flow.md](docs/nextstep-server-deploy-flow.md)
 > **legacy DEV only:** `192.168.2.109` / ngrok / `/home/bosscatdog/billflow-henna`
 
@@ -13,10 +13,13 @@
 
 Read this section first when resuming work in a new session.
 
-- Application baseline is intentionally split for AOY-only UAT: AOY runs
-  `966b027` (`fix: restore marketplace master conversion safely`),
-  while Demo and Lanboon remain on `82baa4a` (`Simplify marketplace stock
-  quantity setup`). The Central SML Gateway is on `42992f5`
+- Demo, AOY, and Lanboon now run the same application feature baseline
+  `966b027` (`fix: restore marketplace master conversion safely`). Their
+  runtime settings and feature gates remain tenant-scoped; aligning code did
+  not enable AOY features in Demo or Lanboon. Ploy remains on its isolated
+  bootstrap application commit `5497558`. The shared server release/edge
+  checkout is `c74ec6a`, which retains the four-tenant registry. The Central
+  SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
 - Tenant databases, SML tenants, credentials, channel routes, feature flags, and
   deployment revisions remain isolated and must never be copied between
@@ -25,10 +28,11 @@ Read this section first when resuming work in a new session.
   Demo, AOY, Lanboon, and both Central Gateway health endpoints returned HTTP
   200. Each tenant backend resolved the Central Shopee Gateway on the shared
   Docker network.
-- Migration 085 is applied on all three tenant PostgreSQL 16 databases. The new
-  Catalog-generation, exact SML attempt, reservation, mapping-job, stock-policy
-  job, and asynchronous stock-run tables/columns exist. Post-deploy checks found
-  zero queued mapping/backfill/policy/stock jobs and zero active reservations.
+- Migrations through 090 have been replayed on Demo, AOY, Lanboon, and the fresh
+  Ploy PostgreSQL 16 database. The Catalog-generation, exact SML attempt,
+  reservation, mapping-job, stock-policy, asynchronous stock-run, cancellation,
+  and Auto SML trigger schemas exist. Runtime feature gates still decide which
+  tenant can use each capability.
 - Marketplace activation remains tenant-scoped and fail-closed:
   - Demo: unit Catalog enabled for SML validation; grouped UI, conversion,
     reservation ledger, and set-stock remain disabled. Active generation 3 has
@@ -487,6 +491,22 @@ Current AOY UAT scope:
     securely rotate/hand off the bootstrap admin before user UAT. Bootstrap
     tooling health polling was corrected in `5460037` after the first startup
     overlapped migrations 001–090.
+34. Demo and Lanboon application baselines were aligned to AOY commit `966b027`
+    on 2026-08-27 without copying or enabling AOY configuration. Demo retained
+    unit Catalog only, with grouped UI, conversion, reservation ledger, Shopee
+    API/realtime, and set-stock disabled. Lanboon retained all Marketplace and
+    Shopee gates disabled. Exact `app_settings` table data matched each tenant's
+    pre-deploy backup after migration; bill, alias, connection, channel-default,
+    and setting counts were unchanged. Migration 090 columns are present on
+    both databases. Backups are Demo
+    `pre-deploy-20260827-062156.sql.gz` and Lanboon
+    `pre-deploy-20260827-062526.sql.gz`. AOY and Ploy container image/start
+    identities were unchanged, proving they were not redeployed. The shared
+    release/edge checkout was restored to `c74ec6a` after the pinned tenant
+    builds so Ploy's registry and Host route remain present. All four app health
+    endpoints, all four SML tenant readiness checks, edge Host routes, and the
+    Central Shopee Gateway passed; recent Demo/Lanboon severe-log scans were
+    clean.
 
 Known deferred or incomplete validation:
 
@@ -501,9 +521,10 @@ Known deferred or incomplete validation:
   Shopee CANCELLED -> SML CN -> stock recalculation -> LINE end-to-end UAT on
   order `260827ECCFMCSC`; broader route coverage for TRANS_FLAG 45 still needs a
   future controlled case if AOY changes destinations.
-- Demo and Lanboon currently run the older `82baa4a` application revision and
-  may also have paid features or Shopee runtime flags disabled. Verify both the
-  deployed revision and per-instance settings instead of assuming AOY behavior.
+- Demo and Lanboon run the same `966b027` application feature baseline as AOY,
+  but their Marketplace/Shopee capabilities remain disabled according to each
+  tenant's own configuration. Never infer enabled behavior from a shared code
+  revision; verify the per-instance settings and readiness first.
 
 Resume checklist:
 
@@ -512,9 +533,10 @@ Resume checklist:
 3. Ask for or inspect the newest AOY user feedback and the exact affected order,
    bill, SKU, shop, or SML document number.
 4. Preserve tenant isolation and deploy the same committed code with
-   `scripts/deploy_nextstep_instances.py`; for a split AOY-only baseline always
-   pass `--ref <verified-commit>` because the script defaults to `origin/main`.
-   Change runtime flags only for the explicitly requested tenant.
+   `scripts/deploy_nextstep_instances.py`; when intentionally pinning a tenant
+   baseline, always pass `--ref <verified-commit>` because the script defaults
+   to `origin/main`. Change runtime flags only for the explicitly requested
+   tenant.
 
 ---
 

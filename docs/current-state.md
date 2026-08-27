@@ -8,17 +8,19 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 
 ## Production UAT Status
 
-- Application baseline is intentionally split during AOY UAT. AOY runs
-  `0470b3c`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
-  settings, credentials, channel routes, and feature flags remain isolated.
-  Central SML Gateway baseline: `42992f5`.
-- Demo, AOY, Lanboon, Ploy, and Central Shopee Gateway health endpoints returned HTTP
-  200 with database status `ok` on 2026-08-27.
-- Migration 085 is installed on every tenant. AOY has grouped UI, versioned unit
-  Catalog, active conversion, and the reservation ledger enabled after readiness
-  validation. Demo has only the versioned unit Catalog enabled. Lanboon retains
-  all marketplace Release A gates disabled. The user explicitly enabled AOY
-  Shopee set-stock for controlled testing; Demo and Lanboon remain disabled.
+- Demo, AOY, and Lanboon run the same application feature baseline `966b027`.
+  Ploy remains on isolated bootstrap commit `5497558`, while the shared
+  release/edge checkout is `c74ec6a` so the four-tenant registry remains
+  current. Tenant databases, SML settings, credentials, channel routes, and
+  feature flags remain isolated. Central SML Gateway baseline: `42992f5`.
+- Demo, AOY, Lanboon, Ploy, and Central Shopee Gateway health endpoints returned
+  HTTP 200 with database status `ok` on 2026-08-27.
+- Migrations through 090 are installed on every tenant. AOY has grouped UI,
+  versioned unit Catalog, active conversion, and the reservation ledger enabled
+  after readiness validation. Demo has only the versioned unit Catalog enabled.
+  Lanboon retains all Marketplace Release A gates disabled. The user explicitly
+  enabled AOY Shopee set-stock for controlled testing; Demo and Lanboon remain
+  disabled. Shared code never overrides these tenant-specific gates.
 - AOY is the active production UAT tenant and the user is actively testing the
   current build. Feedback remains pending for the marketplace sales/SML stock
   flow, Product Master/Catalog channel tags, `/sale-invoices`, and the compact
@@ -53,19 +55,22 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 - AOY normal-product Shopee stock UAT passed on shop `264993963` for item/model
   `6278820512/43634992848` mapped to SML `AH-0033` at factor 1. A controlled
   manual run changed Shopee stock 0 -> 1, catalog read-back confirmed 1, and the
-  post-write preview was unchanged 1 -> 1. Automatic stock sync is disabled.
+  post-write preview was unchanged 1 -> 1. Automatic stock sync is enabled on
+  AOY at its preserved five-minute interval after a successful dry-run.
   Shopee set-product stock is enabled only for AOY's controlled first real
   mapped set-product UAT and is not yet production-validated end to end.
-- AOY uses consistent input-channel tags across sale invoices, Product Master,
+- The shared application baseline contains consistent input-channel tags across
+  sale invoices, Product Master,
   and Catalog. Shopee mappings display `Shopee API (Henna.milkford)` together
   with `Shopee Excel`; Lazada and TikTok display their Excel channels. Generic
-  `บัญชีหลัก` labels were removed. This UI is deployed only to AOY at
-  `e069f2b`.
-- AOY expanded Shopee stock groups identify SML stock, current Shopee stock,
-  and the absolute stock target that Nexflow will send. Wide screens use aligned
-  column headers; laptop widths use labeled stacked values so no stock value or
-  mapping action is clipped by the sidebar. This UI is deployed only to AOY at
-  `44b5a72`; production browser QA was read-only and did not write Shopee stock.
+  `บัญชีหลัก` labels were removed. This flow is enabled and validated in AOY;
+  the code originated at `e069f2b`.
+- The shared baseline's expanded Shopee stock groups identify SML stock,
+  current Shopee stock, and the absolute stock target that Nexflow will send.
+  Wide screens use aligned column headers; laptop widths use labeled stacked
+  values so no stock value or mapping action is clipped by the sidebar. This
+  flow is enabled and validated in AOY; the UI originated at `44b5a72`, and
+  production browser QA was read-only and did not write Shopee stock.
 - Detailed resume notes, deferred work, and the per-session preflight checklist
   are maintained in `AGENTS.md` under `Current UAT Handoff`.
 
