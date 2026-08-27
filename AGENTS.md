@@ -466,6 +466,27 @@ Current AOY UAT scope:
     build, lint, Go tests, sales-only guard, and post-mutation error scan passed.
     The AOY pre-deploy backup is `pre-deploy-20260827-045844.sql.gz`. Demo and
     Lanboon were not deployed and remain on `82baa4a`.
+33. Ploy test tenant bootstrap is prepared as of 2026-08-27. Registry commit
+    `de18812` adds `nexflow-ploy.nextstep-soft.com`, isolated runtime folder
+    `/mnt/data/nextstep-node-2/nexflow-ploy`, backend `127.0.0.1:8113`, local
+    PostgreSQL `127.0.0.1:5443`, and frontend debug `127.0.0.1:16326`.
+    Application commit `5497558` is running with a fresh local volume: one
+    bootstrap admin and zero bills, Shopee connections, Marketplace aliases,
+    and Catalog rows. No AOY data, credentials, tokens, users, or settings were
+    copied. The shared SML Gateway now allowlists tenant/database `ploy` on the
+    same PostgreSQL service as AOY; existing Demo/AOY/Lanboon readiness remains
+    HTTP 200. Gateway runtime backups are stamped
+    `*.pre-ploy.20260827-052841`. Ploy SML readiness is HTTP 200, but its product
+    endpoint returns zero rows, so the controlled unit-Catalog sync failed
+    closed with one failed run, zero staged/active products, and no active
+    generation. Unit Catalog, conversion, reservation ledger, Shopee API,
+    realtime workers, Auto SML/cancellation, set stock, and set expansion remain
+    disabled. Internal edge Host-header smoke returns HTTP 200 for `/login` and
+    `/health`; public DNS does not yet resolve. Add the proxied Cloudflare CNAME,
+    populate Ploy SML products/`ic_unit_use`, rerun Catalog generation, and
+    securely rotate/hand off the bootstrap admin before user UAT. Bootstrap
+    tooling health polling was corrected in `5460037` after the first startup
+    overlapped migrations 001–090.
 
 Known deferred or incomplete validation:
 
@@ -487,7 +508,7 @@ Known deferred or incomplete validation:
 Resume checklist:
 
 1. Run `git status --short` and `git log -1 --oneline`.
-2. Check `/health` for all three instances and the Shopee Gateway.
+2. Check `/health` for all four instances and the Shopee Gateway.
 3. Ask for or inspect the newest AOY user feedback and the exact affected order,
    bill, SKU, shop, or SML document number.
 4. Preserve tenant isolation and deploy the same committed code with
@@ -514,6 +535,7 @@ Production ports:
 | demo | edge **6323**, debug **127.0.0.1:16323** | **8110** | **5440** |
 | aoy | edge **6323**, debug **127.0.0.1:16324** | **8111** | **5441** |
 | lanboon | edge **6323**, debug **127.0.0.1:16325** | **8112** | **5442** |
+| ploy | edge **6323**, debug **127.0.0.1:16326** | **127.0.0.1:8113** | **127.0.0.1:5443** |
 
 ---
 
@@ -544,7 +566,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–089** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–090** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -601,7 +623,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 9. **`app_settings` vs `.env`** — `/settings/instance` แก้ได้เฉพาะชื่อร้านและช่องทางติดต่อ. ค่า SML tenant/URL, public URL, Shopee gateway และ infrastructure อื่นจัดการผ่าน deployment runbook; ค่าเดิมใน `app_settings`/`.env` ยังเป็น runtime source และห้าม serialize ไปหน้า instance.
 
-10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy,lbk63`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through `app_settings.sml.database` (`demo`, `aoy`, or `lbk63`). The NextStep SQL uses `FROM ic_trans ic_qt`; `ic_qt` is an alias, not a physical table. Do not use the old `192.168.2.109` / ngrok deploy path for production.
+10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy,lbk63,ploy`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through the tenant-scoped SML database setting (`demo`, `aoy`, `lbk63`, or `ploy`). The NextStep SQL uses `FROM ic_trans ic_qt`; `ic_qt` is an alias, not a physical table. Do not use the old `192.168.2.109` / ngrok deploy path for production.
 
 11. **Webhook URL per OA** — `/webhook/line/<oa_id>`. Must be set in LINE Developer Console per OA.
 
@@ -625,6 +647,7 @@ NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target ploy
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target gateway
 ```
 
@@ -717,4 +740,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-27 | Ports: edge 6323, backends 8110/8111/8112, postgres 5440/5441/5442
+Last updated: 2026-08-27 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443

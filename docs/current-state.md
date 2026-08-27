@@ -12,7 +12,7 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   `0470b3c`; Demo and Lanboon remain on `82baa4a`. Tenant databases, SML
   settings, credentials, channel routes, and feature flags remain isolated.
   Central SML Gateway baseline: `42992f5`.
-- Demo, AOY, Lanboon, and Central Shopee Gateway health endpoints returned HTTP
+- Demo, AOY, Lanboon, Ploy, and Central Shopee Gateway health endpoints returned HTTP
   200 with database status `ok` on 2026-08-27.
 - Migration 085 is installed on every tenant. AOY has grouped UI, versioned unit
   Catalog, active conversion, and the reservation ledger enabled after readiness
@@ -100,8 +100,16 @@ lanboon:
   Postgres:  nexflow-lanboon-postgres  :5442
   SML DB:    lbk63
 
+ploy (isolated test tenant; public DNS pending):
+  Folder:    /mnt/data/nextstep-node-2/nexflow-ploy
+  Public:    https://nexflow-ploy.nextstep-soft.com
+  Backend:   nexflow-ploy-backend   :127.0.0.1:8113
+  Frontend:  nexflow-ploy-frontend  :127.0.0.1:16326
+  Postgres:  nexflow-ploy-postgres  :127.0.0.1:5443
+  SML DB:    ploy (reachable, product Catalog currently empty)
+
 edge:      nexflow-edge          :6323  → host-based routing for production domains
-sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy,lbk63
+sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy,lbk63,ploy
 ```
 
 The old `192.168.2.109` / ngrok deployment is DEV/legacy only. Production deploys
@@ -180,6 +188,7 @@ Marketplace release gates (tenant-specific):
 demo:    grouped=false, unit_catalog=true,  conversion=off,    ledger=false, set_stock=false
 aoy:     grouped=true,  unit_catalog=true,  conversion=active, ledger=true,  set_stock=true
 lanboon: grouped=false, unit_catalog=false, conversion=off,    ledger=false, set_stock=false
+ploy:    grouped=true,  unit_catalog=false, conversion=off,    ledger=false, set_stock=false
 ```
 
 `ENABLE_SHOPEE_RICH_LINE_FLEX`, `ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS`, and

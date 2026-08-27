@@ -1,6 +1,6 @@
 # Nexflow NextStep Production Deploy Flow
 
-Updated: 2026-07-09
+Updated: 2026-08-27
 
 This is the current production server topology. The old `192.168.2.109` /
 ngrok deployment is DEV/legacy only and must not be used for production deploys.
@@ -12,6 +12,7 @@ ngrok deployment is DEV/legacy only and must not be used for production deploys.
 | demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `127.0.0.1:16323 -> 80` | `8110 -> 8090` | `5440 -> 5432` | `demo` |
 | aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `127.0.0.1:16324 -> 80` | `8111 -> 8090` | `5441 -> 5432` | `aoy` |
 | lanboon | `https://nextflow-lanboon.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-lanboon` | `127.0.0.1:16325 -> 80` | `8112 -> 8090` | `5442 -> 5432` | `lbk63` |
+| ploy | `https://nexflow-ploy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-ploy` | `127.0.0.1:16326 -> 80` | `127.0.0.1:8113 -> 8090` | `127.0.0.1:5443 -> 5432` | `ploy` |
 
 Public entrypoint:
 
@@ -27,7 +28,7 @@ Shared SML gateway:
 ```text
 container: nexflow-sml-api-bybos
 port:      8200
-tenants:   demo,aoy,lbk63
+tenants:   demo,aoy,lbk63,ploy
 ```
 
 Each Nexflow instance has its own `.env`, Docker Compose file, Postgres volume,
@@ -72,17 +73,28 @@ flowchart TB
       LanboonBE --> LanboonDB
     end
 
-    SMLAPI["nexflow-sml-api-bybos<br/>8200<br/>ALLOWED_TENANTS=demo,aoy,lbk63"]
+    subgraph Ploy["ploy test instance"]
+      PloyFE["nexflow-ploy-frontend<br/>127.0.0.1:16326 -> nginx :80"]
+      PloyBE["nexflow-ploy-backend<br/>127.0.0.1:8113 -> Go :8090"]
+      PloyDB["nexflow-ploy-postgres<br/>127.0.0.1:5443 -> PostgreSQL"]
+      PloyFE -->|"same-origin /api"| PloyBE
+      PloyBE --> PloyDB
+    end
+
+    SMLAPI["nexflow-sml-api-bybos<br/>8200<br/>ALLOWED_TENANTS=demo,aoy,lbk63,ploy"]
     SMLDemo["SML database: demo"]
     SMLAoy["SML database: aoy"]
     SMLLanboon["SML database: lbk63<br/>chk562595.totddns.com:12831"]
+    SMLPloy["SML database: ploy<br/>same PostgreSQL service as AOY"]
 
     DemoBE -->|"app_settings: sml.database=demo"| SMLAPI
     AoyBE -->|"app_settings: sml.database=aoy"| SMLAPI
     LanboonBE -->|"app_settings: sml.database=lbk63"| SMLAPI
+    PloyBE -->|"runtime: sml.database=ploy"| SMLAPI
     SMLAPI --> SMLDemo
     SMLAPI --> SMLAoy
     SMLAPI --> SMLLanboon
+    SMLAPI --> SMLPloy
   end
 
   Cloudflare["Cloudflare proxied DNS / HTTPS"]
@@ -90,9 +102,11 @@ flowchart TB
   Edge -->|"Host: nexflow.nextstep-soft.com"| DemoFE
   Edge -->|"Host: nexflow-aoy.nextstep-soft.com"| AoyFE
   Edge -->|"Host: nextflow-lanboon.nextstep-soft.com"| LanboonFE
+  Edge -->|"Host: nexflow-ploy.nextstep-soft.com"| PloyFE
   Edge -->|"demo /api, /health, /webhook"| DemoBE
   Edge -->|"aoy /api, /health, /webhook"| AoyBE
   Edge -->|"lanboon /api, /health, /webhook"| LanboonBE
+  Edge -->|"ploy /api, /health, /webhook"| PloyBE
 
   Script --> Release
   Release -->|"edge config"| Edge
@@ -102,6 +116,8 @@ flowchart TB
   Release -->|"Docker build context"| AoyBE
   Release -->|"Docker build context"| LanboonFE
   Release -->|"Docker build context"| LanboonBE
+  Release -->|"Docker build context"| PloyFE
+  Release -->|"Docker build context"| PloyBE
 ```
 
 ## Standard Code Deploy
@@ -139,6 +155,7 @@ Deploy only one instance when the change is intentionally isolated:
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target demo
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target aoy
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target lanboon
+NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --target ploy
 NX_PASS='<server-password>' python scripts/deploy_nextstep_instances.py --ref d52de63
 ```
 
@@ -211,6 +228,17 @@ PostgreSQL/SML server and Nexflow reads it through `sml-api-bybos`.
    - set `SHOPEE_SML_PROVIDER=NEXT`, `SHOPEE_SML_CONFIG_FILE=SMLConfigNEXT.xml`
    - set `SHOPEE_SML_DATABASE=<tenant-or-db-name>`
    - keep Shopee/LINE disabled until configured per customer
+
+   Use the fail-closed bootstrap command for a newly registered target. It
+   refuses an existing folder, container, volume, occupied port, or a server
+   with less than 8 GiB free. It also creates unique runtime/admin secrets and
+   verifies that the fresh tenant has no bills, Shopee connections, mappings,
+   or Catalog rows.
+
+   ```bash
+   NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py \
+     --target <shop-key> --bootstrap-runtime --ref <reviewed-commit>
+   ```
 
 6. Add the customer tenant to `/mnt/data/nextstep-node-2/sml-api-bybos-nexflow/.env`
    and `nexflow-sml-api-bybos.runtime.env`:
@@ -291,6 +319,42 @@ sml.config_file=SMLConfigNEXT.xml
 sml.rest_base_url=http://172.17.0.1:8200
 Shopee/LINE settings are customer-specific and start unconfigured
 ```
+
+Current Ploy staging status (2026-08-27):
+
+```text
+PUBLIC_BASE_URL=https://nexflow-ploy.nextstep-soft.com
+sml.database=ploy
+sml.provider=NEXT
+sml.config_file=SMLConfigNEXT.xml
+sml.rest_base_url=http://172.17.0.1:8200
+local Nexflow DB: 1 bootstrap admin, 0 bills, 0 Shopee connections,
+                  0 marketplace mappings, 0 Catalog rows
+```
+
+Ploy is an isolated test tenant; no AOY database, user, OAuth token, order,
+mapping, or setting was copied. The SML Gateway can connect to database `ploy`,
+but its product endpoint currently returns zero rows. The first unit-Catalog
+generation therefore failed closed and activated nothing. Keep these flags off
+until the SML team has populated products and `ic_unit_use`, then sync and
+validate a generation before enabling conversion:
+
+```text
+MARKETPLACE_UNIT_CATALOG_ENABLED=false
+MARKETPLACE_CONVERSION_MODE=off
+MARKETPLACE_RESERVATION_LEDGER_ENABLED=false
+SHOPEE_OPEN_API_ENABLED=false
+ENABLE_SHOPEE_REALTIME_OPS=false
+SHOPEE_AUTO_SML_ENABLED=false
+SHOPEE_AUTO_SML_CANCEL_ENABLED=false
+SHOPEE_SET_STOCK_ENABLED=false
+SML_SET_PRODUCT_EXPANSION_ENABLED=false
+```
+
+The edge Host route already passes internal smoke tests. Public DNS is still a
+release gate: add proxied CNAME `nexflow-ploy` to
+`9bd809c61265.sn.mynetname.net` before public browser QA. Rotate/hand off the
+Ploy bootstrap admin through an approved secure channel before users sign in.
 
 ## Central Shopee Gateway
 
