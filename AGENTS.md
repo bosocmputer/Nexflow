@@ -17,7 +17,7 @@ Read this section first when resuming work in a new session.
   `966b027` (`fix: restore marketplace master conversion safely`). Their
   runtime settings and feature gates remain tenant-scoped; aligning code did
   not enable AOY features in Demo or Lanboon. Ploy is deployed independently at
-  `8dd7f2c`; the shared server release/edge checkout is also `8dd7f2c` and
+  `8dd7f2c`; the shared server release/edge checkout is `f700a9c` and
   retains the four-tenant registry. The Central
   SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
@@ -552,6 +552,26 @@ Current AOY UAT scope:
     `pre-deploy-20260828-030851.sql.gz`. Commit `8dd7f2c` also fixes deploy
     prechecks for intentionally root-owned mode-0700 tenant runtime folders
     without weakening their permissions.
+37. Ploy's Shopee OAuth HTTP 502 incident is resolved as of 2026-08-28. The
+    Central Shopee Gateway process had not reloaded the committed four-tenant
+    registry, so its database had no `ploy` tenant even though Ploy's runtime
+    feature gate and HMAC identity were present. After registration, the first
+    private-backend route also exposed that `http://172.17.0.1:8113` was
+    unreachable from the gateway container because Ploy's host port is
+    intentionally loopback-only. Commits `6f319cf` and `f700a9c` make tenant
+    deploys verify the exact gateway registration, restart only when it is
+    missing or stale, force-recreate the gateway when deploying its mounted
+    registry, and route new private tenants over the shared Docker network.
+    Ploy is now registered as
+    `http://nexflow-ploy-backend:8090`; both containers share
+    `nexflow-shopee-gateway_default`. The exact authenticated
+    `POST /api/shopee-api/auth-url` returned HTTP 200 with a signed Shopee auth
+    URL and the central callback, while three consecutive route-discovery calls
+    returned HTTP 200 and the severe-log scans were clean. The Ploy application
+    container remains pinned at `8dd7f2c`; only the shared release checkout and
+    Central Shopee Gateway were refreshed to `f700a9c`. No Shopee shop was
+    connected during verification; the admin must still complete Shopee's own
+    login/authorization screen.
 
 Known deferred or incomplete validation:
 

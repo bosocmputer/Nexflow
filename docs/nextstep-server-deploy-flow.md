@@ -404,6 +404,15 @@ shop before changing the global Shopee callback. See
 `docs/shopee-gateway-runbook.md` for Shopee Console values, provisioning,
 canary checks, and direct-mode rollback.
 
+Every registry row also carries `gateway_backend_url`. New private tenants use
+the backend container DNS name on `nexflow-shopee-gateway_default`, for example
+`http://nexflow-ploy-backend:8090`; do not point the gateway at a host port that
+is bound to `127.0.0.1`. A tenant deploy verifies the exact enabled tenant row,
+public base URL, and backend URL in the gateway database. If registration is
+missing or stale it restarts the gateway and waits for the committed registry
+to sync. Gateway deploys force-recreate the container because the registry is a
+mounted file and an unchanged image alone does not reload it.
+
 ## Smoke Checks
 
 ```bash
