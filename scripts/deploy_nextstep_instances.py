@@ -793,6 +793,49 @@ def provision_target_gateway_identity(target: Target) -> None:
     )
 
 
+def gateway_registration_sql(target: Target) -> str:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", target.name):
+        fail(f"invalid gateway tenant slug: {target.name!r}")
+    expected_backend_url = f"http://172.17.0.1:{target.backend_port}"
+    public_url = target.public_url.replace("'", "''")
+    return (
+        "SELECT COUNT(*) FROM tenants "
+        f"WHERE slug='{target.name}' AND enabled=TRUE "
+        f"AND public_base_url='{public_url}' "
+        f"AND backend_url='{expected_backend_url}'"
+    )
+
+
+def ensure_target_gateway_registration(target: Target) -> None:
+    sql = gateway_registration_sql(target)
+    script = f"""
+set -euo pipefail
+check_registration() {{
+  docker exec {shlex.quote(GATEWAY_POSTGRES_CONTAINER)} \
+    psql -U nexflow_gateway -d nexflow_shopee_gateway -Atc {shlex.quote(sql)}
+}}
+if [ "$(check_registration)" = "1" ]; then
+  echo 'Shopee gateway tenant registration already current for {target.name}.'
+  exit 0
+fi
+echo 'Shopee gateway tenant registration is missing or stale for {target.name}; restarting gateway to sync the committed registry.'
+docker restart {shlex.quote(GATEWAY_CONTAINER)} >/dev/null
+for attempt in $(seq 1 60); do
+  if docker exec {shlex.quote(GATEWAY_CONTAINER)} \
+       sh -lc 'wget -qO- http://127.0.0.1:8091/health' 2>/dev/null \
+       | grep -q '"status":"ok"' \
+     && [ "$(check_registration)" = "1" ]; then
+    echo 'Shopee gateway tenant registration synced for {target.name}.'
+    exit 0
+  fi
+  sleep 1
+done
+echo 'Shopee gateway did not register {target.name} from the committed registry.' >&2
+exit 1
+"""
+    sudo(script, label=f"verify {target.name} Shopee gateway registration", timeout=90)
+
+
 def deploy_target(target: Target) -> None:
     # Fresh tenant runtimes are intentionally root-owned mode 0700. Keep the
     # precheck inside the same privileged boundary as the later compose and
@@ -809,6 +852,7 @@ def deploy_target(target: Target) -> None:
     )
     ensure_instance_compose(target)
     provision_target_gateway_identity(target)
+    ensure_target_gateway_registration(target)
     snapshot_target_sales_counts(target, "before")
     backup_target(target)
     sanitize_target_disabled_env(target)

@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from scripts import deploy_nextstep_instances as deploy
@@ -54,6 +55,29 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             "wget -qO- http://nexflow-shopee-gateway:8091/health",
             script,
         )
+
+    def test_gateway_registration_restarts_only_when_committed_tenant_is_missing(self) -> None:
+        target = self.make_target()
+        sql = deploy.gateway_registration_sql(target)
+
+        self.assertIn("slug='aoy'", sql)
+        self.assertIn("public_base_url='https://nexflow-aoy.example.com'", sql)
+        self.assertIn("backend_url='http://172.17.0.1:8111'", sql)
+
+        with patch.object(deploy, "sudo") as sudo:
+            deploy.ensure_target_gateway_registration(target)
+
+        script = sudo.call_args.args[0]
+        self.assertIn("docker restart nexflow-shopee-gateway", script)
+        self.assertIn("$(check_registration)", script)
+        self.assertEqual(sudo.call_args.kwargs["label"], "verify aoy Shopee gateway registration")
+
+    def test_gateway_registration_sql_escapes_registry_url(self) -> None:
+        target = replace(self.make_target(), public_url="https://nexflow.example.com/o'hare")
+
+        sql = deploy.gateway_registration_sql(target)
+
+        self.assertIn("public_base_url='https://nexflow.example.com/o''hare'", sql)
 
     def test_fresh_runtime_compose_is_isolated_and_local_only(self) -> None:
         target = self.make_target()
@@ -134,6 +158,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             patch.object(deploy, "ssh", return_value='{"status":"ok"}'),
             patch.object(deploy, "ensure_instance_compose"),
             patch.object(deploy, "provision_target_gateway_identity"),
+            patch.object(deploy, "ensure_target_gateway_registration") as registration,
             patch.object(deploy, "snapshot_target_sales_counts"),
             patch.object(deploy, "backup_target"),
             patch.object(deploy, "sanitize_target_disabled_env"),
@@ -145,6 +170,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertEqual(precheck.kwargs["label"], "precheck aoy")
         self.assertIn("test -d /srv/nexflow-aoy", precheck.args[0])
         self.assertIn("test -f /srv/nexflow-aoy/.env", precheck.args[0])
+        registration.assert_called_once_with(target)
 
 
 if __name__ == "__main__":
