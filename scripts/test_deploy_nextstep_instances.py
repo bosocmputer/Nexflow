@@ -79,6 +79,29 @@ class DeployNextstepInstancesTest(unittest.TestCase):
 
         self.assertIn("public_base_url='https://nexflow.example.com/o''hare'", sql)
 
+    def test_gateway_registration_prefers_private_docker_network_url(self) -> None:
+        target = replace(
+            self.make_target(),
+            gateway_backend_url="http://nexflow-aoy-backend:8090",
+        )
+
+        sql = deploy.gateway_registration_sql(target)
+
+        self.assertIn("backend_url='http://nexflow-aoy-backend:8090'", sql)
+
+    def test_gateway_deploy_recreates_service_to_reload_mounted_registry(self) -> None:
+        with (
+            patch.object(deploy, "ensure_gateway_runtime"),
+            patch.object(deploy, "backup_gateway"),
+            patch.object(deploy, "sudo", side_effect=["", '{"status":"ok"}']) as sudo,
+        ):
+            deploy.deploy_gateway()
+
+        self.assertIn(
+            "docker compose up -d --build --force-recreate gateway",
+            sudo.call_args_list[0].args[0],
+        )
+
     def test_fresh_runtime_compose_is_isolated_and_local_only(self) -> None:
         target = self.make_target()
 

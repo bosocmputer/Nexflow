@@ -63,6 +63,7 @@
       "backend_port": 8113,
       "postgres_port": 5443,
       "public_url": "https://nexflow-ploy.nextstep-soft.com",
+      "gateway_backend_url": "http://nexflow-ploy-backend:8090",
       "sml_tenant": "ploy",
       "sml_host": "postgresql",
       "sml_port": 5432,

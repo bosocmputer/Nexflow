@@ -139,6 +139,7 @@ def command_add(args: argparse.Namespace) -> None:
         "backend_port": int(backend_port),
         "postgres_port": int(postgres_port),
         "public_url": f"https://{args.hostname.strip().lower()}",
+        "gateway_backend_url": f"http://{folder}-backend:8090",
         "sml_tenant": tenant,
         "sml_host": args.sml_host.strip(),
         "sml_port": int(args.sml_port),

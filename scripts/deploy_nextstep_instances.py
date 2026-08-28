@@ -94,6 +94,7 @@ class Target:
     folder: str
     sml_tenant: str
     backend_extra_hosts: tuple[str, ...]
+    gateway_backend_url: str = ""
 
 
 def render_fresh_instance_compose(target: Target) -> str:
@@ -138,6 +139,7 @@ def load_targets(registry_path: Path = REGISTRY_PATH) -> dict[str, Target]:
                 for value in item.get("backend_extra_hosts", [])
                 if str(value).strip()
             ),
+            gateway_backend_url=str(item.get("gateway_backend_url") or "").strip(),
         )
         values = {
             "name": target.name,
@@ -750,7 +752,7 @@ def deploy_gateway() -> None:
     ensure_gateway_runtime()
     backup_gateway()
     sudo(
-        f"cd {shlex.quote(GATEWAY_DIR)} && docker compose up -d --build",
+        f"cd {shlex.quote(GATEWAY_DIR)} && docker compose up -d --build --force-recreate gateway",
         label="docker up Shopee gateway",
         timeout=1200,
     )
@@ -796,13 +798,14 @@ def provision_target_gateway_identity(target: Target) -> None:
 def gateway_registration_sql(target: Target) -> str:
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", target.name):
         fail(f"invalid gateway tenant slug: {target.name!r}")
-    expected_backend_url = f"http://172.17.0.1:{target.backend_port}"
+    expected_backend_url = target.gateway_backend_url or f"http://172.17.0.1:{target.backend_port}"
     public_url = target.public_url.replace("'", "''")
+    backend_url = expected_backend_url.replace("'", "''")
     return (
         "SELECT COUNT(*) FROM tenants "
         f"WHERE slug='{target.name}' AND enabled=TRUE "
         f"AND public_base_url='{public_url}' "
-        f"AND backend_url='{expected_backend_url}'"
+        f"AND backend_url='{backend_url}'"
     )
 
 
