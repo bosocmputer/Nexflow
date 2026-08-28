@@ -9,16 +9,16 @@
 
 ---
 
-## 0. Current UAT Handoff (2026-08-27)
+## 0. Current UAT Handoff (2026-08-28)
 
 Read this section first when resuming work in a new session.
 
 - Demo, AOY, and Lanboon now run the same application feature baseline
   `966b027` (`fix: restore marketplace master conversion safely`). Their
   runtime settings and feature gates remain tenant-scoped; aligning code did
-  not enable AOY features in Demo or Lanboon. Ploy remains on its isolated
-  bootstrap application commit `5497558`. The shared server release/edge
-  checkout is `c74ec6a`, which retains the four-tenant registry. The Central
+  not enable AOY features in Demo or Lanboon. Ploy is deployed independently at
+  `8dd7f2c`; the shared server release/edge checkout is also `8dd7f2c` and
+  retains the four-tenant registry. The Central
   SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
 - Tenant databases, SML tenants, credentials, channel routes, feature flags, and
@@ -44,6 +44,15 @@ Read this section first when resuming work in a new session.
     because its saved unit is no longer valid for the mapped item.
   - Lanboon: application code updated, but all five marketplace feature gates
     remain disabled pending tenant-specific preflight.
+  - Ploy: AOY-equivalent global Marketplace/Shopee capabilities are exposed,
+    including Shopee Gateway/Open API, realtime operations, Auto SML,
+    cancellation documents, set-stock, set-product expansion, unit Catalog,
+    and reservation ledger. Conversion intentionally remains `shadow` because
+    SML database `ploy` still has zero products/units and no active Catalog
+    generation; changing it to `active` would correctly fail backend startup.
+    Ploy also has no Shopee connection, per-shop stock/Auto SML settings, LINE
+    recipient, mapping, or bill yet, so no external automation is currently
+    capable of firing.
 - Pre-deploy database backups from 2026-08-25 are stored under
   `/mnt/data/nextstep-node-2/nexflow-backups`: Demo
   `pre-deploy-20260825-080734.sql.gz`, AOY
@@ -520,6 +529,29 @@ Current AOY UAT scope:
     generating a distinct 32+ character password per tenant. Never replace this
     with a shared literal such as `admin1234` or commit an initial password to
     source control.
+36. Ploy AOY-equivalent capability exposure is deployed at `8dd7f2c` on
+    2026-08-28. Runtime now has `SHOPEE_OPEN_API_ENABLED=true` in Central Gateway
+    mode, Shopee realtime, Auto SML, automatic cancellation, cancellation
+    documents, set-stock, set-product expansion, Marketplace unit Catalog, and
+    reservation ledger enabled globally. Product Master stays active and stock
+    availability uses `net_sale_order_v1` with the approved gateway contract.
+    `MARKETPLACE_CONVERSION_MODE=shadow` is the sole intentional Marketplace
+    activation exception: SML `ploy` readiness is healthy but both product and
+    stock-Catalog feeds still return zero rows, so Catalog/mapping/reservation
+    readiness remains false. The isolated Nexflow DB still contains zero bills,
+    Shopee connections, mappings, active Catalog generations, stock/Auto SML
+    shop settings, and LINE recipients. Therefore these menus are available for
+    setup, but no Auto SML, cancellation, or stock write can run before an admin
+    connects Ploy's own Shopee shop and completes the tenant-specific routes,
+    Catalog sync, mapping, Dry-run, and LINE setup. Health passed for Ploy,
+    Central Shopee Gateway, and SML tenant `ploy`; public `/login`, `/health`,
+    `/shopee-operations`, `/settings/shopee-stock`, and `/settings/catalog`
+    returned HTTP 200 with no recent severe backend log. Backups are
+    `.env.pre-feature-enable-20260828-030634`,
+    `pre-feature-enable-20260828-030634.sql.gz`, and
+    `pre-deploy-20260828-030851.sql.gz`. Commit `8dd7f2c` also fixes deploy
+    prechecks for intentionally root-owned mode-0700 tenant runtime folders
+    without weakening their permissions.
 
 Known deferred or incomplete validation:
 
@@ -775,4 +807,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-27 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
+Last updated: 2026-08-28 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443

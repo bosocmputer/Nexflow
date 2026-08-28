@@ -1,6 +1,6 @@
 # Nexflow NextStep Production Deploy Flow
 
-Updated: 2026-08-27
+Updated: 2026-08-28
 
 This is the current production server topology. The old `192.168.2.109` /
 ngrok deployment is DEV/legacy only and must not be used for production deploys.
@@ -35,10 +35,10 @@ Each Nexflow instance has its own `.env`, Docker Compose file, Postgres volume,
 `app_settings`, LINE/Shopee settings, and user data. Code should normally be the
 same commit on all production instances.
 
-Current application feature baseline (2026-08-27): Demo, AOY, and Lanboon run
+Current application feature baseline (2026-08-28): Demo, AOY, and Lanboon run
 `966b027`; each tenant keeps its own feature flags and configuration. Ploy runs
-its isolated bootstrap commit `5497558`. The shared release/edge checkout is
-`c74ec6a` because it contains the complete four-tenant registry. A shared code
+its isolated capability rollout `8dd7f2c`. The shared release/edge checkout is
+also `8dd7f2c` and contains the complete four-tenant registry. A shared code
 baseline does not authorize copying or enabling another tenant's settings.
 
 ## Diagram
@@ -329,7 +329,7 @@ sml.rest_base_url=http://172.17.0.1:8200
 Shopee/LINE settings are customer-specific and start unconfigured
 ```
 
-Current Ploy staging status (2026-08-27):
+Current Ploy staging status (2026-08-28):
 
 ```text
 PUBLIC_BASE_URL=https://nexflow-ploy.nextstep-soft.com
@@ -342,23 +342,34 @@ local Nexflow DB: 1 bootstrap admin, 0 bills, 0 Shopee connections,
 ```
 
 Ploy is an isolated test tenant; no AOY database, user, OAuth token, order,
-mapping, or setting was copied. The SML Gateway can connect to database `ploy`,
-but its product endpoint currently returns zero rows. The first unit-Catalog
-generation therefore failed closed and activated nothing. Keep these flags off
-until the SML team has populated products and `ic_unit_use`, then sync and
-validate a generation before enabling conversion:
+mapping, or setting was copied. Its global feature surface is now aligned with
+AOY where safe, so admins can configure Ploy's own connection and routes:
 
 ```text
-MARKETPLACE_UNIT_CATALOG_ENABLED=false
-MARKETPLACE_CONVERSION_MODE=off
-MARKETPLACE_RESERVATION_LEDGER_ENABLED=false
-SHOPEE_OPEN_API_ENABLED=false
-ENABLE_SHOPEE_REALTIME_OPS=false
-SHOPEE_AUTO_SML_ENABLED=false
-SHOPEE_AUTO_SML_CANCEL_ENABLED=false
-SHOPEE_SET_STOCK_ENABLED=false
-SML_SET_PRODUCT_EXPANSION_ENABLED=false
+MARKETPLACE_UNIT_CATALOG_ENABLED=true
+MARKETPLACE_CONVERSION_MODE=shadow
+MARKETPLACE_RESERVATION_LEDGER_ENABLED=true
+SHOPEE_OPEN_API_ENABLED=true
+ENABLE_SHOPEE_REALTIME_OPS=true
+SHOPEE_AUTO_SML_ENABLED=true
+SHOPEE_AUTO_SML_CANCEL_ENABLED=true
+SHOPEE_SET_STOCK_ENABLED=true
+SML_SET_PRODUCT_EXPANSION_ENABLED=true
 ```
+
+The SML Gateway can connect to database `ploy`, but its product and stock-
+Catalog endpoints still return zero rows. There is no active generation and
+conversion readiness is false for Catalog, mapping, and reservations. Do not
+change conversion from `shadow` to `active` until the SML team has populated
+products and `ic_unit_use`, a generation activates, and both reconciliation
+jobs pass. The backend intentionally refuses to start with active conversion
+before those gates pass.
+
+Ploy currently has no Shopee connection, per-shop stock setting, per-shop Auto
+SML setting, LINE recipient, mapping, or bill. Global enablement exposes the
+configuration UI but cannot create an external write by itself. Connect Ploy's
+own Shopee shop, configure sale/cancellation routes and LINE, sync the Catalog,
+map products, and pass Dry-run before enabling each shop's automation.
 
 The public DNS, origin TLS certificate, HTTP-to-HTTPS redirect, edge Host route,
 `/login`, and `/health` now pass. Ploy's bootstrap administrator has been
