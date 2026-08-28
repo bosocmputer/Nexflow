@@ -794,7 +794,10 @@ def provision_target_gateway_identity(target: Target) -> None:
 
 
 def deploy_target(target: Target) -> None:
-    ssh(
+    # Fresh tenant runtimes are intentionally root-owned mode 0700. Keep the
+    # precheck inside the same privileged boundary as the later compose and
+    # backup operations instead of weakening the runtime directory permissions.
+    sudo(
         f"test -d {shlex.quote(target.remote)} && test -f {shlex.quote(target.remote)}/docker-compose.yml && test -f {shlex.quote(target.remote)}/.env",
         label=f"precheck {target.name}",
         timeout=30,

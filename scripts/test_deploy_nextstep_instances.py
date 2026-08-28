@@ -126,6 +126,26 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         health_script = ssh.call_args.args[0]
         self.assertIn("seq 1 60", health_script)
 
+    def test_deploy_precheck_supports_private_bootstrap_runtime_directory(self) -> None:
+        target = self.make_target()
+
+        with (
+            patch.object(deploy, "sudo") as sudo,
+            patch.object(deploy, "ssh", return_value='{"status":"ok"}'),
+            patch.object(deploy, "ensure_instance_compose"),
+            patch.object(deploy, "provision_target_gateway_identity"),
+            patch.object(deploy, "snapshot_target_sales_counts"),
+            patch.object(deploy, "backup_target"),
+            patch.object(deploy, "sanitize_target_disabled_env"),
+            patch.object(deploy, "connect_target_to_gateway"),
+        ):
+            deploy.deploy_target(target)
+
+        precheck = sudo.call_args_list[0]
+        self.assertEqual(precheck.kwargs["label"], "precheck aoy")
+        self.assertIn("test -d /srv/nexflow-aoy", precheck.args[0])
+        self.assertIn("test -f /srv/nexflow-aoy/.env", precheck.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()
