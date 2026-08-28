@@ -360,10 +360,17 @@ SHOPEE_SET_STOCK_ENABLED=false
 SML_SET_PRODUCT_EXPANSION_ENABLED=false
 ```
 
-The edge Host route already passes internal smoke tests. Public DNS is still a
-release gate: add proxied CNAME `nexflow-ploy` to
-`9bd809c61265.sn.mynetname.net` before public browser QA. Rotate/hand off the
-Ploy bootstrap admin through an approved secure channel before users sign in.
+The public DNS, origin TLS certificate, HTTP-to-HTTPS redirect, edge Host route,
+`/login`, and `/health` now pass. Ploy's bootstrap administrator has been
+rotated to `admin@nexflow.local` with a unique random password delivered through
+the operator's local clipboard. Its pre-rotation environment and database
+backups are retained under the Ploy backup folder.
+
+Every future fresh tenant uses `admin@nexflow.local` as the bootstrap email and
+generates a different 32+ character password at deploy time. Never hard-code or
+reuse `admin1234` (or another shared password) across tenants. Keep the generated
+secret only in the mode-0600 server runtime environment, hand it off through an
+approved secure channel, and rotate it after the first login.
 
 ## Central Shopee Gateway
 

@@ -78,6 +78,8 @@ class DeployNextstepInstancesTest(unittest.TestCase):
 
         rendered = deploy.render_fresh_instance_env(target, secrets)
 
+        self.assertIn("BOOTSTRAP_ADMIN_EMAIL=admin@nexflow.local", rendered)
+        self.assertNotIn("BOOTSTRAP_ADMIN_EMAIL=admin@aoy.nexflow.local", rendered)
         self.assertIn("PUBLIC_BASE_URL=https://nexflow-aoy.example.com", rendered)
         self.assertIn("SHOPEE_SML_DATABASE=aoy", rendered)
         self.assertIn("SHOPEE_GATEWAY_TENANT=aoy", rendered)

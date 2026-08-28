@@ -105,7 +105,7 @@ lanboon:
   Postgres:  nexflow-lanboon-postgres  :5442
   SML DB:    lbk63
 
-ploy (isolated test tenant; public DNS pending):
+ploy (isolated test tenant; public HTTPS active):
   Folder:    /mnt/data/nextstep-node-2/nexflow-ploy
   Public:    https://nexflow-ploy.nextstep-soft.com
   Backend:   nexflow-ploy-backend   :127.0.0.1:8113
@@ -120,6 +120,13 @@ sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy,lbk63,ploy
 The old `192.168.2.109` / ngrok deployment is DEV/legacy only. Production deploys
 use `scripts/deploy_nextstep_instances.py`; see
 `docs/nextstep-server-deploy-flow.md`.
+
+Ploy's current bootstrap administrator is `admin@nexflow.local`. Its unique
+random password was rotated and delivered through the local operator clipboard;
+the previous credential is invalid. Fresh tenants use the same bootstrap email
+but always receive a different generated 32+ character password. Shared literal
+passwords such as `admin1234` are prohibited from runtime templates and source
+control.
 
 ---
 

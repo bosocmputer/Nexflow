@@ -507,6 +507,19 @@ Current AOY UAT scope:
     endpoints, all four SML tenant readiness checks, edge Host routes, and the
     Central Shopee Gateway passed; recent Demo/Lanboon severe-log scans were
     clean.
+35. Ploy's bootstrap administrator was rotated on 2026-08-28 after public DNS,
+    origin TLS, and reverse-proxy routing became healthy. The current login
+    email is `admin@nexflow.local`; its new unique random password was verified
+    through the trusted internal edge, copied to the local operator clipboard,
+    and never printed or committed. The previous email/password now returns
+    HTTP 401. Runtime `.env` remains mode 0600 and matches the rotated account.
+    Rollback artifacts are
+    `.env.pre-admin-rotate-20260828-025331` and
+    `pre-admin-rotate-20260828-025331.sql.gz` under the Ploy backup folder.
+    Future fresh-tenant bootstrap also uses `admin@nexflow.local`, but continues
+    generating a distinct 32+ character password per tenant. Never replace this
+    with a shared literal such as `admin1234` or commit an initial password to
+    source control.
 
 Known deferred or incomplete validation:
 

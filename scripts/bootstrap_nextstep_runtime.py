@@ -108,7 +108,7 @@ def render_fresh_instance_env(target: RuntimeTarget, runtime: BootstrapSecrets) 
 PORT=8090
 ENV=production
 
-BOOTSTRAP_ADMIN_EMAIL=admin@{target.name}.nexflow.local
+BOOTSTRAP_ADMIN_EMAIL=admin@nexflow.local
 BOOTSTRAP_ADMIN_NAME={target.name.title()} Admin
 BOOTSTRAP_ADMIN_PASSWORD={runtime.admin_password}
 
