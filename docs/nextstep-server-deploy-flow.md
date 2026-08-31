@@ -1,6 +1,6 @@
 # Nexflow NextStep Production Deploy Flow
 
-Updated: 2026-08-28
+Updated: 2026-08-31
 
 This is the current production server topology. The old `192.168.2.109` /
 ngrok deployment is DEV/legacy only and must not be used for production deploys.
@@ -12,7 +12,7 @@ ngrok deployment is DEV/legacy only and must not be used for production deploys.
 | demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `127.0.0.1:16323 -> 80` | `8110 -> 8090` | `5440 -> 5432` | `demo` |
 | aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `127.0.0.1:16324 -> 80` | `8111 -> 8090` | `5441 -> 5432` | `aoy` |
 | lanboon | `https://nextflow-lanboon.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-lanboon` | `127.0.0.1:16325 -> 80` | `8112 -> 8090` | `5442 -> 5432` | `lbk63` |
-| ploy | `https://nexflow-ploy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-ploy` | `127.0.0.1:16326 -> 80` | `127.0.0.1:8113 -> 8090` | `127.0.0.1:5443 -> 5432` | `ploy` |
+| ploy | `https://nexflow-ploy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-ploy` | `127.0.0.1:16326 -> 80` | `127.0.0.1:8113 -> 8090` | `127.0.0.1:5443 -> 5432` | `ploy_test` |
 
 Public entrypoint:
 
@@ -28,7 +28,7 @@ Shared SML gateway:
 ```text
 container: nexflow-sml-api-bybos
 port:      8200
-tenants:   demo,aoy,lbk63,ploy
+tenants:   demo,aoy,lbk63,ploy,ploy_test
 ```
 
 Each Nexflow instance has its own `.env`, Docker Compose file, Postgres volume,
@@ -87,16 +87,16 @@ flowchart TB
       PloyBE --> PloyDB
     end
 
-    SMLAPI["nexflow-sml-api-bybos<br/>8200<br/>ALLOWED_TENANTS=demo,aoy,lbk63,ploy"]
+    SMLAPI["nexflow-sml-api-bybos<br/>8200<br/>ALLOWED_TENANTS=demo,aoy,lbk63,ploy,ploy_test"]
     SMLDemo["SML database: demo"]
     SMLAoy["SML database: aoy"]
     SMLLanboon["SML database: lbk63<br/>chk562595.totddns.com:12831"]
-    SMLPloy["SML database: ploy<br/>same PostgreSQL service as AOY"]
+    SMLPloy["SML database: ploy_test<br/>same internal PostgreSQL service as the placeholder ploy DB"]
 
     DemoBE -->|"app_settings: sml.database=demo"| SMLAPI
     AoyBE -->|"app_settings: sml.database=aoy"| SMLAPI
     LanboonBE -->|"app_settings: sml.database=lbk63"| SMLAPI
-    PloyBE -->|"runtime: sml.database=ploy"| SMLAPI
+    PloyBE -->|"runtime: sml.database=ploy_test"| SMLAPI
     SMLAPI --> SMLDemo
     SMLAPI --> SMLAoy
     SMLAPI --> SMLLanboon
@@ -290,7 +290,8 @@ PostgreSQL/SML server and Nexflow reads it through `sml-api-bybos`.
     - `/dashboard`
     - `/nextstep-marketplace`
     - local Nexflow DB has no bills from other shops
-    - `app_settings.sml.database` equals the customer tenant
+    - the resolved runtime SML tenant equals the customer tenant, and no stale
+      `app_settings.sml.database` row overrides the deployment `.env`
 
 ## Per-Instance Config
 
@@ -329,11 +330,11 @@ sml.rest_base_url=http://172.17.0.1:8200
 Shopee/LINE settings are customer-specific and start unconfigured
 ```
 
-Current Ploy staging status (2026-08-28):
+Current Ploy staging status (2026-08-31):
 
 ```text
 PUBLIC_BASE_URL=https://nexflow-ploy.nextstep-soft.com
-sml.database=ploy
+sml.database=ploy_test
 sml.provider=NEXT
 sml.config_file=SMLConfigNEXT.xml
 sml.rest_base_url=http://172.17.0.1:8200
@@ -357,7 +358,7 @@ SHOPEE_SET_STOCK_ENABLED=true
 SML_SET_PRODUCT_EXPANSION_ENABLED=true
 ```
 
-The SML Gateway can connect to database `ploy`, but its product and stock-
+The SML Gateway can connect to database `ploy_test`, but its product and stock-
 Catalog endpoints still return zero rows. There is no active generation and
 conversion readiness is false for Catalog, mapping, and reservations. Do not
 change conversion from `shadow` to `active` until the SML team has populated
@@ -447,7 +448,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:16326/login
 curl -s -H 'x-tenant: demo' http://localhost:8200/health/ready
 curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
 curl -s -H 'x-tenant: lbk63' http://localhost:8200/health/ready
-curl -s -H 'x-tenant: ploy' http://localhost:8200/health/ready
+curl -s -H 'x-tenant: ploy_test' http://localhost:8200/health/ready
 ```
 
 ## Cloudflare / IT Routing

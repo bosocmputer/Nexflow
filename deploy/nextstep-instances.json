@@ -64,10 +64,10 @@
       "postgres_port": 5443,
       "public_url": "https://nexflow-ploy.nextstep-soft.com",
       "gateway_backend_url": "http://nexflow-ploy-backend:8090",
-      "sml_tenant": "ploy",
+      "sml_tenant": "ploy_test",
       "sml_host": "postgresql",
       "sml_port": 5432,
-      "sml_database": "ploy",
+      "sml_database": "ploy_test",
       "backend_extra_hosts": [
         "nextstep.iszai.com:10.121.20.83"
       ]

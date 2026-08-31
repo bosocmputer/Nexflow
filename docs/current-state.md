@@ -111,10 +111,10 @@ ploy (isolated test tenant; public HTTPS active):
   Backend:   nexflow-ploy-backend   :127.0.0.1:8113
   Frontend:  nexflow-ploy-frontend  :127.0.0.1:16326
   Postgres:  nexflow-ploy-postgres  :127.0.0.1:5443
-  SML DB:    ploy (reachable, product Catalog currently empty)
+  SML DB:    ploy_test (reachable, product Catalog currently empty)
 
 edge:      nexflow-edge          :6323  → host-based routing for production domains
-sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy,lbk63,ploy
+sml-api:   nexflow-sml-api-bybos  :8200  → tenants demo,aoy,lbk63,ploy,ploy_test
 ```
 
 The old `192.168.2.109` / ngrok deployment is DEV/legacy only. Production deploys
@@ -253,9 +253,11 @@ SML #1 REST (saleinvoice v4):  http://192.168.2.213:8086
 SML #2 (Shopee REST):    http://192.168.2.248:8080
   provider=SMLGOH  db=SML1_2026  cust_code=AR00004  wh=WH-01  shelf=SH-01
 
-sml-api-bybos:  http://172.17.0.1:8200  x-tenant from app_settings.sml.database
+sml-api-bybos:  http://172.17.0.1:8200  x-tenant from resolved tenant runtime
+  (deployment .env, unless a legacy app_settings.sml.database override exists)
   tenant aoy DB: nextstep.iszai.com:6843 / database aoy
   tenant lbk63 DB: chk562595.totddns.com:12831 / database lbk63
+  tenant ploy DB: internal PostgreSQL / database ploy_test
   provider/config: NEXT / SMLConfigNEXT.xml
   stock_request_url: http://nextstep.iszai.com:8093
   health/ready: {"database":"aoy","status":"ok"}

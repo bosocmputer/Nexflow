@@ -158,12 +158,16 @@ Location:  ~/sml-api-bybos/
 Port:      8200
 ```
 
-Nexflow backend calls `http://172.17.0.1:8200` (Docker host gateway) with header `x-tenant` from `app_settings.sml.database` to route to the customer SML DB.
+Nexflow backend calls `http://172.17.0.1:8200` (Docker host gateway) with header
+`x-tenant` from the resolved tenant runtime. The deployment `.env` supplies the
+default; a pre-existing `app_settings.sml.database` row overrides it at startup,
+so migrations must update or remove any stale override explicitly.
 
 | Header | Value | DB |
 | --- | --- | --- |
 | `x-tenant` | `aoy` | `sml-api-bybos` tenant `aoy` |
 | `x-tenant` | `lbk63` | `chk562595.totddns.com:12831/lbk63` |
+| `x-tenant` | `ploy_test` | internal PostgreSQL database `ploy_test` |
 
 Current Aoy tenant config:
 
@@ -198,6 +202,9 @@ curl -s -H 'x-tenant: aoy' http://localhost:8200/health/ready
 
 curl -s -H 'x-tenant: lbk63' http://localhost:8200/health/ready
 # {"database":"lbk63","status":"ok"}
+
+curl -s -H 'x-tenant: ploy_test' http://localhost:8200/health/ready
+# {"database":"ploy_test","status":"ok"}
 
 curl -s -o /dev/null -w '%{http_code}' http://nextstep.iszai.com:8093/
 # 200

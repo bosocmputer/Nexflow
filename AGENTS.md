@@ -9,7 +9,7 @@
 
 ---
 
-## 0. Current UAT Handoff (2026-08-28)
+## 0. Current UAT Handoff (2026-08-31)
 
 Read this section first when resuming work in a new session.
 
@@ -48,7 +48,7 @@ Read this section first when resuming work in a new session.
     including Shopee Gateway/Open API, realtime operations, Auto SML,
     cancellation documents, set-stock, set-product expansion, unit Catalog,
     and reservation ledger. Conversion intentionally remains `shadow` because
-    SML database `ploy` still has zero products/units and no active Catalog
+    SML database `ploy_test` still has zero products/units and no active Catalog
     generation; changing it to `active` would correctly fail backend startup.
     Ploy also has no Shopee connection, per-shop stock/Auto SML settings, LINE
     recipient, mapping, or bill yet, so no external automation is currently
@@ -572,6 +572,25 @@ Current AOY UAT scope:
     Central Shopee Gateway were refreshed to `f700a9c`. No Shopee shop was
     connected during verification; the admin must still complete Shopee's own
     login/authorization screen.
+38. Ploy's active SML tenant was switched from the empty placeholder database
+    `ploy` to the SML-team database `ploy_test` on 2026-08-31. The committed
+    instance registry and Ploy runtime now use `SHOPEE_SML_DATABASE=ploy_test`;
+    there is no `app_settings.sml.database` override, so runtime cannot be
+    silently redirected to the old tenant. Central SML Gateway allowlists both
+    `ploy` and `ploy_test` during the rollback window and has explicit
+    `SML_DB_*_PLOY_TEST` connection settings copied from the same internal
+    PostgreSQL service. An authenticated Nexflow connection check returned
+    `configured=true`, `ready=true`, `status=ok`, and product lookup through
+    tenant `ploy_test` returned HTTP 200. Direct Product, stock-Catalog, and SI,
+    SR, ST, SIC, and EE document-format APIs all returned HTTP 200 with zero
+    rows, matching the SML team's intentionally empty schema. Ploy's isolated
+    Nexflow database remains at one admin and zero bills, Shopee connections,
+    mappings, and Catalog rows; conversion therefore remains `shadow` and no
+    external automation can fire. Demo, AOY, Lanboon, the old `ploy` rollback
+    tenant, and the public Ploy login all remained healthy. Backups are Ploy
+    `.env.bak.20260831-100436` and `pre-deploy-20260831-100436.sql.gz`, plus SML
+    Gateway `backups/pre-ploy-test-20260831-095952`; the stopped rollback
+    container is `nexflow-sml-api-bybos-pre-ploy-test-20260831-100312`.
 
 Known deferred or incomplete validation:
 
@@ -710,7 +729,7 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 9. **`app_settings` vs `.env`** — `/settings/instance` แก้ได้เฉพาะชื่อร้านและช่องทางติดต่อ. ค่า SML tenant/URL, public URL, Shopee gateway และ infrastructure อื่นจัดการผ่าน deployment runbook; ค่าเดิมใน `app_settings`/`.env` ยังเป็น runtime source และห้าม serialize ไปหน้า instance.
 
-10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy,lbk63,ploy`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through the tenant-scoped SML database setting (`demo`, `aoy`, `lbk63`, or `ploy`). The NextStep SQL uses `FROM ic_trans ic_qt`; `ic_qt` is an alias, not a physical table. Do not use the old `192.168.2.109` / ngrok deploy path for production.
+10. **sml-api-bybos** — current production gateway is `nexflow-sml-api-bybos` on `10.121.20.83:8200` with `ALLOWED_TENANTS=demo,aoy,lbk63,ploy,ploy_test`. Nexflow instances call `http://172.17.0.1:8200` and select tenant through the tenant-scoped SML database setting (`demo`, `aoy`, `lbk63`, or active Ploy `ploy_test`). The old empty `ploy` tenant remains allowlisted only for the current rollback window. The NextStep SQL uses `FROM ic_trans ic_qt`; `ic_qt` is an alias, not a physical table. Do not use the old `192.168.2.109` / ngrok deploy path for production.
 
 11. **Webhook URL per OA** — `/webhook/line/<oa_id>`. Must be set in LINE Developer Console per OA.
 
@@ -827,4 +846,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-28 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
+Last updated: 2026-08-31 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443

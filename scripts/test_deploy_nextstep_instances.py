@@ -6,6 +6,11 @@ from scripts import deploy_nextstep_instances as deploy
 
 
 class DeployNextstepInstancesTest(unittest.TestCase):
+    def test_ploy_registry_uses_production_sml_database(self) -> None:
+        target = deploy.TARGETS["ploy"]
+
+        self.assertEqual(target.sml_tenant, "ploy_test")
+
     def make_target(self, *, extra_hosts: tuple[str, ...] = ()) -> deploy.Target:
         return deploy.Target(
             name="aoy",
