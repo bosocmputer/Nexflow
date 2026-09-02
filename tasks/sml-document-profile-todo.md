@@ -2,10 +2,10 @@
 
 ## Handoff
 
-- Last completed: AOY compact Bill header/detail summary and immutable sale
-  `inquiry_type` propagation
+- Last completed: AOY plain-language inquiry type and Shopee API empty-evidence
+  cleanup on Bill detail
 - Active task: T11 deployed percentiles plus the remaining first-ten monitoring
-- Nexflow deployed application: `codex/marketplace-units-conversion` / `68ec5c9`;
+- Nexflow deployed application: `codex/marketplace-units-conversion` / `483160d`;
   durable production handoff continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
 - Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
@@ -28,12 +28,13 @@
   `BF-INV26090002`, followed by `ขาย -> ขายสินค้าและบริการ` and
   `ส่งแล้ว (AUTO)` in one compact header. The duplicate successful-status card
   is absent and the Shopee order time is `02/09/2026 16:43 น.` in
-  Asia/Bangkok. The SML summary includes inquiry type and both remarks; this
-  historical immutable payload did not contain `inquiry_type`, so it truthfully
-  renders `0 · ขายเงินเชื่อ (ค่าเริ่มต้น)` rather than borrowing mutable route
-  config. Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow
-  and zero console warnings/errors.
-- Production evidence: Central Gateway `16c550d` and AOY Nexflow `68ec5c9` are
+  Asia/Bangkok. The SML summary renders the operator-facing label/value
+  `ประเภทรายการ` / `ขายเงินเชื่อ` and both remarks without exposing the raw
+  `inquiry_type` key, numeric code or fallback wording. An empty Shopee API
+  artifact section is hidden; timelines and real artifacts remain available.
+  Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow and
+  zero console warnings/errors.
+- Production evidence: Central Gateway `16c550d` and AOY Nexflow `483160d` are
   deployed. Gateway readiness passes for demo/aoy/lbk63/ploy_test. Controlled
   order `26090216HNM1GJ` produced exactly one bill/attempt/document
   `BF-INV26090002`: HTTP 201 in 179 ms, Profile complete with all five checks,
@@ -54,7 +55,9 @@
   `pre-deploy-20260902-170204.sql.gz` and
   `pre-deploy-20260902-170832.sql.gz`, compact-header backup
   `pre-deploy-20260902-172519.sql.gz`, and inquiry-type backup
-  `pre-deploy-20260902-173738.sql.gz`; AOY runtime before shadow at
+  `pre-deploy-20260902-173738.sql.gz`, plus simplified-evidence backups
+  `pre-deploy-20260902-180737.sql.gz` and
+  `pre-deploy-20260902-181122.sql.gz`; AOY runtime before shadow at
   `.env.pre-sml-profile-shadow-20260902-213500` and before active at
   `.env.pre-sml-profile-active-20260902-220000`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
@@ -361,6 +364,32 @@
 - Browser: desktop 1280x720 and 390x844 QA pass with no horizontal overflow and
   zero console warnings/errors. No config save, SML write or document resend was
   performed during QA.
+- Next action: monitor nine more Profile documents and confirm that the next new
+  immutable request contains its selected `inquiry_type`, then capture deployed
+  p95/p99/queue-age evidence for T11.
+
+### AOY release checkpoint: plain inquiry type and Shopee API evidence
+
+- Nexflow commits: human-only inquiry type and conditional empty-evidence
+  presentation `dcc660a`; removal of the remaining technical field label
+  `483160d`.
+- Behavior: the SML summary displays `ประเภทรายการ` / `ขายเงินเชื่อ` without a
+  raw field name, numeric code or default suffix. Shopee API bills hide the
+  original-evidence card only when it has no files; a real artifact still shows,
+  and non-API import flows preserve their existing evidence state. The Shopee
+  source shop and order remain in the Bill header.
+- Tests: bill-detail presentation, SML payload summary, Document Profile and
+  timeline focused suites pass; production build passes; lint has zero errors
+  and 35 pre-existing warnings.
+- Production: deployed AOY-only at `483160d`; Demo, Lanboon and Ploy were not
+  rebuilt. Backups are `pre-deploy-20260902-180737.sql.gz` and
+  `pre-deploy-20260902-181122.sql.gz`. Backend/database, frontend, edge and
+  Shopee Gateway health pass; protected before/after counts are unchanged and
+  the recent severe-error scan is clean.
+- Browser: exact production bill `BF-INV26090002` passes desktop 1280x720 and
+  mobile 390x844 QA. The new label/value are present, technical/default text and
+  the empty artifact copy are absent, the page has no horizontal overflow, and
+  the console has no warning/error.
 - Next action: monitor nine more Profile documents and confirm that the next new
   immutable request contains its selected `inquiry_type`, then capture deployed
   p95/p99/queue-age evidence for T11.
