@@ -2,14 +2,15 @@
 
 ## Handoff
 
-- Last completed: AOY off-mode compatibility deploy, route safety gate and shadow preview
-- Active task: T14 controlled active-document parity and production monitoring
+- Last completed: AOY active-mode enablement and controlled Auto SML cutoff
+- Active task: T14 controlled automatic document parity and production monitoring
 - Nexflow deployed application: `codex/marketplace-units-conversion` / `2ae9cbd`;
   durable production handoff continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4b5a3f3`
-- Feature mode: AOY is `shadow`; Demo, Lanboon and Ploy remain `off`. AOY
-  Shopee main route is `AB-1 / 001`, config version 2. Shop `264993963`
-  remains enabled but is safely paused with `route_changed`; shop `1029622928`
+- Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
+  Shopee main route is `AB-1 / 001`, Channel config version 2. Shop `264993963`
+  is enabled and unpaused with trigger `PROCESSED`, Auto SML config version 4
+  and cutoff `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop `1029622928`
   remains disabled. No Profile reconciliation job or backfill was created.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
@@ -39,15 +40,15 @@
   `/mnt/data/nextstep-node-2/deploy-backups/sml-document-profile-20260902-141000`;
   AOY DB at `pre-deploy-20260902-141500.sql.gz` and
   `pre-deploy-20260902-142246.sql.gz`; AOY runtime before shadow at
-  `.env.pre-sml-profile-shadow-20260902-213500`.
-- Blocker: activating Profile writes and proving parity requires user confirmation
-  of the controlled production order. Read-only inspection found exactly one
-  current non-cancelled AOY Shopee snapshot without a Nexflow bill:
-  `26090216HNM1GJ` (`READY_TO_SHIP`, one item, 308.00 THB). No production
-  accounting document will be selected by guesswork.
-- Next action: confirm whether `26090216HNM1GJ` is the controlled AOY order,
-  switch AOY temporarily to `active`, create/send it manually, and compare SML
-  header/detail/VAT/shipment/logs before reconfirming Auto SML with a fresh cutoff.
+  `.env.pre-sml-profile-shadow-20260902-213500` and before active at
+  `.env.pre-sml-profile-active-20260902-220000`.
+- Controlled order: user selected the real Shopee status-change flow for
+  `26090216HNM1GJ` (one item, 308.00 THB). Its recorded push history is
+  `UNPAID` at 16:43 -> `READY_TO_SHIP` at 17:13, both before the new cutoff.
+  The user will trigger the later `PROCESSED` transition from Shopee.
+- Next action: wait for the user to click prepare/ready-to-ship in Shopee, then
+  trace the exact push/reconcile/job/core/profile/log/stock lifecycle and compare
+  the resulting SML document with the Profile V1 golden parity evidence.
 
 ## Phase A — Proof and contract
 
@@ -109,8 +110,9 @@
 - [x] Deploy Gateway compatibility first
 - [x] Deploy Nexflow with profile mode off
 - [x] Shadow preview with AOY `AB-1 / 001`
-- [ ] Controlled manual document parity and no-duplicate proof
-- [ ] Enable AOY Auto SML with a new cutoff and no backfill
+- [ ] Controlled automatic document parity and no-duplicate proof (the user
+      explicitly chose the Auto SML path instead of a separate manual send)
+- [x] Enable AOY Auto SML with a new cutoff and no backfill
 - [ ] Verify the first 10 documents; keep all other tenants off
 
 ## Per-Increment Completion Record
@@ -211,6 +213,35 @@
   non-cancelled Shopee snapshot without a Nexflow bill (`READY_TO_SHIP`, one
   item, 308.00 THB). It remains untouched while awaiting explicit confirmation.
 - Next action: confirm that candidate for the active write and parity gate.
+
+### AOY release checkpoint: active + controlled Auto SML
+
+- User-directed scope: exercise the first Profile V1 write through the real
+  Shopee automatic lifecycle rather than a separate manual send.
+- Runtime: AOY changed `shadow` -> `active` after creating
+  `.env.pre-sml-profile-active-20260902-220000`; backend health, Central Gateway
+  readiness, runtime capability log and severe-error scan passed. Other tenants
+  remain `off`.
+- Initial Auto SML preview: Henna.milkford, `READY_TO_SHIP`, Profile `active`,
+  route config version 2, two LINE recipients and no-backfill warning all passed.
+  Reconfirmation cleared `route_changed` and created a fresh cutoff without
+  enqueuing the historical ready-to-ship order.
+- Trigger correction: exact push evidence for `26090216HNM1GJ` proved
+  `UNPAID` at 16:43 and `READY_TO_SHIP` at 17:13. Because the user's intended
+  Seller Centre action is the later prepare-shipment action, a second signed
+  preview changed the trigger to `PROCESSED`, whose UI contract explicitly says
+  it waits for the shop to prepare shipment.
+- Final setting: shop `264993963` enabled/unpaused, trigger `PROCESSED`, config
+  version 4, cutoff `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop
+  `1029622928` remains disabled. Existing Auto jobs remain six succeeded;
+  Profile reconciliation queue remains empty; no backfill or SML write occurred.
+- Browser evidence: active Preview and both Auto SML signed previews passed;
+  UI reports Auto SML on and trigger PROCESSED; console is clean.
+- Sequence exception: the user explicitly requested the controlled bill itself
+  test Auto SML, so Auto SML is enabled before the first Profile parity result.
+  Scope is bounded to the selected shop/order and the new cutoff.
+- Next action: after the user's Shopee click, monitor and reconcile the first
+  automatic Profile V1 document end to end before accepting the release gate.
 
 For every completed task, update Handoff with:
 
