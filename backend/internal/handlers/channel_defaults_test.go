@@ -59,6 +59,9 @@ func TestChannelDefaultPreviewIsReadOnlyAndResolvesProfileFields(t *testing.T) {
 	if response.ProfileMode != "shadow" || response.RouteSignature == "" || len(response.Missing) != 0 {
 		t.Fatalf("unexpected preview: %+v", response)
 	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"missing_prerequisites":[]`)) {
+		t.Fatalf("empty prerequisites must be a JSON array, body=%s", recorder.Body.String())
+	}
 	if response.ProfileVersion != "sml-document-v1" || response.Payload["document_profile_version"] != "" {
 		t.Fatalf("shadow must validate V1 without opting the wire payload in: %+v", response)
 	}

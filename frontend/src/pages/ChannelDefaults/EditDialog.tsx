@@ -939,9 +939,9 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 						route {preview.route_signature}
 					  </div>
 					</div>
-					{preview.missing_prerequisites.length > 0 && (
+					{(preview.missing_prerequisites ?? []).length > 0 && (
 					  <div className="rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-2 text-xs text-warning">
-						ข้อมูลที่ยังขาด: {preview.missing_prerequisites.join(', ')}
+						ข้อมูลที่ยังขาด: {(preview.missing_prerequisites ?? []).join(', ')}
 					  </div>
 					)}
 				  </div>

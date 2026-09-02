@@ -315,9 +315,9 @@ func channelDefaultFromUpsert(in models.ChannelDefaultUpsert) *models.ChannelDef
 
 func channelDefaultMissingPrerequisites(d *models.ChannelDefault) []string {
 	if d.Channel != "shopee_realtime" || d.BillType != "sale" {
-		return nil
+		return []string{}
 	}
-	var missing []string
+	missing := make([]string, 0)
 	for _, field := range []struct{ value, label string }{
 		{d.Endpoint, "ปลายทาง SML"}, {d.DocFormatCode, "รูปแบบเอกสาร"},
 		{d.DocPrefix, "คำนำหน้าเลขเอกสาร"}, {d.DocRunningFormat, "รูปแบบเลขรัน"},
