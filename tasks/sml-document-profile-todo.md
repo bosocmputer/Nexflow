@@ -39,12 +39,14 @@
   AOY DB at `pre-deploy-20260902-141500.sql.gz` and
   `pre-deploy-20260902-142246.sql.gz`; AOY runtime before shadow at
   `.env.pre-sml-profile-shadow-20260902-213500`.
-- Blocker: activating Profile writes and proving parity requires one explicitly
-  selected AOY controlled bill/order. No production accounting document will be
-  invented or selected by guesswork.
-- Next action: identify the controlled AOY bill/order, switch AOY temporarily to
-  `active`, send it manually, and compare SML header/detail/VAT/shipment/logs
-  before reconfirming Auto SML with a fresh cutoff.
+- Blocker: activating Profile writes and proving parity requires user confirmation
+  of the controlled production order. Read-only inspection found exactly one
+  current non-cancelled AOY Shopee snapshot without a Nexflow bill:
+  `26090216HNM1GJ` (`READY_TO_SHIP`, one item, 308.00 THB). No production
+  accounting document will be selected by guesswork.
+- Next action: confirm whether `26090216HNM1GJ` is the controlled AOY order,
+  switch AOY temporarily to `active`, create/send it manually, and compare SML
+  header/detail/VAT/shipment/logs before reconfirming Auto SML with a fresh cutoff.
 
 ## Phase A — Proof and contract
 
@@ -204,8 +206,10 @@
 - Residual verification: controlled active bill, SML parity, recovery card,
   true 390px, deployed percentile evidence, ten-document monitoring and Auto SML
   reconfirm/cutoff remain open.
-- Next action: obtain one explicitly controlled AOY bill/order for the active
-  write and parity gate.
+- Candidate discovered read-only: order `26090216HNM1GJ` is the only current
+  non-cancelled Shopee snapshot without a Nexflow bill (`READY_TO_SHIP`, one
+  item, 308.00 THB). It remains untouched while awaiting explicit confirmation.
+- Next action: confirm that candidate for the active write and parity gate.
 
 For every completed task, update Handoff with:
 
