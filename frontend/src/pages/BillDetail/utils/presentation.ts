@@ -42,11 +42,18 @@ export function smlInquiryTypeLabel(value: unknown, billType: string, fallbackVa
   if ((value == null || value === '') && !usesFallback) return '—'
   const resolvedValue = usesFallback ? fallbackValue : value
   const numericValue = typeof resolvedValue === 'number' ? resolvedValue : Number(resolvedValue)
-  if (!Number.isInteger(numericValue)) return `${String(value)} · ไม่ทราบความหมาย`
+  if (!Number.isInteger(numericValue)) return 'ไม่ทราบประเภทรายการ'
 
   const labels = billType === 'purchase'
     ? PURCHASE_INQUIRY_TYPE_LABELS
     : SALE_INQUIRY_TYPE_LABELS
-  const suffix = usesFallback ? ' (ค่าเริ่มต้น)' : ''
-  return `${numericValue} · ${labels[numericValue] ?? 'ไม่ทราบความหมาย'}${suffix}`
+  return labels[numericValue] ?? 'ไม่ทราบประเภทรายการ'
+}
+
+export function artifactEvidenceState(
+  visibleItemCount: number,
+  hideWhenEmpty: boolean,
+): 'hidden' | 'empty' | 'list' {
+  if (visibleItemCount > 0) return 'list'
+  return hideWhenEmpty ? 'hidden' : 'empty'
 }

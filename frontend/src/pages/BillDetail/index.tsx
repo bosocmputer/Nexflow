@@ -416,7 +416,9 @@ export default function BillDetail() {
           <div>
             <h3 className="text-sm font-semibold text-foreground">ข้อมูลประกอบการตรวจสอบ</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              ใช้เมื่อต้องย้อนดูหลักฐานต้นฉบับ ประวัติ และข้อมูลที่ส่งเข้า SML
+              {isShopeeRealtimeBill
+                ? 'ใช้เมื่อต้องย้อนดูประวัติและข้อมูลที่ส่งเข้า SML'
+                : 'ใช้เมื่อต้องย้อนดูหลักฐานต้นฉบับ ประวัติ และข้อมูลที่ส่งเข้า SML'}
             </p>
           </div>
           <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
@@ -425,7 +427,11 @@ export default function BillDetail() {
         </div>
 
         <div className="min-w-0 space-y-4">
-          <ArtifactList billId={bill.id} emailGroup={bill.email_group} />
+          <ArtifactList
+            billId={bill.id}
+            emailGroup={bill.email_group}
+            hideWhenEmpty={isShopeeRealtimeBill}
+          />
           <BillTimeline billId={bill.id} shopeeEvents={bill.shopee_events ?? []} />
           <SmlPayloadSection
             bill={bill}

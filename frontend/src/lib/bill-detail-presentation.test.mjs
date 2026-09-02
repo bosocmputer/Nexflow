@@ -10,6 +10,7 @@ const vite = await createServer({
 })
 
 const {
+  artifactEvidenceState,
   billSMLStatusLabel,
   formatBangkokDateTime,
   smlInquiryTypeLabel,
@@ -36,19 +37,23 @@ test('labels automatic and manual successful SML sends in the document header', 
   assert.equal(billSMLStatusLabel('pending', true), '')
 })
 
-test('shows sale inquiry_type with both its exact value and SML meaning', () => {
-  assert.equal(smlInquiryTypeLabel(0, 'sale'), '0 · ขายเงินเชื่อ')
-  assert.equal(smlInquiryTypeLabel(1, 'sale'), '1 · ขายเงินสด')
-  assert.equal(smlInquiryTypeLabel(2, 'sale'), '2 · ขายเงินเชื่อ (สินค้าบริการ)')
-  assert.equal(smlInquiryTypeLabel(3, 'sale'), '3 · ขายเงินสด (สินค้าบริการ)')
+test('shows the user-facing inquiry type without its technical numeric code', () => {
+  assert.equal(smlInquiryTypeLabel(0, 'sale'), 'ขายเงินเชื่อ')
+  assert.equal(smlInquiryTypeLabel(1, 'sale'), 'ขายเงินสด')
+  assert.equal(smlInquiryTypeLabel(2, 'sale'), 'ขายเงินเชื่อ (สินค้าบริการ)')
+  assert.equal(smlInquiryTypeLabel(3, 'sale'), 'ขายเงินสด (สินค้าบริการ)')
 })
 
 test('keeps purchase inquiry_type semantics and exposes missing values plainly', () => {
-  assert.equal(smlInquiryTypeLabel('1', 'purchase'), '1 · ซื้อสินค้าเงินสด')
+  assert.equal(smlInquiryTypeLabel('1', 'purchase'), 'ซื้อสินค้าเงินสด')
   assert.equal(smlInquiryTypeLabel(undefined, 'sale'), '—')
-  assert.equal(
-    smlInquiryTypeLabel(undefined, 'sale', 0),
-    '0 · ขายเงินเชื่อ (ค่าเริ่มต้น)',
-  )
-  assert.equal(smlInquiryTypeLabel(9, 'sale'), '9 · ไม่ทราบความหมาย')
+  assert.equal(smlInquiryTypeLabel(undefined, 'sale', 0), 'ขายเงินเชื่อ')
+  assert.equal(smlInquiryTypeLabel(9, 'sale'), 'ไม่ทราบประเภทรายการ')
+})
+
+test('hides an empty evidence card for Shopee API while preserving real files and other sources', () => {
+  assert.equal(artifactEvidenceState(0, true), 'hidden')
+  assert.equal(artifactEvidenceState(1, true), 'list')
+  assert.equal(artifactEvidenceState(0, false), 'empty')
+  assert.equal(artifactEvidenceState(2, false), 'list')
 })

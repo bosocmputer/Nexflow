@@ -9,12 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useArtifacts, openArtifact, printArtifact, recordArtifactPrint } from '../hooks/useArtifacts'
 import type { BillArtifact } from '../hooks/useArtifacts'
 import { KIND_META, fmtSize, isUserVisibleArtifact } from '../utils/formatters'
+import { artifactEvidenceState } from '../utils/presentation'
 import api from '@/api/client'
 import type { BillEmailGroup, BillEmailRelatedBill, EmailPrintEvent } from '@/types'
 
 interface Props {
   billId: string
   emailGroup?: BillEmailGroup | null
+  hideWhenEmpty?: boolean
 }
 
 // EmailPreviewModal renders HTML email content in a sandboxed iframe so the
@@ -144,7 +146,7 @@ function EmailPreviewModal({
   )
 }
 
-export function ArtifactList({ billId, emailGroup }: Props) {
+export function ArtifactList({ billId, emailGroup, hideWhenEmpty = false }: Props) {
   const { items, loading } = useArtifacts(billId)
   const [previewArt, setPreviewArt] = useState<{ id: string; filename: string; contentType: string; displayName: string } | null>(null)
   const [printEvents, setPrintEvents] = useState<EmailPrintEvent[]>(emailGroup?.print_events ?? [])
@@ -175,8 +177,11 @@ export function ArtifactList({ billId, emailGroup }: Props) {
   if (loading) return null
 
   const visibleItems = items.filter((a) => isUserVisibleArtifact(a.kind))
+  const evidenceState = artifactEvidenceState(visibleItems.length, hideWhenEmpty)
 
-  if (visibleItems.length === 0) {
+  if (evidenceState === 'hidden') return null
+
+  if (evidenceState === 'empty') {
     return (
       <Card className="rounded-lg border-border/70 shadow-sm">
         <CardHeader className="pb-3">
