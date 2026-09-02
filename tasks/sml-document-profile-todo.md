@@ -2,7 +2,7 @@
 
 ## Handoff
 
-- Last completed: four-tenant application alignment and 2026-09-02 release
+- Last completed: four-tenant application alignment and 2026-09-03 release
   closeout
 - Active task: none for today; T11 deployed percentiles and the remaining
   first-ten monitoring resume in the next work session
@@ -427,7 +427,7 @@
   previously recorded moderate React Router advisories. The full build tree also
   reports Vite/esbuild development-server advisories; those tools are not copied
   into the nginx runtime image and no forced breaking upgrade was applied.
-- Closeout: no active deployment remains on 2026-09-02. Next action on resume is
+- Closeout: no active deployment remains on 2026-09-03. Next action on resume is
   the remaining nine AOY Profile documents plus deployed percentile/queue-age
   evidence for T11.
 
