@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { JsonViewer } from '@/components/common/JsonViewer'
 import { Badge } from '@/components/ui/badge'
 import { remark2Label } from '@/lib/smlRemark2'
+import { documentItems, documentLocation } from '@/lib/smlPayloadSummary.js'
 
 interface Props {
   smlPayload?: Record<string, unknown> | null
@@ -56,12 +57,10 @@ function SummaryCell({
 
 export function SmlPayloadSection({ smlPayload, smlResponse }: Props) {
   if (!smlPayload && !smlResponse) return null
-  const items = Array.isArray(smlPayload?.items) ? smlPayload?.items : []
-  const firstItem = items[0] as Record<string, unknown> | undefined
+  const items = documentItems(smlPayload)
   const responseStatus = text(smlResponse?.status)
   const responseLabel = responseStatus === '—' ? 'มี response' : responseStatus
-  const whCode = smlPayload?.wh_code ?? firstItem?.wh_code
-  const shelfCode = smlPayload?.shelf_code ?? firstItem?.shelf_code
+  const { whCode, shelfCode } = documentLocation(smlPayload)
   const remark2 = typeof smlPayload?.remark_2 === 'string' ? smlPayload.remark_2 : ''
 
   return (

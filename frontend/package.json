@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "test:timeline-dialog": "node --test src/lib/shopee-timeline-dialog.test.mjs",
-    "test:sml-document-profile": "node --test src/lib/sml-document-profile.test.mjs"
+    "test:sml-document-profile": "node --test src/lib/sml-document-profile.test.mjs",
+    "test:sml-payload-summary": "node --test src/lib/sml-payload-summary.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.11",
