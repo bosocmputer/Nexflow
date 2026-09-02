@@ -2,11 +2,13 @@
 
 ## Handoff
 
-- Last completed: AOY plain-language inquiry type and Shopee API empty-evidence
-  cleanup on Bill detail
-- Active task: T11 deployed percentiles plus the remaining first-ten monitoring
-- Nexflow deployed application: `codex/marketplace-units-conversion` / `483160d`;
-  durable production handoff continues on the same branch
+- Last completed: four-tenant application alignment and 2026-09-02 release
+  closeout
+- Active task: none for today; T11 deployed percentiles and the remaining
+  first-ten monitoring resume in the next work session
+- Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
+  `codex/marketplace-units-conversion` / `483160d`; durable production handoff
+  continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
 - Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
   Shopee main route is `AB-1 / 001`, Channel config version 2. Shop `264993963`
@@ -34,8 +36,9 @@
   artifact section is hidden; timelines and real artifacts remain available.
   Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow and
   zero console warnings/errors.
-- Production evidence: Central Gateway `16c550d` and AOY Nexflow `483160d` are
-  deployed. Gateway readiness passes for demo/aoy/lbk63/ploy_test. Controlled
+- Production evidence: Central Gateway `16c550d`; Demo, AOY, Lanboon and Ploy
+  Nexflow `483160d` are deployed. Gateway readiness passes for
+  demo/aoy/lbk63/ploy_test. Controlled
   order `26090216HNM1GJ` produced exactly one bill/attempt/document
   `BF-INV26090002`: HTTP 201 in 179 ms, Profile complete with all five checks,
   stock recalculation completed on its first attempt, and no duplicate rows.
@@ -57,7 +60,10 @@
   `pre-deploy-20260902-172519.sql.gz`, and inquiry-type backup
   `pre-deploy-20260902-173738.sql.gz`, plus simplified-evidence backups
   `pre-deploy-20260902-180737.sql.gz` and
-  `pre-deploy-20260902-181122.sql.gz`; AOY runtime before shadow at
+  `pre-deploy-20260902-181122.sql.gz`; alignment backups are Demo
+  `pre-deploy-20260902-181634.sql.gz`, Lanboon
+  `pre-deploy-20260902-181809.sql.gz` and Ploy
+  `pre-deploy-20260902-181838.sql.gz`; AOY runtime before shadow at
   `.env.pre-sml-profile-shadow-20260902-213500` and before active at
   `.env.pre-sml-profile-active-20260902-220000`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
@@ -66,8 +72,9 @@
   `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
-- Next action: leave AOY active and monitor the next nine Profile documents;
-  collect deployed p95/p99/queue-age evidence.
+- Next action: no active work remains today. On the next work session, leave AOY
+  active, monitor the next nine Profile documents and collect deployed
+  p95/p99/queue-age evidence.
 
 ## Phase A — Proof and contract
 
@@ -393,6 +400,36 @@
 - Next action: monitor nine more Profile documents and confirm that the next new
   immutable request contains its selected `inquiry_type`, then capture deployed
   p95/p99/queue-age evidence for T11.
+
+### Four-tenant application alignment and daily closeout
+
+- Runtime commit: Demo, AOY, Lanboon and Ploy all run application commit
+  `483160d`. The later branch-only commit `476f05a` contains handoff
+  documentation and was not required in runtime images.
+- Tenant isolation: databases, credentials, channel routes, shop settings and
+  feature flags were preserved. `SML_DOCUMENT_PROFILE_MODE` remains `active`
+  only on AOY; its absence on Demo, Lanboon and Ploy resolves to the code's
+  fail-closed `off` default. Ploy's pre-existing global Auto SML capability flags
+  remain unchanged and no shop was enabled by this deployment.
+- Backups: Demo `pre-deploy-20260902-181634.sql.gz`; Lanboon
+  `pre-deploy-20260902-181809.sql.gz`; Ploy
+  `pre-deploy-20260902-181838.sql.gz`.
+- Deploy verification: sales-only guard passed before each deployment; all four
+  public `/health` endpoints return HTTP 200 with production/database status OK;
+  backend database authentication, frontend status, edge health, Shopee Gateway
+  connectivity and recent severe-error scans pass. Protected counts are exactly
+  unchanged before/after on each newly deployed tenant.
+- Frontend evidence: the deployed Bill bundle for every tenant contains the
+  plain `ประเภทรายการ` / `ขายเงินเชื่อ` presentation and does not contain the
+  removed technical label. AOY exact-bill desktop/mobile QA remains the
+  behavioral proof for the Shopee API empty-evidence rule.
+- Dependency evidence: production-only npm audit has zero high/critical and two
+  previously recorded moderate React Router advisories. The full build tree also
+  reports Vite/esbuild development-server advisories; those tools are not copied
+  into the nginx runtime image and no forced breaking upgrade was applied.
+- Closeout: no active deployment remains on 2026-09-02. Next action on resume is
+  the remaining nine AOY Profile documents plus deployed percentile/queue-age
+  evidence for T11.
 
 For every completed task, update Handoff with:
 
