@@ -2,11 +2,14 @@
 
 ## Handoff
 
-- Last completed: T13 observability, security hardening, recovery UX and durable worker
-- Active task: T14 production release verification and AOY controlled rollout
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `d685345`
+- Last completed: AOY off-mode compatibility deploy, route safety gate and shadow preview
+- Active task: T14 controlled active-document parity and production monitoring
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `2ae9cbd`
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4b5a3f3`
-- Feature mode: complete in code with default `off`; production runtime and tenant settings unchanged
+- Feature mode: AOY is `shadow`; Demo, Lanboon and Ploy remain `off`. AOY
+  Shopee main route is `AB-1 / 001`, config version 2. Shop `264993963`
+  remains enabled but is safely paused with `route_changed`; shop `1029622928`
+  remains disabled. No Profile reconciliation job or backfill was created.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
@@ -17,19 +20,31 @@
   1.539/7.854/35.891/140.596 microseconds; Gateway normalization/hash =
   5.572/25.762/110.357/482.279 microseconds. HTTP/database p95 budgets still
   require deployed telemetry.
-- Browser evidence: local desktop Channel dialog, preview states and unsaved
-  guard passed with a clean console. The local backend was intentionally absent;
-  live data, Profile status recovery, and true 390px verification remain release
-  checks because the in-app browser kept a 1280px viewport.
-- Production evidence: read-only AOY parity inspection only; no deployment,
-  runtime change, migration, Auto SML setting change, or SML write was performed
+- Browser evidence: local desktop Channel dialog plus production AOY off/shadow
+  previews passed. Production shadow preview displayed `sml-document-v1`,
+  `AB-1 / 001`, VAT 7%, the deterministic `remark_5`, and a clean console.
+  Profile recovery-card and true 390px verification still require a controlled
+  Profile attempt because the in-app browser keeps a 1280px viewport.
+- Production evidence: Central Gateway `4b5a3f3` and AOY Nexflow `2ae9cbd` are
+  deployed. Gateway health passed for demo/aoy/lbk63/ploy_test and its capability
+  endpoint advertises `sml-document-v1`. AOY migrations 091-092 are applied,
+  health and Gateway connectivity pass, and the recent severe-error scan is
+  clean. A production preview null-array bug was found, fixed in `2ae9cbd`,
+  redeployed and reverified without an SML write.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; existing `tasks/plan.md` and
   `tasks/todo.md`; untracked `.serena/` and `scripts/__pycache__/`
-- Blocker: controlled `active` parity and first ten-document monitoring require
-  the AOY release gates; they cannot be claimed from local tests
-- Next action: back up AOY and Central Gateway, deploy Gateway capability first,
-  then deploy Nexflow migration/code with `SML_DOCUMENT_PROFILE_MODE=off`
+- Backups: Gateway source/runtime/image at
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-document-profile-20260902-141000`;
+  AOY DB at `pre-deploy-20260902-141500.sql.gz` and
+  `pre-deploy-20260902-142246.sql.gz`; AOY runtime before shadow at
+  `.env.pre-sml-profile-shadow-20260902-213500`.
+- Blocker: activating Profile writes and proving parity requires one explicitly
+  selected AOY controlled bill/order. No production accounting document will be
+  invented or selected by guesswork.
+- Next action: identify the controlled AOY bill/order, switch AOY temporarily to
+  `active`, send it manually, and compare SML header/detail/VAT/shipment/logs
+  before reconfirming Auto SML with a fresh cutoff.
 
 ## Phase A — Proof and contract
 
@@ -87,10 +102,10 @@
 
 ## AOY Release Gates
 
-- [ ] Backup AOY application DB/runtime and Central SML Gateway
-- [ ] Deploy Gateway compatibility first
-- [ ] Deploy Nexflow with profile mode off
-- [ ] Shadow preview with AOY `AB-1 / 001`
+- [x] Backup AOY application DB/runtime and Central SML Gateway
+- [x] Deploy Gateway compatibility first
+- [x] Deploy Nexflow with profile mode off
+- [x] Shadow preview with AOY `AB-1 / 001`
 - [ ] Controlled manual document parity and no-duplicate proof
 - [ ] Enable AOY Auto SML with a new cutoff and no backfill
 - [ ] Verify the first 10 documents; keep all other tenants off
@@ -154,6 +169,43 @@
   major upgrade; keep as a separate tested migration rather than forcing it here
 - Production evidence: not deployed
 - Next action at completion: AOY backup and off-mode compatibility deployment
+
+### AOY release checkpoint: capability -> off -> shadow
+
+- Nexflow commits: release baseline `174485a`; production preview stability fix
+  `2ae9cbd`
+- Gateway commit: `4b5a3f3`
+- Scope: Central Gateway capability deployed first; only AOY Nexflow was
+  migrated/recreated. Demo, Lanboon and Ploy Profile modes remain `off`.
+- Backups: Central Gateway source/runtime/container/image under
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-document-profile-20260902-141000`;
+  AOY database `pre-deploy-20260902-141500.sql.gz` and
+  `pre-deploy-20260902-142246.sql.gz`; AOY runtime
+  `.env.pre-sml-profile-shadow-20260902-213500`.
+- Compatibility evidence: Gateway readiness passed for all four SML tenants;
+  capability returned HTTP 200 with Profile V1 and the 2 MiB/500-item limits.
+  AOY off-mode health, Gateway DNS/connectivity, migrations 091-092, empty
+  Profile queue and clean severe-error scan passed.
+- Safety evidence: production Preview initially exposed a `null` empty-array UI
+  boundary and made the page white. No save or SML write happened. `2ae9cbd`
+  makes backend preview arrays non-null and keeps a frontend compatibility guard;
+  focused Go/frontend tests, lint and build passed before redeploy.
+- Route/config evidence: off-mode preview passed and the main Shopee route was
+  saved as `AB-1 / 001`, incrementing Channel config 1 -> 2. The enabled shop
+  was automatically paused as `route_changed` and its Auto SML config incremented
+  1 -> 2. The second shop remained disabled; no queue/backfill appeared.
+- Shadow evidence: AOY runtime reports `sml_document_profile_mode=shadow`;
+  health/Gateway connectivity and error scan pass. Production UI preview shows
+  `shadow · sml-document-v1`, `AB-1 / 001`, VAT type 1/rate 7,
+  `/api/v1/ic/sale-invoices`, and
+  `NEXFLOW|shopee_realtime|ORDER-PREVIEW`, with a clean console.
+- Feature mode after checkpoint: AOY `shadow`; Auto SML remains paused. No SML
+  sale/profile write occurred.
+- Residual verification: controlled active bill, SML parity, recovery card,
+  true 390px, deployed percentile evidence, ten-document monitoring and Auto SML
+  reconfirm/cutoff remain open.
+- Next action: obtain one explicitly controlled AOY bill/order for the active
+  write and parity gate.
 
 For every completed task, update Handoff with:
 
