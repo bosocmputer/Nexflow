@@ -4,7 +4,8 @@
 
 - Last completed: AOY off-mode compatibility deploy, route safety gate and shadow preview
 - Active task: T14 controlled active-document parity and production monitoring
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `2ae9cbd`
+- Nexflow deployed application: `codex/marketplace-units-conversion` / `2ae9cbd`;
+  durable production handoff continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4b5a3f3`
 - Feature mode: AOY is `shadow`; Demo, Lanboon and Ploy remain `off`. AOY
   Shopee main route is `AB-1 / 001`, config version 2. Shop `264993963`
