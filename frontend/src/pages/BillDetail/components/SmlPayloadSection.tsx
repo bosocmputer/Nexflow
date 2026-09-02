@@ -3,7 +3,7 @@ import { JsonViewer } from '@/components/common/JsonViewer'
 import { documentItems, documentLocation } from '@/lib/smlPayloadSummary.js'
 import { useAuthStore } from '@/store/auth'
 import type { Bill } from '@/types'
-import { smlInquiryTypeLabel } from '../utils/presentation'
+import { SML_INQUIRY_TYPE_FIELD_LABEL, smlInquiryTypeLabel } from '../utils/presentation'
 
 interface Props {
   smlPayload?: Record<string, unknown> | null
@@ -84,7 +84,7 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
               <SummaryItem label="วิธีส่ง" value={bill.sml_sent_automatically ? 'อัตโนมัติจาก Shopee (AUTO)' : 'ส่งโดยผู้ใช้'} />
               <SummaryItem label="รูปแบบเอกสาร" value={text(smlPayload.doc_format_code)} mono />
               <SummaryItem
-                label="ประเภทรายการ (inquiry_type)"
+                label={SML_INQUIRY_TYPE_FIELD_LABEL}
                 value={smlInquiryTypeLabel(
                   smlPayload.inquiry_type,
                   bill.bill_type,

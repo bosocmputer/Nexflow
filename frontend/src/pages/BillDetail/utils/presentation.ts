@@ -12,6 +12,8 @@ const PURCHASE_INQUIRY_TYPE_LABELS: Record<number, string> = {
   3: 'ซื้อสินค้าเงินสด (สินค้าบริการ)',
 }
 
+export const SML_INQUIRY_TYPE_FIELD_LABEL = 'ประเภทรายการ'
+
 export function formatBangkokDateTime(value?: string | Date | null): string {
   if (!value) return ''
   const date = value instanceof Date ? value : new Date(value)

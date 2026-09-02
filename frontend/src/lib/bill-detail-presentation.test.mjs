@@ -10,6 +10,7 @@ const vite = await createServer({
 })
 
 const {
+  SML_INQUIRY_TYPE_FIELD_LABEL,
   artifactEvidenceState,
   billSMLStatusLabel,
   formatBangkokDateTime,
@@ -38,6 +39,7 @@ test('labels automatic and manual successful SML sends in the document header', 
 })
 
 test('shows the user-facing inquiry type without its technical numeric code', () => {
+  assert.equal(SML_INQUIRY_TYPE_FIELD_LABEL, 'ประเภทรายการ')
   assert.equal(smlInquiryTypeLabel(0, 'sale'), 'ขายเงินเชื่อ')
   assert.equal(smlInquiryTypeLabel(1, 'sale'), 'ขายเงินสด')
   assert.equal(smlInquiryTypeLabel(2, 'sale'), 'ขายเงินเชื่อ (สินค้าบริการ)')
