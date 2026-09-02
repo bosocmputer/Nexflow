@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { StatusDot } from '@/components/common/StatusDot'
 import {
   Tooltip,
   TooltipContent,
@@ -27,6 +28,7 @@ import {
 } from '@/lib/shopeeBill'
 import { SOURCE_LABELS } from '../utils/formatters'
 import { hasInvalidPrice, type ValidationResult } from '../utils/validation'
+import { billSMLStatusLabel, formatBangkokDateTime } from '../utils/presentation'
 
 interface Props {
   bill: Bill
@@ -89,6 +91,7 @@ export function BillHeader({
     saleRoute === 'saleinvoice' ? 'Sale Invoice' : 'Sales Order'
   const orderID = shopeeOrderID(rawData)
   const orderDateTime = rawString(rawData, 'order_datetime') || rawString(rawData, 'doc_date')
+  const orderDateTimeDisplay = formatBangkokDateTime(orderDateTime)
   const sellerName = rawString(rawData, 'seller_name')
   const buyerName = rawString(rawData, 'customer_name') || rawString(rawData, 'buyer_username')
   const paymentChannel = rawString(rawData, 'payment_channel')
@@ -117,25 +120,26 @@ export function BillHeader({
     : isFailed
       ? `ลองส่งใหม่${isPurchase ? 'ไป SML' : ''}`
       : `ส่งเข้า SML${isPurchase ? ' (บิลซื้อ)' : ''}`
+  const sentStatusLabel = billSMLStatusLabel(bill.status, bill.sml_sent_automatically)
 
   return (
-    <div className="space-y-2">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2 h-8"
-        onClick={() => navigate(-1)}
-      >
-        <ArrowLeft className="h-4 w-4" />
-        กลับ
-      </Button>
-
-      <Card className="overflow-hidden rounded-lg border-border/70 shadow-sm">
+    <Card className="overflow-hidden rounded-lg border-border/70 shadow-sm">
         <CardHeader className="border-b bg-card px-5 py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 space-y-2">
               <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+                  onClick={() => navigate(-1)}
+                  aria-label="กลับหน้าก่อนหน้า"
+                  title="กลับหน้าก่อนหน้า"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  <span className="hidden sm:inline">กลับ</span>
+                </Button>
                 <h2 className="font-mono text-xl font-bold tracking-tight sm:text-2xl">
                   {bill.sml_doc_no ?? bill.id.slice(0, 8)}
                 </h2>
@@ -157,7 +161,9 @@ export function BillHeader({
                     {saleDestinationLabel}
                   </Badge>
                 )}
-                <BillStatusBadge status={bill.status} />
+                {sentStatusLabel
+                  ? <StatusDot variant="success" label={sentStatusLabel} />
+                  : <BillStatusBadge status={bill.status} />}
               </div>
               {canShowSendButton && (
                 <p className={cn(
@@ -285,7 +291,7 @@ export function BillHeader({
             {(isPurchase || isShopeeSale) && orderDateTime && (
               <InfoRow
                 label="วันที่สั่งซื้อ"
-                value={orderDateTime}
+                value={orderDateTimeDisplay}
               />
             )}
             {isPurchase && sellerName && (
@@ -344,7 +350,6 @@ export function BillHeader({
               header by the parent) — gives the error room to breathe + a
               copy button without cluttering the meta grid. */}
         </CardContent>
-      </Card>
-    </div>
+    </Card>
   )
 }

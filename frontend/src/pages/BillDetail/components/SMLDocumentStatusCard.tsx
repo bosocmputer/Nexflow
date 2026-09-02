@@ -89,24 +89,7 @@ export function SMLDocumentStatusCard({ bill, retrying, onRetryProfile }: { bill
   const recoverable = bill.sml_profile_reconciliation_required && ['needs_reconciliation', 'terminal_failure'].includes(bill.sml_profile_status ?? '')
   const jobBusy = ['queued', 'running'].includes(bill.sml_profile_job_status ?? '')
 
-  if (presentation.complete) {
-    return (
-      <Card className="border-success/30 bg-success/[0.04]">
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <CheckCircle2 className="h-5 w-5 shrink-0 text-success" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-foreground">{presentation.headline}</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">{presentation.detail}</p>
-          </div>
-          {bill.sml_doc_no && (
-            <code className="rounded-md bg-background px-2.5 py-1.5 font-mono text-xs font-medium text-foreground">
-              {bill.sml_doc_no}
-            </code>
-          )}
-        </CardContent>
-      </Card>
-    )
-  }
+  if (presentation.complete) return null
 
   return (
     <Card className="border-border/80">

@@ -3,6 +3,7 @@ import { JsonViewer } from '@/components/common/JsonViewer'
 import { documentItems, documentLocation } from '@/lib/smlPayloadSummary.js'
 import { useAuthStore } from '@/store/auth'
 import type { Bill } from '@/types'
+import { smlInquiryTypeLabel } from '../utils/presentation'
 
 interface Props {
   smlPayload?: Record<string, unknown> | null
@@ -82,6 +83,10 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
               <SummaryItem label="อ้างอิงคำสั่งซื้อ" value={text(smlPayload.doc_ref)} mono />
               <SummaryItem label="วิธีส่ง" value={bill.sml_sent_automatically ? 'อัตโนมัติจาก Shopee (AUTO)' : 'ส่งโดยผู้ใช้'} />
               <SummaryItem label="รูปแบบเอกสาร" value={text(smlPayload.doc_format_code)} mono />
+              <SummaryItem
+                label="ประเภทรายการ (inquiry_type)"
+                value={smlInquiryTypeLabel(smlPayload.inquiry_type, bill.bill_type)}
+              />
               <SummaryItem label="ลูกค้า SML" value={party} />
               <SummaryItem label="คลัง / พื้นที่เก็บ" value={`${text(whCode)} / ${text(shelfCode)}`} mono />
               <SummaryItem
@@ -91,8 +96,8 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
               <SummaryItem label="จำนวนรายการ" value={`${items.length.toLocaleString('th-TH')} รายการ`} />
               <SummaryItem label="ยอดสุทธิ" value={money(smlPayload.total_amount_decimal ?? smlPayload.total_amount)} />
               {branchCode && <SummaryItem label="สาขา" value={branchCode} mono />}
-              {remark && <SummaryItem label="หมายเหตุ 1" value={remark} />}
-              {remark2 && <SummaryItem label="หมายเหตุ 2" value={remark2} />}
+              <SummaryItem label="หมายเหตุ 1" value={text(remark)} />
+              <SummaryItem label="หมายเหตุ 2" value={text(remark2)} />
             </dl>
           </div>
         )}
