@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PackageSearch } from 'lucide-react'
+import { Eye, PackageSearch } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ import { Switch } from '@/components/ui/switch'
 import { UnitSelect } from '@/components/common/UnitSelect'
 import client from '@/api/client'
 import type { CatalogMatch } from '@/types'
+import { validateProfileText } from '@/lib/smlDocumentProfile.js'
 import { SMLMasterCodePicker } from '../BillDetail/components/SMLMasterCodePicker'
 import { ShelfPicker, WarehousePicker } from '../BillDetail/components/WarehousePicker'
 import { PartyPicker, type Party } from './PartyPicker'
@@ -55,8 +56,17 @@ import {
   type ChannelKey,
   type EndpointKind,
 } from './labels'
-import { REMARK2_NONE, SML_REMARK2_OPTIONS, normalizeRemark2 } from '@/lib/smlRemark2'
 import { MapItemModal } from '../BillDetail/components/MapItemModal'
+
+interface ChannelDefaultPreview {
+  profile_mode: 'off' | 'shadow' | 'active'
+  profile_version: string
+  route_signature: string
+  resolved: { remark: string; remark_2: string }
+  system_fields: Record<string, string>
+  missing_prerequisites: string[]
+  warnings: string[]
+}
 
 interface Props {
   open: boolean
@@ -92,13 +102,22 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const [vatTypeStr, setVatTypeStr] = useState('')
   const [vatRate, setVatRate] = useState('')
   const [inquiryTypeStr, setInquiryTypeStr] = useState('')
-  const [remark2Str, setRemark2Str] = useState(REMARK2_NONE)
+  const [remark, setRemark] = useState('')
+  const [remark2, setRemark2] = useState('')
   const [passbookCode, setPassbookCode] = useState('')
   const [expenseCode, setExpenseCode] = useState('')
   const [passbooks, setPassbooks] = useState<SMLMasterOption[]>([])
   const [expenses, setExpenses] = useState<SMLMasterOption[]>([])
   const [settlementMastersLoading, setSettlementMastersLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const [preview, setPreview] = useState<ChannelDefaultPreview | null>(null)
+  const [dirty, setDirty] = useState(false)
+
+  const markDirty = () => {
+    setDirty(true)
+    setPreview(null)
+  }
 
   useEffect(() => {
     if (!open || !row) return
@@ -128,9 +147,12 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     setVatTypeStr(typeof row.vat_type === 'number' && row.vat_type >= 0 ? String(row.vat_type) : '')
     setVatRate(typeof row.vat_rate === 'number' && row.vat_rate >= 0 ? String(row.vat_rate) : '')
     setInquiryTypeStr(typeof row.inquiry_type === 'number' && row.inquiry_type >= 0 ? String(row.inquiry_type) : '')
-    setRemark2Str(normalizeRemark2(row.remark_2 || ''))
+    setRemark(row.remark || '')
+    setRemark2(row.remark_2 || '')
     setPassbookCode(row.passbook_code || '')
     setExpenseCode(row.expense_code || '')
+    setPreview(null)
+    setDirty(false)
   }, [open, row])
 
   // Fetch doc formats from SML when destination changes; auto-fill prefix + running format from selected format
@@ -253,6 +275,8 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const parsedVatRate = Number(vatRate)
   const vatRateValue = vatRate.trim() === '' || !Number.isFinite(parsedVatRate) ? -1 : parsedVatRate
   const inquiryTypeValue = inquiryTypeStr === '' ? -1 : Number(inquiryTypeStr)
+  const remarkError = validateProfileText(remark, true)
+  const remark2Error = validateProfileText(remark2)
   const docWarning = docNoPatternWarning(docPrefixTrimmed, docRunningFormatTrimmed)
   const selectedPassbook = passbooks.find((p) => p.code === passbookCodeTrimmed)
   const selectedExpense = expenses.find((p) => p.code === expenseCodeTrimmed)
@@ -278,17 +302,81 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     if (supportsShippingItem && shippingEnabled && !shippingItemUnitCodeTrimmed) {
       return 'เลือกหน่วย SML สำหรับค่าขนส่งก่อนเปิดใช้งาน'
     }
+	if (remarkError) return `หมายเหตุ 1: ${remarkError}`
+	if (remark2Error) return `หมายเหตุ 2: ${remark2Error}`
+	if (isShopeeRealtimeAutoRoute && !preview) return 'ตรวจตัวอย่างและผลกระทบก่อนบันทึกเส้นทาง Auto SML'
     return ''
   })()
   const canSave = !saveDisabledReason
 
   const handleDestinationChange = (value: EndpointKind) => {
+	markDirty()
     const destination = destinationOptions.find((option) => option.value === value)
     setSelectedDestination(value)
     setSelectedDocFormatCode('') // reset — useEffect will re-fetch and select first
     if (!destination) return
     setDocPrefix(destination.docPrefix)
     setDocRunningFormat(destination.docRunningFormat)
+  }
+
+  const buildPayload = () => ({
+    channel: row.channel,
+    bill_type: row.bill_type,
+    party_code: showPartyPicker ? (party?.code ?? '') : (row.party_code ?? ''),
+    party_name: showPartyPicker ? (party?.name ?? '') : (row.party_name ?? ''),
+    party_phone: row.party_phone ?? '',
+    party_address: row.party_address ?? '',
+    party_tax_id: row.party_tax_id ?? '',
+    doc_format_code: selectedDocFormatCode || selectedDestinationMeta.docFormatCode,
+    endpoint: selectedDestinationMeta.apiPath,
+    doc_prefix: isSettlement ? (selectedDocFormatCode || selectedDestinationMeta.docPrefix) : docPrefixTrimmed,
+    doc_running_format: isSettlement ? '@YYMM####' : docRunningFormatTrimmed,
+    branch_code: isSettlement ? '' : branchCodeTrimmed,
+    sale_code: isSettlement ? '' : saleCodeTrimmed,
+    unit_code: '',
+    doc_time: '',
+    shipping_item_enabled: supportsShippingItem ? shippingEnabled : false,
+    shipping_item_code: supportsShippingItem ? shippingItemCodeTrimmed : '',
+    shipping_item_unit_code: supportsShippingItem ? shippingItemUnitCodeTrimmed : '',
+    passbook_code: isSettlement ? passbookCodeTrimmed : '',
+    passbook_name: isSettlement ? (selectedPassbook?.name_1 ?? row.passbook_name ?? '') : '',
+    bank_code: isSettlement ? (selectedPassbook?.bank_code ?? row.bank_code ?? '') : '',
+    bank_branch: isSettlement ? (selectedPassbook?.bank_branch ?? row.bank_branch ?? '') : '',
+    expense_code: isSettlement ? expenseCodeTrimmed : '',
+    expense_name: isSettlement ? (selectedExpense?.name_1 ?? row.expense_name ?? '') : '',
+    wh_code: isSettlement ? '' : whCodeTrimmed,
+    shelf_code: isSettlement ? '' : shelfCodeTrimmed,
+    vat_type: isSettlement ? -1 : vatTypeValue,
+    vat_rate: isSettlement ? -1 : vatRateValue,
+    inquiry_type: isSettlement ? -1 : inquiryTypeValue,
+    remark: isSettlement ? '' : remark,
+    remark_2: isSettlement ? '' : remark2,
+    expected_config_version: row.config_version ?? 0,
+  })
+
+  const handlePreview = async () => {
+    if (previewing || saving) return
+    if (remarkError || remark2Error) {
+      toast.error(remarkError ? `หมายเหตุ 1: ${remarkError}` : `หมายเหตุ 2: ${remark2Error}`)
+      return
+    }
+    setPreviewing(true)
+    setPreview(null)
+    try {
+      const response = await client.post<ChannelDefaultPreview>('/api/settings/channel-defaults/preview', {
+        ...buildPayload(),
+        preview_context: {
+          channel: channelLabel,
+          order_ref: 'ORDER-PREVIEW',
+          bill_no: previewDocNo(docPrefixTrimmed || 'BF', docRunningFormatTrimmed || 'YYMM####'),
+        },
+      })
+      setPreview(response.data)
+    } catch (e: any) {
+      toast.error('ตรวจตัวอย่างไม่สำเร็จ: ' + (e?.response?.data?.error ?? e?.message ?? 'unknown'))
+    } finally {
+      setPreviewing(false)
+    }
   }
 
   const handleSave = async () => {
@@ -319,42 +407,19 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     }
     setSaving(true)
     try {
-      await client.put('/api/settings/channel-defaults', {
-        channel: row.channel,
-        bill_type: row.bill_type,
-        party_code: showPartyPicker ? (party?.code ?? '') : (row.party_code ?? ''),
-        party_name: showPartyPicker ? (party?.name ?? '') : (row.party_name ?? ''),
-        party_phone: row.party_phone ?? '',
-        party_address: row.party_address ?? '',
-        party_tax_id: row.party_tax_id ?? '',
-        doc_format_code: selectedDocFormatCode || selectedDestinationMeta.docFormatCode,
-        endpoint: selectedDestinationMeta.apiPath,
-        doc_prefix: isSettlement ? (selectedDocFormatCode || selectedDestinationMeta.docPrefix) : docPrefixTrimmed,
-        doc_running_format: isSettlement ? '@YYMM####' : docRunningFormatTrimmed,
-        branch_code: isSettlement ? '' : branchCodeTrimmed,
-        sale_code: isSettlement ? '' : saleCodeTrimmed,
-        unit_code: '',
-        doc_time: '',
-        shipping_item_enabled: supportsShippingItem ? shippingEnabled : false,
-        shipping_item_code: supportsShippingItem ? shippingItemCodeTrimmed : '',
-        shipping_item_unit_code: supportsShippingItem ? shippingItemUnitCodeTrimmed : '',
-        passbook_code: isSettlement ? passbookCodeTrimmed : '',
-        passbook_name: isSettlement ? (selectedPassbook?.name_1 ?? row.passbook_name ?? '') : '',
-        bank_code: isSettlement ? (selectedPassbook?.bank_code ?? row.bank_code ?? '') : '',
-        bank_branch: isSettlement ? (selectedPassbook?.bank_branch ?? row.bank_branch ?? '') : '',
-        expense_code: isSettlement ? expenseCodeTrimmed : '',
-        expense_name: isSettlement ? (selectedExpense?.name_1 ?? row.expense_name ?? '') : '',
-        wh_code: isSettlement ? '' : whCodeTrimmed,
-        shelf_code: isSettlement ? '' : shelfCodeTrimmed,
-        vat_type: isSettlement ? -1 : vatTypeValue,
-        vat_rate: isSettlement ? -1 : vatRateValue,
-        inquiry_type: isSettlement ? -1 : inquiryTypeValue,
-        remark_2: isSettlement ? '' : (remark2Str === REMARK2_NONE ? '' : remark2Str),
-      })
+		await client.put('/api/settings/channel-defaults', buildPayload())
       toast.success('บันทึกสำเร็จ')
+		setDirty(false)
       onSaved()
       onOpenChange(false)
     } catch (e: any) {
+		if (e?.response?.status === 409 && e?.response?.data?.code === 'config_version_conflict') {
+			toast.error('มีผู้ใช้อื่นแก้ไขค่านี้แล้ว ระบบกำลังโหลดข้อมูลล่าสุด กรุณาตรวจสอบก่อนบันทึกอีกครั้ง')
+			setDirty(false)
+			onSaved()
+			onOpenChange(false)
+			return
+		}
       toast.error('บันทึกล้มเหลว: ' + (e?.response?.data?.error ?? e?.message ?? 'unknown'))
     } finally {
       setSaving(false)
@@ -362,20 +427,26 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   }
 
   const handleShippingPick = (code: string, unitCode: string, picked?: CatalogMatch) => {
+	markDirty()
     setShippingItemCode(code)
     setShippingItemUnitCode(unitCode || '')
     setShippingItemName(picked?.item_name || '')
     setShippingPickerOpen(false)
   }
 
+  const requestOpenChange = (nextOpen: boolean) => {
+	if (!nextOpen && dirty && !window.confirm('มีการตั้งค่าที่ยังไม่ได้บันทึก ต้องการปิดโดยทิ้งการเปลี่ยนแปลงหรือไม่')) {
+		return
+	}
+	if (!nextOpen) setShippingPickerOpen(false)
+	onOpenChange(nextOpen)
+  }
+
   return (
     <>
       <Dialog
         open={open}
-        onOpenChange={(v) => {
-          if (!v) setShippingPickerOpen(false)
-          onOpenChange(v)
-        }}
+		onOpenChange={requestOpenChange}
       >
         <DialogContent className="grid max-h-[90vh] max-w-xl grid-rows-[auto_minmax(0,1fr)_auto]">
           <DialogHeader>
@@ -434,6 +505,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                 <Select
                   value={selectedDocFormatCode}
                   onValueChange={(code) => {
+					markDirty()
                     setSelectedDocFormatCode(code)
                     const fmt = docFormats.find((f) => f.code === code)
                     if (fmt) {
@@ -485,7 +557,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <Label className="text-xs">บัญชีรับเงิน</Label>
                     <Select
                       value={passbookCode || SELECT_NONE_VALUE}
-                      onValueChange={(value) => setPassbookCode(value === SELECT_NONE_VALUE ? '' : value)}
+					  onValueChange={(value) => {
+						markDirty()
+						setPassbookCode(value === SELECT_NONE_VALUE ? '' : value)
+					  }}
                       disabled={settlementMastersLoading}
                     >
                       <SelectTrigger className="h-10">
@@ -510,7 +585,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <Label className="text-xs">ส่วนต่าง Shopee</Label>
                     <Select
                       value={expenseCode || SELECT_NONE_VALUE}
-                      onValueChange={(value) => setExpenseCode(value === SELECT_NONE_VALUE ? '' : value)}
+					  onValueChange={(value) => {
+						markDirty()
+						setExpenseCode(value === SELECT_NONE_VALUE ? '' : value)
+					  }}
                       disabled={settlementMastersLoading}
                     >
                       <SelectTrigger className="h-10">
@@ -600,7 +678,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <PartyPicker
                       billType={isPurchase ? 'purchase' : 'sale'}
                       value={party}
-                      onChange={setParty}
+					  onChange={(value) => {
+						markDirty()
+						setParty(value)
+					  }}
                     />
                   </div>
                 )}
@@ -612,7 +693,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                       variant="ghost"
                       size="sm"
                       className="h-6 px-1.5 text-[11px]"
-                      onClick={() => setManualWarehouse((v) => !v)}
+					  onClick={() => {
+						markDirty()
+						setManualWarehouse((v) => !v)
+					  }}
                     >
                       {manualWarehouse ? 'เลือกจาก SML' : 'พิมพ์รหัสเอง'}
                     </Button>
@@ -621,6 +705,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <Input
                       value={whCode}
                       onChange={(e) => {
+						markDirty()
                         setWhCode(e.target.value.toUpperCase())
                         setShelfCode('')
                       }}
@@ -631,6 +716,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <WarehousePicker
                       value={whCode}
                       onChange={(warehouse) => {
+						markDirty()
                         setWhCode(warehouse.code)
                         setShelfCode('')
                       }}
@@ -642,7 +728,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   {manualWarehouse ? (
                     <Input
                       value={shelfCode}
-                      onChange={(e) => setShelfCode(e.target.value.toUpperCase())}
+					  onChange={(e) => {
+						markDirty()
+						setShelfCode(e.target.value.toUpperCase())
+					  }}
                       placeholder="เช่น SH-01"
                       className="font-mono"
                     />
@@ -650,13 +739,19 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <ShelfPicker
                       warehouseCode={whCode}
                       value={shelfCode}
-                      onChange={(shelf) => setShelfCode(shelf.code)}
+					  onChange={(shelf) => {
+						markDirty()
+						setShelfCode(shelf.code)
+					  }}
                     />
                   )}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">ประเภทภาษี (vat_type)</Label>
-                  <Select value={vatTypeStr} onValueChange={setVatTypeStr}>
+				  <Select value={vatTypeStr} onValueChange={(value) => {
+					markDirty()
+					setVatTypeStr(value)
+				  }}>
                     <SelectTrigger className="h-10">
                       <SelectValue placeholder="ไม่ระบุ" />
                     </SelectTrigger>
@@ -671,7 +766,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   <Label className="text-xs">อัตราภาษี (vat_rate)</Label>
                   <Input
                     value={vatRate}
-                    onChange={(e) => setVatRate(e.target.value)}
+					onChange={(e) => {
+					  markDirty()
+					  setVatRate(e.target.value)
+					}}
                     placeholder="เช่น 7"
                     inputMode="decimal"
                     className="font-mono"
@@ -679,7 +777,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">ประเภทรายการ (inquiry_type)</Label>
-                  <Select value={inquiryTypeStr} onValueChange={setInquiryTypeStr}>
+				  <Select value={inquiryTypeStr} onValueChange={(value) => {
+					markDirty()
+					setInquiryTypeStr(value)
+				  }}>
                     <SelectTrigger className="h-10">
                       <SelectValue placeholder="ไม่ระบุ (กรอกตอนส่ง)" />
                     </SelectTrigger>
@@ -702,26 +803,45 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">สถานะเอกสาร (remark_2)</Label>
-                  <Select value={remark2Str} onValueChange={setRemark2Str}>
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder="ไม่ระบุ (กรอกตอนส่ง)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={REMARK2_NONE}>ไม่ระบุ</SelectItem>
-                      {SML_REMARK2_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+				<div className="space-y-1.5 sm:col-span-2">
+				  <Label className="text-xs" htmlFor="channel-remark">หมายเหตุ 1 (remark)</Label>
+				  <Input
+					id="channel-remark"
+					value={remark}
+					onChange={(event) => {
+					  markDirty()
+					  setRemark(event.target.value)
+					}}
+					placeholder="เช่น {{channel}} | {{order_ref}}"
+					aria-invalid={Boolean(remarkError)}
+				  />
+				  <p className={remarkError ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+					{remarkError || 'ใช้ token ได้: {{channel}}, {{order_ref}}, {{bill_no}}'}
+				  </p>
+				</div>
+				<div className="space-y-1.5 sm:col-span-2">
+				  <Label className="text-xs" htmlFor="channel-remark-2">หมายเหตุ 2 (remark_2)</Label>
+				  <Input
+					id="channel-remark-2"
+					value={remark2}
+					onChange={(event) => {
+					  markDirty()
+					  setRemark2(event.target.value)
+					}}
+					placeholder="ข้อความอิสระ ไม่เกิน 255 ตัวอักษร"
+					aria-invalid={Boolean(remark2Error)}
+				  />
+				  {remark2Error && <p className="text-xs text-destructive">{remark2Error}</p>}
+				</div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">สาขา (branch_code)</Label>
                   <SMLMasterCodePicker
                     kind="branch"
                     value={branchCode}
-                    onChange={setBranchCode}
+					onChange={(value) => {
+					  markDirty()
+					  setBranchCode(value)
+					}}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -729,7 +849,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   <SMLMasterCodePicker
                     kind="sale"
                     value={saleCode}
-                    onChange={setSaleCode}
+					onChange={(value) => {
+					  markDirty()
+					  setSaleCode(value)
+					}}
                   />
                 </div>
               </div>
@@ -742,6 +865,68 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
               )}
             </div>
             )}
+
+			{!isSettlement && !isShopeeRealtimeCancelRoute && (
+			  <div className="space-y-3 rounded-md border border-border bg-background p-3">
+				<div className="flex flex-wrap items-start justify-between gap-3">
+				  <div>
+					<div className="text-sm font-semibold text-foreground">ตรวจตัวอย่าง Document Profile</div>
+					<p className="mt-1 max-w-[62ch] text-xs text-muted-foreground">
+					  ตรวจค่าที่ resolve แล้วและผลกระทบก่อนบันทึก การเปลี่ยนแปลงนี้มีผลเฉพาะเอกสารใหม่
+					</p>
+				  </div>
+				  <Button
+					type="button"
+					variant="outline"
+					className="gap-2"
+					onClick={handlePreview}
+					disabled={previewing || saving || Boolean(remarkError || remark2Error)}
+				  >
+					<Eye className="h-4 w-4" />
+					{previewing ? 'กำลังตรวจ...' : 'ตรวจตัวอย่าง'}
+				  </Button>
+				</div>
+
+				<div className="grid gap-2 text-xs sm:grid-cols-2">
+				  <div className="rounded-md bg-muted/50 px-3 py-2">
+					<div className="text-muted-foreground">ค่าระบบที่แก้ไขไม่ได้</div>
+					<div className="mt-1 font-mono text-foreground">BILLFLOW · NEXFLOW · THB × 1</div>
+				  </div>
+				  <div className="rounded-md bg-muted/50 px-3 py-2">
+					<div className="text-muted-foreground">เวลาเอกสาร</div>
+					<div className="mt-1 text-foreground">เวลาจริงขณะส่ง · Asia/Bangkok</div>
+				  </div>
+				</div>
+
+				{preview ? (
+				  <div className="space-y-2" role="status" aria-live="polite">
+					<div className="rounded-md border border-success/30 bg-success/5 px-3 py-2 text-xs">
+					  <div className="font-medium text-foreground">
+						Profile {preview.profile_mode}{preview.profile_version ? ` · ${preview.profile_version}` : ''}
+					  </div>
+					  <div className="mt-1 break-words text-muted-foreground">
+						หมายเหตุ 1: {preview.resolved.remark || 'ไม่ระบุ'}
+					  </div>
+					  <div className="mt-0.5 break-words text-muted-foreground">
+						หมายเหตุ 2: {preview.resolved.remark_2 || 'ไม่ระบุ'}
+					  </div>
+					  <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
+						route {preview.route_signature}
+					  </div>
+					</div>
+					{preview.missing_prerequisites.length > 0 && (
+					  <div className="rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-2 text-xs text-warning">
+						ข้อมูลที่ยังขาด: {preview.missing_prerequisites.join(', ')}
+					  </div>
+					)}
+				  </div>
+				) : (
+				  <p className="text-xs text-muted-foreground" role="status">
+					ยังไม่ได้ตรวจตัวอย่าง หลังแก้ไขค่าใด ๆ ต้องตรวจใหม่ก่อนบันทึกเส้นทาง Auto SML
+				  </p>
+				)}
+			  </div>
+			)}
 
             {supportsShippingItem && (
               <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
@@ -758,7 +943,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   </div>
                   <Switch
                     checked={shippingEnabled}
-                    onCheckedChange={setShippingEnabled}
+					onCheckedChange={(value) => {
+					  markDirty()
+					  setShippingEnabled(value)
+					}}
                     aria-label="เพิ่มค่าขนส่งเป็นรายการสินค้า"
                   />
                 </div>
@@ -800,7 +988,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     <Label className="text-xs">หน่วย</Label>
                     <UnitSelect
                       value={shippingItemUnitCode}
-                      onValueChange={setShippingItemUnitCode}
+					  onValueChange={(value) => {
+						markDirty()
+						setShippingItemUnitCode(value)
+					  }}
                       productCode={shippingItemCodeTrimmed}
                       disabled={!shippingEnabled || !shippingItemCodeTrimmed}
                       autoSelectSingle

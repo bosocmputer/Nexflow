@@ -70,6 +70,7 @@ type Config struct {
 	MarketplaceReservationLedgerEnabled bool
 	SMLStockAvailabilityMode            string
 	SMLStockSourceFingerprint           string
+	SMLDocumentProfileMode              string
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
@@ -126,6 +127,10 @@ func Load() *Config {
 	if err != nil {
 		log.Fatal(err)
 	}
+	documentProfileMode, err := parseSMLDocumentProfileMode(getEnv("SML_DOCUMENT_PROFILE_MODE", "off"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	c := &Config{
 		Port:                                getEnv("PORT", "8090"),
@@ -163,6 +168,7 @@ func Load() *Config {
 		MarketplaceReservationLedgerEnabled: getEnvBool("MARKETPLACE_RESERVATION_LEDGER_ENABLED", false),
 		SMLStockAvailabilityMode:            stockAvailabilityMode,
 		SMLStockSourceFingerprint:           strings.TrimSpace(getEnv("SML_STOCK_SOURCE_FINGERPRINT", "")),
+		SMLDocumentProfileMode:              documentProfileMode,
 		ShopeeOpenAPIEnabled:                getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
 		ShopeeOpenAPIEnv:                    getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
 		ShopeeOpenAPIBaseURL:                getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
@@ -230,6 +236,16 @@ func parseSMLStockAvailabilityMode(raw string) (string, error) {
 		return mode, nil
 	default:
 		return "", fmt.Errorf("SML_STOCK_AVAILABILITY_MODE must be physical_v1, shadow, or net_sale_order_v1; got %q", raw)
+	}
+}
+
+func parseSMLDocumentProfileMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	switch mode {
+	case "off", "shadow", "active":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("SML_DOCUMENT_PROFILE_MODE must be off, shadow, or active; got %q", raw)
 	}
 }
 

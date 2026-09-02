@@ -49,7 +49,9 @@ export interface ChannelDefaultRow {
   vat_type: number      // -1 = use default; 0=แยกนอก, 1=รวมใน, 2=ศูนย์%
   vat_rate: number      // -1 = use default; else percent (e.g. 7)
   inquiry_type: number  // -1 = use default; 0-3 = ประเภทรายการ
-  remark_2?: string     // '' = ไม่ระบุ; 'tax'|'notax'|'re'
+  remark?: string
+  remark_2?: string
+  config_version: number
   updated_by?: string | null
   updated_at?: string
 }

@@ -358,7 +358,7 @@ func main() {
 	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, cfg.MarketplaceGroupedUIEnabled, logger)
 	settingsH := handlers.NewSettingsHandler(platformRepo, logger)
 	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, auditLogRepo, cfg, logger)
-	channelDefaultsH := handlers.NewChannelDefaultsHandler(channelDefaultRepo, auditLogRepo, cfg.PurchaseFlowEnabled, logger)
+	channelDefaultsH := handlers.NewChannelDefaultsHandler(channelDefaultRepo, auditLogRepo, cfg.PurchaseFlowEnabled, cfg.SMLDocumentProfileMode, logger)
 	smlPartyH := handlers.NewSMLPartyHandler(partyCache, partyClient, auditLogRepo, logger)
 	smlPartyH.SetSMLConfig(cfg.ShopeeSMLURL, cfg.ShopeeSMLGUID, cfg.ShopeeSMLDatabase)
 	smlWarehouseH := handlers.NewSMLWarehouseHandler(warehouseCache, logger)
@@ -623,6 +623,7 @@ func main() {
 		// Channel defaults (admin only) — per-(channel, bill_type) party config
 		api.GET("/settings/channel-defaults", middleware.RequireRole("admin"), channelDefaultsH.List)
 		api.PUT("/settings/channel-defaults", middleware.RequireRole("admin"), channelDefaultsH.Upsert)
+		api.POST("/settings/channel-defaults/preview", middleware.RequireRole("admin"), channelDefaultsH.Preview)
 
 		// SML party master proxy — search customers/suppliers from cache
 		api.GET("/sml/customers", middleware.RequireRole("admin", "staff"), smlPartyH.SearchCustomers)

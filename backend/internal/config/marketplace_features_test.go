@@ -37,3 +37,15 @@ func TestParseSMLStockAvailabilityModeRejectsUnsafeFallback(t *testing.T) {
 		t.Fatal("unknown stock availability mode must fail closed")
 	}
 }
+
+func TestParseSMLDocumentProfileMode(t *testing.T) {
+	for _, mode := range []string{"off", "shadow", "active"} {
+		got, err := parseSMLDocumentProfileMode(mode)
+		if err != nil || got != mode {
+			t.Fatalf("parseSMLDocumentProfileMode(%q) = %q, %v", mode, got, err)
+		}
+	}
+	if _, err := parseSMLDocumentProfileMode("enabled"); err == nil {
+		t.Fatal("unknown document profile mode must fail closed")
+	}
+}

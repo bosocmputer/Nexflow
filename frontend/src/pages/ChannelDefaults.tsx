@@ -283,6 +283,9 @@ export default function ChannelDefaults() {
         vat_type: -1,
         vat_rate: -1,
         inquiry_type: -1,
+		remark: '',
+		remark_2: '',
+		config_version: 0,
       } satisfies ChannelDefaultRow
     })
   }, [rows])

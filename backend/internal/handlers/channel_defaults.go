@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,7 +11,10 @@ import (
 
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
+	"nexflow/internal/services/smlprofile"
 )
+
+const channelDefaultRequestLimit = 2 << 20
 
 // ChannelDefaultsHandler exposes route/document defaults for channel_defaults.
 type ChannelDefaultsHandler struct {
@@ -18,18 +22,21 @@ type ChannelDefaultsHandler struct {
 	auditRepo           *repository.AuditLogRepo
 	logger              *zap.Logger
 	purchaseFlowEnabled bool
+	profileMode         string
 }
 
 func NewChannelDefaultsHandler(
 	repo *repository.ChannelDefaultRepo,
 	auditRepo *repository.AuditLogRepo,
 	purchaseFlowEnabled bool,
+	profileMode string,
 	logger *zap.Logger,
 ) *ChannelDefaultsHandler {
 	return &ChannelDefaultsHandler{
 		repo:                repo,
 		auditRepo:           auditRepo,
 		purchaseFlowEnabled: purchaseFlowEnabled,
+		profileMode:         profileMode,
 		logger:              logger,
 	}
 }
@@ -56,6 +63,7 @@ func (h *ChannelDefaultsHandler) List(c *gin.Context) {
 // PUT /api/settings/channel-defaults — upsert by (channel, bill_type)
 func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 	var in models.ChannelDefaultUpsert
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelDefaultRequestLimit)
 	if err := c.ShouldBindJSON(&in); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -70,6 +78,127 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		})
 		return
 	}
+	if err := normalizeAndValidateChannelDefault(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if in.ExpectedConfigVersion == nil || *in.ExpectedConfigVersion < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expected_config_version must be zero or greater"})
+		return
+	}
+
+	before, err := h.repo.Get(in.Channel, in.BillType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if (before == nil && *in.ExpectedConfigVersion != 0) ||
+		(before != nil && before.ConfigVersion != *in.ExpectedConfigVersion) {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":  "config_version_conflict",
+			"error": "การตั้งค่าถูกแก้ไขแล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง",
+		})
+		return
+	}
+
+	d := channelDefaultFromUpsert(in)
+	userID := c.GetString("user_id")
+	pauseAutoSML := in.Channel == "shopee_realtime" && in.BillType == "sale"
+	var updated *models.ChannelDefault
+	if before == nil {
+		updated, err = h.repo.CreateExpected(d, userID, pauseAutoSML)
+	} else {
+		updated, err = h.repo.UpdateExpected(d, userID, *in.ExpectedConfigVersion, pauseAutoSML)
+	}
+	if errors.Is(err, repository.ErrConfigVersionConflict) {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":  "config_version_conflict",
+			"error": "การตั้งค่าถูกแก้ไขแล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง",
+		})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.audit(c, "channel_default_updated", map[string]interface{}{
+		"channel": in.Channel, "bill_type": in.BillType,
+		"before":                             safeChannelDefaultAudit(before, h.profileMode),
+		"after":                              safeChannelDefaultAudit(updated, h.profileMode),
+		"auto_sml_paused_for_reconfirmation": pauseAutoSML,
+	})
+	c.JSON(http.StatusOK, updated)
+}
+
+type channelDefaultPreviewRequest struct {
+	models.ChannelDefaultUpsert
+	PreviewContext struct {
+		Channel  string `json:"channel"`
+		OrderRef string `json:"order_ref"`
+		BillNo   string `json:"bill_no"`
+	} `json:"preview_context"`
+}
+
+// Preview validates and resolves a proposed configuration without reading or
+// mutating channel_defaults. Master-data refreshes are deliberately separate.
+func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
+	var in channelDefaultPreviewRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelDefaultRequestLimit)
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !h.purchaseFlowEnabled && in.BillType == "purchase" {
+		featureGone(c, "ฝั่งซื้อถูกปิดใช้งานแล้ว")
+		return
+	}
+	if !validChannelBillTypeCombo(in.Channel, in.BillType) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid channel/bill_type combo"})
+		return
+	}
+	if err := normalizeAndValidateChannelDefault(&in.ChannelDefaultUpsert); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	d := channelDefaultFromUpsert(in.ChannelDefaultUpsert)
+	if in.ExpectedConfigVersion != nil {
+		d.ConfigVersion = *in.ExpectedConfigVersion + 1
+	}
+	context := smlprofile.TemplateContext{
+		Channel: in.PreviewContext.Channel, OrderRef: in.PreviewContext.OrderRef, BillNo: in.PreviewContext.BillNo,
+	}
+	resolvedRemark, err := smlprofile.ResolveTemplate(d.Remark, context)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	missing := channelDefaultMissingPrerequisites(d)
+	profileVersion := ""
+	if h.profileMode != smlprofile.ModeOff {
+		profileVersion = smlprofile.Version
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"profile_mode":    h.profileMode,
+		"profile_version": profileVersion,
+		"route_signature": smlprofile.RouteSignature(*d, h.profileMode),
+		"resolved":        gin.H{"remark": resolvedRemark, "remark_2": d.Remark2},
+		"system_fields": gin.H{
+			"creator_code": "BILLFLOW", "cashier_code": "BILLFLOW", "user_request": "NEXFLOW",
+			"remark_5":      "NEXFLOW|" + d.Channel + "|" + firstNonEmpty(context.OrderRef, context.BillNo),
+			"currency_code": "THB", "exchange_rate": "1", "timezone": "Asia/Bangkok",
+		},
+		"payload": gin.H{
+			"endpoint": d.Endpoint, "doc_format_code": d.DocFormatCode, "warehouse": d.WHCode,
+			"location": d.ShelfCode, "vat_type": d.VATType, "vat_rate": d.VATRate,
+			"remark": resolvedRemark, "remark_2": d.Remark2, "document_profile_version": profileVersion,
+		},
+		"missing_prerequisites": missing,
+		"warnings":              previewWarnings(d, missing),
+	})
+}
+
+func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
 	in.ShippingItemCode = strings.TrimSpace(in.ShippingItemCode)
 	in.ShippingItemUnitCode = strings.TrimSpace(in.ShippingItemUnitCode)
 	in.PassbookCode = strings.TrimSpace(in.PassbookCode)
@@ -110,12 +239,10 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		in.ShippingItemCode = ""
 		in.ShippingItemUnitCode = ""
 		if strings.TrimSpace(in.DocFormatCode) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาเลือกรูปแบบเอกสารรับชำระ (screen_code=EE)"})
-			return
+			return fmt.Errorf("กรุณาเลือกรูปแบบเอกสารรับชำระ (screen_code=EE)")
 		}
 		if strings.TrimSpace(in.PassbookCode) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาเลือกบัญชีรับเงินสำหรับรับชำระ Shopee"})
-			return
+			return fmt.Errorf("กรุณาเลือกบัญชีรับเงินสำหรับรับชำระ Shopee")
 		}
 		if strings.TrimSpace(in.DocPrefix) == "" {
 			in.DocPrefix = strings.TrimSpace(in.DocFormatCode)
@@ -125,28 +252,28 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		}
 	}
 	if in.ShippingItemEnabled && in.ShippingItemCode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "กรุณาเลือกสินค้า SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน",
-		})
-		return
+		return fmt.Errorf("กรุณาเลือกสินค้า SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน")
 	}
 	if in.ShippingItemEnabled && in.ShippingItemUnitCode == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "กรุณาเลือกหน่วย SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน",
-		})
-		return
+		return fmt.Errorf("กรุณาเลือกหน่วย SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน")
 	}
-	if err := validateShopeeRealtimeAutoDefaults(in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := validateShopeeRealtimeAutoDefaults(*in); err != nil {
+		return err
 	}
-	if err := validateShopeeRealtimeCancelDefaults(in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	if err := validateShopeeRealtimeCancelDefaults(*in); err != nil {
+		return err
 	}
+	if err := smlprofile.ValidateTextTemplate("remark", in.Remark); err != nil {
+		return err
+	}
+	if err := smlprofile.ValidateFreeText("remark_2", in.Remark2); err != nil {
+		return err
+	}
+	return nil
+}
 
-	userID := c.GetString("user_id")
-	d := &models.ChannelDefault{
+func channelDefaultFromUpsert(in models.ChannelDefaultUpsert) *models.ChannelDefault {
+	return &models.ChannelDefault{
 		Channel:          in.Channel,
 		BillType:         in.BillType,
 		PartyCode:        in.PartyCode,
@@ -177,26 +304,63 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		VATType:              in.VATType,
 		VATRate:              in.VATRate,
 		InquiryType:          in.InquiryType,
+		Remark:               in.Remark,
 		Remark2:              in.Remark2,
 	}
-	if err := h.repo.Upsert(d, userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+}
 
-	h.audit(c, "channel_default_updated", map[string]interface{}{
-		"channel":               in.Channel,
-		"bill_type":             in.BillType,
-		"endpoint":              in.Endpoint,
-		"doc_format_code":       in.DocFormatCode,
-		"doc_prefix":            in.DocPrefix,
-		"doc_running_format":    in.DocRunningFormat,
-		"shipping_item_enabled": in.ShippingItemEnabled,
-		"shipping_item_code":    in.ShippingItemCode,
-		"passbook_code":         in.PassbookCode,
-		"expense_code":          in.ExpenseCode,
-	})
-	c.JSON(http.StatusOK, d)
+func channelDefaultMissingPrerequisites(d *models.ChannelDefault) []string {
+	if d.Channel != "shopee_realtime" || d.BillType != "sale" {
+		return nil
+	}
+	var missing []string
+	for _, field := range []struct{ value, label string }{
+		{d.Endpoint, "ปลายทาง SML"}, {d.DocFormatCode, "รูปแบบเอกสาร"},
+		{d.DocPrefix, "คำนำหน้าเลขเอกสาร"}, {d.DocRunningFormat, "รูปแบบเลขรัน"},
+		{d.PartyCode, "ลูกค้า SML"}, {d.WHCode, "คลัง"}, {d.ShelfCode, "พื้นที่เก็บ"},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			missing = append(missing, field.label)
+		}
+	}
+	if d.VATType < 0 {
+		missing = append(missing, "ประเภทภาษี")
+	}
+	if d.VATRate < 0 {
+		missing = append(missing, "อัตราภาษี")
+	}
+	if d.ShippingItemEnabled && strings.TrimSpace(d.ShippingItemCode) == "" {
+		missing = append(missing, "สินค้าค่าจัดส่ง")
+	}
+	if d.ShippingItemEnabled && strings.TrimSpace(d.ShippingItemUnitCode) == "" {
+		missing = append(missing, "หน่วยค่าจัดส่ง")
+	}
+	return missing
+}
+
+func previewWarnings(d *models.ChannelDefault, missing []string) []string {
+	warnings := []string{"การเปลี่ยนแปลงมีผลเฉพาะเอกสารใหม่"}
+	if len(missing) > 0 {
+		warnings = append(warnings, "ยังเปิด Auto SML ไม่ได้จนกว่าข้อมูลที่จำเป็นจะครบ")
+	}
+	if d.Channel == "shopee_realtime" {
+		warnings = append(warnings, "การเปลี่ยน route signature ต้อง preview และยืนยัน Auto SML ใหม่")
+	}
+	return warnings
+}
+
+func safeChannelDefaultAudit(d *models.ChannelDefault, mode string) map[string]interface{} {
+	if d == nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"config_version": d.ConfigVersion, "route_signature": smlprofile.RouteSignature(*d, mode),
+		"endpoint": d.Endpoint, "doc_format_code": d.DocFormatCode, "doc_prefix": d.DocPrefix,
+		"doc_running_format": d.DocRunningFormat, "wh_code": d.WHCode, "shelf_code": d.ShelfCode,
+		"vat_type": d.VATType, "vat_rate": d.VATRate, "shipping_item_enabled": d.ShippingItemEnabled,
+		"shipping_item_code": d.ShippingItemCode, "shipping_item_unit_code": d.ShippingItemUnitCode,
+		"remark_configured": d.Remark != "", "remark_2_configured": d.Remark2 != "", "profile_mode": mode,
+	}
 }
 
 func validateShopeeRealtimeAutoDefaults(in models.ChannelDefaultUpsert) error {

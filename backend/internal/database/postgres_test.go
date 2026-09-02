@@ -192,6 +192,29 @@ func TestMigration090AddsVersionedAutoSMLTriggerSnapshots(t *testing.T) {
 	}
 }
 
+func TestMigration091SMLDocumentProfileChannelDefaultsIsAdditive(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/091_sml_document_profile_channel_defaults.sql")
+	if err != nil {
+		t.Fatalf("read migration 091: %v", err)
+	}
+	body := string(data)
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS remark VARCHAR(255)",
+		"ALTER COLUMN remark_2 TYPE VARCHAR(255)",
+		"ADD COLUMN IF NOT EXISTS config_version BIGINT",
+		"channel_defaults_config_version_check",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 091 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"DROP TABLE", "DROP COLUMN", "TRUNCATE", "DELETE FROM"} {
+		if strings.Contains(strings.ToUpper(body), forbidden) {
+			t.Errorf("migration 091 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
