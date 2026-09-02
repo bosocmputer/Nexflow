@@ -2,16 +2,17 @@
 
 ## Handoff
 
-- Last completed: AOY active-mode enablement and controlled Auto SML cutoff
-- Active task: T14 controlled automatic document parity and production monitoring
-- Nexflow deployed application: `codex/marketplace-units-conversion` / `2ae9cbd`;
+- Last completed: first AOY automatic Profile V1 document, SML parity and UI proof
+- Active task: T11 deployed percentiles plus T14 390px/first-ten monitoring
+- Nexflow deployed application: `codex/marketplace-units-conversion` / `aa1ccbb`;
   durable production handoff continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4b5a3f3`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
 - Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
   Shopee main route is `AB-1 / 001`, Channel config version 2. Shop `264993963`
   is enabled and unpaused with trigger `PROCESSED`, Auto SML config version 4
   and cutoff `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop `1029622928`
-  remains disabled. No Profile reconciliation job or backfill was created.
+  remains disabled. The first Profile completed synchronously, so no Profile
+  reconciliation job or backfill was required.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
@@ -22,33 +23,40 @@
   1.539/7.854/35.891/140.596 microseconds; Gateway normalization/hash =
   5.572/25.762/110.357/482.279 microseconds. HTTP/database p95 budgets still
   require deployed telemetry.
-- Browser evidence: local desktop Channel dialog plus production AOY off/shadow
-  previews passed. Production shadow preview displayed `sml-document-v1`,
-  `AB-1 / 001`, VAT 7%, the deterministic `remark_5`, and a clean console.
-  Profile recovery-card and true 390px verification still require a controlled
-  Profile attempt because the in-app browser keeps a 1280px viewport.
-- Production evidence: Central Gateway `4b5a3f3` and AOY Nexflow `2ae9cbd` are
-  deployed. Gateway health passed for demo/aoy/lbk63/ploy_test and its capability
-  endpoint advertises `sml-document-v1`. AOY migrations 091-092 are applied,
-  health and Gateway connectivity pass, and the recent severe-error scan is
-  clean. A production preview null-array bug was found, fixed in `2ae9cbd`,
-  redeployed and reverified without an SML write.
+- Browser evidence: production AOY shows `SML Core สร้างแล้ว`, `Document Profile
+  สมบูรณ์`, and `Stock recalculation สำเร็จ` for `BF-INV26090002`; its timeline
+  shows all five Profile checks. The lower payload summary was corrected in
+  `aa1ccbb` and now shows `AB-1 / 001` and two SML rows. Accessibility-tree QA
+  and browser console checks pass; true 390px verification remains open because
+  the in-app browser keeps a 1280px viewport.
+- Production evidence: Central Gateway `16c550d` and AOY Nexflow `aa1ccbb` are
+  deployed. Gateway readiness passes for demo/aoy/lbk63/ploy_test. Controlled
+  order `26090216HNM1GJ` produced exactly one bill/attempt/document
+  `BF-INV26090002`: HTTP 201 in 179 ms, Profile complete with all five checks,
+  stock recalculation completed on its first attempt, and no duplicate rows.
+  SML has header 1/detail 2/VAT 1/shipment 1/main log 1/erp_log 1; `erp_logs`
+  contains all 11 frozen JSON sections. LINE success was delivered once to each
+  of the two enabled recipients.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; existing `tasks/plan.md` and
   `tasks/todo.md`; untracked `.serena/` and `scripts/__pycache__/`
 - Backups: Gateway source/runtime/image at
   `/mnt/data/nextstep-node-2/deploy-backups/sml-document-profile-20260902-141000`;
+  Gateway VAT/profile hotfix backup at
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-profile-vat-hotfix-20260902-215500`;
   AOY DB at `pre-deploy-20260902-141500.sql.gz` and
-  `pre-deploy-20260902-142246.sql.gz`; AOY runtime before shadow at
+  `pre-deploy-20260902-142246.sql.gz`, plus UI-fix backup
+  `pre-deploy-20260902-154415.sql.gz`; AOY runtime before shadow at
   `.env.pre-sml-profile-shadow-20260902-213500` and before active at
   `.env.pre-sml-profile-active-20260902-220000`.
-- Controlled order: user selected the real Shopee status-change flow for
-  `26090216HNM1GJ` (one item, 308.00 THB). Its recorded push history is
-  `UNPAID` at 16:43 -> `READY_TO_SHIP` at 17:13, both before the new cutoff.
-  The user will trigger the later `PROCESSED` transition from Shopee.
-- Next action: wait for the user to click prepare/ready-to-ship in Shopee, then
-  trace the exact push/reconcile/job/core/profile/log/stock lifecycle and compare
-  the resulting SML document with the Profile V1 golden parity evidence.
+- Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
+  Early writes exposed PostgreSQL 11 parameter inference conflicts and rolled
+  back atomically; candidate lookup proved that no core existed. Gateway fixes
+  `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
+  Retrying the immutable attempt reused the same bill, attempt, payload hash and
+  document number, then completed successfully without a duplicate.
+- Next action: leave AOY active and monitor the next nine Profile documents;
+  collect deployed p95/p99/queue-age evidence and perform true 390px QA.
 
 ## Phase A — Proof and contract
 
@@ -102,7 +110,8 @@
   - [x] Automated logs-DB-down, lost-response immutable retry, concurrent
     duplicate, config-race, tenant mismatch and worker lease-reclaim coverage
   - [x] Local desktop Channel dialog and clean-console check
-  - [ ] Live backend/network, Profile recovery card, accessibility and true 390px QA
+  - [x] Live backend/network, Profile status card and desktop accessibility QA
+  - [ ] True 390px QA
 
 ## AOY Release Gates
 
@@ -110,7 +119,7 @@
 - [x] Deploy Gateway compatibility first
 - [x] Deploy Nexflow with profile mode off
 - [x] Shadow preview with AOY `AB-1 / 001`
-- [ ] Controlled automatic document parity and no-duplicate proof (the user
+- [x] Controlled automatic document parity and no-duplicate proof (the user
       explicitly chose the Auto SML path instead of a separate manual send)
 - [x] Enable AOY Auto SML with a new cutoff and no backfill
 - [ ] Verify the first 10 documents; keep all other tenants off
@@ -242,6 +251,50 @@
   Scope is bounded to the selected shop/order and the new cutoff.
 - Next action: after the user's Shopee click, monitor and reconcile the first
   automatic Profile V1 document end to end before accepting the release gate.
+
+### AOY release checkpoint: first automatic Profile V1 document
+
+- Trigger evidence: Shopee order `26090216HNM1GJ` reached exact `PROCESSED` at
+  21:51:10 Asia/Bangkok after the configured cutoff. Nexflow created one Auto job
+  `a2b210c4-d65a-40d1-b5d2-a547d74da046`, one bill
+  `513e0afd-1f8d-42c3-8023-f7759803ffab`, and one immutable SML attempt
+  `29cfa83f-6983-4c84-8c15-1bc22360fda6` for `BF-INV26090002`.
+- Failure containment: PostgreSQL 11 rejected reused parameters across
+  `INSERT ... SELECT` and `NOT EXISTS`. Every failed transaction rolled back;
+  an authenticated candidate lookup returned 404 before the final retry, proving
+  no core document existed. The shop remained enabled because this was one job,
+  not three distinct terminal job failures.
+- Gateway hotfixes: `30d97db` first separated VAT document identity fields;
+  `16c550d` then separated every INSERT and existence-check parameter for VAT,
+  shipment and main log. New regression tests failed before each fix. Full
+  Gateway `go test ./...`, `go test -race ./...`, and `go vet ./...` pass. The
+  three final statements also passed read-only `PREPARE` against AOY's real
+  PostgreSQL 11 schema before deployment.
+- Final result: immutable retry returned HTTP 201 in 179 ms and reused the same
+  bill/attempt/doc number. Attempt state is `sent`, core is `created`, Profile is
+  `complete`, reconciliation is false, and required/completed checks are exactly
+  core, VAT, shipment, main log and erp_log. The stock job completed on attempt 1
+  with both process-stock and balance verification timestamps.
+- SML parity: `BF-INV26090002` has one active header, two active details
+  (`AH-0007` 290 THB and shipping `AH-0061` 18 THB), one VAT row (base 287.85,
+  VAT 20.15, rate 7), one complete shipment row, one Profile main log and one
+  `aoy_logs.erp_logs` row. Header/detail totals are 308, details use `AB-1 / 001`,
+  the Profile marker hash matches the immutable attempt, and `data_new` contains
+  all 11 frozen SML sections. The same header/VAT/shipment/main-log/erp-log
+  relation pattern is present on manual fixture `INV26050020`.
+- Notifications: the earlier terminal failure and final success each produced
+  one delivery per enabled recipient; both success deliveries are sent, and no
+  duplicate delivery exists for a recipient/dedupe key.
+- UI correction: production verification found the legacy lower payload summary
+  ignored Profile V1 `details`. Nexflow `aa1ccbb` adds a legacy-compatible tested
+  resolver; production now displays `AB-1 / 001` and `2 รายการ`, alongside the
+  complete Core/Profile/Stock status card and five-check timeline. Frontend
+  focused tests, lint (0 errors/35 pre-existing warnings), build, sales-only
+  guard, AOY backup/deploy health, Gateway connectivity and severe-error scan
+  pass. AOY backup is `pre-deploy-20260902-154415.sql.gz`.
+- Current scope: AOY remains `active`; Demo, Lanboon and Ploy remain `off`.
+- Next action: monitor nine more AOY Profile documents and capture deployed
+  percentile/queue-age evidence plus true 390px QA before closing T11/T14.
 
 For every completed task, update Handoff with:
 
