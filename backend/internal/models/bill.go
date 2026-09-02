@@ -36,6 +36,7 @@ type Bill struct {
 	SMLStockJobStatus       string             `json:"sml_stock_job_status,omitempty"`
 	SMLStockRetryCount      int                `json:"sml_stock_retry_count,omitempty"`
 	SMLStockErrorMessage    string             `json:"sml_stock_error_message,omitempty"`
+	SMLSentAutomatically    bool               `json:"sml_sent_automatically"`
 	MutationRevision        int64              `json:"mutation_revision"`
 	AIConfidence            *float64           `json:"-"` // retained in storage for historical audit only
 	Anomalies               json.RawMessage    `json:"anomalies"`

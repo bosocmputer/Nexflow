@@ -289,6 +289,7 @@ export interface Bill {
   sml_stock_job_status?: string
   sml_stock_retry_count?: number
   sml_stock_error_message?: string
+  sml_sent_automatically?: boolean
   anomalies?: Anomaly[]
   error_msg?: string | null
   items?: BillItem[]

@@ -428,6 +428,7 @@ export default function BillDetail() {
           <ArtifactList billId={bill.id} emailGroup={bill.email_group} />
           <BillTimeline billId={bill.id} shopeeEvents={bill.shopee_events ?? []} />
           <SmlPayloadSection
+            bill={bill}
             smlPayload={bill.sml_payload}
             smlResponse={bill.sml_response}
           />

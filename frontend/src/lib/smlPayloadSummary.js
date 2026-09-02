@@ -26,3 +26,22 @@ export function documentLocation(payload) {
     ),
   }
 }
+
+export function documentSendPresentation(bill) {
+  const record = asRecord(bill)
+  const coreComplete = record.status === 'sent'
+    || ['created', 'already_exists', 'complete'].includes(record.sml_core_status)
+  const hasProfile = Boolean(record.sml_profile_version || record.sml_profile_status)
+  const profileComplete = !hasProfile || record.sml_profile_status === 'complete'
+  const hasStockJob = Boolean(record.sml_stock_job_status)
+  const stockComplete = !hasStockJob || record.sml_stock_job_status === 'completed'
+  const complete = coreComplete && profileComplete && stockComplete
+
+  return {
+    complete,
+    headline: record.sml_sent_automatically ? 'ส่งเข้า SML แล้ว (AUTO)' : 'ส่งเข้า SML แล้ว',
+    detail: hasStockJob && stockComplete
+      ? 'สร้างเอกสารและคำนวณต้นทุนสต๊อกเรียบร้อย'
+      : 'สร้างเอกสารใน SML เรียบร้อย',
+  }
+}

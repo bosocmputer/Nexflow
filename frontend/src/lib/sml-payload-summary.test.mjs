@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { documentItems, documentLocation } from './smlPayloadSummary.js'
+import { documentItems, documentLocation, documentSendPresentation } from './smlPayloadSummary.js'
 
 test('summarizes Profile V1 sale invoice details and their SML location', () => {
   const payload = {
@@ -24,4 +24,30 @@ test('keeps legacy items and header location compatible', () => {
 
   assert.equal(documentItems(payload).length, 1)
   assert.deepEqual(documentLocation(payload), { whCode: 'HEADER-WH', shelfCode: 'HEADER-SHELF' })
+})
+
+test('collapses a fully successful automatic send into one plain-language result', () => {
+  assert.deepEqual(documentSendPresentation({
+    status: 'sent',
+    sml_sent_automatically: true,
+    sml_profile_version: 'sml-document-v1',
+    sml_profile_status: 'complete',
+    sml_stock_job_status: 'completed',
+  }), {
+    complete: true,
+    headline: 'ส่งเข้า SML แล้ว (AUTO)',
+    detail: 'สร้างเอกสารและคำนวณต้นทุนสต๊อกเรียบร้อย',
+  })
+})
+
+test('keeps recovery details visible when work after document creation is incomplete', () => {
+  const result = documentSendPresentation({
+    status: 'sent',
+    sml_sent_automatically: false,
+    sml_profile_version: 'sml-document-v1',
+    sml_profile_status: 'needs_reconciliation',
+    sml_stock_job_status: 'completed',
+  })
+  assert.equal(result.complete, false)
+  assert.equal(result.headline, 'ส่งเข้า SML แล้ว')
 })

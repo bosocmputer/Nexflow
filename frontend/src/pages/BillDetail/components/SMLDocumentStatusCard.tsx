@@ -1,9 +1,10 @@
-import { AlertTriangle, CheckCircle2, Clock3, Database, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock3, RefreshCw } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { documentSendPresentation } from '@/lib/smlPayloadSummary.js'
 import { useAuthStore } from '@/store/auth'
 import type { Bill } from '@/types'
 
@@ -24,7 +25,7 @@ const toneClass: Record<Tone, string> = {
 
 function coreStatus(bill: Bill): StatusPresentation {
   if (bill.status === 'sent' || ['created', 'already_exists', 'complete'].includes(bill.sml_core_status ?? '')) {
-    return { label: 'สร้างแล้ว', detail: 'SML รับ header และรายการหลักแล้ว ห้ามส่งบิลใหม่ซ้ำ', tone: 'success' }
+    return { label: 'สร้างแล้ว', detail: 'เอกสารและรายการสินค้าถูกสร้างใน SML แล้ว', tone: 'success' }
   }
   if (bill.sml_attempt_state === 'sending') {
     return { label: 'กำลังส่ง', detail: 'กำลังยืนยันผลการสร้างเอกสารหลัก', tone: 'warning' }
@@ -35,15 +36,15 @@ function coreStatus(bill: Bill): StatusPresentation {
 function profileStatus(bill: Bill): StatusPresentation {
   switch (bill.sml_profile_status) {
     case 'complete':
-      return { label: 'สมบูรณ์', detail: 'VAT, ขนส่ง และ audit log ผ่านรายการตรวจที่กำหนดแล้ว', tone: 'success' }
+      return { label: 'ครบถ้วน', detail: 'ข้อมูลภาษี การจัดส่ง และประวัติเอกสารครบแล้ว', tone: 'success' }
     case 'terminal_failure':
-      return { label: 'ต้องให้ผู้ดูแลซ่อม', detail: 'ครบจำนวน retry อัตโนมัติแล้ว เอกสารหลักยังคงอยู่และจะไม่ถูกส่งซ้ำ', tone: 'danger' }
+      return { label: 'ต้องให้ผู้ดูแลแก้ไข', detail: 'ระบบลองซ่อมอัตโนมัติครบแล้ว แต่เอกสารใน SML ยังคงอยู่', tone: 'danger' }
     case 'needs_reconciliation':
-      return { label: 'กำลังรอซ่อม', detail: 'เอกสารหลักสร้างแล้ว แต่ข้อมูลประกอบหรือ audit log ยังไม่ครบ', tone: 'warning' }
+      return { label: 'กำลังรอแก้ไข', detail: 'เอกสารสร้างแล้ว แต่ข้อมูลประกอบหรือประวัติยังไม่ครบ', tone: 'warning' }
     case 'pending':
-      return { label: 'กำลังตรวจ', detail: 'กำลังตรวจความครบถ้วนของ Document Profile', tone: 'warning' }
+      return { label: 'กำลังตรวจ', detail: 'กำลังตรวจความครบถ้วนของข้อมูลประกอบเอกสาร', tone: 'warning' }
     default:
-      return { label: 'ไม่เปิดใช้', detail: 'เอกสารนี้ใช้รูปแบบเดิมและไม่มี Profile V1', tone: 'muted' }
+      return { label: 'ไม่ต้องดำเนินการ', detail: 'เอกสารนี้ไม่มีงานข้อมูลประกอบที่ต้องรอ', tone: 'muted' }
   }
 }
 
@@ -53,12 +54,12 @@ function stockStatus(bill: Bill): StatusPresentation {
       return { label: 'สำเร็จ', detail: 'คำนวณต้นทุน/สต๊อกจากเอกสารหลักสำเร็จแล้ว', tone: 'success' }
     case 'queued':
     case 'running':
-      return { label: bill.sml_stock_job_status === 'running' ? 'กำลังคำนวณ' : 'รอคำนวณ', detail: 'งานสต๊อกแยกจากการเติม Document Profile', tone: 'warning' }
+      return { label: bill.sml_stock_job_status === 'running' ? 'กำลังคำนวณ' : 'รอคำนวณ', detail: 'ระบบกำลังคำนวณต้นทุนและสต๊อกหลังส่งบิล', tone: 'warning' }
     case 'failed':
     case 'manual_reconciliation':
       return { label: 'ต้องตรวจสอบ', detail: 'เอกสารหลักยังอยู่ แต่การคำนวณสต๊อกยังไม่สมบูรณ์', tone: 'danger' }
     default:
-      return { label: 'ไม่มีงาน', detail: 'เอกสารนี้ไม่มี durable stock job หรือไม่เข้าเงื่อนไขคำนวณ', tone: 'muted' }
+      return { label: 'ไม่ต้องดำเนินการ', detail: 'เอกสารนี้ไม่มีงานคำนวณสต๊อกที่ต้องรอ', tone: 'muted' }
   }
 }
 
@@ -84,48 +85,75 @@ export function SMLDocumentStatusCard({ bill, retrying, onRetryProfile }: { bill
   if (!bill.current_sml_attempt_id && !hasProfile) return null
 
   const profile = profileStatus(bill)
+  const presentation = documentSendPresentation(bill as unknown as Record<string, unknown>)
   const recoverable = bill.sml_profile_reconciliation_required && ['needs_reconciliation', 'terminal_failure'].includes(bill.sml_profile_status ?? '')
   const jobBusy = ['queued', 'running'].includes(bill.sml_profile_job_status ?? '')
+
+  if (presentation.complete) {
+    return (
+      <Card className="border-success/30 bg-success/[0.04]">
+        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-success" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-foreground">{presentation.headline}</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{presentation.detail}</p>
+          </div>
+          {bill.sml_doc_no && (
+            <code className="rounded-md bg-background px-2.5 py-1.5 font-mono text-xs font-medium text-foreground">
+              {bill.sml_doc_no}
+            </code>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <Card className="border-border/80">
       <CardContent className="space-y-3 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-2.5">
-            <Database className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div>
-              <h3 className="text-sm font-semibold text-foreground">สถานะเอกสาร SML</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">Core, Document Profile และสต๊อกทำงานแยกกัน เพื่อป้องกันการสร้างบิลซ้ำ</p>
+              <h3 className="text-sm font-semibold text-foreground">
+                {bill.status === 'sent' ? 'มีงานหลังส่ง SML ที่ต้องตรวจสอบ' : 'กำลังตรวจสอบผลการส่ง SML'}
+              </h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">หากเอกสารถูกสร้างแล้ว ระบบจะซ่อมเฉพาะส่วนที่ขาดและจะไม่สร้างบิลซ้ำ</p>
             </div>
           </div>
           {isAdmin && recoverable && (
             <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={retrying || jobBusy} onClick={() => void onRetryProfile()}>
               <RefreshCw className={cn('h-3.5 w-3.5', retrying && 'animate-spin')} />
-              {jobBusy ? 'อยู่ในคิวซ่อม' : 'Retry เฉพาะ Profile'}
+              {jobBusy ? 'อยู่ในคิวแก้ไข' : 'ลองแก้ไขข้อมูลประกอบอีกครั้ง'}
             </Button>
           )}
         </div>
 
         <div className="grid gap-2 lg:grid-cols-3">
-          <StatusRow title="SML Core" status={coreStatus(bill)} />
-          <StatusRow title="Document Profile" status={profile} />
-          <StatusRow title="Stock recalculation" status={stockStatus(bill)} />
+          <StatusRow title="เอกสารใน SML" status={coreStatus(bill)} />
+          <StatusRow title="ข้อมูลประกอบเอกสาร" status={profile} />
+          <StatusRow title="ต้นทุนและสต๊อก" status={stockStatus(bill)} />
         </div>
 
         {recoverable && (
           <div className={cn('rounded-md border px-3 py-2.5 text-xs leading-5', profile.tone === 'danger' ? toneClass.danger : toneClass.warning)}>
             <div><span className="font-semibold">สาเหตุ:</span> {bill.sml_profile_error_message || bill.sml_profile_error_code || 'ข้อมูลประกอบเอกสารยังผ่านรายการตรวจไม่ครบ'}</div>
-            <div><span className="font-semibold">ผลกระทบ:</span> บิล SML สร้างแล้ว แต่ Profile ยังไม่สมบูรณ์; ระบบจะไม่ส่ง Core ซ้ำ</div>
-            <div><span className="font-semibold">ขั้นตอนแก้:</span> ตรวจระบบ logs/Gateway แล้วให้ Admin กด Retry เฉพาะ Profile</div>
+            <div><span className="font-semibold">ผลกระทบ:</span> บิล SML สร้างแล้ว แต่ข้อมูลประกอบยังไม่ครบ ระบบจะไม่ส่งเอกสารซ้ำ</div>
+            <div><span className="font-semibold">ขั้นตอนแก้:</span> ให้ผู้ดูแลตรวจระบบเชื่อมต่อ แล้วกดลองแก้ไขข้อมูลประกอบอีกครั้ง</div>
           </div>
         )}
 
-        {(bill.sml_doc_no || bill.sml_profile_correlation_id || hasProfile) && (
+        {['failed', 'manual_reconciliation'].includes(bill.sml_stock_job_status ?? '') && (
+          <div className={cn('rounded-md border px-3 py-2.5 text-xs leading-5', toneClass.danger)}>
+            <div><span className="font-semibold">ต้นทุนและสต๊อก:</span> {bill.sml_stock_error_message || 'คำนวณหลังส่งบิลไม่สำเร็จ'}</div>
+            <div><span className="font-semibold">ผลกระทบ:</span> เอกสารใน SML ยังอยู่และจะไม่ถูกส่งซ้ำ กรุณาให้ผู้ดูแลตรวจงานคำนวณสต๊อก</div>
+          </div>
+        )}
+
+        {(bill.sml_doc_no || recoverable) && (
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
             {bill.sml_doc_no && <span>เอกสาร <code className="font-mono text-foreground">{bill.sml_doc_no}</code></span>}
-            {hasProfile && <span>Profile <code className="font-mono text-foreground">{bill.sml_profile_version}</code></span>}
-            {bill.sml_profile_correlation_id && <span>Correlation <code className="font-mono text-foreground">{bill.sml_profile_correlation_id}</code></span>}
-            {bill.sml_profile_max_retries ? <span>Retry {bill.sml_profile_retry_count ?? 0}/{bill.sml_profile_max_retries}{bill.sml_profile_manual_retries ? ` · ผู้ดูแล ${bill.sml_profile_manual_retries} ครั้ง` : ''}</span> : null}
+            {recoverable && bill.sml_profile_max_retries ? <span>ลองแก้ไขแล้ว {bill.sml_profile_retry_count ?? 0}/{bill.sml_profile_max_retries} ครั้ง</span> : null}
           </div>
         )}
       </CardContent>

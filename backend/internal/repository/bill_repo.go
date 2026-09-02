@@ -203,7 +203,13 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		        COALESCE(a.profile_completed_checks,'[]'::jsonb),COALESCE(a.profile_reconciliation_required,FALSE),
 		        COALESCE(pr.status,''),COALESCE(pr.attempt_count,0),COALESCE(pr.manual_retry_count,0),COALESCE(pr.max_attempts,0),
 		        COALESCE(pr.last_error_code,''),COALESCE(pr.last_error_message,''),COALESCE(pr.correlation_id,''),
-		        COALESCE(sr.status,''),COALESCE(sr.attempt_count,0),COALESCE(sr.error_message,'')
+		        COALESCE(sr.status,''),COALESCE(sr.attempt_count,0),COALESCE(sr.error_message,''),
+		        EXISTS (
+		          SELECT 1
+		            FROM shopee_auto_sml_jobs auto_job
+		           WHERE auto_job.bill_id = b.id
+		             AND auto_job.status = 'succeeded'
+		        ) AS sml_sent_automatically
 		 FROM bills b
 		 LEFT JOIN bill_sml_attempts a ON a.id=b.current_sml_attempt_id
 		 LEFT JOIN sml_document_profile_reconciliation_jobs pr
@@ -223,7 +229,7 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		&b.SMLProfileNeedsRepair, &b.SMLProfileJobStatus, &b.SMLProfileRetryCount,
 		&b.SMLProfileManualRetries, &b.SMLProfileMaxRetries, &b.SMLProfileErrorCode, &b.SMLProfileErrorMessage,
 		&b.SMLProfileCorrelationID, &b.SMLStockJobStatus, &b.SMLStockRetryCount,
-		&b.SMLStockErrorMessage,
+		&b.SMLStockErrorMessage, &b.SMLSentAutomatically,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
