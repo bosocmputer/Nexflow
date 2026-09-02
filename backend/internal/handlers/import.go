@@ -518,6 +518,7 @@ func (h *ImportHandler) buildImportPayload(bill *models.Bill) (sml.SaleOrderPayl
 	}
 	applyDocumentOverrides(def, &cfg.BranchCode, &cfg.SaleCode, &cfg.UnitCode, &cfg.DocTime)
 	applyChannelOverrides(def, &cfg.WHCode, &cfg.ShelfCode, &cfg.VATType, &cfg.VATRate)
+	applySaleInquiryTypeOverrides(def, RetryRequest{}, &cfg.InquiryType)
 	if def.DocFormatCode != "" {
 		cfg.DocFormat = def.DocFormatCode
 	}

@@ -16,21 +16,22 @@ import (
 // Mirrors PurchaseOrderConfig — saleorder is the sale-side counterpart that
 // posts to /api/v1/ic/sale-orders and uses sale_type instead of buy_type.
 type SaleOrderConfig struct {
-	BaseURL    string
-	GUID       string
-	Provider   string
-	ConfigFile string
-	Database   string
-	DocFormat  string // e.g. "SR"
-	CustCode   string // customer code (set per-call from channel_defaults)
-	SaleCode   string
-	BranchCode string
-	WHCode     string
-	ShelfCode  string
-	UnitCode   string
-	VATType    int
-	VATRate    float64
-	DocTime    string
+	BaseURL     string
+	GUID        string
+	Provider    string
+	ConfigFile  string
+	Database    string
+	DocFormat   string // e.g. "SR"
+	CustCode    string // customer code (set per-call from channel_defaults)
+	SaleCode    string
+	BranchCode  string
+	WHCode      string
+	ShelfCode   string
+	UnitCode    string
+	VATType     int
+	VATRate     float64
+	InquiryType int
+	DocTime     string
 }
 
 // SaleOrderClient is the REST client for SML saleorder API (ใบสั่งขาย).
@@ -98,6 +99,7 @@ type SaleOrderPayload struct {
 	SaleType       int             `json:"sale_type"`
 	VATType        int             `json:"vat_type"`
 	VATRate        float64         `json:"vat_rate"`
+	InquiryType    int             `json:"inquiry_type"`
 	TotalValue     float64         `json:"total_value"`
 	TotalDiscount  float64         `json:"total_discount"`
 	TotalBeforeVAT float64         `json:"total_before_vat"`
@@ -364,6 +366,7 @@ func BuildSaleOrderPayload(
 		SaleType:       0,
 		VATType:        cfg.VATType,
 		VATRate:        cfg.VATRate,
+		InquiryType:    cfg.InquiryType,
 		TotalValue:     totalValue,
 		TotalDiscount:  totalDiscount,
 		TotalBeforeVAT: totalBeforeVAT,

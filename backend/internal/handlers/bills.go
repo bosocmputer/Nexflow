@@ -473,6 +473,7 @@ func (h *BillHandler) resolvedSaleOrderConfig(def *models.ChannelDefault, req Re
 	}
 	applyDocumentOverrides(def, &cfg.BranchCode, &cfg.SaleCode, &cfg.UnitCode, &cfg.DocTime)
 	applyChannelOverrides(def, &cfg.WHCode, &cfg.ShelfCode, &cfg.VATType, &cfg.VATRate)
+	applySaleInquiryTypeOverrides(def, req, &cfg.InquiryType)
 	applyRetryDocumentOverrides(req, &cfg.BranchCode, &cfg.SaleCode, &cfg.UnitCode, &cfg.DocTime)
 	applyRetryOverrides(req, &cfg.WHCode, &cfg.ShelfCode, &cfg.VATType, &cfg.VATRate)
 	return cfg
@@ -480,13 +481,14 @@ func (h *BillHandler) resolvedSaleOrderConfig(def *models.ChannelDefault, req Re
 
 func (h *BillHandler) resolvedInvoiceConfig(def *models.ChannelDefault, req RetryRequest) sml.InvoiceConfig {
 	cfg := sml.InvoiceConfig{
-		BaseURL:    h.cfg.ShopeeSMLURL,
-		GUID:       h.cfg.ShopeeSMLGUID,
-		Provider:   h.cfg.ShopeeSMLProvider,
-		ConfigFile: h.cfg.ShopeeSMLConfigFile,
-		Database:   h.cfg.ShopeeSMLDatabase,
-		VATType:    -1,
-		VATRate:    -1,
+		BaseURL:     h.cfg.ShopeeSMLURL,
+		GUID:        h.cfg.ShopeeSMLGUID,
+		Provider:    h.cfg.ShopeeSMLProvider,
+		ConfigFile:  h.cfg.ShopeeSMLConfigFile,
+		Database:    h.cfg.ShopeeSMLDatabase,
+		VATType:     -1,
+		VATRate:     -1,
+		InquiryType: 0,
 	}
 	if def != nil && def.PartyCode != "" {
 		cfg.CustCode = def.PartyCode
@@ -496,6 +498,7 @@ func (h *BillHandler) resolvedInvoiceConfig(def *models.ChannelDefault, req Retr
 	}
 	applyDocumentOverrides(def, &cfg.BranchCode, &cfg.SaleCode, &cfg.UnitCode, &cfg.DocTime)
 	applyChannelOverrides(def, &cfg.WHCode, &cfg.ShelfCode, &cfg.VATType, &cfg.VATRate)
+	applySaleInquiryTypeOverrides(def, req, &cfg.InquiryType)
 	applyRetryDocumentOverrides(req, &cfg.BranchCode, &cfg.SaleCode, &cfg.UnitCode, &cfg.DocTime)
 	applyRetryOverrides(req, &cfg.WHCode, &cfg.ShelfCode, &cfg.VATType, &cfg.VATRate)
 	return cfg
@@ -1723,6 +1726,11 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	if err := validateRemark2(req.Remark2); err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error()}
 	}
+	if bill.BillType == "sale" && req.InquiryType != nil {
+		if err := validateSaleInquiryType(*req.InquiryType); err != nil {
+			return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: err.Error()}
+		}
+	}
 	readiness := h.checkSMLReadiness(ctx, false)
 	if !readiness.Ready {
 		targetID := bill.ID
@@ -2671,11 +2679,23 @@ func validateBulkSendPayload(billType, documentRoute string, payload RetryReques
 	if err := validateRemark2(payload.Remark2); err != nil {
 		return err
 	}
+	if strings.TrimSpace(billType) == "sale" && payload.InquiryType != nil {
+		return validateSaleInquiryType(*payload.InquiryType)
+	}
 	if strings.TrimSpace(billType) != "purchase" && strings.TrimSpace(documentRoute) != "purchaseorder" {
 		return nil
 	}
 	_, err := validatePurchaseInquiryType(payload.InquiryType)
 	return err
+}
+
+func validateSaleInquiryType(value int) error {
+	switch value {
+	case 0, 1, 2, 3:
+		return nil
+	default:
+		return fmt.Errorf("ประเภทรายการขายไม่ถูกต้อง (เลือกได้เฉพาะ 0, 1, 2, 3)")
+	}
 }
 
 func (h *BillHandler) RetryFailedBulkSendJob(c *gin.Context) {
@@ -3474,20 +3494,18 @@ func (h *BillHandler) previewSMLDefaults(def *models.ChannelDefault, billType st
 	}
 	cfg := h.resolvedSaleOrderConfig(def, RetryRequest{})
 	result := gin.H{
-		"branch_code": cfg.BranchCode,
-		"sale_code":   cfg.SaleCode,
-		"wh_code":     cfg.WHCode,
-		"shelf_code":  cfg.ShelfCode,
-		"unit_code":   cfg.UnitCode,
-		"vat_type":    cfg.VATType,
-		"vat_rate":    cfg.VATRate,
-		"doc_time":    cfg.DocTime,
-		"doc_format":  cfg.DocFormat,
-		"database":    cfg.Database,
-		"base_url":    cfg.BaseURL,
-	}
-	if def != nil && def.InquiryType >= 0 {
-		result["inquiry_type"] = def.InquiryType
+		"branch_code":  cfg.BranchCode,
+		"sale_code":    cfg.SaleCode,
+		"wh_code":      cfg.WHCode,
+		"shelf_code":   cfg.ShelfCode,
+		"unit_code":    cfg.UnitCode,
+		"vat_type":     cfg.VATType,
+		"vat_rate":     cfg.VATRate,
+		"inquiry_type": cfg.InquiryType,
+		"doc_time":     cfg.DocTime,
+		"doc_format":   cfg.DocFormat,
+		"database":     cfg.Database,
+		"base_url":     cfg.BaseURL,
 	}
 	if def != nil && def.PartyCode != "" {
 		result["party_code"] = def.PartyCode
@@ -3533,6 +3551,16 @@ func applyChannelOverrides(def *models.ChannelDefault, wh, shelf *string, vatTyp
 	}
 	if def.VATRate >= 0 {
 		*vatRate = def.VATRate
+	}
+}
+
+func applySaleInquiryTypeOverrides(def *models.ChannelDefault, req RetryRequest, inquiryType *int) {
+	*inquiryType = 0
+	if def != nil && def.InquiryType >= 0 {
+		*inquiryType = def.InquiryType
+	}
+	if req.InquiryType != nil {
+		*inquiryType = *req.InquiryType
 	}
 }
 

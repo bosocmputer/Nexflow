@@ -37,13 +37,16 @@ export function billSMLStatusLabel(status: string, automatically?: boolean): str
   return automatically ? 'ส่งแล้ว (AUTO)' : 'ส่งแล้ว'
 }
 
-export function smlInquiryTypeLabel(value: unknown, billType: string): string {
-  if (value == null || value === '') return '—'
-  const numericValue = typeof value === 'number' ? value : Number(value)
+export function smlInquiryTypeLabel(value: unknown, billType: string, fallbackValue?: number): string {
+  const usesFallback = (value == null || value === '') && fallbackValue != null
+  if ((value == null || value === '') && !usesFallback) return '—'
+  const resolvedValue = usesFallback ? fallbackValue : value
+  const numericValue = typeof resolvedValue === 'number' ? resolvedValue : Number(resolvedValue)
   if (!Number.isInteger(numericValue)) return `${String(value)} · ไม่ทราบความหมาย`
 
   const labels = billType === 'purchase'
     ? PURCHASE_INQUIRY_TYPE_LABELS
     : SALE_INQUIRY_TYPE_LABELS
-  return `${numericValue} · ${labels[numericValue] ?? 'ไม่ทราบความหมาย'}`
+  const suffix = usesFallback ? ' (ค่าเริ่มต้น)' : ''
+  return `${numericValue} · ${labels[numericValue] ?? 'ไม่ทราบความหมาย'}${suffix}`
 }

@@ -85,7 +85,11 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
               <SummaryItem label="รูปแบบเอกสาร" value={text(smlPayload.doc_format_code)} mono />
               <SummaryItem
                 label="ประเภทรายการ (inquiry_type)"
-                value={smlInquiryTypeLabel(smlPayload.inquiry_type, bill.bill_type)}
+                value={smlInquiryTypeLabel(
+                  smlPayload.inquiry_type,
+                  bill.bill_type,
+                  bill.bill_type === 'sale' ? 0 : undefined,
+                )}
               />
               <SummaryItem label="ลูกค้า SML" value={party} />
               <SummaryItem label="คลัง / พื้นที่เก็บ" value={`${text(whCode)} / ${text(shelfCode)}`} mono />

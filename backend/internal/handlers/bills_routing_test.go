@@ -338,4 +338,30 @@ func TestValidateBulkSendPayloadChecksRemark2ForSaleAndPurchase(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("valid purchase bulk payload rejected: %v", err)
 	}
+	invalidSaleInquiryType := 4
+	if err := validateBulkSendPayload("sale", "saleinvoice", RetryRequest{InquiryType: &invalidSaleInquiryType}); err == nil {
+		t.Fatal("sale bulk payload with invalid inquiry_type should be rejected")
+	}
+	validSaleInquiryType := 2
+	if err := validateBulkSendPayload("sale", "saleinvoice", RetryRequest{InquiryType: &validSaleInquiryType}); err != nil {
+		t.Fatalf("valid sale inquiry_type rejected: %v", err)
+	}
+}
+
+func TestResolvedSaleConfigsUseRouteInquiryTypeAndExplicitFirstSendOverride(t *testing.T) {
+	h := &BillHandler{cfg: &config.Config{}}
+	def := &models.ChannelDefault{InquiryType: 1}
+
+	invoice := h.resolvedInvoiceConfig(def, RetryRequest{})
+	saleOrder := h.resolvedSaleOrderConfig(def, RetryRequest{})
+	if invoice.InquiryType != 1 || saleOrder.InquiryType != 1 {
+		t.Fatalf("route inquiry_type not propagated: invoice=%d saleorder=%d", invoice.InquiryType, saleOrder.InquiryType)
+	}
+
+	explicit := 3
+	invoice = h.resolvedInvoiceConfig(def, RetryRequest{InquiryType: &explicit})
+	saleOrder = h.resolvedSaleOrderConfig(def, RetryRequest{InquiryType: &explicit})
+	if invoice.InquiryType != 3 || saleOrder.InquiryType != 3 {
+		t.Fatalf("explicit inquiry_type must win: invoice=%d saleorder=%d", invoice.InquiryType, saleOrder.InquiryType)
+	}
 }

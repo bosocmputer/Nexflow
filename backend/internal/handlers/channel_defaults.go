@@ -174,6 +174,10 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 	if h.profileMode == smlprofile.ModeActive {
 		wireProfileVersion = smlprofile.Version
 	}
+	inquiryType := d.InquiryType
+	if d.BillType == "sale" && inquiryType < 0 {
+		inquiryType = 0
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"profile_mode":    h.profileMode,
 		"profile_version": profileVersion,
@@ -186,7 +190,7 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 		},
 		"payload": gin.H{
 			"endpoint": d.Endpoint, "doc_format_code": d.DocFormatCode, "warehouse": d.WHCode,
-			"location": d.ShelfCode, "vat_type": d.VATType, "vat_rate": d.VATRate,
+			"location": d.ShelfCode, "vat_type": d.VATType, "vat_rate": d.VATRate, "inquiry_type": inquiryType,
 			"party_code": d.PartyCode, "branch_code": d.BranchCode,
 			"remark": d.Remark, "remark_2": d.Remark2, "document_profile_version": wireProfileVersion,
 		},
@@ -201,6 +205,9 @@ func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
 	}
 	if err := smlprofile.ValidateFreeText("remark_2", in.Remark2); err != nil {
 		return err
+	}
+	if in.BillType == "sale" && (in.InquiryType < -1 || in.InquiryType > 3) {
+		return fmt.Errorf("inquiry_type must be -1 or between 0 and 3")
 	}
 	in.Remark = strings.TrimSpace(in.Remark)
 	in.Remark2 = strings.TrimSpace(in.Remark2)

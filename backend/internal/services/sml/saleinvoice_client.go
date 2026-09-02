@@ -15,21 +15,22 @@ import (
 
 // InvoiceConfig holds all parameters for the SML saleinvoice REST API (SML 224).
 type InvoiceConfig struct {
-	BaseURL    string  // e.g. http://192.168.2.224:8080
-	GUID       string  // guid header
-	Provider   string  // provider header
-	ConfigFile string  // configFileName header
-	Database   string  // databaseName header
-	DocFormat  string  // doc_format_code (e.g. RU)
-	CustCode   string  // default cust_code for all Shopee orders
-	SaleCode   string  // sale_code (optional)
-	BranchCode string  // branch_code (required for fiscal period lookup, e.g. "001")
-	WHCode     string  // fallback warehouse
-	ShelfCode  string  // fallback shelf
-	UnitCode   string  // fallback unit
-	VATType    int     // 0=แยกนอก, 1=รวมใน, 2=ศูนย์%
-	VATRate    float64 // e.g. 7
-	DocTime    string  // e.g. "09:00"
+	BaseURL     string  // e.g. http://192.168.2.224:8080
+	GUID        string  // guid header
+	Provider    string  // provider header
+	ConfigFile  string  // configFileName header
+	Database    string  // databaseName header
+	DocFormat   string  // doc_format_code (e.g. RU)
+	CustCode    string  // default cust_code for all Shopee orders
+	SaleCode    string  // sale_code (optional)
+	BranchCode  string  // branch_code (required for fiscal period lookup, e.g. "001")
+	WHCode      string  // fallback warehouse
+	ShelfCode   string  // fallback shelf
+	UnitCode    string  // fallback unit
+	VATType     int     // 0=แยกนอก, 1=รวมใน, 2=ศูนย์%
+	VATRate     float64 // e.g. 7
+	InquiryType int     // 0=ขายเงินเชื่อ, 1=ขายเงินสด, 2/3=สินค้าบริการ
+	DocTime     string  // e.g. "09:00"
 }
 
 // InvoiceClient is the REST client for SML saleinvoice API.
@@ -216,6 +217,7 @@ type InvoicePayload struct {
 	SaleType                 int              `json:"sale_type"`
 	VATType                  int              `json:"vat_type"`
 	VATRate                  float64          `json:"vat_rate"`
+	InquiryType              int              `json:"inquiry_type"`
 	VATRateDecimal           string           `json:"vat_rate_decimal,omitempty"`
 	TotalValue               float64          `json:"total_value"`
 	TotalDiscount            float64          `json:"total_discount"`
@@ -638,6 +640,7 @@ func BuildInvoicePayload(
 		SaleType:       0,
 		VATType:        cfg.VATType,
 		VATRate:        cfg.VATRate,
+		InquiryType:    cfg.InquiryType,
 		TotalValue:     totalValue,
 		TotalDiscount:  totalDiscount,
 		TotalBeforeVAT: totalBeforeVAT,

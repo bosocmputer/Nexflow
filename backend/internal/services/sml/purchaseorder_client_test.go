@@ -93,12 +93,15 @@ func TestSaleAndInvoicePayloadIncludeRemark2WhenProvided(t *testing.T) {
 		"",
 		"",
 		[]SOItem{{ItemCode: "ITEM-1", Qty: 1, Price: 100}},
-		SaleOrderConfig{DocFormat: "SO", CustCode: "AR001", VATType: 2, UnitCode: "ชิ้น"},
+		SaleOrderConfig{DocFormat: "SO", CustCode: "AR001", VATType: 2, UnitCode: "ชิ้น", InquiryType: 1},
 		"",
 		SaleOrderHeaderOptions{Remark2: "notax"},
 	)
 	if saleOrder.Remark2 != "notax" {
 		t.Fatalf("saleorder remark_2 = %q, want notax", saleOrder.Remark2)
+	}
+	if saleOrder.InquiryType != 1 {
+		t.Fatalf("saleorder inquiry_type = %d, want 1", saleOrder.InquiryType)
 	}
 
 	invoice := BuildInvoicePayload(
@@ -107,13 +110,32 @@ func TestSaleAndInvoicePayloadIncludeRemark2WhenProvided(t *testing.T) {
 		"",
 		"",
 		[]ShopeeOrderItem{{SKU: "ITEM-1", ProductName: "สินค้า", Qty: 1, Price: 100}},
-		InvoiceConfig{DocFormat: "INV", CustCode: "AR001", VATType: 2, UnitCode: "ชิ้น"},
+		InvoiceConfig{DocFormat: "INV", CustCode: "AR001", VATType: 2, UnitCode: "ชิ้น", InquiryType: 3},
 		map[string]*ProductInfo{},
 		"",
 		InvoiceHeaderOptions{Remark2: "re"},
 	)
 	if invoice.Remark2 != "re" {
 		t.Fatalf("saleinvoice remark_2 = %q, want re", invoice.Remark2)
+	}
+	if invoice.InquiryType != 3 {
+		t.Fatalf("saleinvoice inquiry_type = %d, want 3", invoice.InquiryType)
+	}
+}
+
+func TestSalePayloadsAlwaysSerializeInquiryTypeZeroFallback(t *testing.T) {
+	saleOrder, err := json.Marshal(SaleOrderPayload{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoice, err := json.Marshal(InvoicePayload{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{"saleorder": saleOrder, "saleinvoice": invoice} {
+		if !bytes.Contains(body, []byte(`"inquiry_type":0`)) {
+			t.Fatalf("%s payload must preserve explicit inquiry_type fallback: %s", name, body)
+		}
 	}
 }
 

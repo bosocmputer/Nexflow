@@ -46,5 +46,9 @@ test('shows sale inquiry_type with both its exact value and SML meaning', () => 
 test('keeps purchase inquiry_type semantics and exposes missing values plainly', () => {
   assert.equal(smlInquiryTypeLabel('1', 'purchase'), '1 · ซื้อสินค้าเงินสด')
   assert.equal(smlInquiryTypeLabel(undefined, 'sale'), '—')
+  assert.equal(
+    smlInquiryTypeLabel(undefined, 'sale', 0),
+    '0 · ขายเงินเชื่อ (ค่าเริ่มต้น)',
+  )
   assert.equal(smlInquiryTypeLabel(9, 'sale'), '9 · ไม่ทราบความหมาย')
 })

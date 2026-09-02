@@ -68,8 +68,34 @@ func TestChannelDefaultPreviewIsReadOnlyAndResolvesProfileFields(t *testing.T) {
 	if response.SystemFields["creator_code"] != "BILLFLOW" || response.SystemFields["currency_code"] != "THB" {
 		t.Fatalf("unexpected system fields: %+v", response.SystemFields)
 	}
+	if response.Payload["inquiry_type"] != float64(0) {
+		t.Fatalf("unset sale inquiry_type must preview the SML fallback 0: %+v", response.Payload)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("preview must not query or write the database: %v", err)
+	}
+}
+
+func TestChannelDefaultPreviewRejectsInvalidSaleInquiryType(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := NewChannelDefaultsHandler(repository.NewChannelDefaultRepo(db), nil, false, "active", zap.NewNop())
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/settings/channel-defaults/preview", bytes.NewReader(validChannelDefaultJSON(map[string]any{
+		"inquiry_type": 4,
+	})))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	h.Preview(ctx)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("invalid inquiry_type must be rejected before SQL: %v", err)
 	}
 }
 
