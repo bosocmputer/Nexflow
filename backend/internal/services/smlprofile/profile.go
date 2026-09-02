@@ -20,21 +20,6 @@ const (
 	MaxTextRunes = 255
 )
 
-var templateTokens = []struct {
-	token string
-	value func(TemplateContext) string
-}{
-	{"{{channel}}", func(v TemplateContext) string { return v.Channel }},
-	{"{{order_ref}}", func(v TemplateContext) string { return v.OrderRef }},
-	{"{{bill_no}}", func(v TemplateContext) string { return v.BillNo }},
-}
-
-type TemplateContext struct {
-	Channel  string
-	OrderRef string
-	BillNo   string
-}
-
 func ParseMode(raw string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	switch mode {
@@ -43,34 +28,6 @@ func ParseMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("SML_DOCUMENT_PROFILE_MODE must be off, shadow, or active; got %q", raw)
 	}
-}
-
-func ValidateTextTemplate(field, value string) error {
-	if err := validateBoundedText(field, value); err != nil {
-		return err
-	}
-	remainder := value
-	for _, item := range templateTokens {
-		remainder = strings.ReplaceAll(remainder, item.token, "")
-	}
-	if strings.Contains(remainder, "{{") || strings.Contains(remainder, "}}") {
-		return fmt.Errorf("%s contains an unknown or malformed template token", field)
-	}
-	return nil
-}
-
-func ResolveTemplate(template string, context TemplateContext) (string, error) {
-	if err := ValidateTextTemplate("remark", template); err != nil {
-		return "", err
-	}
-	resolved := template
-	for _, item := range templateTokens {
-		resolved = strings.ReplaceAll(resolved, item.token, item.value(context))
-	}
-	if err := validateBoundedText("resolved remark", resolved); err != nil {
-		return "", err
-	}
-	return resolved, nil
 }
 
 func ValidateFreeText(field, value string) error {

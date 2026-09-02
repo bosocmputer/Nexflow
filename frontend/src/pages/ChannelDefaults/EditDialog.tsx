@@ -59,14 +59,12 @@ import {
 import { MapItemModal } from '../BillDetail/components/MapItemModal'
 
 interface ChannelDefaultPreview {
-  profile_mode: 'off' | 'shadow' | 'active'
-  profile_version: string
-  route_signature: string
   resolved: { remark: string; remark_2: string }
-  system_fields: Record<string, string>
   payload: {
     endpoint: string
     doc_format_code: string
+    party_code: string
+    branch_code: string
     warehouse: string
     location: string
     vat_type: number
@@ -286,7 +284,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const parsedVatRate = Number(vatRate)
   const vatRateValue = vatRate.trim() === '' || !Number.isFinite(parsedVatRate) ? -1 : parsedVatRate
   const inquiryTypeValue = inquiryTypeStr === '' ? -1 : Number(inquiryTypeStr)
-  const remarkError = validateProfileText(remark, true)
+  const remarkError = validateProfileText(remark)
   const remark2Error = validateProfileText(remark2)
   const docWarning = docNoPatternWarning(docPrefixTrimmed, docRunningFormatTrimmed)
   const selectedPassbook = passbooks.find((p) => p.code === passbookCodeTrimmed)
@@ -315,7 +313,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     }
 	if (remarkError) return `หมายเหตุ 1: ${remarkError}`
 	if (remark2Error) return `หมายเหตุ 2: ${remark2Error}`
-	if (isShopeeRealtimeAutoRoute && !preview) return 'ตรวจตัวอย่างและผลกระทบก่อนบันทึกเส้นทาง Auto SML'
+	if (isShopeeRealtimeAutoRoute && !preview) return 'ตรวจสอบค่าก่อนบันทึกเส้นทาง Auto SML'
     return ''
   })()
   const canSave = !saveDisabledReason
@@ -384,7 +382,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
       })
       setPreview(response.data)
     } catch (e: any) {
-      toast.error('ตรวจตัวอย่างไม่สำเร็จ: ' + (e?.response?.data?.error ?? e?.message ?? 'unknown'))
+      toast.error('ตรวจสอบค่าไม่สำเร็จ: ' + (e?.response?.data?.error ?? e?.message ?? 'unknown'))
     } finally {
       setPreviewing(false)
     }
@@ -815,7 +813,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                   </Select>
                 </div>
 				<div className="space-y-1.5 sm:col-span-2">
-				  <Label className="text-xs" htmlFor="channel-remark">หมายเหตุ 1 (remark)</Label>
+				  <Label className="text-xs" htmlFor="channel-remark">หมายเหตุ 1</Label>
 				  <Input
 					id="channel-remark"
 					value={remark}
@@ -823,15 +821,13 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 					  markDirty()
 					  setRemark(event.target.value)
 					}}
-					placeholder="เช่น {{channel}} | {{order_ref}}"
+					placeholder="ข้อความอิสระ ไม่เกิน 255 ตัวอักษร"
 					aria-invalid={Boolean(remarkError)}
 				  />
-				  <p className={remarkError ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-					{remarkError || 'ใช้ token ได้: {{channel}}, {{order_ref}}, {{bill_no}}'}
-				  </p>
+				  {remarkError && <p className="text-xs text-destructive">{remarkError}</p>}
 				</div>
 				<div className="space-y-1.5 sm:col-span-2">
-				  <Label className="text-xs" htmlFor="channel-remark-2">หมายเหตุ 2 (remark_2)</Label>
+				  <Label className="text-xs" htmlFor="channel-remark-2">หมายเหตุ 2</Label>
 				  <Input
 					id="channel-remark-2"
 					value={remark2}
@@ -881,9 +877,9 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 			  <div className="space-y-3 rounded-md border border-border bg-background p-3">
 				<div className="flex flex-wrap items-start justify-between gap-3">
 				  <div>
-					<div className="text-sm font-semibold text-foreground">ตรวจตัวอย่าง Document Profile</div>
+					<div className="text-sm font-semibold text-foreground">ตรวจสอบค่าก่อนบันทึก</div>
 					<p className="mt-1 max-w-[62ch] text-xs text-muted-foreground">
-					  ตรวจค่าที่ resolve แล้วและผลกระทบก่อนบันทึก การเปลี่ยนแปลงนี้มีผลเฉพาะเอกสารใหม่
+					  ตรวจปลายทาง คลัง และภาษีให้ครบ ค่าที่เปลี่ยนจะใช้กับเอกสารใหม่เท่านั้น
 					</p>
 				  </div>
 				  <Button
@@ -894,50 +890,30 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 					disabled={previewing || saving || Boolean(remarkError || remark2Error)}
 				  >
 					<Eye className="h-4 w-4" />
-					{previewing ? 'กำลังตรวจ...' : 'ตรวจตัวอย่าง'}
+					{previewing ? 'กำลังตรวจ...' : 'ตรวจสอบค่า'}
 				  </Button>
-				</div>
-
-				<div className="grid gap-2 text-xs sm:grid-cols-2">
-				  <div className="rounded-md bg-muted/50 px-3 py-2">
-					<div className="text-muted-foreground">ค่าระบบที่แก้ไขไม่ได้</div>
-					<div className="mt-1 font-mono text-foreground">BILLFLOW · NEXFLOW · THB × 1</div>
-				  </div>
-				  <div className="rounded-md bg-muted/50 px-3 py-2">
-					<div className="text-muted-foreground">เวลาเอกสาร</div>
-					<div className="mt-1 text-foreground">เวลาจริงขณะส่ง · Asia/Bangkok</div>
-				  </div>
 				</div>
 
 				{preview ? (
 				  <div className="space-y-2" role="status" aria-live="polite">
-					<div className="rounded-md border border-success/30 bg-success/5 px-3 py-2 text-xs">
-					  <div className="font-medium text-foreground">
-						Profile {preview.profile_mode}{preview.profile_version ? ` · ${preview.profile_version}` : ''}
+					<div className={(preview.missing_prerequisites ?? []).length > 0
+					  ? 'rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-3 text-xs'
+					  : 'rounded-md border border-success/30 bg-success/5 px-3 py-3 text-xs'}>
+					  <div className={(preview.missing_prerequisites ?? []).length > 0
+						? 'flex items-center gap-2 font-medium text-warning'
+						: 'flex items-center gap-2 font-medium text-success'}>
+						<span aria-hidden>{(preview.missing_prerequisites ?? []).length > 0 ? '!' : '✓'}</span>
+						{(preview.missing_prerequisites ?? []).length > 0 ? 'ยังบันทึกไม่ได้' : 'พร้อมบันทึกสำหรับเอกสารใหม่'}
 					  </div>
-					  <div className="mt-1 break-words text-muted-foreground">
-						หมายเหตุ 1: {preview.resolved.remark || 'ไม่ระบุ'}
-					  </div>
-					  <div className="mt-0.5 break-words text-muted-foreground">
-						หมายเหตุ 2: {preview.resolved.remark_2 || 'ไม่ระบุ'}
-					  </div>
-					  <div className="mt-1 grid gap-1 text-muted-foreground sm:grid-cols-2">
-						<div>เอกสาร: {preview.payload.doc_format_code || 'ยังไม่กำหนด'}</div>
-						<div>คลัง/ที่เก็บ: {preview.payload.warehouse || '—'} / {preview.payload.location || '—'}</div>
-						<div>VAT: type {preview.payload.vat_type} · {preview.payload.vat_rate}%</div>
-						<div>ปลายทาง: {preview.payload.endpoint || 'ยังไม่กำหนด'}</div>
-					  </div>
-					  <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
-						{preview.system_fields.remark_5}
-					  </div>
-					  {preview.profile_mode === 'shadow' && (
-						<div className="mt-1 text-muted-foreground">
-						  Shadow ตรวจสัญญา V1 แล้ว แต่ payload ที่เขียนจริงยังไม่เปิด Document Profile
-						</div>
-					  )}
-					  <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
-						route {preview.route_signature}
-					  </div>
+					  <dl className="mt-3 grid gap-x-5 gap-y-2 text-muted-foreground sm:grid-cols-2">
+						<div><dt className="inline">รูปแบบเอกสาร: </dt><dd className="inline font-medium text-foreground">{preview.payload.doc_format_code || 'ยังไม่กำหนด'}</dd></div>
+						<div><dt className="inline">ลูกค้า SML: </dt><dd className="inline font-mono text-foreground">{preview.payload.party_code || '—'}</dd></div>
+						<div><dt className="inline">คลัง / พื้นที่เก็บ: </dt><dd className="inline font-mono text-foreground">{preview.payload.warehouse || '—'} / {preview.payload.location || '—'}</dd></div>
+						<div><dt className="inline">ภาษี: </dt><dd className="inline text-foreground">{preview.payload.vat_type === 1 ? 'รวมใน' : preview.payload.vat_type === 0 ? 'แยกนอก' : preview.payload.vat_type === 2 ? 'อัตรา 0%' : 'ยังไม่กำหนด'} · {preview.payload.vat_rate}%</dd></div>
+						{preview.payload.branch_code && <div><dt className="inline">สาขา: </dt><dd className="inline font-mono text-foreground">{preview.payload.branch_code}</dd></div>}
+						{preview.resolved.remark && <div className="sm:col-span-2"><dt className="inline">หมายเหตุ 1: </dt><dd className="inline break-words text-foreground">{preview.resolved.remark}</dd></div>}
+						{preview.resolved.remark_2 && <div className="sm:col-span-2"><dt className="inline">หมายเหตุ 2: </dt><dd className="inline break-words text-foreground">{preview.resolved.remark_2}</dd></div>}
+					  </dl>
 					</div>
 					{(preview.missing_prerequisites ?? []).length > 0 && (
 					  <div className="rounded-md border border-warning/35 bg-warning/[0.08] px-3 py-2 text-xs text-warning">
@@ -947,7 +923,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 				  </div>
 				) : (
 				  <p className="text-xs text-muted-foreground" role="status">
-					ยังไม่ได้ตรวจตัวอย่าง หลังแก้ไขค่าใด ๆ ต้องตรวจใหม่ก่อนบันทึกเส้นทาง Auto SML
+					หลังแก้ไขค่า ให้กดตรวจสอบอีกครั้งก่อนบันทึก Auto SML
 				  </p>
 				)}
 			  </div>

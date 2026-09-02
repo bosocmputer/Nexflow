@@ -578,7 +578,7 @@ func TestShopeeSMLCancellationRouteSignatureCoversImmutableRoutingFields(t *test
 	}
 }
 
-func TestSaleInvoiceCancelRequestResolvesSavedRemarkTemplate(t *testing.T) {
+func TestSaleInvoiceCancelRequestUsesSavedRemarkAsLiteralText(t *testing.T) {
 	h := &ShopeeRealtimeHandler{}
 	cancelCtx := &shopeeSMLCancelDocumentContext{
 		Snapshot:  &models.ShopeeOrderSnapshot{OrderSN: "ORDER-1"},
@@ -589,7 +589,7 @@ func TestSaleInvoiceCancelRequestResolvesSavedRemarkTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Remark != "shopee_realtime_cancel|ORDER-1|CN-1" || req.UserRequest != "NEXFLOW" {
+	if req.Remark != "{{channel}}|{{order_ref}}|{{bill_no}}" || req.UserRequest != "NEXFLOW" {
 		t.Fatalf("request=%+v", req)
 	}
 }

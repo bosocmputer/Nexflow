@@ -7,37 +7,31 @@ import (
 	"nexflow/internal/models"
 )
 
-func TestResolveTemplateUsesOnlyDocumentTokens(t *testing.T) {
-	got, err := ResolveTemplate(
-		"{{channel}} | {{order_ref}} | {{bill_no}}",
-		TemplateContext{Channel: "Shopee API", OrderRef: "ORDER-1", BillNo: "BF-1"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "Shopee API | ORDER-1 | BF-1" {
-		t.Fatalf("resolved template = %q", got)
+func TestValidateFreeTextTreatsBracesAsLiteralText(t *testing.T) {
+	for _, value := range []string{"{{channel}}", "{{buyer_name}}", "ข้อความ {อิสระ}"} {
+		if err := ValidateFreeText("remark", value); err != nil {
+			t.Fatalf("ValidateFreeText(%q): %v", value, err)
+		}
 	}
 }
 
-func TestValidateTemplateRejectsUnknownControlAndOversizedValues(t *testing.T) {
+func TestValidateFreeTextRejectsControlAndOversizedValues(t *testing.T) {
 	tests := []struct {
 		name  string
 		value string
 	}{
-		{name: "unknown token", value: "{{buyer_name}}"},
 		{name: "control character", value: "safe\nunsafe"},
 		{name: "more than 255 unicode characters", value: strings.Repeat("ก", 256)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := ValidateTextTemplate("remark", tt.value); err == nil {
-				t.Fatalf("ValidateTextTemplate(%q) unexpectedly succeeded", tt.value)
+			if err := ValidateFreeText("remark", tt.value); err == nil {
+				t.Fatalf("ValidateFreeText(%q) unexpectedly succeeded", tt.value)
 			}
 		})
 	}
 
-	if err := ValidateTextTemplate("remark", strings.Repeat("ก", 255)); err != nil {
+	if err := ValidateFreeText("remark", strings.Repeat("ก", 255)); err != nil {
 		t.Fatalf("255 unicode characters must be accepted: %v", err)
 	}
 }

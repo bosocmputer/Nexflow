@@ -25,7 +25,6 @@ func (h *BillHandler) resolveInvoiceDocumentProfile(ctx context.Context, bill *m
 	}
 	channel := channelDefaultKeyForBill(bill)
 	orderRef := docRefFromBill(bill)
-	templateContext := smlprofile.TemplateContext{Channel: channel, OrderRef: orderRef, BillNo: docNo}
 
 	remark := strings.TrimSpace(req.Remark)
 	if remark != "" {
@@ -33,9 +32,8 @@ func (h *BillHandler) resolveInvoiceDocumentProfile(ctx context.Context, bill *m
 			return resolvedInvoiceDocumentProfile{}, err
 		}
 	} else if def != nil && strings.TrimSpace(def.Remark) != "" {
-		var err error
-		remark, err = smlprofile.ResolveTemplate(def.Remark, templateContext)
-		if err != nil {
+		remark = strings.TrimSpace(def.Remark)
+		if err := smlprofile.ValidateFreeText("remark", remark); err != nil {
 			return resolvedInvoiceDocumentProfile{}, err
 		}
 	} else if bill != nil {

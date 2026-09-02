@@ -165,14 +165,6 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 	if in.ExpectedConfigVersion != nil {
 		d.ConfigVersion = *in.ExpectedConfigVersion + 1
 	}
-	context := smlprofile.TemplateContext{
-		Channel: in.PreviewContext.Channel, OrderRef: in.PreviewContext.OrderRef, BillNo: in.PreviewContext.BillNo,
-	}
-	resolvedRemark, err := smlprofile.ResolveTemplate(d.Remark, context)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 	missing := channelDefaultMissingPrerequisites(d)
 	profileVersion := ""
 	if h.profileMode != smlprofile.ModeOff {
@@ -186,16 +178,17 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 		"profile_mode":    h.profileMode,
 		"profile_version": profileVersion,
 		"route_signature": smlprofile.RouteSignature(*d, h.profileMode),
-		"resolved":        gin.H{"remark": resolvedRemark, "remark_2": d.Remark2},
+		"resolved":        gin.H{"remark": d.Remark, "remark_2": d.Remark2},
 		"system_fields": gin.H{
 			"creator_code": "BILLFLOW", "cashier_code": "BILLFLOW", "user_request": "NEXFLOW",
-			"remark_5":      "NEXFLOW|" + d.Channel + "|" + firstNonEmpty(context.OrderRef, context.BillNo),
+			"remark_5":      "NEXFLOW|" + d.Channel + "|" + firstNonEmpty(in.PreviewContext.OrderRef, in.PreviewContext.BillNo),
 			"currency_code": "THB", "exchange_rate": "1", "timezone": "Asia/Bangkok",
 		},
 		"payload": gin.H{
 			"endpoint": d.Endpoint, "doc_format_code": d.DocFormatCode, "warehouse": d.WHCode,
 			"location": d.ShelfCode, "vat_type": d.VATType, "vat_rate": d.VATRate,
-			"remark": resolvedRemark, "remark_2": d.Remark2, "document_profile_version": wireProfileVersion,
+			"party_code": d.PartyCode, "branch_code": d.BranchCode,
+			"remark": d.Remark, "remark_2": d.Remark2, "document_profile_version": wireProfileVersion,
 		},
 		"missing_prerequisites": missing,
 		"warnings":              previewWarnings(d, missing),
@@ -203,6 +196,14 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 }
 
 func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
+	if err := smlprofile.ValidateFreeText("remark", in.Remark); err != nil {
+		return err
+	}
+	if err := smlprofile.ValidateFreeText("remark_2", in.Remark2); err != nil {
+		return err
+	}
+	in.Remark = strings.TrimSpace(in.Remark)
+	in.Remark2 = strings.TrimSpace(in.Remark2)
 	in.ShippingItemCode = strings.TrimSpace(in.ShippingItemCode)
 	in.ShippingItemUnitCode = strings.TrimSpace(in.ShippingItemUnitCode)
 	in.PassbookCode = strings.TrimSpace(in.PassbookCode)
@@ -265,12 +266,6 @@ func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
 		return err
 	}
 	if err := validateShopeeRealtimeCancelDefaults(*in); err != nil {
-		return err
-	}
-	if err := smlprofile.ValidateTextTemplate("remark", in.Remark); err != nil {
-		return err
-	}
-	if err := smlprofile.ValidateFreeText("remark_2", in.Remark2); err != nil {
 		return err
 	}
 	return nil
@@ -348,7 +343,7 @@ func previewWarnings(d *models.ChannelDefault, missing []string) []string {
 		warnings = append(warnings, "ยังเปิด Auto SML ไม่ได้จนกว่าข้อมูลที่จำเป็นจะครบ")
 	}
 	if d.Channel == "shopee_realtime" {
-		warnings = append(warnings, "การเปลี่ยน route signature ต้อง preview และยืนยัน Auto SML ใหม่")
+		warnings = append(warnings, "หากเปลี่ยนเส้นทาง ระบบจะหยุด Auto SML และให้ตรวจสอบค่าก่อนเปิดใช้งานอีกครั้ง")
 	}
 	return warnings
 }

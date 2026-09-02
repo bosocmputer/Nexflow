@@ -28,7 +28,7 @@ func TestResolveInvoiceDocumentProfileUsesDocumentPrecedenceAndShipment(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Remark != "shopee_realtime/ORDER-1/BF-INV1" || got.Remark2 != "default note" {
+	if got.Remark != "{{channel}}/{{order_ref}}/{{bill_no}}" || got.Remark2 != "default note" {
 		t.Fatalf("resolved text=%q/%q", got.Remark, got.Remark2)
 	}
 	if got.Options.Remark5 != "NEXFLOW|shopee_realtime|ORDER-1" || got.Options.ConfigVersion != 7 || got.Options.RouteSignature == "" {

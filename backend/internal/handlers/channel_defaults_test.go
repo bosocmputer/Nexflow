@@ -24,7 +24,7 @@ func TestChannelDefaultPreviewIsReadOnlyAndResolvesProfileFields(t *testing.T) {
 
 	h := NewChannelDefaultsHandler(repository.NewChannelDefaultRepo(db), nil, false, "shadow", zap.NewNop())
 	body := validChannelDefaultJSON(map[string]any{
-		"remark":   "{{channel}} | {{order_ref}} | {{bill_no}}",
+		"remark":   "  {{channel}} | {{order_ref}} | {{bill_no}}  ",
 		"remark_2": "ส่งจาก Nexflow",
 		"preview_context": map[string]any{
 			"channel": "Shopee API", "order_ref": "ORDER-DEMO", "bill_no": "BF-DEMO",
@@ -53,8 +53,8 @@ func TestChannelDefaultPreviewIsReadOnlyAndResolvesProfileFields(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Resolved.Remark != "Shopee API | ORDER-DEMO | BF-DEMO" {
-		t.Fatalf("resolved remark=%q", response.Resolved.Remark)
+	if response.Resolved.Remark != "{{channel}} | {{order_ref}} | {{bill_no}}" {
+		t.Fatalf("literal remark=%q", response.Resolved.Remark)
 	}
 	if response.ProfileMode != "shadow" || response.RouteSignature == "" || len(response.Missing) != 0 {
 		t.Fatalf("unexpected preview: %+v", response)
@@ -108,7 +108,7 @@ func TestChannelDefaultUpsertReturnsVersionConflict(t *testing.T) {
 	}
 }
 
-func TestChannelDefaultUpsertRejectsUnsafeRemarkBeforeDatabaseWrite(t *testing.T) {
+func TestChannelDefaultUpsertRejectsControlCharacterInRemarkBeforeDatabaseWrite(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestChannelDefaultUpsertRejectsUnsafeRemarkBeforeDatabaseWrite(t *testing.T
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/settings/channel-defaults", bytes.NewReader(validChannelDefaultJSON(map[string]any{
-		"remark": "{{buyer_name}}",
+		"remark": "บรรทัดแรก\nบรรทัดสอง",
 	})))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	h.Upsert(ctx)

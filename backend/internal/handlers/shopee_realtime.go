@@ -1550,13 +1550,10 @@ func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCan
 	}
 	remark := "Shopee order cancelled: " + cancelCtx.Snapshot.OrderSN
 	if cancelCtx.RouteDef != nil && strings.TrimSpace(cancelCtx.RouteDef.Remark) != "" {
-		resolved, err := smlprofile.ResolveTemplate(cancelCtx.RouteDef.Remark, smlprofile.TemplateContext{
-			Channel: "shopee_realtime_cancel", OrderRef: cancelCtx.Snapshot.OrderSN, BillNo: strings.TrimSpace(docNo),
-		})
-		if err != nil {
+		remark = strings.TrimSpace(cancelCtx.RouteDef.Remark)
+		if err := smlprofile.ValidateFreeText("remark", remark); err != nil {
 			return sml.SaleInvoiceCancelRequest{}, err
 		}
-		remark = resolved
 	}
 	req := sml.SaleInvoiceCancelRequest{
 		Kind:          cancelCtx.RouteMeta.Kind,
