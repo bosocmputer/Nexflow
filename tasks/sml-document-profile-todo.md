@@ -2,9 +2,10 @@
 
 ## Handoff
 
-- Last completed: AOY plain-language Channel/Bill UI, literal remarks and true 390px QA
+- Last completed: AOY compact Bill header/detail summary and immutable sale
+  `inquiry_type` propagation
 - Active task: T11 deployed percentiles plus the remaining first-ten monitoring
-- Nexflow deployed application: `codex/marketplace-units-conversion` / `c51c52b`;
+- Nexflow deployed application: `codex/marketplace-units-conversion` / `68ec5c9`;
   durable production handoff continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
 - Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
@@ -23,15 +24,16 @@
   1.539/7.854/35.891/140.596 microseconds; Gateway normalization/hash =
   5.572/25.762/110.357/482.279 microseconds. HTTP/database p95 budgets still
   require deployed telemetry.
-- Browser evidence: production AOY shows the single result `ส่งเข้า SML แล้ว
-  (AUTO)` for `BF-INV26090002`; recovery details appear only when actionable.
-  The compact summary shows order reference, Auto/manual source, document format,
-  customer, `AB-1 / 001`, configured VAT, two rows and exact 308.00 total. The
-  timeline uses plain Thai instead of Profile/Core jargon. Desktop and true
-  390x844 QA pass with no horizontal overflow and clean console. The settings
-  dialog uses literal free-text remarks and a simple readiness check; its Select
-  controlled-state warning was fixed and the final console is clean.
-- Production evidence: Central Gateway `16c550d` and AOY Nexflow `aa1ccbb` are
+- Browser evidence: production AOY renders the back action inline before
+  `BF-INV26090002`, followed by `ขาย -> ขายสินค้าและบริการ` and
+  `ส่งแล้ว (AUTO)` in one compact header. The duplicate successful-status card
+  is absent and the Shopee order time is `02/09/2026 16:43 น.` in
+  Asia/Bangkok. The SML summary includes inquiry type and both remarks; this
+  historical immutable payload did not contain `inquiry_type`, so it truthfully
+  renders `0 · ขายเงินเชื่อ (ค่าเริ่มต้น)` rather than borrowing mutable route
+  config. Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow
+  and zero console warnings/errors.
+- Production evidence: Central Gateway `16c550d` and AOY Nexflow `68ec5c9` are
   deployed. Gateway readiness passes for demo/aoy/lbk63/ploy_test. Controlled
   order `26090216HNM1GJ` produced exactly one bill/attempt/document
   `BF-INV26090002`: HTTP 201 in 179 ms, Profile complete with all five checks,
@@ -50,7 +52,9 @@
   `pre-deploy-20260902-142246.sql.gz`, plus UI-fix backup
   `pre-deploy-20260902-154415.sql.gz`, plus plain-UI backups
   `pre-deploy-20260902-170204.sql.gz` and
-  `pre-deploy-20260902-170832.sql.gz`; AOY runtime before shadow at
+  `pre-deploy-20260902-170832.sql.gz`, compact-header backup
+  `pre-deploy-20260902-172519.sql.gz`, and inquiry-type backup
+  `pre-deploy-20260902-173738.sql.gz`; AOY runtime before shadow at
   `.env.pre-sml-profile-shadow-20260902-213500` and before active at
   `.env.pre-sml-profile-active-20260902-220000`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
@@ -330,6 +334,35 @@
   or errors. Preview was exercised read-only; no config save or SML write was
   performed during QA.
 - Next action: monitor nine more Profile documents and capture deployed
+  p95/p99/queue-age evidence for T11.
+
+### AOY release checkpoint: compact bill header and complete SML summary
+
+- Nexflow commits: compact header/detail presentation `dcf9fbd`; immutable sale
+  inquiry type and historical fallback `68ec5c9`.
+- Behavior: the back action now shares the document-number row; the header owns
+  the SML number, sale route and AUTO/manual success state. The redundant success
+  card is removed while actionable recovery remains visible. Shopee order time
+  is formatted in Asia/Bangkok. The compact summary now exposes
+  `inquiry_type`, `remark` and `remark_2` without expanding the admin JSON.
+- Data integrity: future sale-invoice and sale-order payloads always serialize
+  `inquiry_type` with precedence explicit first-send value -> channel default ->
+  legacy-compatible fallback 0. Validation accepts only sale values 0-3; import,
+  manual, bulk, Auto SML and retry paths use the same resolved config. The
+  existing Gateway already writes this field to SML header and detail, so no
+  Gateway deployment or SML document rewrite was required.
+- Tests: `go test ./...`, `go test -race ./...`, `go vet ./...`, focused
+  frontend presentation/payload tests, production build and sales-only release
+  guard pass. Lint has zero errors and 35 pre-existing warnings.
+- Production: deployed AOY-only at `68ec5c9`; Demo, Lanboon and Ploy were not
+  rebuilt. Backup is `pre-deploy-20260902-173738.sql.gz`. AOY backend/database,
+  frontend, edge and Shopee Gateway health pass; before/after protected counts
+  are unchanged and the recent severe-error scan is clean.
+- Browser: desktop 1280x720 and 390x844 QA pass with no horizontal overflow and
+  zero console warnings/errors. No config save, SML write or document resend was
+  performed during QA.
+- Next action: monitor nine more Profile documents and confirm that the next new
+  immutable request contains its selected `inquiry_type`, then capture deployed
   p95/p99/queue-age evidence for T11.
 
 For every completed task, update Handoff with:
