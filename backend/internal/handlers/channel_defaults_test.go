@@ -44,8 +44,10 @@ func TestChannelDefaultPreviewIsReadOnlyAndResolvesProfileFields(t *testing.T) {
 			Remark string `json:"remark"`
 		} `json:"resolved"`
 		ProfileMode    string         `json:"profile_mode"`
+		ProfileVersion string         `json:"profile_version"`
 		RouteSignature string         `json:"route_signature"`
 		SystemFields   map[string]any `json:"system_fields"`
+		Payload        map[string]any `json:"payload"`
 		Missing        []string       `json:"missing_prerequisites"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -56,6 +58,9 @@ func TestChannelDefaultPreviewIsReadOnlyAndResolvesProfileFields(t *testing.T) {
 	}
 	if response.ProfileMode != "shadow" || response.RouteSignature == "" || len(response.Missing) != 0 {
 		t.Fatalf("unexpected preview: %+v", response)
+	}
+	if response.ProfileVersion != "sml-document-v1" || response.Payload["document_profile_version"] != "" {
+		t.Fatalf("shadow must validate V1 without opting the wire payload in: %+v", response)
 	}
 	if response.SystemFields["creator_code"] != "BILLFLOW" || response.SystemFields["currency_code"] != "THB" {
 		t.Fatalf("unexpected system fields: %+v", response.SystemFields)

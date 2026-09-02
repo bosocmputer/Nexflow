@@ -170,6 +170,18 @@ export async function retryBill(
   return res.data
 }
 
+export async function retrySMLDocumentProfile(id: string): Promise<void> {
+  const res = await client.post<{ message?: string }>(
+    `/api/bills/${id}/sml-document-profile/retry`,
+    {},
+    { validateStatus: () => true },
+  )
+  if (res.status !== 202) {
+    throw new Error(res.data?.message || (res.data as { error?: string })?.error || `จัดคิวซ่อม Document Profile ไม่สำเร็จ (HTTP ${res.status})`)
+  }
+  notifyWorkQueueChanged()
+}
+
 export async function ensureShopeeShippingLine(
   id: string,
 ): Promise<{ inserted: boolean; item?: BillItem | null }> {

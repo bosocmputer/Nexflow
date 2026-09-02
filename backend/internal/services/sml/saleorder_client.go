@@ -147,7 +147,12 @@ func (r *SaleOrderResponse) GetMessage() string {
 	return apiErrorMessage(r.Error)
 }
 
-func (r *SaleOrderResponse) GetCode() string { return strings.TrimSpace(r.Code) }
+func (r *SaleOrderResponse) GetCode() string {
+	if code := strings.TrimSpace(r.Code); code != "" {
+		return code
+	}
+	return strings.TrimSpace(apiErrorCode(r.Error))
+}
 
 // ─── Create ───────────────────────────────────────────────────────────────────
 

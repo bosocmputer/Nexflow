@@ -215,6 +215,29 @@ func TestMigration091SMLDocumentProfileChannelDefaultsIsAdditive(t *testing.T) {
 	}
 }
 
+func TestMigration092AddsDurableSMLDocumentProfileReconciliation(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/092_sml_document_profile_reconciliation.sql")
+	if err != nil {
+		t.Fatalf("read migration 092: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"profile_status", "profile_payload_hash", "profile_reconciliation_required",
+		"create table if not exists sml_document_profile_reconciliation_jobs",
+		"unique (sml_attempt_id, profile_version)", "lease_token", "attempt_count", "manual_retry_count",
+		"max_attempts", "manual_reconciliation", "sml_document_profile_reconciliation_queue_idx",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 092 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 092 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

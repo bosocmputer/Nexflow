@@ -185,19 +185,31 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 	b := &models.Bill{}
 	var anomaliesRaw []byte
 	var smlPayloadRaw, smlResponseRaw []byte
+	var profileRequiredRaw, profileCompletedRaw []byte
 	err := r.db.QueryRow(
-		`SELECT id, bill_type, source, source_account_key, status, document_route, raw_data, sml_doc_no,
-		        sml_payload, sml_response, ai_confidence, anomalies,
-		        error_msg, created_by, created_at, sent_at, archived_at, archived_by,
-		        archive_reason, remark, amount_reviewed_at, amount_reviewed_by,
-		        amount_review_fingerprint, current_sml_attempt_id::text,
-		        COALESCE(sml_attempt_state,'unattempted'), COALESCE(mutation_revision,0),
+		`SELECT b.id, b.bill_type, b.source, b.source_account_key, b.status, b.document_route, b.raw_data, b.sml_doc_no,
+		        b.sml_payload, b.sml_response, b.ai_confidence, b.anomalies,
+		        b.error_msg, b.created_by, b.created_at, b.sent_at, b.archived_at, b.archived_by,
+		        b.archive_reason, b.remark, b.amount_reviewed_at, b.amount_reviewed_by,
+		        b.amount_review_fingerprint, b.current_sml_attempt_id::text,
+		        COALESCE(b.sml_attempt_state,'unattempted'), COALESCE(b.mutation_revision,0),
 		        EXISTS (
 		          SELECT 1
 		            FROM shopee_order_snapshots sos
-		           WHERE sos.bill_id = bills.id
-		        ) AS shopee_realtime_linked
-		 FROM bills WHERE id = $1`, id,
+		           WHERE sos.bill_id = b.id
+		        ) AS shopee_realtime_linked,
+		        COALESCE(a.core_status,''),COALESCE(a.profile_version,''),COALESCE(a.profile_status,''),
+		        COALESCE(a.profile_payload_hash,''),COALESCE(a.profile_required_checks,'[]'::jsonb),
+		        COALESCE(a.profile_completed_checks,'[]'::jsonb),COALESCE(a.profile_reconciliation_required,FALSE),
+		        COALESCE(pr.status,''),COALESCE(pr.attempt_count,0),COALESCE(pr.manual_retry_count,0),COALESCE(pr.max_attempts,0),
+		        COALESCE(pr.last_error_code,''),COALESCE(pr.last_error_message,''),COALESCE(pr.correlation_id,''),
+		        COALESCE(sr.status,''),COALESCE(sr.attempt_count,0),COALESCE(sr.error_message,'')
+		 FROM bills b
+		 LEFT JOIN bill_sml_attempts a ON a.id=b.current_sml_attempt_id
+		 LEFT JOIN sml_document_profile_reconciliation_jobs pr
+		   ON pr.sml_attempt_id=a.id AND pr.profile_version=a.profile_version
+		 LEFT JOIN marketplace_stock_recalc_jobs sr ON sr.sml_attempt_id=a.id
+		 WHERE b.id = $1`, id,
 	).Scan(
 		&b.ID, &b.BillType, &b.Source, &b.SourceAccountKey, &b.Status, &b.DocumentRoute, &b.RawData,
 		&b.SMLDocNo, &smlPayloadRaw, &smlResponseRaw, &b.AIConfidence,
@@ -206,6 +218,12 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		&b.AmountReviewedAt, &b.AmountReviewedBy, &b.AmountReviewFingerprint,
 		&b.CurrentSMLAttemptID, &b.SMLAttemptState, &b.MutationRevision,
 		&b.ShopeeRealtimeLinked,
+		&b.SMLCoreStatus, &b.SMLProfileVersion, &b.SMLProfileStatus,
+		&b.SMLProfilePayloadHash, &profileRequiredRaw, &profileCompletedRaw,
+		&b.SMLProfileNeedsRepair, &b.SMLProfileJobStatus, &b.SMLProfileRetryCount,
+		&b.SMLProfileManualRetries, &b.SMLProfileMaxRetries, &b.SMLProfileErrorCode, &b.SMLProfileErrorMessage,
+		&b.SMLProfileCorrelationID, &b.SMLStockJobStatus, &b.SMLStockRetryCount,
+		&b.SMLStockErrorMessage,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -214,6 +232,8 @@ func (r *BillRepo) FindByID(id string) (*models.Bill, error) {
 		return nil, fmt.Errorf("FindByID: %w", err)
 	}
 	b.Anomalies = anomaliesRaw
+	_ = json.Unmarshal(profileRequiredRaw, &b.SMLProfileRequired)
+	_ = json.Unmarshal(profileCompletedRaw, &b.SMLProfileCompleted)
 	if smlPayloadRaw != nil {
 		b.SMLPayload = json.RawMessage(smlPayloadRaw)
 	}

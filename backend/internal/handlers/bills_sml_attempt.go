@@ -17,13 +17,24 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 )
 
 const smlAttemptLeaseDuration = 5 * time.Minute
 
 type smlAttemptRouteSnapshot struct {
-	URLOverride string `json:"url_override,omitempty"`
-	Config      any    `json:"config,omitempty"`
+	URLOverride     string                             `json:"url_override,omitempty"`
+	Config          any                                `json:"config,omitempty"`
+	DocumentProfile *smlAttemptDocumentProfileSnapshot `json:"document_profile,omitempty"`
+}
+
+type smlAttemptDocumentProfileSnapshot struct {
+	Mode            string `json:"mode"`
+	Version         string `json:"version,omitempty"`
+	ConfigVersion   int64  `json:"config_version"`
+	RouteSignature  string `json:"route_signature"`
+	ValidationState string `json:"validation_state"`
+	ValidationError string `json:"validation_error,omitempty"`
 }
 
 func newSMLAttemptLeaseOwner() string {
@@ -48,11 +59,33 @@ func (h *BillHandler) createSMLAttempt(
 	if err != nil {
 		return nil, err
 	}
+	if len(payloadBytes) > sml.MaxInvoiceDocumentBytes {
+		return nil, fmt.Errorf("SML request exceeds %d bytes", sml.MaxInvoiceDocumentBytes)
+	}
 	mappingRevisions, unitGeneration, setHashes, err := smlAttemptDependencySnapshot(bill)
 	if err != nil {
 		return nil, err
 	}
-	routeSettings, err := json.Marshal(smlAttemptRouteSnapshot{URLOverride: urlOverride, Config: routeConfig})
+	routeSnapshot := smlAttemptRouteSnapshot{URLOverride: urlOverride, Config: routeConfig}
+	var invoicePayload *sml.InvoicePayload
+	switch value := payload.(type) {
+	case sml.InvoicePayload:
+		invoicePayload = &value
+	case *sml.InvoicePayload:
+		invoicePayload = value
+	}
+	if invoicePayload != nil && invoicePayload.ProfileMode != "" && invoicePayload.ProfileMode != "off" {
+		validationState := "valid"
+		if invoicePayload.ProfileValidationError != "" {
+			validationState = "invalid"
+		}
+		routeSnapshot.DocumentProfile = &smlAttemptDocumentProfileSnapshot{
+			Mode: invoicePayload.ProfileMode, Version: invoicePayload.DocumentProfileVersion,
+			ConfigVersion: invoicePayload.ProfileConfigVersion, RouteSignature: invoicePayload.ProfileRouteSignature,
+			ValidationState: validationState, ValidationError: invoicePayload.ProfileValidationError,
+		}
+	}
+	routeSettings, err := json.Marshal(routeSnapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +178,13 @@ func (h *BillHandler) executeSMLAttempt(
 	if err := json.Unmarshal(attempt.RouteSettings, &routeSnapshot); err != nil {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "route snapshot ของเอกสารไม่สมบูรณ์ ต้องตรวจสอบก่อนส่งซ้ำ", Route: attempt.Route, Skipped: true}
 	}
+	if routeSnapshot.DocumentProfile != nil && routeSnapshot.DocumentProfile.Version != "" {
+		h.recordSMLProfileAudit(bill, attempt, opts, "profile_requested", "info", map[string]any{
+			"profile_version": routeSnapshot.DocumentProfile.Version,
+			"config_version":  routeSnapshot.DocumentProfile.ConfigVersion,
+			"status":          "requested",
+		})
+	}
 
 	start := time.Now()
 	stopHeartbeat, leaseLost := h.startSMLAttemptHeartbeat(attempt.ID, leaseOwner)
@@ -153,6 +193,8 @@ func (h *BillHandler) executeSMLAttempt(
 	var responseMessage string
 	var responseDocNo string
 	var responseSuccess bool
+	var responseCode string
+	var profileResult sml.InvoiceDocumentProfileResult
 	var sendErr error
 	switch attempt.Route {
 	case "SaleOrder":
@@ -166,6 +208,7 @@ func (h *BillHandler) executeSMLAttempt(
 			responseMessage = response.GetMessage()
 			responseDocNo = response.GetDocNo()
 			responseSuccess = response.IsSuccess()
+			responseCode = response.GetCode()
 		}
 	case "SaleInvoice":
 		if h.invoiceClient == nil {
@@ -173,24 +216,60 @@ func (h *BillHandler) executeSMLAttempt(
 			break
 		}
 		var response *sml.InvoiceResponse
-		statusCode, response, responseBytes, sendErr = h.invoiceClient.CreateInvoiceBytes(attempt.PayloadBytes, routeSnapshot.URLOverride)
+		statusCode, response, responseBytes, sendErr = h.invoiceClient.CreateInvoiceBytesWithCorrelation(attempt.PayloadBytes, routeSnapshot.URLOverride, opts.TraceID)
 		if response != nil {
 			responseMessage = response.GetMessage()
 			responseDocNo = response.GetDocNo()
 			responseSuccess = response.IsSuccess()
+			responseCode = response.GetCode()
+			if routeSnapshot.DocumentProfile != nil {
+				profileResult = response.DocumentProfileResult(routeSnapshot.DocumentProfile.Version)
+			}
 		}
 	default:
 		sendErr = fmt.Errorf("immutable retry route %q is unsupported", attempt.Route)
 	}
+	httpSuccess := statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
 	stopHeartbeat()
+	if routeSnapshot.DocumentProfile != nil && routeSnapshot.DocumentProfile.Version != "" {
+		metricStatus := strings.TrimSpace(profileResult.ProfileStatus)
+		if metricStatus == "" {
+			metricStatus = strings.TrimSpace(responseCode)
+		}
+		if metricStatus == "" && sendErr != nil {
+			metricStatus = "transport_error"
+		}
+		if metricStatus == "" {
+			metricStatus = "unknown"
+		}
+		tenant := ""
+		if h.cfg != nil {
+			tenant = firstNonEmpty(strings.TrimSpace(h.cfg.ShopeeGatewayTenant), strings.TrimSpace(h.cfg.ShopeeSMLDatabase))
+		}
+		smlprofile.DefaultMetrics.ObserveRequest(tenant, attempt.Route, routeSnapshot.DocumentProfile.Version, metricStatus, time.Since(start), sendErr != nil || !httpSuccess || !responseSuccess)
+	}
 	if leaseLost.Load() {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "สิทธิ์ส่ง SML หมดอายุระหว่างทำงาน ระบบหยุดบันทึกผลเพื่อป้องกันข้อมูลซ้ำ", Route: attempt.Route, Skipped: true}
 	}
 
-	httpSuccess := statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+	if routeSnapshot.DocumentProfile != nil && responseCode == "doc_no_payload_mismatch" {
+		profileCompletion := &repository.SMLProfileCompletion{
+			Version: routeSnapshot.DocumentProfile.Version, CoreStatus: "existing_document_conflict",
+			ProfileStatus: "terminal_failure", ReconciliationRequired: false, CorrelationID: opts.TraceID,
+		}
+		if err := h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, "stale_requires_reconciliation", "needs_review", responseBytes, "doc_no_payload_mismatch", profileCompletion); err != nil {
+			return retrySendResult{HTTPStatus: http.StatusConflict, Error: "พบ payload ไม่ตรงและบันทึกสถานะป้องกันไม่สำเร็จ ต้องหยุดส่งและตรวจเอกสารทันที", Route: attempt.Route, DocNoAttempted: attempt.DocNo, Skipped: true}
+		}
+		_, _ = h.billRepo.PauseShopeeAutoSMLForBill(context.Background(), bill.ID, "profile_payload_mismatch")
+		h.recordSMLProfileAudit(bill, attempt, opts, "profile_terminal_failure", "error", map[string]any{
+			"profile_version": routeSnapshot.DocumentProfile.Version, "error_code": "doc_no_payload_mismatch",
+			"impact": "auto_sml_paused_core_not_resent",
+		})
+		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "เลขเอกสารนี้มี payload คนละชุด ระบบหยุด Auto SML และห้ามส่ง Core ซ้ำจนกว่าจะตรวจสอบ", Route: attempt.Route, DocNoAttempted: attempt.DocNo, CoreStatus: "existing_document_conflict", ProfileStatus: "terminal_failure", Skipped: true}
+	}
 	if sendErr == nil && httpSuccess && responseSuccess && responseDocNo != "" && responseDocNo != attempt.DocNo {
 		errMessage := "doc_no_payload_mismatch"
-		_ = h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, "stale_requires_reconciliation", "needs_review", responseBytes, errMessage)
+		_ = h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, "stale_requires_reconciliation", "needs_review", responseBytes, errMessage, nil)
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "SML ตอบเลขเอกสารไม่ตรงกับ payload ต้องตรวจสอบก่อน retry", Route: attempt.Route, DocNoAttempted: attempt.DocNo, Skipped: true}
 	}
 	if sendErr == nil && httpSuccess && responseSuccess {
@@ -198,14 +277,46 @@ func (h *BillHandler) executeSMLAttempt(
 		if responseDocNo == "" {
 			responseDocNo = attempt.DocNo
 		}
-		if err := h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, "sent", "sent", responseBytes, ""); err != nil {
+		var profileCompletion *repository.SMLProfileCompletion
+		if profileResult.Version != "" {
+			profileCompletion = &repository.SMLProfileCompletion{
+				Version: profileResult.Version, PayloadHash: profileResult.PayloadHash,
+				CoreStatus: profileResult.CoreStatus, ProfileStatus: profileResult.ProfileStatus,
+				RequiredChecks: profileResult.RequiredChecks, CompletedChecks: profileResult.CompletedChecks,
+				ReconciliationRequired: profileResult.ReconciliationRequired, CorrelationID: opts.TraceID,
+			}
+		}
+		if err := h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, "sent", "sent", responseBytes, "", profileCompletion); err != nil {
 			return retrySendResult{HTTPStatus: http.StatusConflict, Error: "SML รับเอกสารแล้วแต่บันทึกผลไม่ได้ กรุณาตรวจสอบเอกสารก่อน retry", Route: attempt.Route, DocNoAttempted: attempt.DocNo, Skipped: true}
+		}
+		if profileCompletion != nil {
+			h.recordSMLProfileAudit(bill, attempt, opts, "core_committed", "info", map[string]any{
+				"profile_version": profileCompletion.Version, "core_status": profileCompletion.CoreStatus,
+				"profile_status": profileCompletion.ProfileStatus,
+			})
+			if profileCompletion.ReconciliationRequired {
+				h.recordSMLProfileAudit(bill, attempt, opts, "reconcile_queued", "warn", map[string]any{
+					"profile_version": profileCompletion.Version, "profile_status": profileCompletion.ProfileStatus,
+					"required_checks": profileCompletion.RequiredChecks, "completed_checks": profileCompletion.CompletedChecks,
+				})
+			} else if profileCompletion.ProfileStatus == "complete" {
+				h.recordSMLProfileAudit(bill, attempt, opts, "profile_complete", "info", map[string]any{
+					"profile_version": profileCompletion.Version, "profile_status": "complete",
+					"completed_checks": profileCompletion.CompletedChecks,
+				})
+			}
 		}
 		h.recordSuccessForSend(bill.ID, bill.Source, responseBytes, responseDocNo, attempt.Route, start, opts)
 		if h.cfg == nil || !h.cfg.MarketplaceReservationLedgerEnabled {
 			h.triggerStockRecalculation(bill.ID, responseDocNo, attempt.Route, opts.BulkJobID, billItemCodes(bill))
 		}
-		return retrySendResult{HTTPStatus: http.StatusOK, Message: "bill sent to SML (immutable payload)", DocNo: responseDocNo, DocNoAttempted: attempt.DocNo, Route: attempt.Route, LogWarning: extractSMLERPLogWarning(responseBytes)}
+		return retrySendResult{
+			HTTPStatus: http.StatusOK, Message: "bill sent to SML (immutable payload)", DocNo: responseDocNo,
+			DocNoAttempted: attempt.DocNo, Route: attempt.Route, LogWarning: extractSMLERPLogWarning(responseBytes),
+			SMLAttemptID: attempt.ID, PayloadHash: profileResult.PayloadHash, CoreStatus: profileResult.CoreStatus,
+			ProfileStatus: profileResult.ProfileStatus, RequiredChecks: profileResult.RequiredChecks,
+			CompletedChecks: profileResult.CompletedChecks, ReconciliationRequired: profileResult.ReconciliationRequired,
+		}
 	}
 
 	errMessage := strings.TrimSpace(responseMessage)
@@ -226,11 +337,28 @@ func (h *BillHandler) executeSMLAttempt(
 	}
 	failure := failureDetail{Route: attempt.Route, DocNoAttempted: attempt.DocNo, Error: errMessage, OccurredAt: time.Now().UTC().Format(time.RFC3339)}
 	failureJSON, _ := json.Marshal(failure)
-	if err := h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, attemptState, billStatus, responseBytes, string(failureJSON)); err != nil {
+	if err := h.billRepo.FinishSMLAttempt(ctx, attempt.ID, leaseOwner, attemptState, billStatus, responseBytes, string(failureJSON), nil); err != nil {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "ผลการส่ง SML ไม่แน่นอนและ lease เปลี่ยนแล้ว ต้องตรวจสอบก่อน retry", Route: attempt.Route, DocNoAttempted: attempt.DocNo, Skipped: true}
 	}
 	h.recordSMLAttemptFailureAudit(bill, attempt, opts, start, errMessage, failureClass)
 	return retrySendResult{HTTPStatus: http.StatusBadGateway, Error: "SML send failed: " + errMessage, FailureClass: failureClass, DocNoAttempted: attempt.DocNo, Route: attempt.Route}
+}
+
+func (h *BillHandler) recordSMLProfileAudit(bill *models.Bill, attempt *models.BillSMLAttempt, opts retrySendOptions, action, level string, detail map[string]any) {
+	if h == nil || h.auditRepo == nil || bill == nil || attempt == nil {
+		return
+	}
+	var actor *string
+	if opts.UserID != "" {
+		actor = &opts.UserID
+	}
+	detail["attempt_id"] = attempt.ID
+	detail["route"] = attempt.Route
+	detail["via"] = opts.Via
+	_ = h.auditRepo.Log(models.AuditEntry{
+		Action: action, TargetID: &bill.ID, UserID: actor, Source: "sml",
+		Level: level, TraceID: opts.TraceID, Detail: detail,
+	})
 }
 
 func (h *BillHandler) startSMLAttemptHeartbeat(attemptID, leaseOwner string) (func(), *atomic.Bool) {

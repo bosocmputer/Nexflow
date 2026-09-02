@@ -36,4 +36,5 @@ test('uses a distinct confirmation when an enabled shop changes trigger', () => 
   assert.equal(requiredAutoSMLConfirmation(false, 'READY_TO_SHIP', true, 'PROCESSED'), 'ENABLE_AUTO_SML')
   assert.equal(requiredAutoSMLConfirmation(true, 'READY_TO_SHIP', true, 'PROCESSED'), 'UPDATE_AUTO_SML_TRIGGER')
   assert.equal(requiredAutoSMLConfirmation(true, 'PROCESSED', false, 'PROCESSED'), '')
+  assert.equal(requiredAutoSMLConfirmation(true, 'READY_TO_SHIP', true, 'READY_TO_SHIP', 'profile_terminal_failure'), 'RESUME_AUTO_SML')
 })

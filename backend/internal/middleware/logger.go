@@ -3,6 +3,8 @@ package middleware
 import (
 	"crypto/rand"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +13,10 @@ import (
 
 // TraceIDKey is the gin.Context key for the per-request trace ID.
 const TraceIDKey = "trace_id"
+
+const CorrelationIDHeader = "X-Correlation-ID"
+
+var correlationIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$`)
 
 // NewTraceID returns a random 12-char hex string for tracing requests and background jobs.
 func NewTraceID() string {
@@ -21,8 +27,12 @@ func NewTraceID() string {
 
 func Logger(log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		traceID := NewTraceID()
+		traceID := strings.TrimSpace(c.GetHeader(CorrelationIDHeader))
+		if !correlationIDPattern.MatchString(traceID) {
+			traceID = NewTraceID()
+		}
 		c.Set(TraceIDKey, traceID)
+		c.Header(CorrelationIDHeader, traceID)
 
 		start := time.Now()
 		path := c.Request.URL.Path

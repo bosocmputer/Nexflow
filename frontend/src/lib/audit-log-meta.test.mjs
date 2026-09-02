@@ -93,3 +93,13 @@ test('summarizes Auto SML setting changes without raw Shopee status keys', () =>
     after: { enabled: true, trigger_status: 'PROCESSED', config_version: 3 },
   })), 'เปิดใช้งาน · รอจัดส่ง → เตรียมจัดส่งแล้ว · รุ่นตั้งค่า 3')
 })
+
+test('labels document profile recovery without implying that the core document is resent', () => {
+  assert.equal(ACTION_META.core_committed.label, 'สร้างเอกสารหลัก SML แล้ว')
+  assert.equal(ACTION_META.profile_terminal_failure.label, 'Document Profile ต้องให้ผู้ดูแลซ่อม')
+  assert.equal(summarize(audit('profile_retry_requested', {
+    profile_version: 'sml-document-v1',
+    manual_retry_count: 2,
+  }, 'sml')), 'sml-document-v1 · ไม่ส่งเอกสารหลักซ้ำ · ผู้ดูแล retry ครั้งที่ 2')
+  assert.equal(isSMLAuditLog(audit('profile_complete', {}, 'sml')), true)
+})

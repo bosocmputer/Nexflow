@@ -26,6 +26,7 @@ import (
 	lineservice "nexflow/internal/services/line"
 	"nexflow/internal/services/mapper"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 )
 
 type BillHandler struct {
@@ -1189,17 +1190,24 @@ type retrySendOptions struct {
 }
 
 type retrySendResult struct {
-	HTTPStatus     int
-	Message        string
-	Error          string
-	FailureClass   string
-	DocNo          string
-	DocNoAttempted string
-	Route          string
-	Skipped        bool
-	LeaseBusy      bool
-	Warnings       []hiddenItemCodeWarning
-	LogWarning     string
+	HTTPStatus             int
+	Message                string
+	Error                  string
+	FailureClass           string
+	DocNo                  string
+	DocNoAttempted         string
+	Route                  string
+	Skipped                bool
+	LeaseBusy              bool
+	Warnings               []hiddenItemCodeWarning
+	LogWarning             string
+	SMLAttemptID           string
+	PayloadHash            string
+	CoreStatus             string
+	ProfileStatus          string
+	RequiredChecks         []string
+	CompletedChecks        []string
+	ReconciliationRequired bool
 }
 
 func effectiveSMLQuantity(item models.BillItem, conversionMode string) (float64, error) {
@@ -1343,6 +1351,75 @@ func (h *BillHandler) Retry(c *gin.Context) {
 		result.HTTPStatus = http.StatusInternalServerError
 	}
 	c.JSON(result.HTTPStatus, gin.H{"error": result.Error})
+}
+
+// RetrySMLDocumentProfile requeues only the durable supplement/audit repair
+// for a core SML document that has already been created. It deliberately does
+// not call sendBillToSML and therefore cannot create a second header/detail.
+func (h *BillHandler) RetrySMLDocumentProfile(c *gin.Context) {
+	billID := strings.TrimSpace(c.Param("id"))
+	result, err := h.billRepo.RetrySMLProfileReconciliation(c.Request.Context(), billID, c.GetString("trace_id"))
+	switch {
+	case errors.Is(err, repository.ErrSMLProfileReconciliationNotFound):
+		c.JSON(http.StatusConflict, gin.H{"error": "เอกสารนี้ไม่มี Document Profile ที่ซ่อมแยกได้"})
+		return
+	case errors.Is(err, repository.ErrSMLProfileReconciliationBusy):
+		c.JSON(http.StatusConflict, gin.H{"error": "Document Profile กำลังซ่อมอยู่ กรุณารอผลก่อน"})
+		return
+	case errors.Is(err, repository.ErrSMLProfileReconciliationComplete):
+		c.JSON(http.StatusConflict, gin.H{"error": "Document Profile สมบูรณ์แล้ว ไม่ต้อง retry"})
+		return
+	case err != nil:
+		h.log.Error("retry SML document profile", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "จัดคิวซ่อม Document Profile ไม่สำเร็จ"})
+		return
+	}
+	if h.auditRepo != nil {
+		userID := c.GetString("user_id")
+		var actor *string
+		if userID != "" {
+			actor = &userID
+		}
+		_ = h.auditRepo.Log(models.AuditEntry{
+			Action: "profile_retry_requested", TargetID: &billID, UserID: actor,
+			Source: "sml", Level: "info", TraceID: c.GetString("trace_id"),
+			Detail: map[string]any{
+				"attempt_id": result.SMLAttemptID, "profile_version": result.ProfileVersion,
+				"status": result.Status, "attempt_count": result.AttemptCount,
+				"manual_retry_count": result.ManualRetryCount, "max_attempts": result.MaxAttempts,
+			},
+		})
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "จัดคิวซ่อม Document Profile แล้ว โดยไม่ส่งบิล SML ซ้ำ",
+		"profile": result,
+	})
+}
+
+func (h *BillHandler) SMLDocumentProfileMetrics(c *gin.Context) {
+	queue, err := h.billRepo.SMLProfileQueueMetrics(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่านสถานะคิว Document Profile ไม่สำเร็จ"})
+		return
+	}
+	requests := smlprofile.DefaultMetrics.Snapshot()
+	gatewayP95OverBudget := false
+	for _, item := range requests {
+		if item.Profile == smlprofile.Version && item.P95MS > 2000 {
+			gatewayP95OverBudget = true
+			break
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"requests": requests,
+		"queue":    queue,
+		"alerts": gin.H{
+			"payload_mismatch":      queue.PayloadMismatchCount > 0,
+			"terminal_failure":      queue.TerminalCount > 0,
+			"queue_oldest_over_10m": queue.OldestAgeSeconds > 600,
+			"gateway_p95_over_2s":   gatewayP95OverBudget,
+		},
+	})
 }
 
 // ConfirmAmountReview records that an operator accepted a marketplace amount
@@ -2096,10 +2173,23 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: "เลขเอกสาร SML ไม่ถูกต้อง: " + err.Error(), Route: route}
 	}
-	payload := sml.BuildInvoicePayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, productCache, req.Remark, sml.InvoiceHeaderOptions{
-		Remark2:        req.Remark2,
+	profile, profileErr := h.resolveInvoiceDocumentProfile(opts.Context, bill, def, req, reqDocNo)
+	if profileErr != nil && profile.Mode == smlprofile.ModeActive {
+		return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + profileErr.Error(), Route: route, Skipped: true}
+	}
+	payload := sml.BuildInvoicePayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, productCache, profile.Remark, sml.InvoiceHeaderOptions{
+		Remark2:        profile.Remark2,
 		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
+	if err := sml.ApplyInvoiceDocumentProfile(&payload, profile.Options); err != nil {
+		if profile.Mode == smlprofile.ModeActive {
+			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + err.Error(), Route: route, Skipped: true}
+		}
+		payload.ProfileMode = profile.Mode
+		payload.ProfileConfigVersion = profile.Options.ConfigVersion
+		payload.ProfileRouteSignature = profile.Options.RouteSignature
+		payload.ProfileValidationError = err.Error()
+	}
 	attempt, err := h.createSMLAttempt(opts.Context, bill, reqDocNo, route, payload, urlOverride, cfg, opts.LeaseOwner, opts)
 	if errors.Is(err, repository.ErrSMLAttemptExists) {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "มีการเริ่มส่งเอกสารนี้แล้ว กรุณารอสักครู่", Route: route, Skipped: true, LeaseBusy: true}

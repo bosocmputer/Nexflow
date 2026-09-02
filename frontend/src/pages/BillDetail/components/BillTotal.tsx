@@ -32,9 +32,10 @@ export function BillTotal({
   smlReadiness,
 }: Props) {
   const canShowSendButton =
-    bill.status === 'failed' ||
-    bill.status === 'pending' ||
-    bill.status === 'needs_review'
+    bill.sml_attempt_state !== 'stale_requires_reconciliation' &&
+    (bill.status === 'failed' ||
+      bill.status === 'pending' ||
+      bill.status === 'needs_review')
   const smlReady = isSMLReady(smlReadiness)
 
   if (!canShowSendButton || (smlReady && validation.canSend)) return null

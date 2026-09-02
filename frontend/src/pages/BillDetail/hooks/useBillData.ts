@@ -1,6 +1,6 @@
 import { createElement, useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
-import { ensureShopeeShippingLine, getBill, getLatestBillDocNo, regenerateBillDocNo, retryBill } from '@/hooks/useBills'
+import { ensureShopeeShippingLine, getBill, getLatestBillDocNo, regenerateBillDocNo, retryBill, retrySMLDocumentProfile } from '@/hooks/useBills'
 import type { RetryBillPayload } from '@/hooks/useBills'
 import type { Bill } from '@/types'
 
@@ -38,12 +38,14 @@ export interface UseBillDataReturn {
   bill: Bill | null
   loading: boolean
   retrying: boolean
+  profileRetrying: boolean
   regeneratingDocNo: boolean
   refreshingDocNo: boolean
   retryError: string | null
   reloadBill: () => Promise<Bill | null>
   handleRetry: () => Promise<SMLRetryResult>
   handleRetryWithOverride: (body: RetryBillPayload) => Promise<SMLRetryResult>
+  handleProfileRetry: () => Promise<void>
   handleRegenerateDocNo: () => Promise<string | null>
   handleFetchLatestDocNo: () => Promise<string | null>
   setBill: React.Dispatch<React.SetStateAction<Bill | null>>
@@ -58,6 +60,7 @@ export function useBillData(id: string | undefined): UseBillDataReturn {
   const [bill, setBill] = useState<Bill | null>(null)
   const [loading, setLoading] = useState(true)
   const [retrying, setRetrying] = useState(false)
+  const [profileRetrying, setProfileRetrying] = useState(false)
   const [regeneratingDocNo, setRegeneratingDocNo] = useState(false)
   const [refreshingDocNo, setRefreshingDocNo] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
@@ -126,6 +129,23 @@ export function useBillData(id: string | undefined): UseBillDataReturn {
     [doRetry],
   )
 
+  const handleProfileRetry = useCallback(async () => {
+    if (!id || profileRetrying) return
+    setProfileRetrying(true)
+    try {
+      await retrySMLDocumentProfile(id)
+      await reloadBill()
+      toast.success('จัดคิวซ่อม Document Profile แล้ว', {
+        description: 'ระบบจะเติมเฉพาะข้อมูลที่ขาด โดยไม่ส่งบิล SML ซ้ำ',
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'จัดคิวซ่อม Document Profile ไม่สำเร็จ'
+      toast.error('ซ่อม Document Profile ไม่สำเร็จ', { description: message })
+    } finally {
+      setProfileRetrying(false)
+    }
+  }, [id, profileRetrying, reloadBill])
+
   const handleRegenerateDocNo = useCallback(async () => {
     if (!id) return null
     setRegeneratingDocNo(true)
@@ -173,12 +193,14 @@ export function useBillData(id: string | undefined): UseBillDataReturn {
     bill,
     loading,
     retrying,
+    profileRetrying,
     regeneratingDocNo,
     refreshingDocNo,
     retryError,
     reloadBill,
     handleRetry,
     handleRetryWithOverride,
+    handleProfileRetry,
     handleRegenerateDocNo,
     handleFetchLatestDocNo,
     setBill,

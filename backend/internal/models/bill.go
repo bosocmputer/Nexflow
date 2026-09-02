@@ -19,6 +19,23 @@ type Bill struct {
 	SMLResponse             json.RawMessage    `json:"sml_response,omitempty"`
 	CurrentSMLAttemptID     *string            `json:"current_sml_attempt_id,omitempty"`
 	SMLAttemptState         string             `json:"sml_attempt_state,omitempty"`
+	SMLCoreStatus           string             `json:"sml_core_status,omitempty"`
+	SMLProfileVersion       string             `json:"sml_profile_version,omitempty"`
+	SMLProfileStatus        string             `json:"sml_profile_status,omitempty"`
+	SMLProfilePayloadHash   string             `json:"sml_profile_payload_hash,omitempty"`
+	SMLProfileRequired      []string           `json:"sml_profile_required_checks,omitempty"`
+	SMLProfileCompleted     []string           `json:"sml_profile_completed_checks,omitempty"`
+	SMLProfileNeedsRepair   bool               `json:"sml_profile_reconciliation_required,omitempty"`
+	SMLProfileJobStatus     string             `json:"sml_profile_job_status,omitempty"`
+	SMLProfileRetryCount    int                `json:"sml_profile_retry_count,omitempty"`
+	SMLProfileManualRetries int                `json:"sml_profile_manual_retries,omitempty"`
+	SMLProfileMaxRetries    int                `json:"sml_profile_max_retries,omitempty"`
+	SMLProfileErrorCode     string             `json:"sml_profile_error_code,omitempty"`
+	SMLProfileErrorMessage  string             `json:"sml_profile_error_message,omitempty"`
+	SMLProfileCorrelationID string             `json:"sml_profile_correlation_id,omitempty"`
+	SMLStockJobStatus       string             `json:"sml_stock_job_status,omitempty"`
+	SMLStockRetryCount      int                `json:"sml_stock_retry_count,omitempty"`
+	SMLStockErrorMessage    string             `json:"sml_stock_error_message,omitempty"`
 	MutationRevision        int64              `json:"mutation_revision"`
 	AIConfidence            *float64           `json:"-"` // retained in storage for historical audit only
 	Anomalies               json.RawMessage    `json:"anomalies"`

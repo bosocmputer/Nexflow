@@ -42,6 +42,17 @@ type SMLAttemptCreate struct {
 	ExpectedBillRevision  int64
 }
 
+type SMLProfileCompletion struct {
+	Version                string
+	PayloadHash            string
+	CoreStatus             string
+	ProfileStatus          string
+	RequiredChecks         []string
+	CompletedChecks        []string
+	ReconciliationRequired bool
+	CorrelationID          string
+}
+
 const smlAttemptSelectColumns = `id::text, tenant_key, bill_id::text, doc_no, state, route,
 	       payload_bytes, payload_json, payload_hash, route_settings, mapping_revisions,
 	       unit_catalog_generation::text, set_definition_hashes, lease_owner, lease_until,
@@ -256,12 +267,20 @@ func (r *BillRepo) FinishSMLAttempt(
 	attemptID, leaseOwner, attemptState, billStatus string,
 	responseBytes []byte,
 	errorMessage string,
+	profile *SMLProfileCompletion,
 ) error {
 	validAttemptState := attemptState == "unknown" || attemptState == "sent" ||
 		attemptState == "failed_exact_retry" || attemptState == "stale_requires_reconciliation"
 	validBillStatus := billStatus == "failed" || billStatus == "sent" || billStatus == "needs_review"
 	if attemptID == "" || leaseOwner == "" || !validAttemptState || !validBillStatus {
 		return errors.New("invalid SML attempt completion")
+	}
+	if profile != nil {
+		validProfileStatus := profile.ProfileStatus == "pending" || profile.ProfileStatus == "complete" ||
+			profile.ProfileStatus == "needs_reconciliation" || profile.ProfileStatus == "terminal_failure"
+		if strings.TrimSpace(profile.Version) == "" || !validProfileStatus {
+			return errors.New("invalid SML document profile completion")
+		}
 	}
 	responseHash := ""
 	if len(responseBytes) > 0 {
@@ -308,6 +327,27 @@ func (r *BillRepo) FinishSMLAttempt(
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrSMLAttemptLeaseLost
+	}
+	if profile != nil {
+		requiredChecks, _ := json.Marshal(profile.RequiredChecks)
+		completedChecks, _ := json.Marshal(profile.CompletedChecks)
+		if _, err := tx.ExecContext(ctx, `UPDATE bill_sml_attempts SET
+			core_status=$2,profile_version=$3,profile_status=$4,profile_payload_hash=$5,
+			profile_required_checks=$6,profile_completed_checks=$7,
+			profile_reconciliation_required=$8,updated_at=NOW()
+			WHERE id=$1`, attemptID, profile.CoreStatus, profile.Version, profile.ProfileStatus,
+			profile.PayloadHash, requiredChecks, completedChecks, profile.ReconciliationRequired); err != nil {
+			return err
+		}
+		if profile.ReconciliationRequired {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO sml_document_profile_reconciliation_jobs
+				(tenant_key,sml_attempt_id,profile_version,payload_hash,status,required_checks,completed_checks,correlation_id)
+				SELECT tenant_key,id,$2,$3,'queued',$4,$5,$6 FROM bill_sml_attempts WHERE id=$1
+				ON CONFLICT (sml_attempt_id,profile_version) DO NOTHING`, attemptID, profile.Version,
+				profile.PayloadHash, requiredChecks, completedChecks, strings.TrimSpace(profile.CorrelationID)); err != nil {
+				return err
+			}
+		}
 	}
 	switch attemptState {
 	case "sent":

@@ -20,6 +20,7 @@ import (
 	"nexflow/internal/repository"
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 )
 
 func TestParseShopeePushPayloadAllowsShopLevelAuthorizationEvent(t *testing.T) {
@@ -563,12 +564,33 @@ func TestShopeeSMLCancellationRouteSignatureCoversImmutableRoutingFields(t *test
 		func(v *models.ChannelDefault) { v.DocFormatCode = "CN-ONLINE" },
 		func(v *models.ChannelDefault) { v.DocPrefix = "SIC" },
 		func(v *models.ChannelDefault) { v.DocRunningFormat = "YYYYMM####" },
+		func(v *models.ChannelDefault) { v.Remark = "ยกเลิก {{order_ref}}" },
+		func(v *models.ChannelDefault) { v.ConfigVersion = 2 },
 	} {
 		changed := *base
 		mutate(&changed)
 		if got := shopeeSMLCancellationRouteSignature(&changed); got == want {
 			t.Fatalf("route signature did not change for %+v", changed)
 		}
+	}
+	if shopeeSMLCancellationRouteSignature(base, smlprofile.ModeActive) == want {
+		t.Fatal("profile mode must change cancellation route signature")
+	}
+}
+
+func TestSaleInvoiceCancelRequestResolvesSavedRemarkTemplate(t *testing.T) {
+	h := &ShopeeRealtimeHandler{}
+	cancelCtx := &shopeeSMLCancelDocumentContext{
+		Snapshot:  &models.ShopeeOrderSnapshot{OrderSN: "ORDER-1"},
+		RouteDef:  &models.ChannelDefault{DocFormatCode: "CN", Remark: "{{channel}}|{{order_ref}}|{{bill_no}}"},
+		RouteMeta: shopeeSMLCancellationRoute{Kind: sml.SaleInvoiceCancelKindCreditNote},
+	}
+	req, err := h.saleInvoiceCancelRequest(cancelCtx, "CN-1", time.Date(2026, 9, 2, 10, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Remark != "shopee_realtime_cancel|ORDER-1|CN-1" || req.UserRequest != "NEXFLOW" {
+		t.Fatalf("request=%+v", req)
 	}
 }
 

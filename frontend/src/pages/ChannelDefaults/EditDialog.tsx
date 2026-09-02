@@ -64,6 +64,17 @@ interface ChannelDefaultPreview {
   route_signature: string
   resolved: { remark: string; remark_2: string }
   system_fields: Record<string, string>
+  payload: {
+    endpoint: string
+    doc_format_code: string
+    warehouse: string
+    location: string
+    vat_type: number
+    vat_rate: number
+    remark: string
+    remark_2: string
+    document_profile_version: string
+  }
   missing_prerequisites: string[]
   warnings: string[]
 }
@@ -910,6 +921,20 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
 					  <div className="mt-0.5 break-words text-muted-foreground">
 						หมายเหตุ 2: {preview.resolved.remark_2 || 'ไม่ระบุ'}
 					  </div>
+					  <div className="mt-1 grid gap-1 text-muted-foreground sm:grid-cols-2">
+						<div>เอกสาร: {preview.payload.doc_format_code || 'ยังไม่กำหนด'}</div>
+						<div>คลัง/ที่เก็บ: {preview.payload.warehouse || '—'} / {preview.payload.location || '—'}</div>
+						<div>VAT: type {preview.payload.vat_type} · {preview.payload.vat_rate}%</div>
+						<div>ปลายทาง: {preview.payload.endpoint || 'ยังไม่กำหนด'}</div>
+					  </div>
+					  <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
+						{preview.system_fields.remark_5}
+					  </div>
+					  {preview.profile_mode === 'shadow' && (
+						<div className="mt-1 text-muted-foreground">
+						  Shadow ตรวจสัญญา V1 แล้ว แต่ payload ที่เขียนจริงยังไม่เปิด Document Profile
+						</div>
+					  )}
 					  <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">
 						route {preview.route_signature}
 					  </div>

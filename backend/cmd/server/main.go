@@ -35,6 +35,7 @@ import (
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/shopeestock"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 	"nexflow/internal/services/stockrecalc"
 	"nexflow/internal/worker"
 )
@@ -269,6 +270,7 @@ func main() {
 		zap.Bool("shopee_set_stock_enabled", cfg.ShopeeSetStockEnabled),
 		zap.Bool("shopee_auto_sml_enabled", cfg.ShopeeAutoSMLEnabled),
 		zap.Bool("shopee_auto_sml_cancel_enabled", cfg.ShopeeAutoSMLCancelEnabled),
+		zap.String("sml_document_profile_mode", cfg.SMLDocumentProfileMode),
 		zap.String("product_mapping_master_mode", mappingMode),
 	)
 
@@ -276,7 +278,8 @@ func main() {
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type")
+		c.Header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Correlation-ID")
+		c.Header("Access-Control-Expose-Headers", "X-Correlation-ID")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
@@ -306,6 +309,7 @@ func main() {
 	smlBulkJobRepo := repository.NewSMLBulkJobRepo(db)
 	billH := handlers.NewBillHandler(billRepo, mapperSvc, invoiceClient, saleOrderClient, nil, docNoClient, cfg, lineSvc, auditLogRepo, catalogRepo, channelDefaultRepo, docCounterRepo, smlBulkJobRepo, artifactSvc, warehouseCache, smlReadiness, appSettingsRepo, logger)
 	billH.RecoverInterruptedBulkSendJobs()
+	smlprofile.NewReconciliationWorker(billRepo, invoiceClient, cfg, auditLogRepo, logger).Start(appCtx)
 	mappingH := handlers.NewMappingHandler(mappingRepo, mapperSvc, catalogRepo, auditLogRepo, logger)
 	dashH := handlers.NewDashboardHandler(billRepo, lineOARepo, logger)
 	dashH.SetSMLReadiness(smlReadiness)
@@ -481,6 +485,8 @@ func main() {
 		api.GET("/bills/:id", billH.Get)
 		api.GET("/bills/:id/timeline", billH.Timeline)
 		api.POST("/bills/:id/retry", billH.Retry)
+		api.POST("/bills/:id/sml-document-profile/retry", middleware.RequireRole("admin"), billH.RetrySMLDocumentProfile)
+		api.GET("/metrics/sml-document-profile", middleware.RequireRole("admin"), billH.SMLDocumentProfileMetrics)
 		api.POST("/bills/:id/amount-review", middleware.RequireRole("admin", "staff"), billH.ConfirmAmountReview)
 		api.POST("/bills/:id/ensure-shopee-shipping-line", middleware.RequireRole("admin", "staff"), billH.EnsureShopeeShippingLine)
 		api.GET("/bills/:id/latest-doc-no", middleware.RequireRole("admin", "staff"), billH.LatestDocNo)
@@ -567,6 +573,7 @@ func main() {
 		api.GET("/shopee-operations/orders", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ListOrders)
 		api.GET("/shopee-operations/counts", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.Counts)
 		api.GET("/shopee-operations/auto-sml/settings", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.AutoSMLSettings)
+		api.POST("/shopee-operations/shops/:shop_id/auto-sml/preview", middleware.RequireRole("admin"), shopeeRealtimeH.AutoSMLSettingPreview)
 		api.PUT("/shopee-operations/shops/:shop_id/auto-sml", middleware.RequireRole("admin"), shopeeRealtimeH.UpdateAutoSMLSetting)
 		api.POST("/shopee-operations/sync", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SyncNow)
 		api.POST("/shopee-operations/create-documents/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.BulkCreateDocumentsPreview)

@@ -21,9 +21,11 @@ export function requiredAutoSMLConfirmation(
   beforeTrigger: string | undefined,
   afterEnabled: boolean,
   afterTrigger: string | undefined,
+  pausedReason?: string,
 ) {
   if (!afterEnabled) return ''
   if (!beforeEnabled) return 'ENABLE_AUTO_SML'
+  if (pausedReason) return 'RESUME_AUTO_SML'
   if (normalizeAutoSMLTriggerStatus(beforeTrigger) !== normalizeAutoSMLTriggerStatus(afterTrigger)) {
     return 'UPDATE_AUTO_SML_TRIGGER'
   }

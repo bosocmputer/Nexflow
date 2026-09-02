@@ -21,6 +21,7 @@ import { SmlPayloadSection } from './components/SmlPayloadSection'
 import { SendPurchaseDialog } from './components/SendPurchaseDialog'
 import { SMLSendProgressDialog, type SMLSendProgressStatus } from './components/SMLSendProgressDialog'
 import { MarketplaceAmountReviewAlert } from './components/MarketplaceAmountReviewAlert'
+import { SMLDocumentStatusCard } from './components/SMLDocumentStatusCard'
 import { validateForSML } from './utils/validation'
 import type { RetryBillPayload } from '@/hooks/useBills'
 import { useSMLReadiness } from '@/hooks/useSMLReadiness'
@@ -64,12 +65,14 @@ export default function BillDetail() {
     bill,
     loading,
     retrying,
+    profileRetrying,
     regeneratingDocNo,
     refreshingDocNo,
     retryError,
     reloadBill,
     handleRetry,
     handleRetryWithOverride,
+    handleProfileRetry,
     handleRegenerateDocNo,
     handleFetchLatestDocNo,
     setBill,
@@ -233,9 +236,10 @@ export default function BillDetail() {
     0,
   )
   const canSend =
-    bill.status === 'failed' ||
-    bill.status === 'pending' ||
-    bill.status === 'needs_review'
+    bill.sml_attempt_state !== 'stale_requires_reconciliation' &&
+    (bill.status === 'failed' ||
+      bill.status === 'pending' ||
+      bill.status === 'needs_review')
   const canEdit = canSend
   const isShopeeRealtimeBill =
     bill.source === 'shopee' && (bill.raw_data?.flow === 'shopee_realtime' || bill.shopee_realtime_linked)
@@ -333,6 +337,8 @@ export default function BillDetail() {
         smlReadiness={smlReadiness}
         smlReadinessLoading={smlReadinessLoading}
       />
+
+      <SMLDocumentStatusCard bill={bill} retrying={profileRetrying} onRetryProfile={handleProfileRetry} />
 
       {isMarketplaceSale(bill) && bill.raw_data?.amount_review_required === true && (
         <MarketplaceAmountReviewAlert

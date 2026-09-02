@@ -42,7 +42,7 @@ type InvoiceClient struct {
 func NewInvoiceClient(cfg InvoiceConfig, logger *zap.Logger) *InvoiceClient {
 	return &InvoiceClient{
 		cfg:        cfg,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: &http.Client{Timeout: 20 * time.Second},
 		logger:     logger,
 	}
 }
@@ -162,60 +162,96 @@ func (c *InvoiceClient) GetProduct(sku string) (*ProductInfo, error) {
 
 // InvoiceDetail is one line item in the saleinvoice payload.
 type InvoiceDetail struct {
-	ItemCode         string  `json:"item_code"`
-	ItemName         string  `json:"item_name,omitempty"`
-	LineNumber       int     `json:"line_number"`
-	IsPremium        int     `json:"is_permium"` // typo intentional (matches SML)
-	IsGetPrice       int     `json:"is_get_price"`
-	UnitCode         string  `json:"unit_code"`
-	WHCode           string  `json:"wh_code"`
-	ShelfCode        string  `json:"shelf_code"`
-	Qty              float64 `json:"qty"`
-	Price            float64 `json:"price"`
-	PriceExcludeVAT  float64 `json:"price_exclude_vat"`
-	DiscountAmount   float64 `json:"discount_amount"`
-	SumAmount        float64 `json:"sum_amount"`
-	VATAmount        float64 `json:"vat_amount"`
-	TaxType          int     `json:"tax_type"`
-	VATType          int     `json:"vat_type"`
-	SumAmountExclVAT float64 `json:"sum_amount_exclude_vat"`
+	ItemCode                string  `json:"item_code"`
+	ItemName                string  `json:"item_name,omitempty"`
+	LineNumber              int     `json:"line_number"`
+	IsPremium               int     `json:"is_permium"` // typo intentional (matches SML)
+	IsGetPrice              int     `json:"is_get_price"`
+	UnitCode                string  `json:"unit_code"`
+	WHCode                  string  `json:"wh_code"`
+	ShelfCode               string  `json:"shelf_code"`
+	Qty                     float64 `json:"qty"`
+	Price                   float64 `json:"price"`
+	PriceExcludeVAT         float64 `json:"price_exclude_vat"`
+	DiscountAmount          float64 `json:"discount_amount"`
+	SumAmount               float64 `json:"sum_amount"`
+	VATAmount               float64 `json:"vat_amount"`
+	TaxType                 int     `json:"tax_type"`
+	VATType                 int     `json:"vat_type"`
+	SumAmountExclVAT        float64 `json:"sum_amount_exclude_vat"`
+	QtyDecimal              string  `json:"qty_decimal,omitempty"`
+	PriceDecimal            string  `json:"price_decimal,omitempty"`
+	PriceExcludeVATDecimal  string  `json:"price_exclude_vat_decimal,omitempty"`
+	DiscountAmountDecimal   string  `json:"discount_amount_decimal,omitempty"`
+	SumAmountDecimal        string  `json:"sum_amount_decimal,omitempty"`
+	VATAmountDecimal        string  `json:"vat_amount_decimal,omitempty"`
+	SumAmountExclVATDecimal string  `json:"sum_amount_exclude_vat_decimal,omitempty"`
+}
+
+type InvoiceShipment struct {
+	TransportName      string `json:"transport_name"`
+	TransportAddress   string `json:"transport_address"`
+	TransportTelephone string `json:"transport_telephone"`
 }
 
 // InvoicePayload is the full body for POST /api/v1/ic/sale-invoices
 type InvoicePayload struct {
-	DocNo          string          `json:"doc_no,omitempty"`
-	DocDate        string          `json:"doc_date"`
-	DocTime        string          `json:"doc_time"`
-	DocRef         string          `json:"doc_ref,omitempty"`
-	DocRefDate     string          `json:"doc_ref_date,omitempty"`
-	DocFormatCode  string          `json:"doc_format_code"`
-	CustCode       string          `json:"cust_code"`
-	SaleCode       string          `json:"sale_code"` // must always be present (even empty)
-	BranchCode     string          `json:"branch_code,omitempty"`
-	SaleType       int             `json:"sale_type"`
-	VATType        int             `json:"vat_type"`
-	VATRate        float64         `json:"vat_rate"`
-	TotalValue     float64         `json:"total_value"`
-	TotalDiscount  float64         `json:"total_discount"`
-	TotalBeforeVAT float64         `json:"total_before_vat"`
-	TotalVATValue  float64         `json:"total_vat_value"`
-	TotalExceptVAT float64         `json:"total_except_vat"`
-	TotalAfterVAT  float64         `json:"total_after_vat"`
-	TotalAmount    float64         `json:"total_amount"`
-	CashAmount     float64         `json:"cash_amount"`
-	ChqAmount      float64         `json:"chq_amount"`
-	CreditAmount   float64         `json:"credit_amount"`
-	TransferAmount float64         `json:"tranfer_amount"` // typo intentional (matches SML)
-	Details        []InvoiceDetail `json:"details"`
-	PayDetails     []interface{}   `json:"paydetails"`
-	Remark         string          `json:"remark,omitempty"`
-	Remark2        string          `json:"remark_2,omitempty"`
-	ExpandSetItems bool            `json:"expand_set_items"`
+	DocumentProfileVersion   string           `json:"document_profile_version,omitempty"`
+	MarketplacePhysicalGoods bool             `json:"marketplace_physical_goods,omitempty"`
+	ShipmentApplicability    string           `json:"shipment_applicability,omitempty"`
+	Shipment                 *InvoiceShipment `json:"shipment,omitempty"`
+	CreatorCode              string           `json:"creator_code,omitempty"`
+	CashierCode              string           `json:"cashier_code,omitempty"`
+	CurrencyCode             string           `json:"currency_code,omitempty"`
+	ExchangeRateDecimal      string           `json:"exchange_rate_decimal,omitempty"`
+	DocNo                    string           `json:"doc_no,omitempty"`
+	DocDate                  string           `json:"doc_date"`
+	DocTime                  string           `json:"doc_time"`
+	DocRef                   string           `json:"doc_ref,omitempty"`
+	DocRefDate               string           `json:"doc_ref_date,omitempty"`
+	DocFormatCode            string           `json:"doc_format_code"`
+	CustCode                 string           `json:"cust_code"`
+	SaleCode                 string           `json:"sale_code"` // must always be present (even empty)
+	BranchCode               string           `json:"branch_code,omitempty"`
+	SaleType                 int              `json:"sale_type"`
+	VATType                  int              `json:"vat_type"`
+	VATRate                  float64          `json:"vat_rate"`
+	VATRateDecimal           string           `json:"vat_rate_decimal,omitempty"`
+	TotalValue               float64          `json:"total_value"`
+	TotalDiscount            float64          `json:"total_discount"`
+	TotalBeforeVAT           float64          `json:"total_before_vat"`
+	TotalVATValue            float64          `json:"total_vat_value"`
+	TotalExceptVAT           float64          `json:"total_except_vat"`
+	TotalAfterVAT            float64          `json:"total_after_vat"`
+	TotalAmount              float64          `json:"total_amount"`
+	TotalValueDecimal        string           `json:"total_value_decimal,omitempty"`
+	TotalDiscountDecimal     string           `json:"total_discount_decimal,omitempty"`
+	TotalBeforeVATDecimal    string           `json:"total_before_vat_decimal,omitempty"`
+	TotalVATValueDecimal     string           `json:"total_vat_value_decimal,omitempty"`
+	TotalExceptVATDecimal    string           `json:"total_except_vat_decimal,omitempty"`
+	TotalAfterVATDecimal     string           `json:"total_after_vat_decimal,omitempty"`
+	TotalAmountDecimal       string           `json:"total_amount_decimal,omitempty"`
+	CashAmount               float64          `json:"cash_amount"`
+	ChqAmount                float64          `json:"chq_amount"`
+	CreditAmount             float64          `json:"credit_amount"`
+	TransferAmount           float64          `json:"tranfer_amount"` // typo intentional (matches SML)
+	Details                  []InvoiceDetail  `json:"details"`
+	PayDetails               []interface{}    `json:"paydetails"`
+	Remark                   string           `json:"remark,omitempty"`
+	Remark2                  string           `json:"remark_2,omitempty"`
+	Remark5                  string           `json:"remark_5,omitempty"`
+	UserRequest              string           `json:"user_request,omitempty"`
+	ExpandSetItems           bool             `json:"expand_set_items"`
+	ProfileMode              string           `json:"-"`
+	ProfileConfigVersion     int64            `json:"-"`
+	ProfileRouteSignature    string           `json:"-"`
+	ProfileValidationError   string           `json:"-"`
 }
 
-// InvoiceResponse handles both old restapi format and new v3 format.
+// InvoiceResponse handles the old restapi, v3, and native Gateway formats.
 // v3 success: {"status":"success","data":{"doc_no":"..."}}
 // v3 error:   {"error":true,"message":"...","code":"..."}
+// Gateway error: {"success":false,"error":{"code":"...","message":"..."}}
 type InvoiceResponse struct {
 	Success bool   `json:"success"` // old restapi format
 	Status  string `json:"status"`  // v3 format: "success" | "error"
@@ -224,9 +260,16 @@ type InvoiceResponse struct {
 	Error   any    `json:"error,omitempty"`
 	Code    string `json:"code,omitempty"`
 	Data    struct {
-		DocNo      string `json:"doc_no"`
-		LogStatus  string `json:"log_status,omitempty"`
-		LogWarning string `json:"log_warning,omitempty"`
+		DocNo                  string   `json:"doc_no"`
+		Status                 string   `json:"status,omitempty"`
+		LogStatus              string   `json:"log_status,omitempty"`
+		LogWarning             string   `json:"log_warning,omitempty"`
+		PayloadHash            string   `json:"payload_hash,omitempty"`
+		CoreStatus             string   `json:"core_status,omitempty"`
+		ProfileStatus          string   `json:"profile_status,omitempty"`
+		RequiredChecks         []string `json:"required_checks,omitempty"`
+		CompletedChecks        []string `json:"completed_checks,omitempty"`
+		ReconciliationRequired bool     `json:"reconciliation_required,omitempty"`
 	} `json:"data"`
 }
 
@@ -250,7 +293,38 @@ func (r *InvoiceResponse) GetMessage() string {
 	return apiErrorMessage(r.Error)
 }
 
-func (r *InvoiceResponse) GetCode() string { return strings.TrimSpace(r.Code) }
+func (r *InvoiceResponse) GetCode() string {
+	if code := strings.TrimSpace(r.Code); code != "" {
+		return code
+	}
+	return strings.TrimSpace(apiErrorCode(r.Error))
+}
+
+func (r *InvoiceResponse) DocumentProfileResult(requestedVersion string) InvoiceDocumentProfileResult {
+	if r == nil || strings.TrimSpace(requestedVersion) == "" {
+		return InvoiceDocumentProfileResult{}
+	}
+	status := strings.TrimSpace(r.Data.ProfileStatus)
+	reconcile := r.Data.ReconciliationRequired
+	if status == "" {
+		status = "needs_reconciliation"
+		reconcile = true
+	}
+	coreStatus := strings.TrimSpace(r.Data.CoreStatus)
+	if coreStatus == "" {
+		coreStatus = strings.TrimSpace(r.Data.Status)
+	}
+	if coreStatus == "" {
+		coreStatus = "created"
+	}
+	return InvoiceDocumentProfileResult{
+		Version: requestedVersion, PayloadHash: strings.TrimSpace(r.Data.PayloadHash),
+		CoreStatus: coreStatus, ProfileStatus: status,
+		RequiredChecks:         append([]string(nil), r.Data.RequiredChecks...),
+		CompletedChecks:        append([]string(nil), r.Data.CompletedChecks...),
+		ReconciliationRequired: reconcile,
+	}
+}
 
 // CreateInvoice posts a saleinvoice to SML and returns the response.
 // urlOverride: empty = default; absolute URL = as-is; path = cfg.BaseURL + path.
@@ -266,6 +340,10 @@ func (c *InvoiceClient) CreateInvoice(payload InvoicePayload, urlOverride string
 // CreateInvoiceBytes sends a previously persisted wire payload without
 // rebuilding it. This is the only safe path for retrying an existing doc_no.
 func (c *InvoiceClient) CreateInvoiceBytes(body []byte, urlOverride string) (int, *InvoiceResponse, []byte, error) {
+	return c.CreateInvoiceBytesWithCorrelation(body, urlOverride, "")
+}
+
+func (c *InvoiceClient) CreateInvoiceBytesWithCorrelation(body []byte, urlOverride, correlationID string) (int, *InvoiceResponse, []byte, error) {
 	var payload InvoicePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return 0, nil, nil, fmt.Errorf("decode immutable saleinvoice payload: %w", err)
@@ -279,12 +357,16 @@ func (c *InvoiceClient) CreateInvoiceBytes(body []byte, urlOverride string) (int
 	for k, v := range c.headers() {
 		req.Header.Set(k, v)
 	}
+	if correlationID = strings.TrimSpace(correlationID); correlationID != "" {
+		req.Header.Set("X-Correlation-ID", correlationID)
+	}
 
 	if c.logger != nil {
 		c.logger.Info("sml_invoice_request",
 			zap.String("url", url),
 			zap.String("doc_date", payload.DocDate),
 			zap.Int("items_count", len(payload.Details)),
+			zap.String("correlation_id", correlationID),
 		)
 	}
 
@@ -312,12 +394,14 @@ func (c *InvoiceClient) CreateInvoiceBytes(body []byte, urlOverride string) (int
 				zap.Int("status_code", resp.StatusCode),
 				zap.String("doc_no", r.GetDocNo()),
 				zap.Int64("duration_ms", durMs),
+				zap.String("correlation_id", correlationID),
 			)
 		} else {
 			c.logger.Warn("sml_invoice_response_failed",
 				zap.Int("status_code", resp.StatusCode),
 				zap.String("message", r.Message),
 				zap.Int64("duration_ms", durMs),
+				zap.String("correlation_id", correlationID),
 			)
 		}
 	}

@@ -270,6 +270,25 @@ export interface Bill {
   sml_order_id?: string | null
   sml_payload?: Record<string, unknown> | null
   sml_response?: Record<string, unknown> | null
+  current_sml_attempt_id?: string | null
+  sml_attempt_state?: string
+  sml_core_status?: string
+  sml_profile_version?: string
+  sml_profile_status?: 'pending' | 'complete' | 'needs_reconciliation' | 'terminal_failure' | ''
+  sml_profile_payload_hash?: string
+  sml_profile_required_checks?: string[]
+  sml_profile_completed_checks?: string[]
+  sml_profile_reconciliation_required?: boolean
+  sml_profile_job_status?: string
+  sml_profile_retry_count?: number
+  sml_profile_manual_retries?: number
+  sml_profile_max_retries?: number
+  sml_profile_error_code?: string
+  sml_profile_error_message?: string
+  sml_profile_correlation_id?: string
+  sml_stock_job_status?: string
+  sml_stock_retry_count?: number
+  sml_stock_error_message?: string
   anomalies?: Anomaly[]
   error_msg?: string | null
   items?: BillItem[]

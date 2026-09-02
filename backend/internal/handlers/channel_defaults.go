@@ -178,6 +178,10 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 	if h.profileMode != smlprofile.ModeOff {
 		profileVersion = smlprofile.Version
 	}
+	wireProfileVersion := ""
+	if h.profileMode == smlprofile.ModeActive {
+		wireProfileVersion = smlprofile.Version
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"profile_mode":    h.profileMode,
 		"profile_version": profileVersion,
@@ -191,7 +195,7 @@ func (h *ChannelDefaultsHandler) Preview(c *gin.Context) {
 		"payload": gin.H{
 			"endpoint": d.Endpoint, "doc_format_code": d.DocFormatCode, "warehouse": d.WHCode,
 			"location": d.ShelfCode, "vat_type": d.VATType, "vat_rate": d.VATRate,
-			"remark": resolvedRemark, "remark_2": d.Remark2, "document_profile_version": profileVersion,
+			"remark": resolvedRemark, "remark_2": d.Remark2, "document_profile_version": wireProfileVersion,
 		},
 		"missing_prerequisites": missing,
 		"warnings":              previewWarnings(d, missing),

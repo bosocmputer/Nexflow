@@ -191,6 +191,22 @@ type AutoSMLSetting = {
   updated_at: string
 }
 
+type AutoSMLSettingPreview = {
+  preview_token: string
+  expires_at: string
+  shop_id: number
+  trigger_status: AutoSMLTriggerStatus
+  config_version: number
+  route_signature: string
+  impact: {
+    new_orders_only: boolean
+    historical_backfill: boolean
+    auto_sml_will_resume: boolean
+    document_profile_mode: string
+  }
+  warnings: string[]
+}
+
 type AutoSMLDialogMode = 'enable' | 'change'
 
 type AutoSMLSettingsResponse = {
@@ -512,6 +528,10 @@ export default function ShopeeOperations() {
   const [autoSMLDialogMode, setAutoSMLDialogMode] = useState<AutoSMLDialogMode>('enable')
   const [autoSMLTriggerDraft, setAutoSMLTriggerDraft] = useState<AutoSMLTriggerStatus>('READY_TO_SHIP')
   const [autoSMLSaving, setAutoSMLSaving] = useState(false)
+  const [autoSMLPreview, setAutoSMLPreview] = useState<AutoSMLSettingPreview | null>(null)
+  const [autoSMLPreviewLoading, setAutoSMLPreviewLoading] = useState(false)
+  const [autoSMLPreviewError, setAutoSMLPreviewError] = useState('')
+  const autoSMLPreviewSeqRef = useRef(0)
   const [autoSMLRetryingKey, setAutoSMLRetryingKey] = useState('')
   const [counts, setCounts] = useState<Counts>(emptyCounts)
   const [orders, setOrders] = useState<OrderSnapshot[]>([])
@@ -867,11 +887,34 @@ export default function ShopeeOperations() {
     }
   }
 
+  const loadAutoSMLPreview = async (triggerStatus: AutoSMLTriggerStatus) => {
+    if (shopID === ALL || !selectedAutoSMLSetting) return
+    const requestSeq = autoSMLPreviewSeqRef.current + 1
+    autoSMLPreviewSeqRef.current = requestSeq
+    setAutoSMLPreview(null)
+    setAutoSMLPreviewError('')
+    setAutoSMLPreviewLoading(true)
+    try {
+      const res = await client.post<AutoSMLSettingPreview>(`/api/shopee-operations/shops/${shopID}/auto-sml/preview`, {
+        trigger_status: triggerStatus,
+      })
+      if (requestSeq === autoSMLPreviewSeqRef.current) setAutoSMLPreview(res.data)
+    } catch (e) {
+      if (requestSeq === autoSMLPreviewSeqRef.current) setAutoSMLPreviewError(apiError(e))
+    } finally {
+      if (requestSeq === autoSMLPreviewSeqRef.current) setAutoSMLPreviewLoading(false)
+    }
+  }
+
   const openAutoSMLDialog = (mode: AutoSMLDialogMode) => {
     if (!selectedAutoSMLSetting) return
+    const trigger = normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting.trigger_status)
     setAutoSMLDialogMode(mode)
-    setAutoSMLTriggerDraft(normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting.trigger_status))
+    setAutoSMLTriggerDraft(trigger)
+    setAutoSMLPreview(null)
+    setAutoSMLPreviewError('')
     setAutoSMLDialogOpen(true)
+    void loadAutoSMLPreview(trigger)
   }
 
   const updateAutoSML = async (enabled: boolean, triggerStatus?: AutoSMLTriggerStatus) => {
@@ -882,6 +925,7 @@ export default function ShopeeOperations() {
       selectedAutoSMLSetting.trigger_status,
       enabled,
       nextTrigger,
+      selectedAutoSMLSetting.paused_reason,
     )
     setAutoSMLSaving(true)
     try {
@@ -890,6 +934,7 @@ export default function ShopeeOperations() {
         trigger_status: nextTrigger,
         expected_config_version: selectedAutoSMLSetting.config_version,
         confirm: confirmation,
+        preview_token: enabled ? autoSMLPreview?.preview_token : undefined,
       })
       toast.success(res.data.message || (enabled ? 'เปิด Auto SML แล้ว' : 'ปิด Auto SML แล้ว'))
       setAutoSMLDialogOpen(false)
@@ -899,6 +944,9 @@ export default function ShopeeOperations() {
         await loadAutoSMLSettings()
         toast.error('การตั้งค่าถูกแก้ไขแล้ว ระบบโหลดค่าล่าสุดให้ กรุณาตรวจสอบก่อนบันทึกใหม่')
         return
+      }
+      if (axios.isAxiosError(e) && e.response?.status === 409 && e.response?.data?.code === 'auto_sml_preview_required') {
+        void loadAutoSMLPreview(nextTrigger)
       }
       toast.error((enabled ? 'เปิด' : 'ปิด') + ' Auto SML ไม่สำเร็จ: ' + apiError(e))
     } finally {
@@ -1913,7 +1961,10 @@ export default function ShopeeOperations() {
                         name="auto-sml-trigger-status"
                         value={option.value}
                         checked={selected}
-                        onChange={() => setAutoSMLTriggerDraft(option.value)}
+                        onChange={() => {
+                          setAutoSMLTriggerDraft(option.value)
+                          void loadAutoSMLPreview(option.value)
+                        }}
                         className="mt-1 h-4 w-4 accent-accentStrong"
                       />
                       <span className="min-w-0">
@@ -1940,6 +1991,27 @@ export default function ShopeeOperations() {
                   ถ้าสินค้ายังไม่จับคู่ ยอดเงินไม่ตรง หรือการตั้งค่าไม่พร้อม ระบบจะหยุดออเดอร์นั้นไว้ที่ “ต้องตรวจ” และแจ้ง LINE โดยไม่ส่ง SML ผิดรายการ
                 </AlertDescription>
               </Alert>
+              <div className="rounded-md border border-border bg-background p-3" aria-live="polite">
+                {autoSMLPreviewLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />กำลัง Preview ความพร้อมและผลกระทบ...</div>
+                ) : autoSMLPreviewError ? (
+                  <div className="space-y-2 text-xs text-destructive">
+                    <div>Preview ไม่ผ่าน: {autoSMLPreviewError}</div>
+                    <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => void loadAutoSMLPreview(autoSMLTriggerDraft)}>ลอง Preview ใหม่</Button>
+                  </div>
+                ) : autoSMLPreview ? (
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-center gap-2 font-medium text-success"><CheckCircle2 className="h-3.5 w-3.5" />Preview ผ่าน — พร้อมให้ยืนยัน</div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <AutoSMLFact label="Document Profile" value={autoSMLPreview.impact.document_profile_mode || 'off'} />
+                      <AutoSMLFact label="รุ่นการตั้งค่า" value={String(autoSMLPreview.config_version)} />
+                    </div>
+                    <ul className="space-y-1 text-muted-foreground">{autoSMLPreview.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">ยังไม่มีผล Preview</div>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 งานที่เข้าคิวแล้วจะทำต่อด้วยสถานะเดิม การตั้งค่านี้ไม่จัดส่งสินค้า ไม่สร้างใบปะหน้า และไม่เปลี่ยนข้อมูลรับชำระ Shopee
               </p>
@@ -1948,7 +2020,7 @@ export default function ShopeeOperations() {
               <Button variant="outline" onClick={() => setAutoSMLDialogOpen(false)} disabled={autoSMLSaving}>ยกเลิก</Button>
               <Button
                 onClick={() => void updateAutoSML(true, autoSMLTriggerDraft)}
-                disabled={autoSMLSaving || (autoSMLDialogMode === 'change' && normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting?.trigger_status) === autoSMLTriggerDraft)}
+                disabled={autoSMLSaving || autoSMLPreviewLoading || !autoSMLPreview || Boolean(autoSMLPreviewError) || autoSMLPreview.trigger_status !== autoSMLTriggerDraft || autoSMLPreview.config_version !== selectedAutoSMLSetting?.config_version || (autoSMLDialogMode === 'change' && normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting?.trigger_status) === autoSMLTriggerDraft)}
               >
                 {autoSMLSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {autoSMLDialogMode === 'change' ? 'บันทึกสถานะเริ่มสร้างบิล' : 'ยืนยันและเริ่มจากออเดอร์ใหม่'}

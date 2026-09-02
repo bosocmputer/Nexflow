@@ -78,9 +78,10 @@ export function BillHeader({
   const isShopeeSale = isShopeeSalesBill(bill)
   const isFailed = bill.status === 'failed'
   const canShowSendButton =
-    bill.status === 'failed' ||
-    bill.status === 'pending' ||
-    bill.status === 'needs_review'
+    bill.sml_attempt_state !== 'stale_requires_reconciliation' &&
+    (bill.status === 'failed' ||
+      bill.status === 'pending' ||
+      bill.status === 'needs_review')
   const saleRoute = bill.document_route || bill.preview?.route || ''
   const saleDestinationLabel =
     saleRoute === 'saleinvoice' ? 'ขาย -> ขายสินค้าและบริการ' : 'ขาย -> ใบสั่งขาย'

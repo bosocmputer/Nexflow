@@ -649,6 +649,7 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		TriggerStatus         *string `json:"trigger_status"`
 		ExpectedConfigVersion *int64  `json:"expected_config_version"`
 		Confirm               string  `json:"confirm"`
+		PreviewToken          string  `json:"preview_token"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
@@ -656,6 +657,10 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 	}
 	if req.Enabled == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ enabled"})
+		return
+	}
+	if *req.Enabled && req.ExpectedConfigVersion == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ expected_config_version ก่อนเปิด Auto SML", "code": "config_version_required"})
 		return
 	}
 	if req.TriggerStatus != nil && req.ExpectedConfigVersion == nil {
@@ -692,6 +697,13 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	if *req.Enabled {
+		routeSignature := h.realtimeRouteSignature(c.Request.Context())
+		if err := validateAutoSMLPreviewToken(req.PreviewToken, h.cfg.JWTSecret, autoSMLPreviewClaims{
+			ShopID: shopID, TriggerStatus: targetTrigger, ConfigVersion: before.ConfigVersion, RouteSignature: routeSignature,
+		}, time.Now()); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "กรุณาเปิด Preview ใหม่ก่อนเปิด Auto SML: " + err.Error(), "code": "auto_sml_preview_required"})
+			return
+		}
 		if code, message := h.autoSMLPreflight(c.Request.Context(), shopID); code != "" {
 			c.JSON(http.StatusConflict, gin.H{"error": message, "code": code})
 			return
@@ -742,6 +754,9 @@ func requiredAutoSMLSettingConfirmation(before models.ShopeeAutoSMLSetting, enab
 	}
 	if !before.Enabled {
 		return "ENABLE_AUTO_SML"
+	}
+	if before.PausedReason != "" {
+		return "RESUME_AUTO_SML"
 	}
 	if models.NormalizeShopeeAutoSMLTriggerStatus(before.TriggerStatus) != models.NormalizeShopeeAutoSMLTriggerStatus(triggerStatus) {
 		return "UPDATE_AUTO_SML_TRIGGER"

@@ -164,6 +164,12 @@ func TestFinishSMLAttemptUsesLeaseOwnerAsFencingToken(t *testing.T) {
 	mock.ExpectExec(`(?s)UPDATE bills.*status=\$2.*sml_attempt_state=\$3.*current_sml_attempt_id=\$6`).
 		WithArgs("bill-1", "sent", "sent", "BF-SO26080001", json.RawMessage(response), "attempt-1", nil).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE bill_sml_attempts SET.*core_status=\$2.*profile_reconciliation_required=\$8`).
+		WithArgs("attempt-1", "created", "sml-document-v1", "needs_reconciliation", "profile-hash", []byte(`["core","erp_log"]`), []byte(`["core"]`), true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)INSERT INTO sml_document_profile_reconciliation_jobs.*ON CONFLICT`).
+		WithArgs("attempt-1", "sml-document-v1", "profile-hash", []byte(`["core","erp_log"]`), []byte(`["core"]`), "trace-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`(?s)INSERT INTO marketplace_stock_demand_versions.*marketplace_stock_reservations r.*r.bill_id=\$1.*marketplace_stock_reservation_components`).
 		WithArgs("bill-1").
 		WillReturnResult(sqlmock.NewResult(0, 2))
@@ -181,7 +187,12 @@ func TestFinishSMLAttemptUsesLeaseOwnerAsFencingToken(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := NewBillRepo(db).FinishSMLAttempt(context.Background(), "attempt-1", "lease-1", "sent", "sent", response, ""); err != nil {
+	profile := &SMLProfileCompletion{
+		Version: "sml-document-v1", PayloadHash: "profile-hash", CoreStatus: "created",
+		ProfileStatus: "needs_reconciliation", RequiredChecks: []string{"core", "erp_log"},
+		CompletedChecks: []string{"core"}, ReconciliationRequired: true, CorrelationID: "trace-1",
+	}
+	if err := NewBillRepo(db).FinishSMLAttempt(context.Background(), "attempt-1", "lease-1", "sent", "sent", response, "", profile); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -202,7 +213,7 @@ func TestFinishSMLAttemptRejectsWorkerThatLostLease(t *testing.T) {
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectRollback()
 
-	err = NewBillRepo(db).FinishSMLAttempt(context.Background(), "attempt-1", "old-lease", "unknown", "failed", nil, "timeout")
+	err = NewBillRepo(db).FinishSMLAttempt(context.Background(), "attempt-1", "old-lease", "unknown", "failed", nil, "timeout", nil)
 	if err != ErrSMLAttemptLeaseLost {
 		t.Fatalf("error = %v, want ErrSMLAttemptLeaseLost", err)
 	}

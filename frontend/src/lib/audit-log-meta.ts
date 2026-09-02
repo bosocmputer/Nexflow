@@ -52,6 +52,12 @@ export const ACTION_META: Record<string, ActionMeta> = {
   sml_readiness_blocked: { label: 'SML ยังไม่พร้อม', emoji: '⚠️', tone: 'warning' },
   sml_stock_recalc_ok: { label: 'คำนวณต้นทุนสต๊อก', emoji: '📊', tone: 'success' },
   sml_stock_recalc_failed: { label: 'คำนวณต้นทุนสต๊อกล้มเหลว', emoji: '⚠️', tone: 'warning' },
+  profile_requested: { label: 'เริ่มตรวจ Document Profile', emoji: '🔎', tone: 'info' },
+  core_committed: { label: 'สร้างเอกสารหลัก SML แล้ว', emoji: '✅', tone: 'success' },
+  reconcile_queued: { label: 'รอซ่อม Document Profile', emoji: '🧩', tone: 'warning' },
+  profile_complete: { label: 'Document Profile สมบูรณ์', emoji: '✅', tone: 'success' },
+  profile_terminal_failure: { label: 'Document Profile ต้องให้ผู้ดูแลซ่อม', emoji: '⛔', tone: 'danger' },
+  profile_retry_requested: { label: 'สั่ง Retry เฉพาะ Document Profile', emoji: '🔄', tone: 'info' },
   // Shopee Auto SML and cancelled-after-SML lifecycle
   shopee_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่าส่ง SML อัตโนมัติ', emoji: '⚙️', tone: 'info' },
   shopee_sml_cancel_payload_failed: { label: 'เตรียมเอกสารยกเลิก/รับคืนไม่สำเร็จ', emoji: '❌', tone: 'danger' },
@@ -314,6 +320,18 @@ export function summarize(log: AuditLog): string {
     }
     case 'sml_readiness_blocked':
       return [d.via ? auditViaLabel(d.via) : '', d.tenant ? `ฐานข้อมูล ${d.tenant}` : '', d.message].filter(Boolean).join(' · ')
+    case 'profile_requested':
+      return [d.profile_version, d.via ? auditViaLabel(d.via) : '', d.config_version != null ? `รุ่นตั้งค่า ${d.config_version}` : ''].filter(Boolean).join(' · ')
+    case 'core_committed':
+      return [d.profile_version, 'เอกสารหลักสร้างแล้ว', d.profile_status ? `Profile: ${d.profile_status}` : ''].filter(Boolean).join(' · ')
+    case 'reconcile_queued':
+      return [d.profile_version, 'เติมเฉพาะข้อมูลที่ขาดโดยไม่ส่งบิลซ้ำ', Array.isArray(d.completed_checks) ? `ผ่าน ${d.completed_checks.length} จุดตรวจ` : ''].filter(Boolean).join(' · ')
+    case 'profile_complete':
+      return [d.profile_version, Array.isArray(d.completed_checks) ? `ครบ ${d.completed_checks.length} จุดตรวจ` : '', d.attempt_count != null ? `ครั้งที่ ${d.attempt_count}` : ''].filter(Boolean).join(' · ')
+    case 'profile_terminal_failure':
+      return [d.profile_version, d.error_code, d.attempt_count != null ? `ลองแล้ว ${d.attempt_count}/${d.max_attempts ?? 10}` : ''].filter(Boolean).join(' · ')
+    case 'profile_retry_requested':
+      return [d.profile_version, 'ไม่ส่งเอกสารหลักซ้ำ', d.manual_retry_count != null ? `ผู้ดูแล retry ครั้งที่ ${d.manual_retry_count}` : ''].filter(Boolean).join(' · ')
     case 'shopee_sml_cancel_created':
     case 'shopee_sml_cancel_created_auto':
       return [

@@ -12,6 +12,9 @@ client.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
+  if (!config.headers['X-Correlation-ID']) {
+    config.headers['X-Correlation-ID'] = `ui-${crypto.randomUUID()}`
+  }
   return config
 })
 

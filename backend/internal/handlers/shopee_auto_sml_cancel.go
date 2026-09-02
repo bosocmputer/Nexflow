@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -16,6 +14,7 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 )
 
 const (
@@ -43,7 +42,7 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSMLCancellation(ctx context.Cont
 	inserted, err := h.repo.EnqueueAutoSMLCancellation(ctx, repository.ShopeeSMLCancellationInput{
 		ShopID: after.ShopID, OrderSN: after.OrderSN, BillID: billID,
 		SaleSMLDocNo: strings.TrimSpace(after.SMLDocNo), RouteEndpoint: strings.TrimSpace(routeDef.Endpoint),
-		RouteSignature: shopeeSMLCancellationRouteSignature(routeDef),
+		RouteSignature: shopeeSMLCancellationRouteSignature(routeDef, h.documentProfileMode()),
 	})
 	if err != nil {
 		if h.logger != nil {
@@ -66,16 +65,15 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSMLCancellation(ctx context.Cont
 	return true
 }
 
-func shopeeSMLCancellationRouteSignature(def *models.ChannelDefault) string {
+func shopeeSMLCancellationRouteSignature(def *models.ChannelDefault, profileMode ...string) string {
 	if def == nil {
 		return ""
 	}
-	parts := []string{
-		strings.TrimSpace(def.Endpoint), strings.TrimSpace(def.DocFormatCode),
-		strings.TrimSpace(def.DocPrefix), strings.TrimSpace(def.DocRunningFormat),
+	mode := smlprofile.ModeOff
+	if len(profileMode) > 0 && strings.TrimSpace(profileMode[0]) != "" {
+		mode = strings.TrimSpace(profileMode[0])
 	}
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return hex.EncodeToString(sum[:])
+	return smlprofile.RouteSignature(*def, mode)
 }
 
 func (h *ShopeeRealtimeHandler) StartSMLCancellationWorkers(ctx context.Context) {
@@ -184,7 +182,7 @@ func (h *ShopeeRealtimeHandler) processAutoSMLCancellationJob(ctx context.Contex
 			return
 		}
 	}
-	currentSignature := shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef)
+	currentSignature := shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef, h.documentProfileMode())
 	if currentSignature == "" || currentSignature != job.RouteSignature || strings.TrimSpace(cancelCtx.RouteDef.Endpoint) != strings.TrimSpace(job.RouteEndpoint) {
 		h.blockAutoSMLCancellation(ctx, job, snap, "route_changed", "เส้นทางเอกสารยกเลิก SML เปลี่ยนหลังเข้าคิว กรุณาตรวจสอบก่อนลองใหม่", nil)
 		return
@@ -363,7 +361,10 @@ func (h *ShopeeRealtimeHandler) smlCancellationRequestForAttempt(ctx context.Con
 	if err != nil {
 		return sml.SaleInvoiceCancelRequest{}, err
 	}
-	req := h.saleInvoiceCancelRequest(cancelCtx, docNo, now)
+	req, err := h.saleInvoiceCancelRequest(cancelCtx, docNo, now)
+	if err != nil {
+		return sml.SaleInvoiceCancelRequest{}, err
+	}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return sml.SaleInvoiceCancelRequest{}, err

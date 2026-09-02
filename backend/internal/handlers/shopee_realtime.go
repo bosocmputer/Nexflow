@@ -27,6 +27,7 @@ import (
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/shopeepush"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 )
 
 const (
@@ -965,7 +966,11 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocumentPreview(c *gin.Context) {
 		})
 		return
 	}
-	req := h.saleInvoiceCancelRequest(cancelCtx, previewDocNo, now)
+	req, err := h.saleInvoiceCancelRequest(cancelCtx, previewDocNo, now)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "ตั้งค่าหมายเหตุเอกสารยกเลิกไม่ถูกต้อง: " + err.Error(), "code": "sml_cancel_profile_invalid"})
+		return
+	}
 	statusCode, resp, err := h.cancelClient.Preview(c.Request.Context(), cancelCtx.SaleDocNo, req)
 	if err != nil || resp == nil || statusCode >= 300 || !resp.IsSuccess() {
 		msg := smlCancelErrorMessage(statusCode, resp, err)
@@ -1048,7 +1053,7 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 		CreatedBy:      c.GetString("user_id"),
 		Response:       requestRaw,
 		RouteEndpoint:  cancelCtx.RouteDef.Endpoint,
-		RouteSignature: shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef),
+		RouteSignature: shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef, h.documentProfileMode()),
 	})
 	if err != nil {
 		h.logger.Warn("shopee_realtime: start SML cancellation failed", zap.Int64("shop_id", shopID), zap.String("order_sn", orderSN), zap.Error(err))
@@ -1165,7 +1170,7 @@ func (h *ShopeeRealtimeHandler) previewBulkCreateDocuments(ctx context.Context, 
 	}
 	signature := ""
 	if routeReady {
-		signature = shopeeRealtimeRouteSignature(cfg, routeDef)
+		signature = shopeeRealtimeRouteSignature(cfg, routeDef, h.documentProfileMode())
 	}
 
 	ready := []shopeeRealtimeBulkOrderResult{}
@@ -1249,10 +1254,17 @@ func (h *ShopeeRealtimeHandler) realtimeRouteSignature(ctx context.Context) stri
 	if err != nil {
 		return ""
 	}
-	return shopeeRealtimeRouteSignature(cfg, def)
+	return shopeeRealtimeRouteSignature(cfg, def, h.documentProfileMode())
 }
 
-func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDefault) string {
+func (h *ShopeeRealtimeHandler) documentProfileMode() string {
+	if h != nil && h.importH != nil && h.importH.cfg != nil {
+		return h.importH.cfg.SMLDocumentProfileMode
+	}
+	return smlprofile.ModeOff
+}
+
+func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDefault, profileMode ...string) string {
 	parts := []string{
 		"shopee_realtime",
 		"sale",
@@ -1269,7 +1281,12 @@ func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDe
 		fmt.Sprintf("%.4f", cfg.VATRate),
 	}
 	if def != nil {
+		mode := smlprofile.ModeOff
+		if len(profileMode) > 0 && strings.TrimSpace(profileMode[0]) != "" {
+			mode = strings.TrimSpace(profileMode[0])
+		}
 		parts = append(parts,
+			smlprofile.RouteSignature(*def, mode),
 			strings.TrimSpace(def.Endpoint),
 			strings.TrimSpace(def.DocFormatCode),
 			strings.TrimSpace(def.PartyCode),
@@ -1527,20 +1544,33 @@ func (h *ShopeeRealtimeHandler) cancelSMLDocumentContext(ctx context.Context, sh
 	}, http.StatusOK, nil
 }
 
-func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCancelDocumentContext, docNo string, now time.Time) sml.SaleInvoiceCancelRequest {
+func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCancelDocumentContext, docNo string, now time.Time) (sml.SaleInvoiceCancelRequest, error) {
+	if cancelCtx == nil || cancelCtx.Snapshot == nil {
+		return sml.SaleInvoiceCancelRequest{}, fmt.Errorf("cancel document context is incomplete")
+	}
+	remark := "Shopee order cancelled: " + cancelCtx.Snapshot.OrderSN
+	if cancelCtx.RouteDef != nil && strings.TrimSpace(cancelCtx.RouteDef.Remark) != "" {
+		resolved, err := smlprofile.ResolveTemplate(cancelCtx.RouteDef.Remark, smlprofile.TemplateContext{
+			Channel: "shopee_realtime_cancel", OrderRef: cancelCtx.Snapshot.OrderSN, BillNo: strings.TrimSpace(docNo),
+		})
+		if err != nil {
+			return sml.SaleInvoiceCancelRequest{}, err
+		}
+		remark = resolved
+	}
 	req := sml.SaleInvoiceCancelRequest{
 		Kind:          cancelCtx.RouteMeta.Kind,
 		DocDate:       now.Format("2006-01-02"),
 		DocTime:       now.Format("15:04"),
 		DocFormatCode: "CN",
 		DocNo:         strings.TrimSpace(docNo),
-		Remark:        "Shopee order cancelled: " + cancelCtx.Snapshot.OrderSN,
+		Remark:        remark,
 		UserRequest:   "NEXFLOW",
 	}
 	if cancelCtx != nil && cancelCtx.RouteDef != nil && strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode) != "" {
 		req.DocFormatCode = strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode)
 	}
-	return req
+	return req, nil
 }
 
 func (h *ShopeeRealtimeHandler) allocateSMLCancellationDocNo(
