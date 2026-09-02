@@ -26,10 +26,12 @@ document profile และ stock recalculation และเปิดใช้ AO
 
 - Mode: `SML_DOCUMENT_PROFILE_MODE=off|shadow|active`, default `off`.
 - Profile: `document_profile_version=sml-document-v1`.
-- Channel defaults add `remark`, free-text `remark_2`, `config_version` and
+- Channel defaults use literal free-text `remark` and `remark_2`, plus `config_version` and
   `expected_config_version` on update.
-- Preview is read-only and returns resolved remarks, system fields, missing
-  prerequisites, route signature and mode.
+- Preview is read-only and returns literal remarks, system fields, missing
+  prerequisites, route signature and mode. The normal UI shows only the
+  document/customer/warehouse/VAT readiness summary; technical contract fields
+  remain internal.
 - Gateway response adds `payload_hash`, `core_status`, `profile_status`,
   `required_checks`, `completed_checks`, and `reconciliation_required`.
 - Profile status: `pending|complete|needs_reconciliation|terminal_failure`.
@@ -49,4 +51,3 @@ Demo, Lanboon and Ploy remain off.
 Pause Auto SML and set profile mode off before rolling code back. Additive
 migrations and immutable attempts/jobs stay in place. Never delete an SML document
 automatically as rollback.
-

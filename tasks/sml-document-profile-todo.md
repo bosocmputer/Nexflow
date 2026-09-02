@@ -2,9 +2,9 @@
 
 ## Handoff
 
-- Last completed: first AOY automatic Profile V1 document, SML parity and UI proof
-- Active task: T11 deployed percentiles plus T14 390px/first-ten monitoring
-- Nexflow deployed application: `codex/marketplace-units-conversion` / `aa1ccbb`;
+- Last completed: AOY plain-language Channel/Bill UI, literal remarks and true 390px QA
+- Active task: T11 deployed percentiles plus the remaining first-ten monitoring
+- Nexflow deployed application: `codex/marketplace-units-conversion` / `c51c52b`;
   durable production handoff continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
 - Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
@@ -23,12 +23,14 @@
   1.539/7.854/35.891/140.596 microseconds; Gateway normalization/hash =
   5.572/25.762/110.357/482.279 microseconds. HTTP/database p95 budgets still
   require deployed telemetry.
-- Browser evidence: production AOY shows `SML Core สร้างแล้ว`, `Document Profile
-  สมบูรณ์`, and `Stock recalculation สำเร็จ` for `BF-INV26090002`; its timeline
-  shows all five Profile checks. The lower payload summary was corrected in
-  `aa1ccbb` and now shows `AB-1 / 001` and two SML rows. Accessibility-tree QA
-  and browser console checks pass; true 390px verification remains open because
-  the in-app browser keeps a 1280px viewport.
+- Browser evidence: production AOY shows the single result `ส่งเข้า SML แล้ว
+  (AUTO)` for `BF-INV26090002`; recovery details appear only when actionable.
+  The compact summary shows order reference, Auto/manual source, document format,
+  customer, `AB-1 / 001`, configured VAT, two rows and exact 308.00 total. The
+  timeline uses plain Thai instead of Profile/Core jargon. Desktop and true
+  390x844 QA pass with no horizontal overflow and clean console. The settings
+  dialog uses literal free-text remarks and a simple readiness check; its Select
+  controlled-state warning was fixed and the final console is clean.
 - Production evidence: Central Gateway `16c550d` and AOY Nexflow `aa1ccbb` are
   deployed. Gateway readiness passes for demo/aoy/lbk63/ploy_test. Controlled
   order `26090216HNM1GJ` produced exactly one bill/attempt/document
@@ -46,7 +48,9 @@
   `/mnt/data/nextstep-node-2/deploy-backups/sml-profile-vat-hotfix-20260902-215500`;
   AOY DB at `pre-deploy-20260902-141500.sql.gz` and
   `pre-deploy-20260902-142246.sql.gz`, plus UI-fix backup
-  `pre-deploy-20260902-154415.sql.gz`; AOY runtime before shadow at
+  `pre-deploy-20260902-154415.sql.gz`, plus plain-UI backups
+  `pre-deploy-20260902-170204.sql.gz` and
+  `pre-deploy-20260902-170832.sql.gz`; AOY runtime before shadow at
   `.env.pre-sml-profile-shadow-20260902-213500` and before active at
   `.env.pre-sml-profile-active-20260902-220000`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
@@ -56,7 +60,7 @@
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
 - Next action: leave AOY active and monitor the next nine Profile documents;
-  collect deployed p95/p99/queue-age evidence and perform true 390px QA.
+  collect deployed p95/p99/queue-age evidence.
 
 ## Phase A — Proof and contract
 
@@ -80,8 +84,8 @@
   - [x] Add optimistic update and safe audit
   - [x] Add read-only preview endpoint
 - [x] **T04 — Channel dialog and user-error protection**
-  - [x] Remark template preview and free-text remark_2
-  - [x] Read-only system fields, unsaved guard and new-documents-only warning
+  - [x] Literal free-text remark and remark_2 with 255-character/control validation
+  - [x] Plain-language readiness check, unsaved guard and new-documents-only warning
   - [x] Separate save from Auto SML enable/reconfirm
 
 ## Phase C — Gateway Document Profile
@@ -104,14 +108,14 @@
   - [ ] Deployed Settings/Gateway/queue/UI percentile evidence against budgets
 - [x] **T12 — Security/abuse tests and dependency audit triage**
 - [x] **T13 — Correlation IDs, structured events, metrics and runbook alerts**
-- [ ] **T14 — Full tests, browser QA and failure injection**
+- [x] **T14 — Full tests, browser QA and failure injection**
   - [x] Go test/race/vet in both repositories
   - [x] Frontend focused tests/lint/build and sales-only guard
   - [x] Automated logs-DB-down, lost-response immutable retry, concurrent
     duplicate, config-race, tenant mismatch and worker lease-reclaim coverage
   - [x] Local desktop Channel dialog and clean-console check
   - [x] Live backend/network, Profile status card and desktop accessibility QA
-  - [ ] True 390px QA
+  - [x] True 390px QA
 
 ## AOY Release Gates
 
@@ -294,7 +298,39 @@
   pass. AOY backup is `pre-deploy-20260902-154415.sql.gz`.
 - Current scope: AOY remains `active`; Demo, Lanboon and Ploy remain `off`.
 - Next action: monitor nine more AOY Profile documents and capture deployed
-  percentile/queue-age evidence plus true 390px QA before closing T11/T14.
+  percentile/queue-age evidence before closing T11.
+
+### AOY release checkpoint: plain-language operator UI
+
+- Nexflow commits: literal free-text remarks and simplified route preview
+  `68d2366`; compact successful/recovery SML presentation `cc249d9`; plain Thai
+  timeline and controlled Select fix `c51c52b`.
+- Behavior: `remark` and `remark_2` are literal free text end to end; braces are
+  no longer expanded as tokens. Both fields reject control characters and more
+  than 255 Unicode characters. Preview remains a required read-only safety gate
+  but no longer exposes Profile mode/version, system fields, hash or route
+  signature to normal users.
+- Bill UI: a fully successful automatic document renders one compact
+  `ส่งเข้า SML แล้ว (AUTO)` result. Core/profile/stock recovery details are shown
+  only for pending/failure states and use Thai operator language. Raw request and
+  response JSON remain collapsed and admin-only.
+- Auto/manual evidence: Bill detail now derives AUTO only from a succeeded
+  `shopee_auto_sml_jobs` row; the existing bill `BF-INV26090002` renders AUTO,
+  `AB-1 / 001`, VAT `รวมใน · 7%`, two rows and `฿308.00` correctly.
+- Tests: backend `go test ./...`, `go test -race ./...`, and `go vet ./...`
+  pass. Frontend Profile/payload/timeline/audit tests, lint (0 errors / 35
+  pre-existing warnings), production build and sales-only guard pass.
+- Production: deployed AOY-only at `c51c52b`; Demo, Lanboon and Ploy were not
+  rebuilt and remain Profile `off`. Backups are
+  `pre-deploy-20260902-170204.sql.gz` and
+  `pre-deploy-20260902-170832.sql.gz`. AOY/edge/Gateway health, database auth,
+  sales-only counts and severe-error scan pass.
+- Browser: desktop accessibility snapshots and 390x844 responsive QA pass; no
+  horizontal overflow. Final settings and bill tabs have zero console warnings
+  or errors. Preview was exercised read-only; no config save or SML write was
+  performed during QA.
+- Next action: monitor nine more Profile documents and capture deployed
+  p95/p99/queue-age evidence for T11.
 
 For every completed task, update Handoff with:
 
