@@ -129,7 +129,7 @@ export function UnitSelect({
   return (
     <div className={cn('space-y-1', className)}>
       <Select
-        value={value.trim() || undefined}
+        value={value.trim()}
         onValueChange={onValueChange}
         disabled={selectDisabled}
       >
