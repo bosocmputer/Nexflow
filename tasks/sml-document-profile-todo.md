@@ -2,15 +2,16 @@
 
 ## Handoff
 
-- Last completed: T17 aligned Sale Invoice VAT types 0/1/2 with the controlled
-  SML fixtures, including the zero-rate header/register rules and pre-database
-  exact-decimal validation. The frozen Sale Invoice canonical hash is unchanged.
-- Active task: T18 Sale Order Profile vertical slice. The original first-organic-post-
+- Last completed: T18 completed the Sale Order Profile vertical slice in both
+  repositories. Profile V1 now uses Sale Order `items`, detail `calc_flag=1`,
+  shipment/main log/route-exact ERP JSON, a uniform Profile response, and
+  route-aware durable reconciliation. Legacy Sale Order JSON remains byte-stable.
+- Active task: T19 Sale Order Cancellation (SSC) vertical slice. The original first-organic-post-
   hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `cde4472`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `f9a20b8`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -20,7 +21,9 @@
   and unpaused with trigger `PROCESSED`, Auto SML config version 4 and cutoff
   `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop `1029622928` remains disabled.
   The first Profile completed synchronously, so no Profile reconciliation job
-  or backfill was required.
+  or backfill was required. The new route-mode variable is not deployed yet;
+  its safe default keeps Sale Order/SSC/SIC/CN Profile extensions `off` while
+  Sale Invoice continues inheriting the global `active` mode.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
@@ -143,9 +146,9 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: add failing T18 Sale Order Profile contract tests, then extend
-  the shared resolver/writer with route-correct detail, shipment and audit
-  semantics without changing the legacy Sale Order wire contract. Separately, inspect
+- Next action: add failing T19 SSC preview/create/doc-number and source-lock
+  tests, then implement exact flag-37 detail reversal, source ownership checks
+  and stock recalculation separation. Separately, inspect
   the first organic AOY VAT Profile document created after Gateway `53393b6`;
   do not manufacture or backfill a Shopee order.
 
@@ -268,11 +271,11 @@
   - [x] Correct VAT type 0/1/2 header/register applicability and zero-rate totals
   - [x] Reject invalid exact decimals before beginning the core transaction
   - [x] Add controlled-fixture regression tests for all VAT modes
-- [ ] **T18 — Sale Order Profile vertical slice** _(active)_
-  - [ ] Add Profile fields/status/hash and route-correct main/ERP logs
-  - [ ] Write detail `calc_flag=1`; require shipment for Marketplace goods
-  - [ ] Test retry, mismatch, 500-item/expanded-item limits and logs DB outage
-- [ ] **T19 — Sale Order Cancellation vertical slice**
+- [x] **T18 — Sale Order Profile vertical slice**
+  - [x] Add Profile fields/status/hash and route-correct main/ERP logs
+  - [x] Write detail `calc_flag=1`; require shipment for Marketplace goods
+  - [x] Test retry, mismatch, 500-item/expanded-item limits and logs DB outage
+- [ ] **T19 — Sale Order Cancellation vertical slice** _(active)_
   - [ ] Add SSC Preview/Create/doc-number aliases and trans flag 37
   - [ ] Add common source lock, source fingerprint and exact detail references
   - [ ] Mark source `used_status=1` and queue stock recalculation after core
@@ -355,6 +358,29 @@
 - Next action: T18 Sale Order Profile request/response/hash, `calc_flag=1`,
   route-specific logs and ERP JSON, required shipment, retry/mismatch and logs
   database outage tests.
+
+### T18 completion record
+
+- Completed task: T18
+- Nexflow commit: `3df46be` (`feat: propagate sale order document profiles`)
+- Gateway commit: `f9a20b8` (`feat: complete sale order document profile`)
+- Contract evidence: `SO26090001` has detail `calc_flag=1`, one shipment,
+  `menu_so_sale_order`, no VAT/AP-AR/GL rows, blank header tax-document fields,
+  and only the five verified ERP JSON sections/keys. The implementation encodes
+  those route differences instead of copying Invoice-only fields into SO.
+- Tests: both repositories pass `go test ./...` and `go vet ./...`; Gateway
+  OpenAPI parses with `jq -e`; diff checks pass. Regression coverage includes
+  legacy wire bytes, active/shadow payloads, route hash mismatch, logs DB
+  failure, route-aware durable retry, and the 500-row post-expansion ceiling.
+- Feature mode: no runtime mode or production deployment changed. With the new
+  route-mode variable absent, Sale Order Profile remains `off` and Sale Invoice
+  continues to inherit the existing global mode.
+- Production evidence: frozen PII-free fixture/read-only evidence only; no SML
+  write or deployment occurred in T18.
+- Residual risk: the Sale Order core still cannot be activated for automation
+  until T19 SSC and T22 atomic route bundle/capability checks are complete.
+- Next action: T19 failing SSC preview/create/doc-number and source-lock tests,
+  then exact flag-37 reversal and stock-recalculation separation.
 
 ## Per-Increment Completion Record
 
