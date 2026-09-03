@@ -2,14 +2,16 @@
 
 ## Handoff
 
-- Last completed: authenticated T24 production browser QA and the responsive
-  dialog correction are deployed. Gateway capability V2 is live, migration 093
-  is applied to all four Nexflow databases, and every tenant runs the same
-  Nexflow commit with only Sale Invoice Profile active; the four new routes
-  remain shadow.
-- Active task: AOY controlled parity for SO/SSC/SIC/CN. The first organic
-  post-hotfix observation, real-user RUM and long-running percentiles remain
-  non-blocking monitoring.
+- Last completed: AOY is released for live Shopee API use by explicit USER
+  confirmation. Sale Invoice and Credit Note Profile routes are active, the
+  shop-level Auto SML pause is cleared, and the new `PROCESSED` cutoff prevents
+  historical backfill. Gateway capability V2, migration 093 and the common
+  application release remain deployed on all four tenants.
+- Active task: observe the first organic AOY order after the live cutoff and
+  record Order -> Nexflow bill -> SML Sale Invoice -> Profile -> stock evidence;
+  if Shopee later cancels it, record the Credit Note path independently. USER
+  explicitly chose live feedback instead of another controlled test. Real-user
+  RUM and long-running percentiles remain non-blocking monitoring.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `ed70202`; durable production handoff
   continues on the same branch.
@@ -17,14 +19,15 @@
   `ed70202`; handoff-only documentation commits may be newer than the deployed
   code without changing runtime behavior.
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `3e2ed0e`
-- Feature mode: all four instances use
+- Feature mode: Demo, Lanboon and Ploy retain
   `saleinvoice:active,saleorder:shadow,saleordercancel:shadow,saleinvoicecancel:shadow,creditnote:shadow`.
+  AOY uses
+  `saleinvoice:active,saleorder:shadow,saleordercancel:shadow,saleinvoicecancel:shadow,creditnote:active`.
   AOY main/cancellation config remains Sale Invoice/Credit Note at versions 2/1.
-  Shop `264993963` retains trigger `PROCESSED` and is deliberately paused as
-  `route_changed`, config version 5, until controlled parity and USER reconfirm;
-  shop `1029622928` remains disabled. All sale, cancellation, sale-Profile and
-  cancellation-Profile live queues are empty. No backfill or SML write occurred
-  during this rollout.
+  Shop `264993963` uses trigger `PROCESSED`, is enabled and unpaused at config
+  version 6, with `eligible_after=2026-09-03 18:11:52 Asia/Bangkok`; shop
+  `1029622928` remains disabled. All live sale and cancellation queues were empty
+  after activation, so no backfill or SML write occurred during the cutover.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
@@ -121,6 +124,10 @@
   `pre-deploy-20260903-104309.sql.gz`, Lanboon
   `pre-deploy-20260903-104505.sql.gz`, and Ploy
   `pre-deploy-20260903-104626.sql.gz`.
+- AOY live-activation backups: runtime
+  `/mnt/data/nextstep-node-2/nexflow-backups/aoy/.env.pre-aoy-live-20260903-180659`
+  and Nexflow database
+  `/mnt/data/nextstep-node-2/nexflow-backups/aoy/pre-aoy-live-20260903-180659.sql.gz`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
   Early writes exposed PostgreSQL 11 parameter inference conflicts and rolled
   back atomically; candidate lookup proved that no core existed. Gateway fixes
@@ -385,7 +392,7 @@
 - Next action: run T24 full race/build/migration/SQL/fault checks, create backups,
   deploy Gateway capability first, then deploy the same Nexflow commit to all
   four tenants with non-invoice routes kept shadow until controlled AOY parity.
-- [ ] **T24 — Full verification and staged rollout**
+- [x] **T24 — Full verification and staged rollout**
   - [x] Full Go test/race/vet, frontend tests/lint/build and sales-only guard
   - [x] PostgreSQL 11 statement preparation and PostgreSQL 16 migration replay
   - [x] Fault matrix and source-to-Profile/stock trace proof
@@ -393,8 +400,8 @@
   - [x] Keep new routes shadow outside controlled AOY parity; no backfill
   - [x] Authenticated production dialog QA at desktop/390px, keyboard,
         accessibility, console/network and UI INP
-  - [ ] Controlled AOY parity for each promoted route and USER reconfirm before
-        resuming automation
+  - [x] USER explicitly waived another controlled AOY write and reconfirmed live
+        Sale Invoice/Credit Note operation; Auto SML resumed behind a new cutoff
 
 ### T24 production baseline record
 
@@ -414,21 +421,23 @@
   every deployed Nexflow database.
 - Runtime: Central Gateway health/readiness passes all four SML tenants and
   advertises revision `sml-sales-document-profile-v2-20260903`, all five routes,
-  2 MiB request/expanded limits and 500 input/expanded items. All four Nexflow
-  containers report Sale Invoice active and SO/SSC/SIC/CN shadow. Health,
-  database authentication, edge routing, Shopee Gateway connectivity,
-  before/after protected counts and severe-log scans passed.
+  2 MiB request/expanded limits and 500 input/expanded items. Demo, Lanboon and
+  Ploy report Sale Invoice active and SO/SSC/SIC/CN shadow. AOY reports Sale
+  Invoice and Credit Note active with SO/SSC/SIC shadow. Health, database
+  authentication, edge routing, Shopee Gateway connectivity, before/after
+  protected counts and severe-log scans passed.
 - Configuration safety: the deployed AOY route bundle is Sale Invoice/Credit
-  Note, config versions 2/1; capability and pair checks pass while automation
-  readiness correctly remains false because Credit Note is shadow. A read-only
-  Preview returned a signed token and a ten-minute expiry. Twenty live samples
-  measured GET p95 3.117 ms and Preview p95 1.711 ms; unauthenticated GET and
-  Preview both returned 401. No PUT, Enable or SML write was invoked.
-- AOY automation: shop `264993963` is still enabled at the business-setting
-  level but is fail-closed with `paused_reason=route_changed`, trigger
-  `PROCESSED`, config version 5. All four live work queues are empty. The second
-  shop remains disabled. Resume requires a current Preview and explicit USER
-  reconfirm after controlled parity.
+  Note, config versions 2/1; both modes are active, capability/pair checks pass,
+  and `automation_ready=true`. The live resume used a fresh signed Preview bound
+  to shop, trigger, config version and route signature. Twenty earlier live
+  samples measured GET p95 3.117 ms and Preview p95 1.711 ms; unauthenticated GET
+  and Preview both returned 401.
+- AOY automation: USER explicitly requested production operation without another
+  controlled test. Shop `264993963` is enabled, unpaused, trigger `PROCESSED`,
+  config version 6 and cutoff `2026-09-03 18:11:52 Asia/Bangkok`. The Sale and
+  Credit Note routes are active; SO/SSC/SIC remain shadow. Sale/cancellation
+  queues were zero immediately after resume and no SML document was created by
+  the activation itself. The second shop remains disabled.
 - Backups: Gateway source/runtime/image/container backup is under
   `/mnt/data/nextstep-node-2/deploy-backups/sml-sales-profile-v2-20260903-094700`.
   All tenant runtime environments have pre-change snapshots at timestamp
@@ -448,13 +457,22 @@
   `pre-deploy-20260903-104309.sql.gz`, Lanboon
   `pre-deploy-20260903-104505.sql.gz`, and Ploy
   `pre-deploy-20260903-104626.sql.gz`.
+- Live activation evidence: pre-change runtime/database backups are
+  `.env.pre-aoy-live-20260903-180659` and
+  `pre-aoy-live-20260903-180659.sql.gz`. AOY backend restart advertised the
+  exact two-active/three-shadow map. Public health returned HTTP 200/database
+  ok, bundle capability was compatible with `automation_ready=true`, Auto SML
+  was enabled through Preview/PUT, and the post-cutover severe-log scan was
+  empty. Per USER instruction, no synthetic order, controlled SML write or
+  backfill was run.
 - Performance note: Preview/count XHRs completed in 31-66 ms. Event Timing shows
   3-5 ms application processing and 37-64 ms presentation. The CUA synthetic
   click adds 360-371 ms of tool input hold to the raw click entry; long-running
   real-user RUM remains monitoring evidence, not a release blocker.
-- Next action: promote and write one route at a time only when USER is ready to
-  create controlled evidence in SML; compare against committed fixtures before
-  changing that route from shadow to active.
+- Next action: inspect the first organic AOY order after the live cutoff. Do not
+  manufacture or backfill an order. If a BUG or USER feedback arrives, reconcile
+  the exact Order SN, bill, immutable attempt, SML document/Profile and stock job
+  before changing code or retrying anything.
 
 ### T15 completion record
 

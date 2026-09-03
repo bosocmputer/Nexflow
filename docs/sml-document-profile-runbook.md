@@ -80,10 +80,15 @@ Structured audit events are `profile_requested`, `core_committed`,
 Back up the AOY Nexflow database/runtime and Central Gateway source/runtime/image
 before deployment. Deploy the Gateway compatibility release first, then Nexflow
 with mode `off`. Progress the first tenant through `shadow` and one controlled
-bill before enabling automatic sends. As of 2026-09-03, Document Profile mode is
-`active` for Demo, AOY, Lanboon, and Ploy by explicit operator decision; only
-AOY currently has an enabled Shopee Auto SML shop. A newly connected tenant must
-still pass its own route preview and shop-level enable confirmation.
+bill before enabling automatic sends unless the USER explicitly accepts a live
+cutover based on the committed parity fixtures. As of 2026-09-03, Document
+Profile mode is `active` for Demo, AOY, Lanboon, and Ploy. AOY has Sale Invoice
+and Credit Note route modes active; SO/SSC/SIC remain shadow. Shop `264993963`
+is enabled and unpaused with trigger `PROCESSED`, config version 6 and cutoff
+`2026-09-03 18:11:52 Asia/Bangkok`. The activation did not backfill or create an
+SML document. Demo, Lanboon and Ploy retain only Sale Invoice active, and a newly
+connected tenant must still pass its own route preview and shop-level enable
+confirmation.
 
 To roll back, pause Auto SML and set Profile mode to `off` before rolling code
 back. Keep additive migrations, immutable attempts, reconciliation jobs, and
