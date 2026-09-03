@@ -51,3 +51,51 @@ Demo, Lanboon and Ploy remain off.
 Pause Auto SML and set profile mode off before rolling code back. Additive
 migrations and immutable attempts/jobs stay in place. Never delete an SML document
 automatically as rollback.
+
+## Approved Extension: Sales Document Profile Completion (T15-T24)
+
+The 2026-09-03 extension completes Profile V1 for the five verified SML sales
+routes while preserving the existing Sale Invoice canonical hash and every
+legacy request/response:
+
+| Route | Canonical API | SML trans flag | Initial rollout mode |
+| --- | --- | ---: | --- |
+| `saleorder` | `POST /api/v1/ic/sale-orders` | 36 | `shadow` |
+| `saleinvoice` | `POST /api/v1/ic/sale-invoices` | 44 | existing global mode |
+| `saleordercancel` | `POST /api/v1/ic/sale-orders/:doc_no/void` | 37 | `shadow` |
+| `saleinvoicecancel` | `POST /api/v1/ic/sale-invoices/:doc_no/void` | 45 | `shadow` |
+| `creditnote` | `POST /api/v1/ic/sale-invoices/:doc_no/cancel` | 48 | `shadow` |
+
+### Extension invariants
+
+1. Gateway capability revision, supported routes and limits are checked before
+   Preview and Enable. Unknown/duplicate route modes fail startup.
+2. Shopee stores route enums only; the backend maps them to canonical paths and
+   rejects absolute URLs.
+3. The main and cancellation routes are previewed and saved atomically with two
+   optimistic config versions and a signed, tenant-bound token valid for ten
+   minutes. Saving pauses automation; enabling is a separate action.
+4. All cancellation types take the same source-scoped PostgreSQL advisory
+   transaction lock. A competing request returns `409 document_busy` within
+   three seconds.
+5. A manually created SML document is evidence of an external action, not a
+   Nexflow document. Nexflow never adds BILLFLOW/NEXFLOW ownership markers to it.
+6. Cancellation is a full-document reversal only. Input and expanded output are
+   both capped at 500 items and 2 MiB before any core write.
+7. Profile repair never resends the core document or stock job. Cross-database
+   ERP-log repair uses a tenant-scoped durable job with fencing and bounded
+   retries.
+8. Profile code never inserts or updates `gl_journal` or `gl_journal_detail`.
+   SML Daily Processing remains the accounting authority.
+
+### Delivery checkpoints
+
+- **Checkpoint A (T15-T17):** fixtures/contract, capability handshake, strict
+  route modes and VAT/decimal correctness; no new production write behavior.
+- **Checkpoint B (T18-T21):** Sale Order, SSC, SIC and CN Profile writers plus
+  durable cancellation reconciliation; route modes remain safe by default.
+- **Checkpoint C (T22-T23):** atomic route bundle, guarded operator UI,
+  performance/security/telemetry budgets.
+- **T24:** full verification, backups and staged rollout. Gateway deploys first;
+  all four Nexflow instances use one commit. New routes stay `shadow` outside
+  controlled AOY parity, and no historical document is backfilled.

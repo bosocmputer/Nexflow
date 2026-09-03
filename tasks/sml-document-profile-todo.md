@@ -2,14 +2,16 @@
 
 ## Handoff
 
-- Last completed: fix and deploy the SML VAT effective-period/register-type
-  incident found by daily processing of `BF-INV26090002` on 2026-09-03
-- Active task: observe the first organic post-hotfix AOY VAT document through
-  SML daily processing; T11 percentiles remain non-blocking
+- Last completed: T15 froze PII-free executable fixtures and the evidence-backed
+  contract for SO/SSC, INV/SIC/CN and VAT 0/1/2. The live controlled documents
+  are no longer a test dependency and may be removed by the USER.
+- Active task: T16 capability/revision handshake and strict route-scoped Profile
+  modes with fail-closed Nexflow readiness. The original first-organic-post-
+  hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `53393b6`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `304235e`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -96,11 +98,56 @@
   `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
-- Next action: inspect the first organic AOY VAT Profile document created after
-  Gateway `53393b6`, then have SML perform its normal daily processing and verify
-  the `215500` VAT credit and balanced GL. Do not manufacture or backfill an
-  order. When another tenant connects Shopee, validate its tenant-specific SML
-  route/preview before enabling that shop's Auto SML.
+- New parity evidence: SML-created sales with header `vat_type=0` (external VAT)
+  and non-zero VAT do have `gl_journal_vat_sale` rows whose register `vat_type`
+  is 0. Gateway `53393b6` currently writes Profile VAT rows only for header
+  types 1/2, so external-VAT Profile documents are a proven contract gap.
+  API-created `CN26080002` also has VAT 11.69 but no VAT-register, main-log, or
+  `erp_logs` row. Sale order Profile V1 is rejected by the current contract and
+  void/credit-note writers do not yet write full audit parity.
+- External-VAT manual evidence: `INV26090003 -> CN26090002` proves both headers
+  use `vat_type=0`, VAT 7%, base 300.00, VAT 21.00 and total amount 321.00; both
+  have VAT-register type 0 with period/year 9/2569. The credit note uses
+  `ref_amount=ref_diff=total_value=300.00`, while its `ap_ar_trans_detail`
+  receivable amount is the VAT-inclusive 321.00. It has no shipment, while the
+  source invoice has one. Both full manual `erp_logs.data_new` payloads include
+  the same VAT/reference/remark values. Lot `00007` reverses the exact 149.53
+  cost from the invoice to the credit note. No GL rows exist yet.
+- External-VAT post-processing evidence: `INV26090003` and `CN26090002` each
+  produced exactly one journal and five detail rows at 13:07 Asia/Bangkok. Each
+  balances 470.53/470.53. The invoice debits AR 321.00 and cost 149.53, then
+  credits sales 300.00, output VAT 21.00 and inventory 149.53; the credit note
+  reverses those exact entries. The controlled pair may now be deleted.
+- Zero-rate pre-processing evidence: manual SML `INV26090004` uses header
+  `vat_type=2`, `vat_rate=7`, `total_value=total_amount=300.00`, but deliberately
+  keeps `total_before_vat=total_vat_value=total_after_vat=0`. Its detail still
+  has `sum_amount_exclude_vat=300.00`. SML writes one zero-base/zero-amount VAT
+  register row with period/year 9/2569 and register type 0. Nexflow currently
+  calculates header before/after VAT as 300.00 for type 2, so this is a proven
+  parity gap.
+- Zero-rate credit-note evidence: manual SML `CN26090003` correctly references
+  `INV26090004`. Both headers use `vat_type=2`, rate 7%,
+  `total_value=total_amount=300.00` and zero before-VAT/VAT/after-VAT totals.
+  Both still have one VAT-register row with zero base/amount, period/year 9/2569
+  and register type 0. The credit note uses
+  `ref_amount=ref_diff=300.00`, has one `ap_ar_trans_detail` row for 300.00,
+  carries the exact source line reference, reverses lot `00007` and cost 149.53
+  with `calc_flag=1`, has no shipment row, and has complete current-round main
+  and `erp_logs` audit rows. Before daily processing neither document has a GL
+  journal or GL detail row.
+- Zero-rate post-processing evidence: SML daily processing created exactly one
+  GL header and four GL detail rows for each of `INV26090004` and `CN26090003`
+  at 13:25:42 Asia/Bangkok. Both journals balance exactly at 449.53/449.53.
+  The invoice debits receivables 300.00 and cost 149.53, then credits sales
+  300.00 and inventory 149.53. The credit note reverses all four accounts
+  exactly. There is deliberately no output-VAT GL detail, while each document
+  retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
+  The detail reference and lot `00007` cost reversal remain intact after
+  processing. The controlled pair may now be deleted.
+- Next action: write and review the endpoint-extension plan using the now-proven
+  VAT type 0/1/2 evidence before changing Gateway behavior. Separately, inspect
+  the first organic AOY VAT Profile document created after Gateway `53393b6`;
+  do not manufacture or backfill a Shopee order.
 
 ## Phase A — Proof and contract
 
@@ -182,6 +229,99 @@
       naturally arrive; there is no deadline and this does not block production
 - [ ] Complete deployed Settings/Gateway/queue/UI percentile evidence when the
       sample size is sufficient
+
+## Endpoint parity extension (evidence gathering)
+
+- [x] Capture manual SML pre-processing structures for sale order, sale invoice,
+      header-only void, and credit note
+- [x] Capture post-processing GL, output-VAT, cost, stock-direction, reference,
+      and audit evidence for the five controlled documents
+- [x] Prove `vat_type=0` sales with non-zero VAT require a VAT-register row
+- [x] Capture a manual `vat_type=0` invoice/credit-note pre-processing snapshot,
+      including VAT-register, AR reference, remarks, shipment and exact lot cost
+- [x] Confirm post-processing GL direction and balance for the manual
+      `vat_type=0` invoice/credit-note pair
+- [x] Capture the manual `vat_type=2` sale pre-processing header/detail/VAT/log
+      behavior and prove its header-total parity gap
+- [x] Capture a manual `vat_type=2` credit-note pre-processing snapshot
+- [x] Capture the `vat_type=2` invoice/credit-note pair's post-processing GL
+- [ ] Freeze and approve the sale-order/void/credit-note Profile contract before
+      implementation
+
+## Sales Document Profile Completion (approved 2026-09-03)
+
+- [x] **T15 — Freeze evidence and contract**
+  - [x] Commit PII-free fixtures for SO/SSC, INV/SIC/CN and VAT 0/1/2
+  - [x] Record exact columns, relation keys, SML menu and ERP JSON sections
+  - [x] Append the approved extension to the durable plan/todo without replacing
+        T00-T14 history
+  - [x] Record that controlled SML samples may be removed after the committed
+        fixture test passes; no test reads the live rows
+- [ ] **T16 — Capability and route-mode foundation** _(active)_
+  - [ ] Add `GET /api/v1/capabilities` with contract revision/routes/limits
+  - [ ] Add strict Gateway and Nexflow route-mode parsing with safe defaults
+  - [ ] Add fail-closed Nexflow capability client and legacy compatibility tests
+- [ ] **Checkpoint A1 — Foundation safety**
+  - [ ] No production behavior changes; legacy tests and Sale Invoice hash pass
+  - [ ] Unknown/duplicate mode and capability mismatch fail closed
+- [ ] **T17 — VAT and exact-decimal correctness**
+  - [ ] Correct VAT type 0/1/2 header/register applicability and zero-rate totals
+  - [ ] Reject invalid exact decimals before beginning the core transaction
+  - [ ] Add controlled-fixture regression tests for all VAT modes
+- [ ] **T18 — Sale Order Profile vertical slice**
+  - [ ] Add Profile fields/status/hash and route-correct main/ERP logs
+  - [ ] Write detail `calc_flag=1`; require shipment for Marketplace goods
+  - [ ] Test retry, mismatch, 500-item/expanded-item limits and logs DB outage
+- [ ] **T19 — Sale Order Cancellation vertical slice**
+  - [ ] Add SSC Preview/Create/doc-number aliases and trans flag 37
+  - [ ] Add common source lock, source fingerprint and exact detail references
+  - [ ] Mark source `used_status=1` and queue stock recalculation after core
+- [ ] **Checkpoint B — SO/SSC parity and concurrency**
+  - [ ] SO/SSC match fixtures and contain no VAT/AP-AR/GL placeholders
+  - [ ] Lost response/concurrent cross-kind cancellation creates no duplicate
+- [ ] **T20 — Invoice Void and Credit Note Profile**
+  - [ ] Complete SIC main/ERP logs and uniform Profile response
+  - [ ] Complete CN VAT, AP-AR and exact source references
+  - [ ] Use `ref_amount/ref_diff=source.total_value` and preserve blank/detail branch
+  - [ ] Test VAT 0/1/2 and external source-state conflicts
+- [ ] **T21 — Durable cancellation reconciliation (migration 093)**
+  - [ ] Add Profile summary columns to `shopee_sml_cancellations`
+  - [ ] Add fenced reconciliation jobs, unique cancellation/version, max 10 tries
+  - [ ] Prove Profile retry cannot resend core or stock jobs
+- [ ] **T22 — Atomic Shopee route bundle API and UI**
+  - [ ] Add GET/Preview/PUT bundle with two config versions and 10-minute token
+  - [ ] Save both rows/audit/Auto pause in one transaction; Enable stays separate
+  - [ ] Reject incompatible route pairs, stale preview and absolute URL injection
+  - [ ] Build one accessible dialog with desktop and 390px coverage
+- [ ] **Checkpoint C — Configuration safety**
+  - [ ] Config races cannot overwrite newer values
+  - [ ] Automation cannot bypass Preview, capability or active route mode
+- [ ] **T23 — Performance, security and observability**
+  - [ ] Enforce 2 MiB and 500 items before/after expansion without N+1 writes
+  - [ ] Enforce 20s transaction, 3s lock wait and 2s ERP-log timeouts
+  - [ ] Verify admin/cross-tenant/PII/logging/SSRF protections
+  - [ ] Add bounded route/profile metrics and operational alerts
+  - [ ] Record 50/200/500-item and settings/UI performance evidence
+- [ ] **T24 — Full verification and staged rollout**
+  - [ ] Full Go test/race/vet, frontend tests/lint/build and sales-only guard
+  - [ ] PostgreSQL 11 statement preparation and PostgreSQL 16 migration replay
+  - [ ] Fault injection, browser/accessibility/network QA and trace proof
+  - [ ] Backup/deploy Gateway first, then the same Nexflow commit to all four
+  - [ ] Keep new routes shadow outside controlled AOY parity; no backfill
+
+### T15 completion record
+
+- Completed task: T15
+- Nexflow commit: pending documentation commit in the current increment
+- Gateway commit: `304235e` (`test: freeze SML sales profile parity fixtures`)
+- Files: `docs/sml-sales-document-profile-evidence.md`, durable plan/todo,
+  Gateway PII-free JSON fixture and its contract test
+- Tests: Gateway focused fixture test passes; no live database dependency
+- Feature modes: no runtime or production behavior change
+- Production evidence: prior read-only controlled SML evidence only; not deployed
+- Residual risk: none for fixture retention; application behavior is still the
+  pre-extension baseline until T16-T24 complete
+- Next action: add failing T16 capability/revision and strict route-mode tests
 
 ## Per-Increment Completion Record
 
