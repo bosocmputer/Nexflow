@@ -2,29 +2,28 @@
 
 ## Handoff
 
-- Last completed: T23 enforces 2 MiB/500-item limits before network/core writes
-  and after set expansion, batches all multi-line Gateway writes, applies the
-  20s transaction/3s source-lock/2s ERP-log budgets, and extends bounded
-  metrics and alerts to cancellation Profile jobs.
-- Active task: T24 full verification and staged rollout. The original first-
-  organic-post-hotfix observation and T11 percentiles remain non-blocking.
+- Last completed: T24 local verification and the safe production baseline are
+  deployed. Gateway capability V2 is live, migration 093 is applied to all four
+  Nexflow databases, and every tenant runs the same Nexflow commit with only
+  Sale Invoice Profile active; the four new routes remain shadow.
+- Active task: authenticated production browser QA and AOY controlled parity
+  for SO/SSC/SIC/CN. No authenticated Nexflow browser session was available
+  during deployment, so no user credential was changed or copied for QA. The
+  first organic post-hotfix observation and long-running percentiles remain
+  non-blocking monitoring.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
-  `codex/marketplace-units-conversion` / `483160d`; durable production handoff
-  continues on the same branch
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `e243da3`
+  `codex/marketplace-units-conversion` / `b82ab3e`; durable production handoff
+  continues on the same branch.
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `b82ab3e`
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `3e2ed0e`
-- Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
-  explicit request. AOY is the only tenant with an active Shopee connection and
-  enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
-  connections, zero enabled Auto SML shops and zero open Auto/Profile jobs, so
-  activation created no document and performed no backfill. AOY Shopee main
-  route is `AB-1 / 001`, Channel config version 2. Shop `264993963` is enabled
-  and unpaused with trigger `PROCESSED`, Auto SML config version 4 and cutoff
-  `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop `1029622928` remains disabled.
-  The first Profile completed synchronously, so no Profile reconciliation job
-  or backfill was required. The new route-mode variable is not deployed yet;
-  its safe default keeps Sale Order/SSC/SIC/CN Profile extensions `off` while
-  Sale Invoice continues inheriting the global `active` mode.
+- Feature mode: all four instances use
+  `saleinvoice:active,saleorder:shadow,saleordercancel:shadow,saleinvoicecancel:shadow,creditnote:shadow`.
+  AOY main/cancellation config remains Sale Invoice/Credit Note at versions 2/1.
+  Shop `264993963` retains trigger `PROCESSED` and is deliberately paused as
+  `route_changed`, config version 5, until controlled parity and USER reconfirm;
+  shop `1029622928` remains disabled. All sale, cancellation, sale-Profile and
+  cancellation-Profile live queues are empty. No backfill or SML write occurred
+  during this rollout.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
@@ -38,8 +37,10 @@
   offered fix is a forced breaking v7 upgrade and was intentionally not applied
 - Performance evidence: current Gateway Profile normalization/hash is
   0.119/0.436/1.081 ms for 50/200/500 lines on Apple M1 Pro; the route-bundle
-  normalize/hash/sign/verify contract is 0.010 ms. HTTP/database p95 and UI INP
-  budgets still require T24 deployed telemetry.
+  normalize/hash/sign/verify contract is 0.010 ms. On deployed AOY, 20 sequential
+  samples measured route-bundle GET p95 at 3.117 ms and Preview p95 at 1.711 ms;
+  both are far below their 300/500 ms budgets. Gateway database-write p95 and UI
+  INP still require controlled traffic/authenticated browser telemetry.
 - Browser evidence: production AOY renders the back action inline before
   `BF-INV26090002`, followed by `ขาย -> ขายสินค้าและบริการ` and
   `ส่งแล้ว (AUTO)` in one compact header. The duplicate successful-status card
@@ -50,9 +51,11 @@
   artifact section is hidden; timelines and real artifacts remain available.
   Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow and
   zero console warnings/errors.
-- Production evidence: Central Gateway `53393b6`; Demo, AOY, Lanboon and Ploy
-  Nexflow `483160d` are deployed. Gateway readiness passes for
-  demo/aoy/lbk63/ploy_test. Controlled
+- Production evidence: Central Gateway `3e2ed0e`; Demo, AOY, Lanboon and Ploy
+  Nexflow `b82ab3e` are deployed. Gateway readiness passes for
+  demo/aoy/lbk63/ploy_test, all five capability routes resolve at revision
+  `sml-sales-document-profile-v2-20260903`, and all four backends have migration
+  093 plus the exact route-mode map above. Controlled
   order `26090216HNM1GJ` produced exactly one bill/attempt/document
   `BF-INV26090002`: HTTP 201 in 179 ms, Profile complete with all five checks,
   stock recalculation completed on its first attempt, and no duplicate rows.
@@ -72,6 +75,16 @@
   `docs/nextstep-server-deploy-flow.md`; existing `tasks/plan.md` and
   `tasks/todo.md`; untracked `.serena/` and `scripts/__pycache__/`
 - Backups: Gateway source/runtime/image at
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-sales-profile-v2-20260903-094700`
+  with rollback container
+  `nexflow-sml-api-bybos-pre-profile-v2-20260903-094700`; four-tenant runtime
+  backups are `.env.pre-profile-v2-20260903-100335`; deployment database backups
+  are Demo `pre-deploy-20260903-100723.sql.gz`, AOY
+  `pre-deploy-20260903-100946.sql.gz`, Lanboon
+  `pre-deploy-20260903-101253.sql.gz`, and Ploy
+  `pre-deploy-20260903-101422.sql.gz`. AOY also has the pre-pause database
+  `pre-profile-v2-20260903-100335.sql.gz`. Earlier backups remain at
+  the following locations: Gateway source/runtime/image at
   `/mnt/data/nextstep-node-2/deploy-backups/sml-document-profile-20260902-141000`;
   Gateway VAT/profile hotfix backup at
   `/mnt/data/nextstep-node-2/deploy-backups/sml-profile-vat-hotfix-20260902-215500`;
@@ -101,13 +114,12 @@
   `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
-- New parity evidence: SML-created sales with header `vat_type=0` (external VAT)
+- Pre-T17 parity evidence: SML-created sales with header `vat_type=0` (external VAT)
   and non-zero VAT do have `gl_journal_vat_sale` rows whose register `vat_type`
-  is 0. Gateway `53393b6` currently writes Profile VAT rows only for header
-  types 1/2, so external-VAT Profile documents are a proven contract gap.
-  API-created `CN26080002` also has VAT 11.69 but no VAT-register, main-log, or
-  `erp_logs` row. Sale order Profile V1 is rejected by the current contract and
-  void/credit-note writers do not yet write full audit parity.
+  is 0. Gateway `53393b6` wrote Profile VAT rows only for header types 1/2, so
+  external-VAT Profile documents were a proven contract gap. API-created
+  `CN26080002` also had VAT 11.69 but no VAT-register, main-log, or `erp_logs`
+  row. T17-T20 close these gaps in deployed Gateway `3e2ed0e`.
 - External-VAT manual evidence: `INV26090003 -> CN26090002` proves both headers
   use `vat_type=0`, VAT 7%, base 300.00, VAT 21.00 and total amount 321.00; both
   have VAT-register type 0 with period/year 9/2569. The credit note uses
@@ -125,9 +137,9 @@
   `vat_type=2`, `vat_rate=7`, `total_value=total_amount=300.00`, but deliberately
   keeps `total_before_vat=total_vat_value=total_after_vat=0`. Its detail still
   has `sum_amount_exclude_vat=300.00`. SML writes one zero-base/zero-amount VAT
-  register row with period/year 9/2569 and register type 0. Nexflow currently
-  calculates header before/after VAT as 300.00 for type 2, so this is a proven
-  parity gap.
+  register row with period/year 9/2569 and register type 0. Pre-T17 Nexflow
+  calculated header before/after VAT as 300.00 for type 2; T17 corrected and
+  regression-tested this parity gap.
 - Zero-rate credit-note evidence: manual SML `CN26090003` correctly references
   `INV26090004`. Both headers use `vat_type=2`, rate 7%,
   `total_value=total_amount=300.00` and zero before-VAT/VAT/after-VAT totals.
@@ -147,11 +159,12 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: T22 bundle GET/Preview/PUT contract tests, signed ten-minute
-  preview token and one plain-language route dialog with safe capability states.
-  Separately, inspect
-  the first organic AOY VAT Profile document created after Gateway `53393b6`;
-  do not manufacture or backfill a Shopee order.
+- Next action: USER signs in to AOY Nexflow for the remaining production
+  desktop/390px keyboard/accessibility/network QA. Then promote one route at a
+  time only after its controlled Preview/Write matches the committed fixture;
+  USER must reconfirm before AOY automation resumes. Separately inspect the
+  first organic AOY VAT Profile document created after Gateway `53393b6`; do
+  not manufacture or backfill a Shopee order.
 
 ## Phase A — Proof and contract
 
@@ -361,11 +374,62 @@
   deploy Gateway capability first, then deploy the same Nexflow commit to all
   four tenants with non-invoice routes kept shadow until controlled AOY parity.
 - [ ] **T24 — Full verification and staged rollout**
-  - [ ] Full Go test/race/vet, frontend tests/lint/build and sales-only guard
-  - [ ] PostgreSQL 11 statement preparation and PostgreSQL 16 migration replay
-  - [ ] Fault injection, browser/accessibility/network QA and trace proof
-  - [ ] Backup/deploy Gateway first, then the same Nexflow commit to all four
-  - [ ] Keep new routes shadow outside controlled AOY parity; no backfill
+  - [x] Full Go test/race/vet, frontend tests/lint/build and sales-only guard
+  - [x] PostgreSQL 11 statement preparation and PostgreSQL 16 migration replay
+  - [x] Fault matrix and source-to-Profile/stock trace proof
+  - [x] Backup/deploy Gateway first, then the same Nexflow commit to all four
+  - [x] Keep new routes shadow outside controlled AOY parity; no backfill
+  - [ ] Authenticated production dialog QA at desktop/390px, keyboard,
+        accessibility, console/network and UI INP
+  - [ ] Controlled AOY parity for each promoted route and USER reconfirm before
+        resuming automation
+
+### T24 production baseline record
+
+- Deployed commits: Gateway `3e2ed0e`; Nexflow Demo/AOY/Lanboon/Ploy
+  `b82ab3e`. The stopped Gateway rollback container is
+  `nexflow-sml-api-bybos-pre-profile-v2-20260903-094700`.
+- Verification: both repositories passed full `go test ./...`,
+  `go test -race ./...` and `go vet ./...`. Frontend focused tests, lint with
+  zero errors/35 pre-existing warnings, production build and the sales-only
+  runtime guard passed. The repeated race fault matrix covers logs-DB outage,
+  lost response, duplicate/cross-kind concurrency, hash mismatch, config race,
+  capability mismatch, worker lease recovery and cross-tenant rejection.
+- Database compatibility: migrations 091-093 replayed inside rollback
+  transactions on all four PostgreSQL 16 Nexflow databases. The exact batched
+  INV/SO/CN/SSC detail statements prepared successfully against PostgreSQL 11
+  schemas `demo`, `aoy`, `lbk63` and `ploy_test`. Migration 093 now exists on
+  every deployed Nexflow database.
+- Runtime: Central Gateway health/readiness passes all four SML tenants and
+  advertises revision `sml-sales-document-profile-v2-20260903`, all five routes,
+  2 MiB request/expanded limits and 500 input/expanded items. All four Nexflow
+  containers report Sale Invoice active and SO/SSC/SIC/CN shadow. Health,
+  database authentication, edge routing, Shopee Gateway connectivity,
+  before/after protected counts and severe-log scans passed.
+- Configuration safety: the deployed AOY route bundle is Sale Invoice/Credit
+  Note, config versions 2/1; capability and pair checks pass while automation
+  readiness correctly remains false because Credit Note is shadow. A read-only
+  Preview returned a signed token and a ten-minute expiry. Twenty live samples
+  measured GET p95 3.117 ms and Preview p95 1.711 ms; unauthenticated GET and
+  Preview both returned 401. No PUT, Enable or SML write was invoked.
+- AOY automation: shop `264993963` is still enabled at the business-setting
+  level but is fail-closed with `paused_reason=route_changed`, trigger
+  `PROCESSED`, config version 5. All four live work queues are empty. The second
+  shop remains disabled. Resume requires a current Preview and explicit USER
+  reconfirm after controlled parity.
+- Backups: Gateway source/runtime/image/container backup is under
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-sales-profile-v2-20260903-094700`.
+  All tenant runtime environments have pre-change snapshots at timestamp
+  `20260903-100335`; database backup names are recorded in Handoff above.
+- Browser limitation: the production URL and login page load, but the available
+  browser had no authenticated Nexflow session. QA did not copy/reset a user
+  password or forge a persistent browser session. The dialog's deployed API,
+  Preview, authorization, capability and performance paths were verified using
+  a five-minute in-memory admin token and left no saved state.
+- Next action: use a USER-authenticated AOY session for the remaining visual,
+  keyboard, accessibility, network and INP pass. Promote and write one route at
+  a time only when USER is ready to create controlled evidence in SML; compare
+  against committed fixtures before changing that route from shadow to active.
 
 ### T15 completion record
 
