@@ -49,3 +49,28 @@ func TestBuildInvoicePayloadCalculatesExcludedVATAfterDiscount(t *testing.T) {
 		t.Fatalf("detail = %+v, want gross VAT with no line discount", payload.Details[0])
 	}
 }
+
+func TestBuildInvoicePayloadMatchesSMLHeaderTotalsForEveryVATMode(t *testing.T) {
+	tests := []struct {
+		name                            string
+		vatType                         int
+		beforeVAT, vat, afterVAT, total float64
+	}{
+		{name: "external", vatType: 0, beforeVAT: 300, vat: 21, afterVAT: 321, total: 321},
+		{name: "included", vatType: 1, beforeVAT: 280.37, vat: 19.63, afterVAT: 300, total: 300},
+		{name: "zero_rate", vatType: 2, beforeVAT: 0, vat: 0, afterVAT: 0, total: 300},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gross := 300.0
+			payload := BuildInvoicePayload("BF-INV26090001", "2026-09-02", "ORDER-1", "2026-09-02", []ShopeeOrderItem{{
+				SKU: "SKU-1", Qty: 1, Price: 300, GrossAmount: &gross,
+			}}, InvoiceConfig{DocFormat: "SI", CustCode: "AR001", UnitCode: "ชิ้น", VATType: tt.vatType, VATRate: 7}, nil, "")
+			if payload.TotalBeforeVAT != tt.beforeVAT || payload.TotalVATValue != tt.vat ||
+				payload.TotalAfterVAT != tt.afterVAT || payload.TotalAmount != tt.total {
+				t.Fatalf("VAT type %d totals before/vat/after/total = %.2f/%.2f/%.2f/%.2f",
+					tt.vatType, payload.TotalBeforeVAT, payload.TotalVATValue, payload.TotalAfterVAT, payload.TotalAmount)
+			}
+		})
+	}
+}

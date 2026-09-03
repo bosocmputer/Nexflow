@@ -502,6 +502,17 @@ func CalcDocumentTotals(net float64, vatType int, vatRate float64) (beforeVAT, v
 	return
 }
 
+// calcSaleInvoiceDocumentTotals keeps Sale Order's legacy type-2 totals intact
+// while matching the verified SML Sale Invoice screen: zero-rate invoices keep
+// total_value/total_amount, but the before/VAT/after VAT header fields are zero.
+func calcSaleInvoiceDocumentTotals(net float64, vatType int, vatRate float64) (beforeVAT, vat, afterVAT, total float64) {
+	beforeVAT, vat, afterVAT, total = CalcDocumentTotals(net, vatType, vatRate)
+	if vatType == 2 {
+		beforeVAT, vat, afterVAT = 0, 0, 0
+	}
+	return
+}
+
 // resolveSMLURL combines a base URL with the per-call override.
 //   - override = ""  → baseURL + defaultPath
 //   - override starts with "http://" or "https://" → use as-is (absolute)
@@ -625,7 +636,7 @@ func BuildInvoicePayload(
 
 	totalValue := centsMoney(totalValueCents)
 	totalDiscount := centsMoney(totalDiscountCents)
-	totalBeforeVAT, totalVAT, totalAfterVAT, totalAmount := CalcDocumentTotals(totalValue-totalDiscount, cfg.VATType, cfg.VATRate)
+	totalBeforeVAT, totalVAT, totalAfterVAT, totalAmount := calcSaleInvoiceDocumentTotals(totalValue-totalDiscount, cfg.VATType, cfg.VATRate)
 
 	return InvoicePayload{
 		DocNo:          docNo,
