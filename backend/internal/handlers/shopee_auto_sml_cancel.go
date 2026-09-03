@@ -30,7 +30,7 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSMLCancellation(ctx context.Cont
 		!shouldEnqueueAutoSMLCancellation(h.cfg.ShopeeAutoSMLCancelEnabled && h.cfg.ShopeeSMLCancelDocumentsEnabled, before, after) {
 		return false
 	}
-	routeDef, _, _, err := h.cancelSaleRoute(ctx)
+	routeDef, routeMeta, _, err := h.cancelSaleRoute(ctx)
 	if err != nil || routeDef == nil {
 		if h.logger != nil {
 			h.logger.Warn("shopee_auto_sml_cancel: route unavailable",
@@ -42,7 +42,7 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSMLCancellation(ctx context.Cont
 	inserted, err := h.repo.EnqueueAutoSMLCancellation(ctx, repository.ShopeeSMLCancellationInput{
 		ShopID: after.ShopID, OrderSN: after.OrderSN, BillID: billID,
 		SaleSMLDocNo: strings.TrimSpace(after.SMLDocNo), RouteEndpoint: strings.TrimSpace(routeDef.Endpoint),
-		RouteSignature: shopeeSMLCancellationRouteSignature(routeDef, h.documentProfileMode()),
+		RouteSignature: shopeeSMLCancellationRouteSignature(routeDef, h.documentProfileRouteMode(routeMeta.StockRoute)),
 	})
 	if err != nil {
 		if h.logger != nil {
@@ -182,7 +182,7 @@ func (h *ShopeeRealtimeHandler) processAutoSMLCancellationJob(ctx context.Contex
 			return
 		}
 	}
-	currentSignature := shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef, h.documentProfileMode())
+	currentSignature := shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef, h.documentProfileRouteMode(cancelCtx.RouteMeta.StockRoute))
 	if currentSignature == "" || currentSignature != job.RouteSignature || strings.TrimSpace(cancelCtx.RouteDef.Endpoint) != strings.TrimSpace(job.RouteEndpoint) {
 		h.blockAutoSMLCancellation(ctx, job, snap, "route_changed", "เส้นทางเอกสารยกเลิก SML เปลี่ยนหลังเข้าคิว กรุณาตรวจสอบก่อนลองใหม่", nil)
 		return

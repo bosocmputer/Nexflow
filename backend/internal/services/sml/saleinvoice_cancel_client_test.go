@@ -151,6 +151,45 @@ func TestSaleInvoiceCancelClientUsesVoidEndpointForSaleCancellation(t *testing.T
 	}
 }
 
+func TestSaleInvoiceCancelClientUsesSaleOrderVoidProfileEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/ic/sale-orders/SO26090001/void/preview" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		for _, want := range []string{
+			`"document_profile_version":"sml-document-v1"`,
+			`"doc_no":"BF-SSC26090001"`,
+			`"remark_2":"full reversal"`,
+			`"creator_code":"BILLFLOW"`,
+			`"cashier_code":"BILLFLOW"`,
+			`"user_request":"NEXFLOW"`,
+		} {
+			if !strings.Contains(string(body), want) {
+				t.Fatalf("body %s missing %s", body, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"status":"ready","cancel_doc_no":"BF-SSC26090001","payload_hash":"abc","core_status":"pending","profile_status":"pending","reconciliation_required":false}}`))
+	}))
+	defer srv.Close()
+
+	client := NewSaleInvoiceCancelClient(PartyConfig{
+		BaseURL: srv.URL, GUID: "smlx", Provider: "SMLGOH", Database: "sml1_2026",
+	}, zap.NewNop())
+	status, resp, err := client.Preview(context.Background(), "SO26090001", SaleInvoiceCancelRequest{
+		Kind: SaleInvoiceCancelKindSaleOrder, DocumentProfileVersion: "sml-document-v1",
+		DocNo: "BF-SSC26090001", Remark2: "full reversal", CreatorCode: "BILLFLOW",
+		CashierCode: "BILLFLOW", UserRequest: "NEXFLOW",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || resp.CancelDocNo() != "BF-SSC26090001" || resp.ProfileStatus() != "pending" {
+		t.Fatalf("status/response = %d/%#v profile=%q", status, resp, resp.ProfileStatus())
+	}
+}
+
 func TestSaleInvoiceCancelClientRejectsUnknownKindBeforeHTTP(t *testing.T) {
 	client := NewSaleInvoiceCancelClient(PartyConfig{
 		BaseURL: "http://127.0.0.1:1", GUID: "smlx", Provider: "SMLGOH", Database: "sml1_2026",

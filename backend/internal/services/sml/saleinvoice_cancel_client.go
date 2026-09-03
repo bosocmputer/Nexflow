@@ -14,8 +14,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// SaleInvoiceCancelClient calls sml-api-bybos endpoints that either void the
-// original sale invoice or create a credit note for an existing sale invoice.
+// SaleInvoiceCancelClient calls sml-api-bybos endpoints that reverse a sale
+// order or either void/credit an existing sale invoice.
 // Nexflow owns workflow/idempotency; sml-api-bybos owns DB-specific inserts.
 type SaleInvoiceCancelClient struct {
 	cfg        PartyConfig
@@ -24,18 +24,24 @@ type SaleInvoiceCancelClient struct {
 }
 
 type SaleInvoiceCancelRequest struct {
-	Kind          SaleInvoiceCancelKind `json:"-"`
-	DocDate       string                `json:"doc_date,omitempty"`
-	DocTime       string                `json:"doc_time,omitempty"`
-	DocFormatCode string                `json:"doc_format_code,omitempty"`
-	DocNo         string                `json:"doc_no,omitempty"`
-	Remark        string                `json:"remark,omitempty"`
-	UserRequest   string                `json:"user_request,omitempty"`
+	Kind                   SaleInvoiceCancelKind `json:"-"`
+	DocumentProfileVersion string                `json:"document_profile_version,omitempty"`
+	DocDate                string                `json:"doc_date,omitempty"`
+	DocTime                string                `json:"doc_time,omitempty"`
+	DocFormatCode          string                `json:"doc_format_code,omitempty"`
+	DocNo                  string                `json:"doc_no,omitempty"`
+	Remark                 string                `json:"remark,omitempty"`
+	Remark2                string                `json:"remark_2,omitempty"`
+	Remark5                string                `json:"remark_5,omitempty"`
+	CreatorCode            string                `json:"creator_code,omitempty"`
+	CashierCode            string                `json:"cashier_code,omitempty"`
+	UserRequest            string                `json:"user_request,omitempty"`
 }
 
 type SaleInvoiceCancelKind string
 
 const (
+	SaleInvoiceCancelKindSaleOrder  SaleInvoiceCancelKind = "sale_order_cancel"
 	SaleInvoiceCancelKindVoid       SaleInvoiceCancelKind = "sale_invoice_cancel"
 	SaleInvoiceCancelKindCreditNote SaleInvoiceCancelKind = "credit_note"
 )
@@ -86,11 +92,11 @@ func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix st
 	if err != nil {
 		return 0, nil, err
 	}
-	action, err := saleInvoiceCancelAction(payload.Kind)
+	collection, action, err := saleInvoiceCancelEndpoint(payload.Kind)
 	if err != nil {
 		return 0, nil, err
 	}
-	path := "/api/v1/ic/sale-invoices/" + url.PathEscape(saleDocNo) + "/" + action
+	path := "/api/v1/ic/" + collection + "/" + url.PathEscape(saleDocNo) + "/" + action
 	if strings.TrimSpace(suffix) == "preview" {
 		path += "/preview"
 	}
@@ -132,14 +138,16 @@ func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix st
 	return resp.StatusCode, out, nil
 }
 
-func saleInvoiceCancelAction(kind SaleInvoiceCancelKind) (string, error) {
+func saleInvoiceCancelEndpoint(kind SaleInvoiceCancelKind) (string, string, error) {
 	switch kind {
+	case SaleInvoiceCancelKindSaleOrder:
+		return "sale-orders", "void", nil
 	case SaleInvoiceCancelKindVoid:
-		return "void", nil
+		return "sale-invoices", "void", nil
 	case "", SaleInvoiceCancelKindCreditNote:
-		return "cancel", nil
+		return "sale-invoices", "cancel", nil
 	default:
-		return "", fmt.Errorf("unsupported SML sale invoice cancellation kind: %s", kind)
+		return "", "", fmt.Errorf("unsupported SML sales cancellation kind: %s", kind)
 	}
 }
 
@@ -232,6 +240,17 @@ func (r *SaleInvoiceCancelResponse) CancelDocNo() string {
 		}
 	}
 	return ""
+}
+
+func (r *SaleInvoiceCancelResponse) ProfileStatus() string {
+	if r == nil {
+		return ""
+	}
+	var root map[string]any
+	if len(r.raw) > 0 {
+		_ = json.Unmarshal(r.raw, &root)
+	}
+	return strings.ToLower(saleInvoiceCancelFindString(root, "profile_status"))
 }
 
 func saleInvoiceCancelFindString(v any, key string) string {

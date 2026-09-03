@@ -405,7 +405,8 @@ func validateShopeeRealtimeCancelDefaults(in models.ChannelDefaultUpsert) error 
 	}
 	endpoint := strings.TrimSpace(in.Endpoint)
 	switch endpoint {
-	case "/api/v1/ic/sale-invoices/:doc_no/void",
+	case "/api/v1/ic/sale-orders/:doc_no/void",
+		"/api/v1/ic/sale-invoices/:doc_no/void",
 		"/api/v1/ic/sale-invoices/:doc_no/cancel":
 	default:
 		return fmt.Errorf("กรุณาเลือกปลายทางยกเลิก SML ที่ระบบรองรับ")

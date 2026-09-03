@@ -328,6 +328,14 @@ func TestValidateShopeeRealtimeCancelDefaults(t *testing.T) {
 		wantErr string
 	}{
 		{
+			name: "sale order cancellation",
+			in: models.ChannelDefaultUpsert{
+				Channel: "shopee_realtime_cancel", BillType: "sale",
+				Endpoint:      "/api/v1/ic/sale-orders/:doc_no/void",
+				DocFormatCode: "SSC", DocPrefix: "SSC", DocRunningFormat: "YYMM####",
+			},
+		},
+		{
 			name: "sale invoice cancellation",
 			in: models.ChannelDefaultUpsert{
 				Channel: "shopee_realtime_cancel", BillType: "sale",
@@ -376,6 +384,13 @@ func TestValidateShopeeRealtimeCancelDefaults(t *testing.T) {
 }
 
 func TestResolveShopeeSMLCancellationRoute(t *testing.T) {
+	saleOrderRoute, err := resolveShopeeSMLCancellationRoute("/api/v1/ic/sale-orders/:doc_no/void")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saleOrderRoute.Kind != sml.SaleInvoiceCancelKindSaleOrder || saleOrderRoute.TransFlag != 37 || saleOrderRoute.DocNoRoute != "saleordercancel" {
+		t.Fatalf("sale order route = %+v", saleOrderRoute)
+	}
 	voidRoute, err := resolveShopeeSMLCancellationRoute("/api/v1/ic/sale-invoices/:doc_no/void")
 	if err != nil {
 		t.Fatal(err)
@@ -551,6 +566,20 @@ func TestAutoSMLCancellationRetryRestoresImmutablePayloadAndRouteKind(t *testing
 	if _, err := h.smlCancellationRequestForAttempt(context.Background(), &shopeeSMLCancelDocumentContext{}, job); err == nil {
 		t.Fatal("mismatched persisted doc_no must fail closed")
 	}
+
+	ssc := models.ShopeeSMLCancellation{
+		CancelSMLDocNo: "BF-SSC26090001",
+		RouteEndpoint:  "/api/v1/ic/sale-orders/:doc_no/void",
+		RequestPayload: json.RawMessage(`{"document_profile_version":"sml-document-v1","doc_no":"BF-SSC26090001","doc_date":"2026-09-03","doc_time":"13:49","doc_format_code":"SSC","remark_5":"NEXFLOW|shopee_realtime|ORDER-1","creator_code":"BILLFLOW","cashier_code":"BILLFLOW","user_request":"NEXFLOW"}`),
+	}
+	restored, err := h.smlCancellationRequestForAttempt(context.Background(), &shopeeSMLCancelDocumentContext{}, ssc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Kind != sml.SaleInvoiceCancelKindSaleOrder || restored.DocNo != ssc.CancelSMLDocNo ||
+		restored.DocumentProfileVersion != sml.InvoiceDocumentProfileVersion || restored.Remark5 != "NEXFLOW|shopee_realtime|ORDER-1" {
+		t.Fatalf("restored SSC request = %+v", restored)
+	}
 }
 
 func TestShopeeSMLCancellationRouteSignatureCoversImmutableRoutingFields(t *testing.T) {
@@ -579,18 +608,37 @@ func TestShopeeSMLCancellationRouteSignatureCoversImmutableRoutingFields(t *test
 }
 
 func TestSaleInvoiceCancelRequestUsesSavedRemarkAsLiteralText(t *testing.T) {
-	h := &ShopeeRealtimeHandler{}
+	h := &ShopeeRealtimeHandler{importH: &ShopeeImportHandler{cfg: &config.Config{
+		SMLDocumentProfileRouteModes: map[string]string{"creditnote": smlprofile.ModeActive},
+	}}}
 	cancelCtx := &shopeeSMLCancelDocumentContext{
 		Snapshot:  &models.ShopeeOrderSnapshot{OrderSN: "ORDER-1"},
-		RouteDef:  &models.ChannelDefault{DocFormatCode: "CN", Remark: "{{channel}}|{{order_ref}}|{{bill_no}}"},
-		RouteMeta: shopeeSMLCancellationRoute{Kind: sml.SaleInvoiceCancelKindCreditNote},
+		RouteDef:  &models.ChannelDefault{DocFormatCode: "CN", Remark: "{{channel}}|{{order_ref}}|{{bill_no}}", Remark2: "เหตุผล", ConfigVersion: 4},
+		RouteMeta: shopeeSMLCancellationRoute{Kind: sml.SaleInvoiceCancelKindCreditNote, StockRoute: "creditnote"},
 	}
 	req, err := h.saleInvoiceCancelRequest(cancelCtx, "CN-1", time.Date(2026, 9, 2, 10, 30, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Remark != "{{channel}}|{{order_ref}}|{{bill_no}}" || req.UserRequest != "NEXFLOW" {
+	if req.Remark != "{{channel}}|{{order_ref}}|{{bill_no}}" || req.Remark2 != "เหตุผล" ||
+		req.Remark5 != "NEXFLOW|shopee_realtime|ORDER-1" || req.DocumentProfileVersion != sml.InvoiceDocumentProfileVersion ||
+		req.CreatorCode != "BILLFLOW" || req.CashierCode != "BILLFLOW" || req.UserRequest != "NEXFLOW" {
 		t.Fatalf("request=%+v", req)
+	}
+}
+
+func TestDocumentProfileRouteModeUsesCancellationRouteScope(t *testing.T) {
+	h := &ShopeeRealtimeHandler{importH: &ShopeeImportHandler{cfg: &config.Config{
+		SMLDocumentProfileMode: smlprofile.ModeActive,
+		SMLDocumentProfileRouteModes: map[string]string{
+			"saleinvoice": smlprofile.ModeActive, "saleordercancel": smlprofile.ModeShadow,
+		},
+	}}}
+	if got := h.documentProfileRouteMode("saleordercancel"); got != smlprofile.ModeShadow {
+		t.Fatalf("saleordercancel mode=%q", got)
+	}
+	if got := h.documentProfileRouteMode("unknown"); got != smlprofile.ModeOff {
+		t.Fatalf("unknown mode=%q", got)
 	}
 }
 

@@ -916,6 +916,12 @@ type shopeeSMLCancellationRoute struct {
 
 func resolveShopeeSMLCancellationRoute(endpoint string) (shopeeSMLCancellationRoute, error) {
 	switch strings.TrimSpace(endpoint) {
+	case "/api/v1/ic/sale-orders/:doc_no/void":
+		return shopeeSMLCancellationRoute{
+			Kind: sml.SaleInvoiceCancelKindSaleOrder, DocNoRoute: "saleordercancel",
+			Destination: "ขาย -> ยกเลิกใบสั่งขาย", TransFlag: 37,
+			FallbackPrefix: "SSC", StockRoute: "saleordercancel",
+		}, nil
 	case "/api/v1/ic/sale-invoices/:doc_no/void":
 		return shopeeSMLCancellationRoute{
 			Kind: sml.SaleInvoiceCancelKindVoid, DocNoRoute: "saleinvoicecancel",
@@ -1053,7 +1059,7 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 		CreatedBy:      c.GetString("user_id"),
 		Response:       requestRaw,
 		RouteEndpoint:  cancelCtx.RouteDef.Endpoint,
-		RouteSignature: shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef, h.documentProfileMode()),
+		RouteSignature: shopeeSMLCancellationRouteSignature(cancelCtx.RouteDef, h.documentProfileRouteMode(cancelCtx.RouteMeta.StockRoute)),
 	})
 	if err != nil {
 		h.logger.Warn("shopee_realtime: start SML cancellation failed", zap.Int64("shop_id", shopID), zap.String("order_sn", orderSN), zap.Error(err))
@@ -1170,7 +1176,7 @@ func (h *ShopeeRealtimeHandler) previewBulkCreateDocuments(ctx context.Context, 
 	}
 	signature := ""
 	if routeReady {
-		signature = shopeeRealtimeRouteSignature(cfg, routeDef, h.documentProfileMode())
+		signature = shopeeRealtimeRouteSignature(cfg, routeDef, h.documentProfileRouteMode(shopeeImportRoute(cfg)))
 	}
 
 	ready := []shopeeRealtimeBulkOrderResult{}
@@ -1254,12 +1260,25 @@ func (h *ShopeeRealtimeHandler) realtimeRouteSignature(ctx context.Context) stri
 	if err != nil {
 		return ""
 	}
-	return shopeeRealtimeRouteSignature(cfg, def, h.documentProfileMode())
+	return shopeeRealtimeRouteSignature(cfg, def, h.documentProfileRouteMode(shopeeImportRoute(cfg)))
 }
 
 func (h *ShopeeRealtimeHandler) documentProfileMode() string {
 	if h != nil && h.importH != nil && h.importH.cfg != nil {
 		return h.importH.cfg.SMLDocumentProfileMode
+	}
+	return smlprofile.ModeOff
+}
+
+func (h *ShopeeRealtimeHandler) documentProfileRouteMode(route string) string {
+	route = strings.ToLower(strings.TrimSpace(route))
+	if h != nil && h.importH != nil && h.importH.cfg != nil {
+		if mode, ok := h.importH.cfg.SMLDocumentProfileRouteModes[route]; ok {
+			return mode
+		}
+		if route == "saleinvoice" {
+			return h.importH.cfg.SMLDocumentProfileMode
+		}
 	}
 	return smlprofile.ModeOff
 }
@@ -1562,10 +1581,22 @@ func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCan
 		DocFormatCode: "CN",
 		DocNo:         strings.TrimSpace(docNo),
 		Remark:        remark,
+		Remark5:       "NEXFLOW|shopee_realtime|" + strings.TrimSpace(cancelCtx.Snapshot.OrderSN),
+		CreatorCode:   "BILLFLOW",
+		CashierCode:   "BILLFLOW",
 		UserRequest:   "NEXFLOW",
 	}
-	if cancelCtx != nil && cancelCtx.RouteDef != nil && strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode) != "" {
+	if cancelCtx.RouteDef != nil {
+		req.Remark2 = strings.TrimSpace(cancelCtx.RouteDef.Remark2)
+		if err := smlprofile.ValidateFreeText("remark_2", req.Remark2); err != nil {
+			return sml.SaleInvoiceCancelRequest{}, err
+		}
+	}
+	if cancelCtx.RouteDef != nil && strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode) != "" {
 		req.DocFormatCode = strings.TrimSpace(cancelCtx.RouteDef.DocFormatCode)
+	}
+	if h.documentProfileRouteMode(cancelCtx.RouteMeta.StockRoute) == smlprofile.ModeActive {
+		req.DocumentProfileVersion = sml.InvoiceDocumentProfileVersion
 	}
 	return req, nil
 }
