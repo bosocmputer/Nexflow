@@ -2,10 +2,10 @@
 
 ## Handoff
 
-- Last completed: user-approved four-tenant Document Profile activation on
-  2026-09-03
-- Active task: none for today; T11 deployed percentiles and the remaining
-  first-ten monitoring resume in the next work session
+- Last completed: reclassify the first-ten-document check as non-blocking
+  post-release monitoring on 2026-09-03
+- Active task: no release blocker; T11 deployed percentiles and additional AOY
+  document observations proceed only when organic production traffic exists
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
@@ -79,10 +79,12 @@
   `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
-- Next action: monitor the next nine AOY Profile documents and collect deployed
-  p95/p99/queue-age evidence. When another tenant connects Shopee, validate its
-  tenant-specific SML route/preview before enabling that shop's Auto SML; no
-  further Profile-mode change is required.
+- Next action: passively inspect new AOY Profile documents as real orders arrive;
+  do not manufacture orders or delay production waiting for a fixed count.
+  Collect deployed p95/p99/queue-age evidence when traffic is sufficient. When
+  another tenant connects Shopee, validate its tenant-specific SML route/preview
+  before enabling that shop's Auto SML; no further Profile-mode change is
+  required.
 
 ## Phase A — Proof and contract
 
@@ -148,9 +150,18 @@
 - [x] Controlled automatic document parity and no-duplicate proof (the user
       explicitly chose the Auto SML path instead of a separate manual send)
 - [x] Enable AOY Auto SML with a new cutoff and no backfill
-- [ ] Verify the first 10 AOY documents
+- [x] Approve AOY production use after the controlled document passed; the
+      first-ten observation is not a release blocker
 - [x] Activate Document Profile for Demo, Lanboon and Ploy before their future
       Shopee connection, per the user's explicit 2026-09-03 request
+
+## Post-release monitoring (non-blocking)
+
+- [x] Verify controlled AOY document `BF-INV26090002` end to end
+- [ ] Observe up to nine additional AOY documents only as real customer orders
+      naturally arrive; there is no deadline and this does not block production
+- [ ] Complete deployed Settings/Gateway/queue/UI percentile evidence when the
+      sample size is sufficient
 
 ## Per-Increment Completion Record
 
@@ -469,6 +480,19 @@
   that tenant's backend. Documents, attempts and migrations must remain intact.
 - Next action: validate the SML route and signed preview for a newly connected
   tenant before enabling its shop-level Auto SML setting.
+
+### Release-gate reclassification
+
+- User decision: AOY may continue normal production use without waiting for an
+  unpredictable number of new Shopee orders.
+- Release status: the controlled end-to-end document `BF-INV26090002`,
+  no-duplicate proof, stock result, health checks and rollback controls satisfy
+  the release gate. No code or runtime configuration changed in this checkpoint.
+- Monitoring status: the next nine documents are a passive post-release sample,
+  not a deployment gate, deadline or reason to generate artificial orders.
+  Evidence is accumulated only when real orders naturally arrive.
+- Next action: remain idle until organic AOY traffic provides a new document or
+  production telemetry has enough samples for T11.
 
 For every completed task, update Handoff with:
 
