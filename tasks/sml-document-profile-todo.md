@@ -2,16 +2,19 @@
 
 ## Handoff
 
-- Last completed: T18 completed the Sale Order Profile vertical slice in both
-  repositories. Profile V1 now uses Sale Order `items`, detail `calc_flag=1`,
-  shipment/main log/route-exact ERP JSON, a uniform Profile response, and
-  route-aware durable reconciliation. Legacy Sale Order JSON remains byte-stable.
-- Active task: T19 Sale Order Cancellation (SSC) vertical slice. The original first-organic-post-
-  hotfix observation and T11 percentiles remain non-blocking.
+- Last completed: T19 completed the Sale Order Cancellation (SSC) vertical
+  slice in both repositories. Gateway now supports SSC preview/create and doc
+  number aliases, exact flag-37 reversal rows, one source-scoped advisory lock,
+  Profile hash ownership checks, main/ERP logs and source `used_status=1`.
+  Nexflow carries the route-specific immutable Profile payload and reuses the
+  existing independent stock-recalculation queue after core success.
+- Active task: T20 Invoice Void and Credit Note Profile. The original first-
+  organic-post-hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `f9a20b8`
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `c448d1e`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `9abef9a`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -146,9 +149,9 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: add failing T19 SSC preview/create/doc-number and source-lock
-  tests, then implement exact flag-37 detail reversal, source ownership checks
-  and stock recalculation separation. Separately, inspect
+- Next action: add failing T20 SIC/CN Profile parity tests, then implement
+  header-only SIC audit ownership and CN VAT/AP-AR/exact branch reconciliation.
+  Separately, inspect
   the first organic AOY VAT Profile document created after Gateway `53393b6`;
   do not manufacture or backfill a Shopee order.
 
@@ -275,10 +278,10 @@
   - [x] Add Profile fields/status/hash and route-correct main/ERP logs
   - [x] Write detail `calc_flag=1`; require shipment for Marketplace goods
   - [x] Test retry, mismatch, 500-item/expanded-item limits and logs DB outage
-- [ ] **T19 — Sale Order Cancellation vertical slice** _(active)_
-  - [ ] Add SSC Preview/Create/doc-number aliases and trans flag 37
-  - [ ] Add common source lock, source fingerprint and exact detail references
-  - [ ] Mark source `used_status=1` and queue stock recalculation after core
+- [x] **T19 — Sale Order Cancellation vertical slice**
+  - [x] Add SSC Preview/Create/doc-number aliases and trans flag 37
+  - [x] Add common source lock, source fingerprint and exact detail references
+  - [x] Mark source `used_status=1` and queue stock recalculation after core
 - [ ] **Checkpoint B — SO/SSC parity and concurrency**
   - [ ] SO/SSC match fixtures and contain no VAT/AP-AR/GL placeholders
   - [ ] Lost response/concurrent cross-kind cancellation creates no duplicate
@@ -381,6 +384,35 @@
   until T19 SSC and T22 atomic route bundle/capability checks are complete.
 - Next action: T19 failing SSC preview/create/doc-number and source-lock tests,
   then exact flag-37 reversal and stock-recalculation separation.
+
+### T19 completion record
+
+- Completed task: T19
+- Nexflow commit: `c448d1e` (`feat: propagate sale order cancellation profiles`)
+- Gateway commit: `9abef9a` (`feat: complete sale order cancellation profile`)
+- Contract evidence: `SO26090001 -> SSC26090001` is encoded as TRANS_FLAG 37,
+  `cancel_type=2`, detail `calc_flag=-1`, exact source line/branch/amount
+  references, source `used_status=1`, no VAT/shipment/AP-AR/GL placeholder,
+  blank main-menu value and only the four verified ERP JSON sections.
+- Safety: all SSC/SIC/CN requests take one 3-second PostgreSQL advisory lock
+  keyed by source type/document. SIC and CN also reject the other destination
+  after taking the same lock. A Profile retry requires the existing BILLFLOW
+  marker and matching canonical hash; a manual SML SSC is returned as
+  `409 source_already_cancelled_externally` and is never adopted or relabelled.
+- Tests: both repositories pass full `go test ./...`, `go test -race ./...`,
+  `go vet ./...` and diff checks. Gateway OpenAPI parses with `jq`; focused
+  tests cover SSC contract/hash/log shapes, lock timeout, doc-number aliases
+  and request limits. Nexflow tests cover endpoint selection, active Profile
+  fields, route-scoped mode/signature and immutable lost-response retry.
+- Feature mode: no runtime mode or production deployment changed. The new
+  route-mode variable is still absent, so SSC/SIC/CN remain `off`; Sale Invoice
+  continues to inherit the deployed global `active` mode.
+- Production evidence: committed PII-free fixture and prior read-only
+  `SO26090001 -> SSC26090001` evidence only; no production SML write occurred.
+- Residual risk: Checkpoint B remains open until the full database fault/
+  concurrent test matrix is rerun with T20's sibling cancellation writers.
+- Next action: T20 failing SIC/CN Profile parity and manual-ownership tests,
+  then complete their transactional audit/VAT/AP-AR reconciliation paths.
 
 ## Per-Increment Completion Record
 
