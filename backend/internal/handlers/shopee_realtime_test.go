@@ -642,6 +642,24 @@ func TestDocumentProfileRouteModeUsesCancellationRouteScope(t *testing.T) {
 	}
 }
 
+func TestCancellationShadowModeDoesNotWriteProfileExtensionFields(t *testing.T) {
+	h := &ShopeeRealtimeHandler{importH: &ShopeeImportHandler{cfg: &config.Config{
+		SMLDocumentProfileRouteModes: map[string]string{"creditnote": smlprofile.ModeShadow},
+	}}}
+	ctx := &shopeeSMLCancelDocumentContext{
+		Snapshot:  &models.ShopeeOrderSnapshot{OrderSN: "ORDER-1"},
+		RouteDef:  &models.ChannelDefault{DocFormatCode: "CN", Remark2: "validated shadow text"},
+		RouteMeta: shopeeSMLCancellationRoute{Kind: sml.SaleInvoiceCancelKindCreditNote, StockRoute: "creditnote"},
+	}
+	req, err := h.saleInvoiceCancelRequest(ctx, "CN-1", time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.DocumentProfileVersion != "" || req.Remark2 != "" || req.Remark5 != "" || req.CreatorCode != "" || req.CashierCode != "" {
+		t.Fatalf("shadow request must preserve legacy Gateway writes: %+v", req)
+	}
+}
+
 func TestSMLCancellationItemCodesAreBoundedToUniqueMappedItems(t *testing.T) {
 	ah1, ah2 := " AH-0002 ", "AH-0001"
 	blank := " "

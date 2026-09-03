@@ -1581,14 +1581,12 @@ func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCan
 		DocFormatCode: "CN",
 		DocNo:         strings.TrimSpace(docNo),
 		Remark:        remark,
-		Remark5:       "NEXFLOW|shopee_realtime|" + strings.TrimSpace(cancelCtx.Snapshot.OrderSN),
-		CreatorCode:   "BILLFLOW",
-		CashierCode:   "BILLFLOW",
 		UserRequest:   "NEXFLOW",
 	}
+	remark2 := ""
 	if cancelCtx.RouteDef != nil {
-		req.Remark2 = strings.TrimSpace(cancelCtx.RouteDef.Remark2)
-		if err := smlprofile.ValidateFreeText("remark_2", req.Remark2); err != nil {
+		remark2 = strings.TrimSpace(cancelCtx.RouteDef.Remark2)
+		if err := smlprofile.ValidateFreeText("remark_2", remark2); err != nil {
 			return sml.SaleInvoiceCancelRequest{}, err
 		}
 	}
@@ -1597,6 +1595,10 @@ func (h *ShopeeRealtimeHandler) saleInvoiceCancelRequest(cancelCtx *shopeeSMLCan
 	}
 	if h.documentProfileRouteMode(cancelCtx.RouteMeta.StockRoute) == smlprofile.ModeActive {
 		req.DocumentProfileVersion = sml.InvoiceDocumentProfileVersion
+		req.Remark2 = remark2
+		req.Remark5 = "NEXFLOW|shopee_realtime|" + strings.TrimSpace(cancelCtx.Snapshot.OrderSN)
+		req.CreatorCode = "BILLFLOW"
+		req.CashierCode = "BILLFLOW"
 	}
 	return req, nil
 }
