@@ -2,20 +2,19 @@
 
 ## Handoff
 
-- Last completed: T24 local verification and the safe production baseline are
-  deployed. Gateway capability V2 is live, migration 093 is applied to all four
-  Nexflow databases, and every tenant runs the same Nexflow commit with only
-  Sale Invoice Profile active; the four new routes remain shadow.
-- Active task: authenticated production browser QA and AOY controlled parity
-  for SO/SSC/SIC/CN. No authenticated Nexflow browser session was available
-  during deployment, so no user credential was changed or copied for QA. The
-  first organic post-hotfix observation and long-running percentiles remain
+- Last completed: authenticated T24 production browser QA and the responsive
+  dialog correction are deployed. Gateway capability V2 is live, migration 093
+  is applied to all four Nexflow databases, and every tenant runs the same
+  Nexflow commit with only Sale Invoice Profile active; the four new routes
+  remain shadow.
+- Active task: AOY controlled parity for SO/SSC/SIC/CN. The first organic
+  post-hotfix observation, real-user RUM and long-running percentiles remain
   non-blocking monitoring.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
-  `codex/marketplace-units-conversion` / `b82ab3e`; durable production handoff
+  `codex/marketplace-units-conversion` / `ed70202`; durable production handoff
   continues on the same branch.
 - Nexflow branch/deployed code: `codex/marketplace-units-conversion` /
-  `b82ab3e`; handoff-only documentation commits may be newer than the deployed
+  `ed70202`; handoff-only documentation commits may be newer than the deployed
   code without changing runtime behavior.
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `3e2ed0e`
 - Feature mode: all four instances use
@@ -41,8 +40,12 @@
   0.119/0.436/1.081 ms for 50/200/500 lines on Apple M1 Pro; the route-bundle
   normalize/hash/sign/verify contract is 0.010 ms. On deployed AOY, 20 sequential
   samples measured route-bundle GET p95 at 3.117 ms and Preview p95 at 1.711 ms;
-  both are far below their 300/500 ms budgets. Gateway database-write p95 and UI
-  INP still require controlled traffic/authenticated browser telemetry.
+  both are far below their 300/500 ms budgets. Authenticated DevTools Network
+  measured the dialog count/Preview requests at 31-66 ms. At 390px, Event Timing
+  measured 3-5 ms handler processing plus 37-64 ms presentation; the CUA driver
+  itself held synthetic clicks for 360-371 ms, so its raw 400-440 ms click entry
+  is automation input delay rather than application work. Real-user RUM and
+  Gateway database-write p95 still require organic/controlled traffic.
 - Browser evidence: production AOY renders the back action inline before
   `BF-INV26090002`, followed by `ขาย -> ขายสินค้าและบริการ` and
   `ส่งแล้ว (AUTO)` in one compact header. The duplicate successful-status card
@@ -52,9 +55,13 @@
   `inquiry_type` key, numeric code or fallback wording. An empty Shopee API
   artifact section is hidden; timelines and real artifacts remain available.
   Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow and
-  zero console warnings/errors.
+  zero new console warnings/errors. The authenticated route-bundle dialog also
+  passes desktop and 390x844: labels/accessible names are present; Tab moves
+  from remark 1 to remark 2, shipping and onward controls; Enter runs the
+  read-only Preview; Escape closes the dialog. Preview enables Save without
+  saving, enabling automation or creating an SML document.
 - Production evidence: Central Gateway `3e2ed0e`; Demo, AOY, Lanboon and Ploy
-  Nexflow `b82ab3e` are deployed. Gateway readiness passes for
+  Nexflow `ed70202` are deployed. Gateway readiness passes for
   demo/aoy/lbk63/ploy_test, all five capability routes resolve at revision
   `sml-sales-document-profile-v2-20260903`, and all four backends have migration
   093 plus the exact route-mode map above. Controlled
@@ -110,6 +117,10 @@
   `/mnt/data/nextstep-node-2/deploy-backups/sml-vat-effective-period-20260903-034424`,
   with rollback container
   `nexflow-sml-api-bybos-pre-vat-20260903-034639`.
+- Responsive-fix backups: Demo `pre-deploy-20260903-104107.sql.gz`, AOY
+  `pre-deploy-20260903-104309.sql.gz`, Lanboon
+  `pre-deploy-20260903-104505.sql.gz`, and Ploy
+  `pre-deploy-20260903-104626.sql.gz`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
   Early writes exposed PostgreSQL 11 parameter inference conflicts and rolled
   back atomically; candidate lookup proved that no core existed. Gateway fixes
@@ -161,12 +172,11 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: USER signs in to AOY Nexflow for the remaining production
-  desktop/390px keyboard/accessibility/network QA. Then promote one route at a
-  time only after its controlled Preview/Write matches the committed fixture;
-  USER must reconfirm before AOY automation resumes. Separately inspect the
-  first organic AOY VAT Profile document created after Gateway `53393b6`; do
-  not manufacture or backfill a Shopee order.
+- Next action: promote one AOY route at a time only after its controlled
+  Preview/Write matches the committed fixture; USER must reconfirm before AOY
+  automation resumes. Separately inspect the first organic AOY VAT Profile
+  document created after Gateway `53393b6`; do not manufacture or backfill a
+  Shopee order.
 
 ## Phase A — Proof and contract
 
@@ -381,7 +391,7 @@
   - [x] Fault matrix and source-to-Profile/stock trace proof
   - [x] Backup/deploy Gateway first, then the same Nexflow commit to all four
   - [x] Keep new routes shadow outside controlled AOY parity; no backfill
-  - [ ] Authenticated production dialog QA at desktop/390px, keyboard,
+  - [x] Authenticated production dialog QA at desktop/390px, keyboard,
         accessibility, console/network and UI INP
   - [ ] Controlled AOY parity for each promoted route and USER reconfirm before
         resuming automation
@@ -389,7 +399,7 @@
 ### T24 production baseline record
 
 - Deployed commits: Gateway `3e2ed0e`; Nexflow Demo/AOY/Lanboon/Ploy
-  `b82ab3e`. The stopped Gateway rollback container is
+  `ed70202`. The stopped Gateway rollback container is
   `nexflow-sml-api-bybos-pre-profile-v2-20260903-094700`.
 - Verification: both repositories passed full `go test ./...`,
   `go test -race ./...` and `go vet ./...`. Frontend focused tests, lint with
@@ -423,15 +433,28 @@
   `/mnt/data/nextstep-node-2/deploy-backups/sml-sales-profile-v2-20260903-094700`.
   All tenant runtime environments have pre-change snapshots at timestamp
   `20260903-100335`; database backup names are recorded in Handoff above.
-- Browser limitation: the production URL and login page load, but the available
-  browser had no authenticated Nexflow session. QA did not copy/reset a user
-  password or forge a persistent browser session. The dialog's deployed API,
-  Preview, authorization, capability and performance paths were verified using
-  a five-minute in-memory admin token and left no saved state.
-- Next action: use a USER-authenticated AOY session for the remaining visual,
-  keyboard, accessibility, network and INP pass. Promote and write one route at
-  a time only when USER is ready to create controlled evidence in SML; compare
-  against committed fixtures before changing that route from shadow to active.
+- Authenticated browser QA: USER signed in to AOY. The dialog passed desktop and
+  true 390x844 checks, accessible labels/focus order, keyboard Preview/Escape,
+  clean post-login Console and successful 200 Network responses. QA found the
+  three footer buttons exceeded the 390px dialog by 18px; `ed70202` stacks them
+  full-width below 640px. Production recheck proves body 390, dialog
+  client/scroll width 388/388 and every action within x=17-373. No Save, Enable,
+  route change or SML write occurred.
+- Responsive-fix validation/deploy: frontend lint passes with zero errors and 35
+  pre-existing warnings; production build and sales-only guard pass. Demo, AOY,
+  Lanboon and Ploy health/database auth, protected counts, edge/Gateway probes
+  and severe-log scans pass after deploying `ed70202`. Backups are Demo
+  `pre-deploy-20260903-104107.sql.gz`, AOY
+  `pre-deploy-20260903-104309.sql.gz`, Lanboon
+  `pre-deploy-20260903-104505.sql.gz`, and Ploy
+  `pre-deploy-20260903-104626.sql.gz`.
+- Performance note: Preview/count XHRs completed in 31-66 ms. Event Timing shows
+  3-5 ms application processing and 37-64 ms presentation. The CUA synthetic
+  click adds 360-371 ms of tool input hold to the raw click entry; long-running
+  real-user RUM remains monitoring evidence, not a release blocker.
+- Next action: promote and write one route at a time only when USER is ready to
+  create controlled evidence in SML; compare against committed fixtures before
+  changing that route from shadow to active.
 
 ### T15 completion record
 
