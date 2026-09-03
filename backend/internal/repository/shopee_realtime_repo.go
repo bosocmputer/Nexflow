@@ -16,7 +16,8 @@ import (
 )
 
 type ShopeeRealtimeRepo struct {
-	db *sql.DB
+	db        *sql.DB
+	tenantKey string
 }
 
 type ShopeeSnapshotUpsert struct {
@@ -42,6 +43,13 @@ type ShopeePushEventInput struct {
 
 func NewShopeeRealtimeRepo(db *sql.DB) *ShopeeRealtimeRepo {
 	return &ShopeeRealtimeRepo{db: db}
+}
+
+func (r *ShopeeRealtimeRepo) WithTenantKey(tenantKey string) *ShopeeRealtimeRepo {
+	if r != nil {
+		r.tenantKey = strings.TrimSpace(tenantKey)
+	}
+	return r
 }
 
 func (r *ShopeeRealtimeRepo) DB() *sql.DB { return r.db }
@@ -1175,7 +1183,9 @@ func (r *ShopeeRealtimeRepo) LatestSMLCancellation(ctx context.Context, shopID i
 		        trigger_source, route_endpoint, route_signature, error_code,
 		        attempts, next_run_at, lease_until,
 		        stock_recalc_status, stock_recalc_error, stock_recalc_attempts,
-		        stock_recalc_next_run_at, stock_recalc_lease_until
+		        stock_recalc_next_run_at, stock_recalc_lease_until,
+		        core_status,profile_version,profile_status,profile_payload_hash,
+		        profile_required_checks,profile_completed_checks,profile_reconciliation_required
 		   FROM shopee_sml_cancellations
 		  WHERE shop_id = $1
 		    AND order_sn = $2`+whereSale+`
@@ -1190,7 +1200,7 @@ func (r *ShopeeRealtimeRepo) LatestSMLCancellation(ctx context.Context, shopID i
 	if !rows.Next() {
 		return nil, nil
 	}
-	row, err := scanAutoSMLCancellation(rows)
+	row, err := scanAutoSMLCancellationWithProfile(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -1333,13 +1343,24 @@ func (r *ShopeeRealtimeRepo) StartSMLCancellationCreate(ctx context.Context, in 
 	return &out, "started", nil
 }
 
-func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, status, cancelSMLDocNo string, response json.RawMessage, errMsg string) (*models.ShopeeSMLCancellation, error) {
+func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, status, cancelSMLDocNo string, response json.RawMessage, errMsg string, profileResults ...SMLCancellationProfileResult) (*models.ShopeeSMLCancellation, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, nil
 	}
+	profile, err := normalizeSMLCancellationProfileResult(profileResults...)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 	resp := jsonForDB(response)
-	row := r.db.QueryRowContext(ctx,
+	requiredChecks, _ := json.Marshal(profile.RequiredChecks)
+	completedChecks, _ := json.Marshal(profile.CompletedChecks)
+	row := tx.QueryRowContext(ctx,
 		`UPDATE shopee_sml_cancellations AS target
 		    SET status = $2,
 		        cancel_sml_doc_no = COALESCE(NULLIF($3, ''), cancel_sml_doc_no),
@@ -1347,6 +1368,13 @@ func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, st
 		        error = $5,
 		        error_code = CASE WHEN $2 IN ('created','already_exists') THEN '' ELSE error_code END,
 		        lease_until = NULL,
+		        core_status = CASE WHEN $7='' THEN core_status ELSE $6 END,
+		        profile_version = CASE WHEN $7='' THEN profile_version ELSE $7 END,
+		        profile_status = CASE WHEN $7='' THEN profile_status ELSE $8 END,
+		        profile_payload_hash = CASE WHEN $7='' THEN profile_payload_hash ELSE $9 END,
+		        profile_required_checks = CASE WHEN $7='' THEN profile_required_checks ELSE $10::jsonb END,
+		        profile_completed_checks = CASE WHEN $7='' THEN profile_completed_checks ELSE $11::jsonb END,
+		        profile_reconciliation_required = CASE WHEN $7='' THEN profile_reconciliation_required ELSE $12 END,
 		        stock_recalc_status = CASE
 		          WHEN $2 IN ('created','already_exists')
 		           AND target.stock_recalc_status NOT IN ('pending','running','succeeded')
@@ -1386,9 +1414,26 @@ func (r *ShopeeRealtimeRepo) CompleteSMLCancellation(ctx context.Context, id, st
 		            stock_recalc_status, stock_recalc_error, stock_recalc_attempts,
 		            stock_recalc_next_run_at, stock_recalc_lease_until`,
 		id, strings.TrimSpace(status), strings.TrimSpace(cancelSMLDocNo), resp, truncateDBText(errMsg, 800),
+		profile.CoreStatus, profile.Version, profile.ProfileStatus, profile.PayloadHash,
+		string(requiredChecks), string(completedChecks), profile.ReconciliationRequired,
 	)
 	out, err := scanAutoSMLCancellation(row)
 	if err != nil {
+		return nil, err
+	}
+	if profile.Version != "" && (status == "created" || status == "already_exists") {
+		if err := r.persistSMLCancellationProfileJob(ctx, tx, out.ID, profile); err != nil {
+			return nil, err
+		}
+		out.CoreStatus = profile.CoreStatus
+		out.ProfileVersion = profile.Version
+		out.ProfileStatus = profile.ProfileStatus
+		out.ProfilePayloadHash = profile.PayloadHash
+		out.ProfileRequiredChecks = append([]string(nil), profile.RequiredChecks...)
+		out.ProfileCompletedChecks = append([]string(nil), profile.CompletedChecks...)
+		out.ProfileNeedsRepair = profile.ReconciliationRequired
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -1404,9 +1449,10 @@ func (r *ShopeeRealtimeRepo) PrepareSMLCancellationCreate(ctx context.Context, i
 		UPDATE shopee_sml_cancellations
 		   SET cancel_sml_doc_no=$2,
 		       request_payload=$3::jsonb,
+		       request_payload_bytes=$4,
 		       updated_at=NOW()
 		 WHERE id=$1::uuid
-		   AND status='creating'`, id, cancelSMLDocNo, request)
+		   AND status='creating'`, id, cancelSMLDocNo, request, []byte(request))
 	if err != nil {
 		return err
 	}
@@ -2496,6 +2542,46 @@ func scanAutoSMLCancellation(rows snapshotScanner) (models.ShopeeSMLCancellation
 	}
 	if stockLeaseUntil.Valid {
 		out.StockRecalcLeaseUntil = &stockLeaseUntil.Time
+	}
+	return out, nil
+}
+
+func scanAutoSMLCancellationWithProfile(rows snapshotScanner) (models.ShopeeSMLCancellation, error) {
+	var out models.ShopeeSMLCancellation
+	var billID, createdBy sql.NullString
+	var completedAt, nextRunAt, leaseUntil, stockNextRunAt, stockLeaseUntil sql.NullTime
+	var requiredChecks, completedChecks []byte
+	if err := rows.Scan(
+		&out.ID, &out.ShopID, &out.OrderSN, &billID, &out.SaleSMLDocNo,
+		&out.CancelSMLDocNo, &out.Status, &out.Error, &out.Response, &createdBy,
+		&out.CreatedAt, &out.UpdatedAt, &completedAt, &out.RequestPayload,
+		&out.TriggerSource, &out.RouteEndpoint, &out.RouteSignature, &out.ErrorCode,
+		&out.Attempts, &nextRunAt, &leaseUntil,
+		&out.StockRecalcStatus, &out.StockRecalcError, &out.StockRecalcAttempts,
+		&stockNextRunAt, &stockLeaseUntil, &out.CoreStatus, &out.ProfileVersion,
+		&out.ProfileStatus, &out.ProfilePayloadHash, &requiredChecks, &completedChecks,
+		&out.ProfileNeedsRepair,
+	); err != nil {
+		return out, err
+	}
+	attachShopeeSMLCancellationNulls(&out, billID, createdBy, completedAt)
+	if nextRunAt.Valid {
+		out.NextRunAt = nextRunAt.Time
+	}
+	if leaseUntil.Valid {
+		out.LeaseUntil = &leaseUntil.Time
+	}
+	if stockNextRunAt.Valid {
+		out.StockRecalcNextRunAt = &stockNextRunAt.Time
+	}
+	if stockLeaseUntil.Valid {
+		out.StockRecalcLeaseUntil = &stockLeaseUntil.Time
+	}
+	if err := json.Unmarshal(requiredChecks, &out.ProfileRequiredChecks); err != nil {
+		return out, fmt.Errorf("decode cancellation profile required checks: %w", err)
+	}
+	if err := json.Unmarshal(completedChecks, &out.ProfileCompletedChecks); err != nil {
+		return out, fmt.Errorf("decode cancellation profile completed checks: %w", err)
 	}
 	return out, nil
 }

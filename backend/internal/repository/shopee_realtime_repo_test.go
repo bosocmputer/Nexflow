@@ -173,7 +173,7 @@ func TestPrepareSMLCancellationCreatePersistsAttemptBeforeWrite(t *testing.T) {
 	repo := NewShopeeRealtimeRepo(db)
 
 	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations.*cancel_sml_doc_no=\$2.*request_payload=\$3::jsonb.*status='creating'`).
-		WithArgs("11111111-1111-1111-1111-111111111111", "CN26080002", sqlmock.AnyArg()).
+		WithArgs("11111111-1111-1111-1111-111111111111", "CN26080002", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err = repo.PrepareSMLCancellationCreate(

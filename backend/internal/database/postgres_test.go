@@ -238,6 +238,31 @@ func TestMigration092AddsDurableSMLDocumentProfileReconciliation(t *testing.T) {
 	}
 }
 
+func TestMigration093AddsDurableSMLCancellationProfileReconciliation(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/093_sml_cancellation_profile_reconciliation.sql")
+	if err != nil {
+		t.Fatalf("read migration 093: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"alter table shopee_sml_cancellations", "request_payload_bytes bytea", "core_status", "profile_status",
+		"profile_payload_hash", "profile_reconciliation_required",
+		"create table if not exists sml_cancellation_profile_reconciliation_jobs",
+		"unique (cancellation_id, profile_version)", "route_name text not null", "lease_owner", "lease_token",
+		"attempt_count", "manual_retry_count", "max_attempts integer not null default 10",
+		"manual_reconciliation", "sml_cancellation_profile_reconciliation_queue_idx",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 093 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 093 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

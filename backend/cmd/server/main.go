@@ -97,7 +97,7 @@ func main() {
 	lineOARepo := repository.NewLineOAAccountRepo(db)
 	lineNotificationRepo := repository.NewLineNotificationRepo(db)
 	lineMyShopRepo := repository.NewLineMyShopRepo(db)
-	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db)
+	shopeeRealtimeRepo := repository.NewShopeeRealtimeRepo(db).WithTenantKey(tenantKey)
 	shopeeAutoSMLRepo := repository.NewShopeeAutoSMLRepo(db)
 	notificationRepo := repository.NewNotificationRepo(db)
 	nextStepNotificationRepo := repository.NewNextStepMarketplaceNotificationRepo(db)
