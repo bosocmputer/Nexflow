@@ -271,6 +271,7 @@ func main() {
 		zap.Bool("shopee_auto_sml_enabled", cfg.ShopeeAutoSMLEnabled),
 		zap.Bool("shopee_auto_sml_cancel_enabled", cfg.ShopeeAutoSMLCancelEnabled),
 		zap.String("sml_document_profile_mode", cfg.SMLDocumentProfileMode),
+		zap.Any("sml_document_profile_route_modes", cfg.SMLDocumentProfileRouteModes),
 		zap.String("product_mapping_master_mode", mappingMode),
 	)
 

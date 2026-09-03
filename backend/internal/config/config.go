@@ -71,6 +71,7 @@ type Config struct {
 	SMLStockAvailabilityMode            string
 	SMLStockSourceFingerprint           string
 	SMLDocumentProfileMode              string
+	SMLDocumentProfileRouteModes        map[string]string
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
@@ -131,6 +132,10 @@ func Load() *Config {
 	if err != nil {
 		log.Fatal(err)
 	}
+	documentProfileRouteModes, err := parseSMLDocumentProfileRouteModes(getEnv("SML_DOCUMENT_PROFILE_ROUTE_MODES", ""), documentProfileMode)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	c := &Config{
 		Port:                                getEnv("PORT", "8090"),
@@ -169,6 +174,7 @@ func Load() *Config {
 		SMLStockAvailabilityMode:            stockAvailabilityMode,
 		SMLStockSourceFingerprint:           strings.TrimSpace(getEnv("SML_STOCK_SOURCE_FINGERPRINT", "")),
 		SMLDocumentProfileMode:              documentProfileMode,
+		SMLDocumentProfileRouteModes:        documentProfileRouteModes,
 		ShopeeOpenAPIEnabled:                getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
 		ShopeeOpenAPIEnv:                    getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
 		ShopeeOpenAPIBaseURL:                getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
@@ -247,6 +253,62 @@ func parseSMLDocumentProfileMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("SML_DOCUMENT_PROFILE_MODE must be off, shadow, or active; got %q", raw)
 	}
+}
+
+var smlDocumentProfileRoutes = []string{
+	"saleinvoice",
+	"saleorder",
+	"saleordercancel",
+	"saleinvoicecancel",
+	"creditnote",
+}
+
+// parseSMLDocumentProfileRouteModes keeps legacy behavior only for Sale Invoice.
+// Every added route defaults to off until an operator explicitly enables it.
+func parseSMLDocumentProfileRouteModes(raw, legacySaleInvoiceMode string) (map[string]string, error) {
+	legacyMode, err := parseSMLDocumentProfileMode(legacySaleInvoiceMode)
+	if err != nil {
+		return nil, err
+	}
+	modes := make(map[string]string, len(smlDocumentProfileRoutes))
+	for _, route := range smlDocumentProfileRoutes {
+		modes[route] = "off"
+	}
+	modes["saleinvoice"] = legacyMode
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return modes, nil
+	}
+	known := make(map[string]struct{}, len(smlDocumentProfileRoutes))
+	for _, route := range smlDocumentProfileRoutes {
+		known[route] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(smlDocumentProfileRoutes))
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return nil, fmt.Errorf("SML_DOCUMENT_PROFILE_ROUTE_MODES contains an empty entry")
+		}
+		parts := strings.Split(entry, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("SML_DOCUMENT_PROFILE_ROUTE_MODES entry %q must use route:mode", entry)
+		}
+		route := strings.ToLower(strings.TrimSpace(parts[0]))
+		if _, ok := known[route]; !ok {
+			return nil, fmt.Errorf("SML_DOCUMENT_PROFILE_ROUTE_MODES contains unknown route %q", route)
+		}
+		if _, duplicate := seen[route]; duplicate {
+			return nil, fmt.Errorf("SML_DOCUMENT_PROFILE_ROUTE_MODES contains duplicate route %q", route)
+		}
+		mode, err := parseSMLDocumentProfileMode(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("SML_DOCUMENT_PROFILE_ROUTE_MODES route %q: %w", route, err)
+		}
+		seen[route] = struct{}{}
+		modes[route] = mode
+	}
+	return modes, nil
 }
 
 func getEnv(key, fallback string) string {

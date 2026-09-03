@@ -7,6 +7,15 @@ the immutable SaleInvoice payload opts in with `sml-document-v1`. `off` keeps
 the legacy wire contract. `shadow` resolves and validates the candidate profile
 but omits the opt-in field, so no supplemental SML rows are written.
 
+For the sales-route completion rollout, use
+`SML_DOCUMENT_PROFILE_ROUTE_MODES`. If it is absent, only `saleinvoice`
+inherits the global mode and `saleorder`, `saleordercancel`,
+`saleinvoicecancel`, and `creditnote` remain `off`. Each configured entry must
+be one unique allowlisted `route:off|shadow|active` pair; invalid input stops the
+backend at startup. Preview and Enable must first load
+`GET /api/v1/capabilities` and require contract revision
+`sml-sales-document-profile-v2-20260903`.
+
 Never delete an SML document as recovery. Once Core is `created` or
 `already_exists`, operators may retry only the profile reconciliation job.
 

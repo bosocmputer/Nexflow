@@ -49,3 +49,45 @@ func TestParseSMLDocumentProfileMode(t *testing.T) {
 		t.Fatal("unknown document profile mode must fail closed")
 	}
 }
+
+func TestParseSMLDocumentProfileRouteModesUsesSafeDefaults(t *testing.T) {
+	modes, err := parseSMLDocumentProfileRouteModes("", "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modes["saleinvoice"] != "active" {
+		t.Fatalf("saleinvoice=%q want active", modes["saleinvoice"])
+	}
+	for _, route := range []string{"saleorder", "saleordercancel", "saleinvoicecancel", "creditnote"} {
+		if modes[route] != "off" {
+			t.Fatalf("%s=%q want off", route, modes[route])
+		}
+	}
+}
+
+func TestParseSMLDocumentProfileRouteModesAcceptsCompleteOverride(t *testing.T) {
+	modes, err := parseSMLDocumentProfileRouteModes(
+		"saleinvoice:active,saleorder:shadow,saleordercancel:shadow,saleinvoicecancel:off,creditnote:active",
+		"off",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modes["saleinvoice"] != "active" || modes["saleorder"] != "shadow" || modes["creditnote"] != "active" {
+		t.Fatalf("unexpected modes: %+v", modes)
+	}
+}
+
+func TestParseSMLDocumentProfileRouteModesRejectsUnsafeInput(t *testing.T) {
+	for _, raw := range []string{
+		"unknown:active",
+		"saleinvoice:enabled",
+		"saleinvoice:active,saleinvoice:shadow",
+		"saleinvoice",
+		"saleinvoice:active,",
+	} {
+		if _, err := parseSMLDocumentProfileRouteModes(raw, "active"); err == nil {
+			t.Fatalf("%q must fail closed", raw)
+		}
+	}
+}
