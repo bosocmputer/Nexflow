@@ -651,12 +651,12 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
 
           <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground" role="status">{validationError || (dirty && !preview ? 'แก้ไขแล้ว กรุณาตรวจสอบค่าก่อนบันทึก' : '')}</p>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => requestOpenChange(false)} disabled={saving}>ยกเลิก</Button>
-              <Button type="button" variant="outline" onClick={handlePreview} disabled={Boolean(loading || loadError || validationError || previewing || saving)}>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end">
+              <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={() => requestOpenChange(false)} disabled={saving}>ยกเลิก</Button>
+              <Button className="w-full sm:w-auto" type="button" variant="outline" onClick={handlePreview} disabled={Boolean(loading || loadError || validationError || previewing || saving)}>
                 {previewing ? 'กำลังตรวจ...' : 'ตรวจสอบความพร้อม'}
               </Button>
-              <Button type="button" onClick={handleSave} disabled={Boolean(!preview || saving)}>
+              <Button className="w-full sm:w-auto" type="button" onClick={handleSave} disabled={Boolean(!preview || saving)}>
                 {saving ? 'กำลังบันทึก...' : 'บันทึกทั้งสองเส้นทาง'}
               </Button>
             </div>
