@@ -2,16 +2,16 @@
 
 ## Handoff
 
-- Last completed: T21 added migration 093 and durable, fenced cancellation
-  Profile repair. Missing ERP audit is retried from byte-exact immutable payload
-  without changing the successful core status or the independent stock job.
-  Terminal work can be requeued only through an admin endpoint.
-- Active task: T22 atomic Shopee route bundle API and accessible dialog. The original first-
+- Last completed: T22 added the atomic Shopee main/cancellation route bundle,
+  signed ten-minute Preview evidence, capability-bound optimistic writes and a
+  single plain-language dialog. Saving pauses enabled shops in the same
+  transaction as both config rows and the redacted audit entry.
+- Active task: T23 performance, security and observability hardening. The original first-
   organic-post-hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `9a1f2e1`
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `ddf6669`
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4d93ebe`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
@@ -249,7 +249,7 @@
       behavior and prove its header-total parity gap
 - [x] Capture a manual `vat_type=2` credit-note pre-processing snapshot
 - [x] Capture the `vat_type=2` invoice/credit-note pair's post-processing GL
-- [ ] Freeze and approve the sale-order/void/credit-note Profile contract before
+- [x] Freeze and approve the sale-order/void/credit-note Profile contract before
       implementation
 
 ## Sales Document Profile Completion (approved 2026-09-03)
@@ -292,11 +292,11 @@
   - [x] Add Profile summary columns to `shopee_sml_cancellations`
   - [x] Add fenced reconciliation jobs, unique cancellation/version, max 10 tries
   - [x] Prove Profile retry cannot resend core or stock jobs
-- [ ] **T22 — Atomic Shopee route bundle API and UI**
-  - [ ] Add GET/Preview/PUT bundle with two config versions and 10-minute token
-  - [ ] Save both rows/audit/Auto pause in one transaction; Enable stays separate
-  - [ ] Reject incompatible route pairs, stale preview and absolute URL injection
-  - [ ] Build one accessible dialog with desktop and 390px coverage
+- [x] **T22 — Atomic Shopee route bundle API and UI**
+  - [x] Add GET/Preview/PUT bundle with two config versions and 10-minute token
+  - [x] Save both rows/audit/Auto pause in one transaction; Enable stays separate
+  - [x] Reject incompatible route pairs, stale preview and absolute URL injection
+  - [x] Build one accessible dialog; production desktop/390px evidence remains T24
 - [ ] **Checkpoint C — Configuration safety**
   - [ ] Config races cannot overwrite newer values
   - [ ] Automation cannot bypass Preview, capability or active route mode
@@ -306,6 +306,25 @@
   - [ ] Verify admin/cross-tenant/PII/logging/SSRF protections
   - [ ] Add bounded route/profile metrics and operational alerts
   - [ ] Record 50/200/500-item and settings/UI performance evidence
+
+### T22 completion record
+
+- Completed task: T22 atomic Shopee route bundle and guarded configuration UI
+- Nexflow commit: `ddf6669` (`feat: configure Shopee SML routes atomically`)
+- Gateway commit: `4d93ebe` (unchanged; T22 consumes the T16 capability contract)
+- Tests: focused handler/repository tests, config-race rollback, HMAC binding and
+  expiry tests, `go test ./...`, focused race tests, `go vet ./...`, frontend
+  lint (0 errors / 35 pre-existing warnings), build and Profile text tests pass
+- Feature modes: local code only; no production runtime or route mode changed
+- Evidence: Preview performs one capability request; signed claims bind tenant,
+  normalized payload, both config versions, capability revision and both route
+  modes. The write transaction updates both rows, pauses every enabled Shopee
+  shop and writes the redacted audit. The normal UI no longer presents the
+  cancellation route as a separate row.
+- Remaining verification: live desktop/390px, keyboard and network QA after the
+  Gateway/Nexflow staged deploy in T24
+- Next action: T23 request/expanded-item limits, batch-write and timeout audit,
+  bounded operational signals and 50/200/500 regression evidence
 - [ ] **T24 — Full verification and staged rollout**
   - [ ] Full Go test/race/vet, frontend tests/lint/build and sales-only guard
   - [ ] PostgreSQL 11 statement preparation and PostgreSQL 16 migration replay
