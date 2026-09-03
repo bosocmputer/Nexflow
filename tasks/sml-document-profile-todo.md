@@ -14,7 +14,9 @@
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `b82ab3e`; durable production handoff
   continues on the same branch.
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `b82ab3e`
+- Nexflow branch/deployed code: `codex/marketplace-units-conversion` /
+  `b82ab3e`; handoff-only documentation commits may be newer than the deployed
+  code without changing runtime behavior.
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `3e2ed0e`
 - Feature mode: all four instances use
   `saleinvoice:active,saleorder:shadow,saleordercancel:shadow,saleinvoicecancel:shadow,creditnote:shadow`.
