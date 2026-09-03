@@ -2,16 +2,16 @@
 
 ## Handoff
 
-- Last completed: T15 froze PII-free executable fixtures and the evidence-backed
-  contract for SO/SSC, INV/SIC/CN and VAT 0/1/2. The live controlled documents
-  are no longer a test dependency and may be removed by the USER.
-- Active task: T16 capability/revision handshake and strict route-scoped Profile
-  modes with fail-closed Nexflow readiness. The original first-organic-post-
+- Last completed: T16 added the authenticated Gateway capability/revision
+  handshake, strict route-scoped Profile modes with safe legacy defaults, and a
+  fail-closed Nexflow capability client. Legacy requests and the Sale Invoice
+  canonical hash remain unchanged.
+- Active task: T17 VAT 0/1/2 and exact-decimal correctness. The original first-organic-post-
   hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `304235e`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `0ad872c`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -144,8 +144,9 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: write and review the endpoint-extension plan using the now-proven
-  VAT type 0/1/2 evidence before changing Gateway behavior. Separately, inspect
+- Next action: add failing T17 regression tests from the frozen VAT 0/1/2
+  fixtures, then correct zero-rate totals and VAT-register applicability without
+  changing the legacy Sale Invoice hash. Separately, inspect
   the first organic AOY VAT Profile document created after Gateway `53393b6`;
   do not manufacture or backfill a Shopee order.
 
@@ -257,14 +258,14 @@
         T00-T14 history
   - [x] Record that controlled SML samples may be removed after the committed
         fixture test passes; no test reads the live rows
-- [ ] **T16 — Capability and route-mode foundation** _(active)_
-  - [ ] Add `GET /api/v1/capabilities` with contract revision/routes/limits
-  - [ ] Add strict Gateway and Nexflow route-mode parsing with safe defaults
-  - [ ] Add fail-closed Nexflow capability client and legacy compatibility tests
-- [ ] **Checkpoint A1 — Foundation safety**
-  - [ ] No production behavior changes; legacy tests and Sale Invoice hash pass
-  - [ ] Unknown/duplicate mode and capability mismatch fail closed
-- [ ] **T17 — VAT and exact-decimal correctness**
+- [x] **T16 — Capability and route-mode foundation**
+  - [x] Add `GET /api/v1/capabilities` with contract revision/routes/limits
+  - [x] Add strict Gateway and Nexflow route-mode parsing with safe defaults
+  - [x] Add fail-closed Nexflow capability client and legacy compatibility tests
+- [x] **Checkpoint A1 — Foundation safety**
+  - [x] No production behavior changes; legacy tests and Sale Invoice hash pass
+  - [x] Unknown/duplicate mode and capability mismatch fail closed
+- [ ] **T17 — VAT and exact-decimal correctness** _(active)_
   - [ ] Correct VAT type 0/1/2 header/register applicability and zero-rate totals
   - [ ] Reject invalid exact decimals before beginning the core transaction
   - [ ] Add controlled-fixture regression tests for all VAT modes
@@ -312,7 +313,7 @@
 ### T15 completion record
 
 - Completed task: T15
-- Nexflow commit: pending documentation commit in the current increment
+- Nexflow commit: `e78a99b` (`docs: freeze SML sales profile completion contract`)
 - Gateway commit: `304235e` (`test: freeze SML sales profile parity fixtures`)
 - Files: `docs/sml-sales-document-profile-evidence.md`, durable plan/todo,
   Gateway PII-free JSON fixture and its contract test
@@ -322,6 +323,22 @@
 - Residual risk: none for fixture retention; application behavior is still the
   pre-extension baseline until T16-T24 complete
 - Next action: add failing T16 capability/revision and strict route-mode tests
+
+### T16 completion record
+
+- Completed task: T16 and Checkpoint A1
+- Nexflow commit: `faaafda` (`feat: add fail-closed SML route capability foundation`)
+- Gateway commit: `0ad872c` (`feat: expose versioned SML sales capabilities`)
+- Tests: Gateway and Nexflow focused capability/route-mode tests passed; both
+  full `go test ./...` suites passed. Existing legacy-response and canonical
+  Sale Invoice hash tests remained green.
+- Feature mode: no runtime mode or production deployment changed. When the new
+  route map is absent, `saleinvoice` alone inherits the global mode and every
+  added route remains `off`.
+- Production evidence: not applicable; this checkpoint changes no production
+  behavior and has not been deployed.
+- Next action: T17 failing VAT 0/1/2 and exact-decimal tests, then the narrow
+  Gateway/Nexflow corrections required by the frozen fixtures.
 
 ## Per-Increment Completion Record
 
