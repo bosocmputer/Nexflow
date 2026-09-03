@@ -2,20 +2,24 @@
 
 ## Handoff
 
-- Last completed: four-tenant application alignment and 2026-09-03 release
-  closeout
+- Last completed: user-approved four-tenant Document Profile activation on
+  2026-09-03
 - Active task: none for today; T11 deployed percentiles and the remaining
   first-ten monitoring resume in the next work session
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
-- Feature mode: AOY is `active`; Demo, Lanboon and Ploy remain `off`. AOY
-  Shopee main route is `AB-1 / 001`, Channel config version 2. Shop `264993963`
-  is enabled and unpaused with trigger `PROCESSED`, Auto SML config version 4
-  and cutoff `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop `1029622928`
-  remains disabled. The first Profile completed synchronously, so no Profile
-  reconciliation job or backfill was required.
+- Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
+  explicit request. AOY is the only tenant with an active Shopee connection and
+  enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
+  connections, zero enabled Auto SML shops and zero open Auto/Profile jobs, so
+  activation created no document and performed no backfill. AOY Shopee main
+  route is `AB-1 / 001`, Channel config version 2. Shop `264993963` is enabled
+  and unpaused with trigger `PROCESSED`, Auto SML config version 4 and cutoff
+  `2026-09-02 21:48:18.064382` Asia/Bangkok. Shop `1029622928` remains disabled.
+  The first Profile completed synchronously, so no Profile reconciliation job
+  or backfill was required.
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
@@ -63,8 +67,11 @@
   `pre-deploy-20260902-181122.sql.gz`; alignment backups are Demo
   `pre-deploy-20260902-181634.sql.gz`, Lanboon
   `pre-deploy-20260902-181809.sql.gz` and Ploy
-  `pre-deploy-20260902-181838.sql.gz`; AOY runtime before shadow at
-  `.env.pre-sml-profile-shadow-20260902-213500` and before active at
+  `pre-deploy-20260902-181838.sql.gz`; four-tenant activation runtime backups
+  are Demo `.env.pre-sml-document-profile-active-20260903-024305`, Lanboon
+  `.env.pre-sml-document-profile-active-20260903-024355` and Ploy
+  `.env.pre-sml-document-profile-active-20260903-024430`; AOY runtime before
+  shadow at `.env.pre-sml-profile-shadow-20260902-213500` and before active at
   `.env.pre-sml-profile-active-20260902-220000`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
   Early writes exposed PostgreSQL 11 parameter inference conflicts and rolled
@@ -72,9 +79,10 @@
   `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
-- Next action: no active work remains today. On the next work session, leave AOY
-  active, monitor the next nine Profile documents and collect deployed
-  p95/p99/queue-age evidence.
+- Next action: monitor the next nine AOY Profile documents and collect deployed
+  p95/p99/queue-age evidence. When another tenant connects Shopee, validate its
+  tenant-specific SML route/preview before enabling that shop's Auto SML; no
+  further Profile-mode change is required.
 
 ## Phase A — Proof and contract
 
@@ -140,7 +148,9 @@
 - [x] Controlled automatic document parity and no-duplicate proof (the user
       explicitly chose the Auto SML path instead of a separate manual send)
 - [x] Enable AOY Auto SML with a new cutoff and no backfill
-- [ ] Verify the first 10 documents; keep all other tenants off
+- [ ] Verify the first 10 AOY documents
+- [x] Activate Document Profile for Demo, Lanboon and Ploy before their future
+      Shopee connection, per the user's explicit 2026-09-03 request
 
 ## Per-Increment Completion Record
 
@@ -430,6 +440,35 @@
 - Closeout: no active deployment remains on 2026-09-03. Next action on resume is
   the remaining nine AOY Profile documents plus deployed percentile/queue-age
   evidence for T11.
+
+### Four-tenant Document Profile activation
+
+- Change type: production runtime configuration only; no application/Gateway
+  source change and no database migration. All tenants remain on application
+  `483160d`, and the Central Gateway remains on `16c550d`.
+- User decision: set `SML_DOCUMENT_PROFILE_MODE=active` on Demo, Lanboon and
+  Ploy so the Profile path is ready when each customer later connects Shopee.
+  AOY was already active and was not restarted.
+- Safety proof before activation: each new tenant had zero active Shopee
+  connections, zero open Auto SML jobs and zero open Profile reconciliation
+  jobs. After activation, Demo/Lanboon/Ploy still have zero active connections,
+  zero enabled Auto SML shops and zero open Auto/Profile jobs; no historical
+  order was backfilled and no SML document was created.
+- Runtime backups: Demo
+  `/mnt/data/nextstep-node-2/nexflow/.env.pre-sml-document-profile-active-20260903-024305`;
+  Lanboon
+  `/mnt/data/nextstep-node-2/nexflow-lanboon/.env.pre-sml-document-profile-active-20260903-024355`;
+  Ploy
+  `/mnt/data/nextstep-node-2/nexflow-ploy/.env.pre-sml-document-profile-active-20260903-024430`.
+- Verification: Docker runtime inspection reports `active` for all four tenants;
+  all four public `/health` endpoints report production/database OK, recent
+  backend severe-error scans are empty, and open Profile jobs are zero. AOY
+  retains one active Shopee connection and one enabled Auto SML shop; the other
+  three tenants retain zero of each.
+- Rollback: restore the exact tenant `.env` backup above and force-recreate only
+  that tenant's backend. Documents, attempts and migrations must remain intact.
+- Next action: validate the SML route and signed preview for a newly connected
+  tenant before enabling its shop-level Auto SML setting.
 
 For every completed task, update Handoff with:
 
