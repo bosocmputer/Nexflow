@@ -2,19 +2,18 @@
 
 ## Handoff
 
-- Last completed: T19 completed the Sale Order Cancellation (SSC) vertical
-  slice in both repositories. Gateway now supports SSC preview/create and doc
-  number aliases, exact flag-37 reversal rows, one source-scoped advisory lock,
-  Profile hash ownership checks, main/ERP logs and source `used_status=1`.
-  Nexflow carries the route-specific immutable Profile payload and reuses the
-  existing independent stock-recalculation queue after core success.
-- Active task: T20 Invoice Void and Credit Note Profile. The original first-
+- Last completed: T20 completed the Invoice Void (SIC) and Credit Note (CN)
+  Profile vertical slice. SIC is header-only with exact source state changes;
+  CN now writes VAT/AP-AR/source references and preserves per-line blank branch
+  values. Both use Profile ownership/hash checks and route-correct audit data,
+  without writing GL rows.
+- Active task: T21 durable cancellation Profile reconciliation. The original first-
   organic-post-hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `c448d1e`
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `9abef9a`
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `8b8f349`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4d93ebe`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -149,8 +148,9 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: add failing T20 SIC/CN Profile parity tests, then implement
-  header-only SIC audit ownership and CN VAT/AP-AR/exact branch reconciliation.
+- Next action: add migration 093 and failing repository/worker tests for fenced
+  cancellation Profile reconciliation that can never resend the core document
+  or stock-recalculation job.
   Separately, inspect
   the first organic AOY VAT Profile document created after Gateway `53393b6`;
   do not manufacture or backfill a Shopee order.
@@ -285,11 +285,11 @@
 - [ ] **Checkpoint B — SO/SSC parity and concurrency**
   - [ ] SO/SSC match fixtures and contain no VAT/AP-AR/GL placeholders
   - [ ] Lost response/concurrent cross-kind cancellation creates no duplicate
-- [ ] **T20 — Invoice Void and Credit Note Profile**
-  - [ ] Complete SIC main/ERP logs and uniform Profile response
-  - [ ] Complete CN VAT, AP-AR and exact source references
-  - [ ] Use `ref_amount/ref_diff=source.total_value` and preserve blank/detail branch
-  - [ ] Test VAT 0/1/2 and external source-state conflicts
+- [x] **T20 — Invoice Void and Credit Note Profile**
+  - [x] Complete SIC main/ERP logs and uniform Profile response
+  - [x] Complete CN VAT, AP-AR and exact source references
+  - [x] Use `ref_amount/ref_diff=source.total_value` and preserve blank/detail branch
+  - [x] Test VAT 0/1/2 and external source-state conflicts
 - [ ] **T21 — Durable cancellation reconciliation (migration 093)**
   - [ ] Add Profile summary columns to `shopee_sml_cancellations`
   - [ ] Add fenced reconciliation jobs, unique cancellation/version, max 10 tries
@@ -413,6 +413,37 @@
   concurrent test matrix is rerun with T20's sibling cancellation writers.
 - Next action: T20 failing SIC/CN Profile parity and manual-ownership tests,
   then complete their transactional audit/VAT/AP-AR reconciliation paths.
+
+### T20 completion record
+
+- Completed task: T20
+- Nexflow commit: `8b8f349` (`fix: preserve cancellation shadow compatibility`)
+- Gateway commit: `4d93ebe` (`feat: complete invoice cancellation profiles`)
+- Contract evidence: SIC is a header-only TRANS_FLAG 45 document that marks the
+  source header/detail `last_status=1`. CN uses TRANS_FLAG 48 detail
+  `calc_flag=1`, exact source line/branch references, source `total_value` for
+  `ref_amount/ref_diff`, VAT-inclusive `total_amount` for the receivable, and a
+  zero/non-zero VAT-register row for header VAT modes 0/1/2. Neither route
+  inserts or updates `gl_journal` or `gl_journal_detail`.
+- Ownership/recovery: a Profile request never adopts a same-kind manual SML
+  cancellation without a BILLFLOW marker. Matching owned documents reconcile
+  only missing VAT/AP-AR/main-log/ERP-log relationships; sibling SIC/CN intents
+  still conflict under the shared source advisory lock.
+- Tests: Gateway and Nexflow pass full `go test ./...`, `go test -race ./...`
+  and `go vet ./...`; Gateway OpenAPI parses and both diffs pass whitespace
+  checks. Regression tests cover VAT 0/1/2, header-only SIC, exact blank detail
+  branch, audit section/menu shape, external ownership, and unchanged legacy
+  invalid-date fallback behavior.
+- Feature mode: no runtime mode or production deployment changed. Active mode
+  sends Profile fields; shadow now validates its configured remark but omits all
+  Profile extension fields so legacy Gateway writes remain byte-compatible.
+- Production evidence: committed PII-free fixtures and prior read-only manual
+  SML evidence only; no production SML write occurred in T20.
+- Residual risk: core creation and synchronous Profile reconciliation are safe,
+  but a logs-database outage still needs the T21 durable profile-only job for
+  SIC/CN. Checkpoint B remains open until that worker/fault matrix passes.
+- Next action: migration 093, fenced cancellation reconciliation repository,
+  worker, and proof that retry cannot invoke core or enqueue stock twice.
 
 ## Per-Increment Completion Record
 
