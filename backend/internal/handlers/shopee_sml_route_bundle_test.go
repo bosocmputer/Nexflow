@@ -109,6 +109,30 @@ func validShopeeSMLBundleRequest() shopeeSMLRouteBundleRequest {
 	}
 }
 
+func BenchmarkShopeeSMLRouteBundlePreviewContract(b *testing.B) {
+	request := validShopeeSMLBundleRequest()
+	handler := &ChannelDefaultsHandler{previewSigningKey: strings.Repeat("k", 32), tenantKey: "aoy"}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		normalized, err := normalizeShopeeSMLRouteBundle(request)
+		if err != nil {
+			b.Fatal(err)
+		}
+		hash, err := normalized.bundleHash()
+		if err != nil {
+			b.Fatal(err)
+		}
+		claims := handler.bundlePreviewClaims(normalized, hash, sml.SalesProfileContractRevision, time.Unix(1_800_000_000, 0))
+		token, err := signShopeeSMLRouteBundlePreview(claims, handler.previewSigningKey)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := validateShopeeSMLRouteBundlePreview(token, handler.previewSigningKey, claims, time.Unix(1_799_999_500, 0)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestNormalizeShopeeSMLRouteBundleRejectsIncompatiblePairAndEndpointInjection(t *testing.T) {
 	req := validShopeeSMLBundleRequest()
 	req.MainRoute = "saleorder"
