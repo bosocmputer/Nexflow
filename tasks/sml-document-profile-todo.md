@@ -2,16 +2,15 @@
 
 ## Handoff
 
-- Last completed: T16 added the authenticated Gateway capability/revision
-  handshake, strict route-scoped Profile modes with safe legacy defaults, and a
-  fail-closed Nexflow capability client. Legacy requests and the Sale Invoice
-  canonical hash remain unchanged.
-- Active task: T17 VAT 0/1/2 and exact-decimal correctness. The original first-organic-post-
+- Last completed: T17 aligned Sale Invoice VAT types 0/1/2 with the controlled
+  SML fixtures, including the zero-rate header/register rules and pre-database
+  exact-decimal validation. The frozen Sale Invoice canonical hash is unchanged.
+- Active task: T18 Sale Order Profile vertical slice. The original first-organic-post-
   hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `0ad872c`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `cde4472`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -144,9 +143,9 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: add failing T17 regression tests from the frozen VAT 0/1/2
-  fixtures, then correct zero-rate totals and VAT-register applicability without
-  changing the legacy Sale Invoice hash. Separately, inspect
+- Next action: add failing T18 Sale Order Profile contract tests, then extend
+  the shared resolver/writer with route-correct detail, shipment and audit
+  semantics without changing the legacy Sale Order wire contract. Separately, inspect
   the first organic AOY VAT Profile document created after Gateway `53393b6`;
   do not manufacture or backfill a Shopee order.
 
@@ -265,11 +264,11 @@
 - [x] **Checkpoint A1 — Foundation safety**
   - [x] No production behavior changes; legacy tests and Sale Invoice hash pass
   - [x] Unknown/duplicate mode and capability mismatch fail closed
-- [ ] **T17 — VAT and exact-decimal correctness** _(active)_
-  - [ ] Correct VAT type 0/1/2 header/register applicability and zero-rate totals
-  - [ ] Reject invalid exact decimals before beginning the core transaction
-  - [ ] Add controlled-fixture regression tests for all VAT modes
-- [ ] **T18 — Sale Order Profile vertical slice**
+- [x] **T17 — VAT and exact-decimal correctness**
+  - [x] Correct VAT type 0/1/2 header/register applicability and zero-rate totals
+  - [x] Reject invalid exact decimals before beginning the core transaction
+  - [x] Add controlled-fixture regression tests for all VAT modes
+- [ ] **T18 — Sale Order Profile vertical slice** _(active)_
   - [ ] Add Profile fields/status/hash and route-correct main/ERP logs
   - [ ] Write detail `calc_flag=1`; require shipment for Marketplace goods
   - [ ] Test retry, mismatch, 500-item/expanded-item limits and logs DB outage
@@ -339,6 +338,23 @@
   behavior and has not been deployed.
 - Next action: T17 failing VAT 0/1/2 and exact-decimal tests, then the narrow
   Gateway/Nexflow corrections required by the frozen fixtures.
+
+### T17 completion record
+
+- Completed task: T17
+- Nexflow commit: `020d655` (`fix: match SML zero-rate invoice totals`)
+- Gateway commit: `cde4472` (`fix: align sale invoice VAT profile modes`)
+- Tests: RED tests proved missing type-0 VAT register, wrong type-2 header totals
+  and missing cross-field validation; focused suites then passed GREEN. Full
+  `go test ./...` passed in both repositories. The exact pre-change canonical
+  Sale Invoice hash is now pinned as
+  `21f38aa96983afb7ed038e3290f6b15213d241aca53ac9110d7d5270924b8897`.
+- Feature mode: no runtime mode or deployment changed.
+- Production evidence: controlled no-PII fixtures from `INV26090003` and
+  `INV26090004` are the authority; no production SML write was performed.
+- Next action: T18 Sale Order Profile request/response/hash, `calc_flag=1`,
+  route-specific logs and ERP JSON, required shipment, retry/mismatch and logs
+  database outage tests.
 
 ## Per-Increment Completion Record
 
