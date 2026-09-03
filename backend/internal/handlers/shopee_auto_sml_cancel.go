@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -77,20 +79,27 @@ func shopeeSMLCancellationRouteSignature(def *models.ChannelDefault, profileMode
 }
 
 func (h *ShopeeRealtimeHandler) StartSMLCancellationWorkers(ctx context.Context) {
-	if h == nil || h.cfg == nil || !h.cfg.ShopeeSMLCancelDocumentsEnabled || h.repo == nil {
+	if h == nil || h.cfg == nil || h.repo == nil {
 		return
 	}
-	if h.cfg.ShopeeAutoSMLCancelEnabled {
+	legacyWorkersEnabled := h.cfg.ShopeeSMLCancelDocumentsEnabled
+	profileWorkerEnabled := h.cancelClient != nil && h.cancelClient.IsConfigured() && h.cancellationProfileReconciliationEnabled()
+	if !legacyWorkersEnabled && !profileWorkerEnabled {
+		return
+	}
+	if legacyWorkersEnabled && h.cfg.ShopeeAutoSMLCancelEnabled {
 		if recovered, err := h.repo.RecoverStaleAutoSMLCancellations(ctx); err != nil {
 			h.logger.Warn("shopee_auto_sml_cancel: recover stale jobs failed", zap.Error(err))
 		} else if recovered > 0 {
 			h.logger.Warn("shopee_auto_sml_cancel: recovered stale jobs", zap.Int64("jobs", recovered))
 		}
 	}
-	if recovered, err := h.repo.RecoverStaleSMLCancellationStockRecalcs(ctx); err != nil {
-		h.logger.Warn("shopee_sml_cancel_stock_recalc: recover stale jobs failed", zap.Error(err))
-	} else if recovered > 0 {
-		h.logger.Warn("shopee_sml_cancel_stock_recalc: recovered stale jobs", zap.Int64("jobs", recovered))
+	if legacyWorkersEnabled {
+		if recovered, err := h.repo.RecoverStaleSMLCancellationStockRecalcs(ctx); err != nil {
+			h.logger.Warn("shopee_sml_cancel_stock_recalc: recover stale jobs failed", zap.Error(err))
+		} else if recovered > 0 {
+			h.logger.Warn("shopee_sml_cancel_stock_recalc: recovered stale jobs", zap.Int64("jobs", recovered))
+		}
 	}
 	go func() {
 		h.processSMLCancellationWorkers(ctx)
@@ -108,10 +117,154 @@ func (h *ShopeeRealtimeHandler) StartSMLCancellationWorkers(ctx context.Context)
 }
 
 func (h *ShopeeRealtimeHandler) processSMLCancellationWorkers(ctx context.Context) {
-	if h.cfg != nil && h.cfg.ShopeeAutoSMLCancelEnabled {
+	if h.cfg != nil && h.cfg.ShopeeSMLCancelDocumentsEnabled && h.cfg.ShopeeAutoSMLCancelEnabled {
 		h.processAutoSMLCancellationBatch(ctx)
 	}
-	h.processSMLCancellationStockRecalcBatch(ctx)
+	if h.cfg != nil && h.cfg.ShopeeSMLCancelDocumentsEnabled {
+		h.processSMLCancellationStockRecalcBatch(ctx)
+	}
+	if h.cancellationProfileReconciliationEnabled() {
+		h.processSMLCancellationProfileReconciliationBatch(ctx)
+	}
+}
+
+func (h *ShopeeRealtimeHandler) cancellationProfileReconciliationEnabled() bool {
+	if h == nil || h.cfg == nil || h.cancelClient == nil || !h.cancelClient.IsConfigured() {
+		return false
+	}
+	for _, route := range []string{"saleordercancel", "saleinvoicecancel", "creditnote"} {
+		if h.documentProfileRouteMode(route) == smlprofile.ModeActive {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *ShopeeRealtimeHandler) processSMLCancellationProfileReconciliationBatch(ctx context.Context) {
+	job, err := h.repo.ClaimSMLCancellationProfileReconciliationJob(ctx, h.cancellationProfileWorkerID(), shopeeAutoSMLCancellationLease)
+	if err != nil {
+		if ctx.Err() == nil && h.logger != nil {
+			h.logger.Warn("sml_cancellation_profile: lease failed", zap.Error(err))
+		}
+		return
+	}
+	if job == nil {
+		return
+	}
+	if h.documentProfileRouteMode(job.Route) != smlprofile.ModeActive {
+		if err := h.repo.DeferSMLCancellationProfileReconciliationJob(ctx, job, time.Minute); err != nil && h.logger != nil {
+			h.logger.Warn("sml_cancellation_profile: defer inactive route failed", zap.String("route", job.Route), zap.Error(err))
+		}
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	failure := h.processSMLCancellationProfileReconciliation(runCtx, job)
+	cancel()
+	if failure == nil {
+		return
+	}
+	recordCtx, recordCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = h.repo.FailSMLCancellationProfileReconciliationJob(recordCtx, job, failure.Code, failure.Message, failure.Terminal)
+	recordCancel()
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Error("sml_cancellation_profile: persist failure failed", zap.String("job_id", job.ID), zap.Error(err))
+		}
+		return
+	}
+	if h.logger != nil {
+		h.logger.Warn("sml_cancellation_profile: reconciliation failed",
+			zap.String("tenant", job.TenantKey), zap.String("route", job.Route),
+			zap.String("code", failure.Code), zap.Int("attempt", job.AttemptCount))
+	}
+}
+
+func (h *ShopeeRealtimeHandler) cancellationProfileWorkerID() string {
+	tenant := "nexflow"
+	if h != nil && h.cfg != nil {
+		tenant = firstNonEmpty(strings.TrimSpace(h.cfg.ShopeeGatewayTenant), strings.TrimSpace(h.cfg.ShopeeSMLDatabase), tenant)
+	}
+	return tenant + "-sml-cancel-profile"
+}
+
+type smlCancellationProfileFailure struct {
+	Code, Message string
+	Terminal      bool
+}
+
+func (h *ShopeeRealtimeHandler) processSMLCancellationProfileReconciliation(ctx context.Context, job *repository.SMLCancellationProfileReconciliationJob) *smlCancellationProfileFailure {
+	if job == nil {
+		return &smlCancellationProfileFailure{Code: "job_invalid", Message: "cancellation Profile job is missing", Terminal: true}
+	}
+	instanceTenant := ""
+	if h != nil && h.cfg != nil {
+		instanceTenant = firstNonEmpty(strings.TrimSpace(h.cfg.ShopeeGatewayTenant), strings.TrimSpace(h.cfg.ShopeeSMLDatabase))
+	}
+	if err := repository.ValidateSMLProfileJobTenant(job.TenantKey, instanceTenant); err != nil {
+		return &smlCancellationProfileFailure{Code: "tenant_mismatch", Message: err.Error(), Terminal: true}
+	}
+	var req sml.SaleInvoiceCancelRequest
+	if err := json.Unmarshal(job.RequestPayload, &req); err != nil || req.DocumentProfileVersion != job.ProfileVersion || req.DocumentProfileVersion != sml.InvoiceDocumentProfileVersion {
+		return &smlCancellationProfileFailure{Code: "immutable_payload_invalid", Message: "immutable cancellation Profile payload is invalid", Terminal: true}
+	}
+	meta, err := resolveShopeeSMLCancellationRoute(job.RouteEndpoint)
+	if err != nil || meta.StockRoute != job.Route {
+		return &smlCancellationProfileFailure{Code: "route_snapshot_invalid", Message: "immutable cancellation route snapshot is invalid", Terminal: true}
+	}
+	req.Kind = meta.Kind
+	if strings.TrimSpace(req.DocNo) == "" || strings.TrimSpace(req.DocNo) != strings.TrimSpace(job.CancelDocNo) || strings.TrimSpace(job.SourceDocNo) == "" {
+		return &smlCancellationProfileFailure{Code: "immutable_payload_invalid", Message: "immutable cancellation document identity is invalid", Terminal: true}
+	}
+	statusCode, response, callErr := h.cancelClient.CreateBytes(ctx, job.SourceDocNo, req.Kind, job.RequestPayload, job.CorrelationID)
+	if callErr != nil {
+		return &smlCancellationProfileFailure{Code: "gateway_unavailable", Message: "SML Gateway is unavailable"}
+	}
+	if response == nil {
+		return &smlCancellationProfileFailure{Code: "gateway_response_missing", Message: "SML Gateway response is missing"}
+	}
+	responseCode := strings.TrimSpace(response.GetCode())
+	if responseCode == "doc_no_payload_mismatch" || responseCode == "existing_document_profile_unverifiable" || responseCode == "source_already_cancelled_externally" {
+		return &smlCancellationProfileFailure{Code: responseCode, Message: "SML cancellation Profile cannot be reconciled automatically", Terminal: true}
+	}
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices || !response.IsSuccess() {
+		terminal := statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError && statusCode != http.StatusTooManyRequests && responseCode != "document_busy"
+		if responseCode == "" {
+			responseCode = "gateway_rejected"
+		}
+		return &smlCancellationProfileFailure{Code: responseCode, Message: fmt.Sprintf("SML Gateway rejected cancellation Profile reconciliation (HTTP %d)", statusCode), Terminal: terminal}
+	}
+	result := response.DocumentProfileResult(job.ProfileVersion)
+	if result.PayloadHash == "" {
+		return &smlCancellationProfileFailure{Code: "profile_hash_missing", Message: "SML Gateway did not return the cancellation Profile hash"}
+	}
+	if job.PayloadHash != "" && result.PayloadHash != job.PayloadHash {
+		return &smlCancellationProfileFailure{Code: "profile_hash_mismatch", Message: "SML Gateway cancellation Profile hash changed", Terminal: true}
+	}
+	if result.ProfileStatus != "complete" || result.ReconciliationRequired {
+		return &smlCancellationProfileFailure{Code: "profile_incomplete", Message: "SML cancellation Profile is still incomplete"}
+	}
+	if err := h.repo.CompleteSMLCancellationProfileReconciliationJob(ctx, job, result.PayloadHash, result.CompletedChecks); err != nil {
+		if errors.Is(err, repository.ErrSMLAttemptLeaseLost) {
+			return &smlCancellationProfileFailure{Code: "lease_lost", Message: "cancellation Profile lease was lost"}
+		}
+		return &smlCancellationProfileFailure{Code: "completion_persist_failed", Message: "persist cancellation Profile completion failed"}
+	}
+	if h.billH != nil && h.billH.auditRepo != nil && strings.TrimSpace(job.BillID) != "" {
+		billID := strings.TrimSpace(job.BillID)
+		_ = h.billH.auditRepo.Log(models.AuditEntry{
+			Action: "profile_complete", TargetID: &billID, Source: "sml", Level: "info",
+			TraceID: job.CorrelationID, Detail: map[string]any{
+				"profile_version": job.ProfileVersion, "route": job.Route,
+				"attempt_count": job.AttemptCount, "completed_checks": result.CompletedChecks,
+			},
+		})
+	}
+	h.publishShopeeRealtimeChanged(ctx, job.ShopID, job.OrderSN, "sml_cancellation_profile_complete")
+	if h.logger != nil {
+		h.logger.Info("profile_complete", zap.String("tenant", job.TenantKey), zap.String("route", job.Route),
+			zap.Int("attempt_count", job.AttemptCount), zap.String("correlation_id", job.CorrelationID))
+	}
+	return nil
 }
 
 func (h *ShopeeRealtimeHandler) processAutoSMLCancellationBatch(ctx context.Context) {
@@ -215,7 +368,8 @@ func (h *ShopeeRealtimeHandler) processAutoSMLCancellationJob(ctx context.Contex
 	if cancelDocNo == "" {
 		cancelDocNo = strings.TrimSpace(req.DocNo)
 	}
-	completed, err := h.repo.CompleteSMLCancellation(ctx, job.ID, finalStatus, cancelDocNo, resp.Raw(), "")
+	profileResult := smlCancellationProfileResult(req, resp, job.ID)
+	completed, err := h.repo.CompleteSMLCancellation(ctx, job.ID, finalStatus, cancelDocNo, resp.Raw(), "", profileResult)
 	if err != nil {
 		// Replaying the same immutable doc_no is safe; do not invent a new attempt.
 		h.retryAutoSMLCancellation(ctx, job, snap, "tracking_complete_failed", "SML สำเร็จแต่บันทึกผลใน Nexflow ไม่สำเร็จ")

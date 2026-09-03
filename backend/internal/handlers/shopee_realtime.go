@@ -1112,7 +1112,8 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 	if strings.TrimSpace(cancelDocNo) == "" {
 		cancelDocNo = attemptDocNo
 	}
-	completed, err := h.repo.CompleteSMLCancellation(c.Request.Context(), record.ID, finalStatus, cancelDocNo, resp.Raw(), "")
+	profileResult := smlCancellationProfileResult(cancelReq, resp, c.GetString("trace_id"))
+	completed, err := h.repo.CompleteSMLCancellation(c.Request.Context(), record.ID, finalStatus, cancelDocNo, resp.Raw(), "", profileResult)
 	if err != nil {
 		h.logger.Warn("shopee_realtime: complete SML cancellation tracking failed", zap.String("record_id", record.ID), zap.Error(err))
 	}
@@ -1131,6 +1132,76 @@ func (h *ShopeeRealtimeHandler) CancelSMLDocument(c *gin.Context) {
 	h.notifySMLCancellationCreated(c.Request.Context(), cancelCtx, cancelDocNo)
 	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "sml_cancel_document_created")
 	c.JSON(http.StatusOK, h.cancelSMLDocumentPayload(cancelCtx, completed, finalStatus, resp.Raw(), "สร้างเอกสารยกเลิก SML แล้ว"))
+}
+
+func (h *ShopeeRealtimeHandler) RetrySMLCancellationProfile(c *gin.Context) {
+	if !h.enabled(c) {
+		return
+	}
+	shopID, orderSN, ok := parseShopOrderParams(c)
+	if !ok {
+		return
+	}
+	cancelCtx, status, payload := h.cancelSMLDocumentContext(c.Request.Context(), shopID, orderSN)
+	if status >= 400 || cancelCtx == nil {
+		c.JSON(status, payload)
+		return
+	}
+	if cancelCtx.Existing == nil || strings.TrimSpace(cancelCtx.Existing.ID) == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบ Document Profile ของเอกสารยกเลิกที่ต้องแก้ไข", "code": "cancellation_profile_not_found"})
+		return
+	}
+	job, err := h.repo.RetrySMLCancellationProfileReconciliation(c.Request.Context(), cancelCtx.Existing.ID, c.GetString("trace_id"))
+	switch {
+	case errors.Is(err, repository.ErrSMLCancellationProfileNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบงานแก้ไข Document Profile", "code": "cancellation_profile_not_found"})
+		return
+	case errors.Is(err, repository.ErrSMLCancellationProfileBusy):
+		c.JSON(http.StatusConflict, gin.H{"error": "ระบบกำลังแก้ไข Document Profile อยู่", "code": "cancellation_profile_busy"})
+		return
+	case errors.Is(err, repository.ErrSMLCancellationProfileComplete):
+		c.JSON(http.StatusConflict, gin.H{"error": "Document Profile สมบูรณ์แล้ว", "code": "cancellation_profile_complete"})
+		return
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "เข้าคิวแก้ไข Document Profile ไม่สำเร็จ", "code": "cancellation_profile_retry_failed"})
+		return
+	}
+	if h.billH != nil && h.billH.auditRepo != nil && cancelCtx.Existing.BillID != nil {
+		billID := strings.TrimSpace(*cancelCtx.Existing.BillID)
+		actor := strings.TrimSpace(c.GetString("user_id"))
+		var actorPtr *string
+		if actor != "" {
+			actorPtr = &actor
+		}
+		_ = h.billH.auditRepo.Log(models.AuditEntry{
+			Action: "profile_retry_requested", TargetID: &billID, UserID: actorPtr,
+			Source: "sml", Level: "info", TraceID: c.GetString("trace_id"),
+			Detail: map[string]any{"cancellation_id": cancelCtx.Existing.ID, "profile_version": job.ProfileVersion, "route": cancelCtx.Existing.RouteEndpoint},
+		})
+	}
+	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, orderSN, "sml_cancellation_profile_retry_queued")
+	c.JSON(http.StatusAccepted, gin.H{
+		"status": "queued", "message": "เข้าคิวแก้ไข Document Profile แล้ว โดยไม่ส่งเอกสารหลักหรือคำนวณสต๊อกซ้ำ",
+		"cancellation_id": cancelCtx.Existing.ID, "profile_version": job.ProfileVersion,
+		"attempt_count": job.AttemptCount, "manual_retry_count": job.ManualRetryCount,
+	})
+}
+
+func smlCancellationProfileResult(req sml.SaleInvoiceCancelRequest, resp *sml.SaleInvoiceCancelResponse, correlationID string) repository.SMLCancellationProfileResult {
+	result := resp.DocumentProfileResult(req.DocumentProfileVersion)
+	route := "creditnote"
+	switch req.Kind {
+	case sml.SaleInvoiceCancelKindSaleOrder:
+		route = "saleordercancel"
+	case sml.SaleInvoiceCancelKindVoid:
+		route = "saleinvoicecancel"
+	}
+	return repository.SMLCancellationProfileResult{
+		Version: result.Version, PayloadHash: result.PayloadHash, CoreStatus: result.CoreStatus,
+		ProfileStatus: result.ProfileStatus, RequiredChecks: result.RequiredChecks,
+		CompletedChecks: result.CompletedChecks, ReconciliationRequired: result.ReconciliationRequired,
+		CorrelationID: strings.TrimSpace(correlationID), Route: route,
+	}
 }
 
 func normalizeShopeeRealtimeOrderRefs(in []shopeeRealtimeOrderRef) ([]shopeeRealtimeOrderRef, error) {

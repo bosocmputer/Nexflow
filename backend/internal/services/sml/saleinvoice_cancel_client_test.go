@@ -2,6 +2,7 @@ package sml
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -197,5 +198,17 @@ func TestSaleInvoiceCancelClientRejectsUnknownKindBeforeHTTP(t *testing.T) {
 	_, _, err := client.Preview(context.Background(), "BF-INV26080058", SaleInvoiceCancelRequest{Kind: "unknown"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSaleInvoiceCancelResponseUsesUniformDocumentProfileResult(t *testing.T) {
+	raw := json.RawMessage(`{"success":true,"data":{"status":"already_exists","payload_hash":"hash-cn","core_status":"already_exists","profile_status":"needs_reconciliation","required_checks":["core","vat","ap_ar","main_log","erp_log"],"completed_checks":["core","vat","ap_ar","main_log"],"reconciliation_required":true}}`)
+	response := &SaleInvoiceCancelResponse{raw: raw}
+	result := response.DocumentProfileResult(InvoiceDocumentProfileVersion)
+	if result.PayloadHash != "hash-cn" || result.CoreStatus != "already_exists" || result.ProfileStatus != "needs_reconciliation" || !result.ReconciliationRequired {
+		t.Fatalf("profile result=%+v", result)
+	}
+	if strings.Join(result.CompletedChecks, ",") != "core,vat,ap_ar,main_log" {
+		t.Fatalf("completed checks=%v", result.CompletedChecks)
 	}
 }

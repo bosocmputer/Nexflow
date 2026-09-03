@@ -80,7 +80,22 @@ func (c *SaleInvoiceCancelClient) Create(ctx context.Context, saleDocNo string, 
 	return c.post(ctx, saleDocNo, "", req)
 }
 
+// CreateBytes replays the exact persisted request bytes for Profile-only
+// reconciliation. The document number and route kind remain separate immutable
+// identity fields and are never inferred from an untrusted URL.
+func (c *SaleInvoiceCancelClient) CreateBytes(ctx context.Context, saleDocNo string, kind SaleInvoiceCancelKind, body []byte, correlationID string) (int, *SaleInvoiceCancelResponse, error) {
+	return c.postBytes(ctx, saleDocNo, "", kind, body, correlationID)
+}
+
 func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix string, payload SaleInvoiceCancelRequest) (int, *SaleInvoiceCancelResponse, error) {
+	body, err := marshalASCII(payload)
+	if err != nil {
+		return 0, nil, err
+	}
+	return c.postBytes(ctx, saleDocNo, suffix, payload.Kind, body, "")
+}
+
+func (c *SaleInvoiceCancelClient) postBytes(ctx context.Context, saleDocNo, suffix string, kind SaleInvoiceCancelKind, body []byte, correlationID string) (int, *SaleInvoiceCancelResponse, error) {
 	if !c.IsConfigured() {
 		return 0, nil, fmt.Errorf("SML sale invoice cancel client not configured")
 	}
@@ -88,11 +103,10 @@ func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix st
 	if saleDocNo == "" {
 		return 0, nil, fmt.Errorf("sale invoice doc_no is required")
 	}
-	body, err := marshalASCII(payload)
-	if err != nil {
-		return 0, nil, err
+	if len(body) == 0 || len(body) > MaxInvoiceDocumentBytes || !json.Valid(body) {
+		return 0, nil, fmt.Errorf("persisted cancellation payload is invalid")
 	}
-	collection, action, err := saleInvoiceCancelEndpoint(payload.Kind)
+	collection, action, err := saleInvoiceCancelEndpoint(kind)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -107,6 +121,9 @@ func (c *SaleInvoiceCancelClient) post(ctx context.Context, saleDocNo, suffix st
 	}
 	for k, v := range c.headers() {
 		httpReq.Header.Set(k, v)
+	}
+	if correlationID = strings.TrimSpace(correlationID); correlationID != "" {
+		httpReq.Header.Set("X-Correlation-ID", correlationID)
 	}
 
 	start := time.Now()
@@ -219,6 +236,20 @@ func (r *SaleInvoiceCancelResponse) GetMessage() string {
 	return ""
 }
 
+func (r *SaleInvoiceCancelResponse) GetCode() string {
+	if r == nil {
+		return ""
+	}
+	if code := strings.TrimSpace(r.Code); code != "" {
+		return code
+	}
+	var root map[string]any
+	if len(r.raw) > 0 {
+		_ = json.Unmarshal(r.raw, &root)
+	}
+	return saleInvoiceCancelFindString(root, "code")
+}
+
 func (r *SaleInvoiceCancelResponse) Raw() json.RawMessage {
 	if r == nil || len(r.raw) == 0 {
 		return nil
@@ -251,6 +282,46 @@ func (r *SaleInvoiceCancelResponse) ProfileStatus() string {
 		_ = json.Unmarshal(r.raw, &root)
 	}
 	return strings.ToLower(saleInvoiceCancelFindString(root, "profile_status"))
+}
+
+func (r *SaleInvoiceCancelResponse) DocumentProfileResult(requestedVersion string) InvoiceDocumentProfileResult {
+	if r == nil || strings.TrimSpace(requestedVersion) == "" {
+		return InvoiceDocumentProfileResult{}
+	}
+	var wire struct {
+		Data struct {
+			Status                 string   `json:"status"`
+			PayloadHash            string   `json:"payload_hash"`
+			CoreStatus             string   `json:"core_status"`
+			ProfileStatus          string   `json:"profile_status"`
+			RequiredChecks         []string `json:"required_checks"`
+			CompletedChecks        []string `json:"completed_checks"`
+			ReconciliationRequired bool     `json:"reconciliation_required"`
+		} `json:"data"`
+	}
+	if len(r.raw) > 0 {
+		_ = json.Unmarshal(r.raw, &wire)
+	}
+	profileStatus := strings.TrimSpace(wire.Data.ProfileStatus)
+	reconcile := wire.Data.ReconciliationRequired
+	if profileStatus == "" {
+		profileStatus = "needs_reconciliation"
+		reconcile = true
+	}
+	coreStatus := strings.TrimSpace(wire.Data.CoreStatus)
+	if coreStatus == "" {
+		coreStatus = strings.TrimSpace(wire.Data.Status)
+	}
+	if coreStatus == "" {
+		coreStatus = "created"
+	}
+	return InvoiceDocumentProfileResult{
+		Version: strings.TrimSpace(requestedVersion), PayloadHash: strings.TrimSpace(wire.Data.PayloadHash),
+		CoreStatus: coreStatus, ProfileStatus: profileStatus,
+		RequiredChecks:         append([]string(nil), wire.Data.RequiredChecks...),
+		CompletedChecks:        append([]string(nil), wire.Data.CompletedChecks...),
+		ReconciliationRequired: reconcile,
+	}
 }
 
 func saleInvoiceCancelFindString(v any, key string) string {

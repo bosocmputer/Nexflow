@@ -584,6 +584,7 @@ func main() {
 		api.POST("/shopee-operations/:shop_id/:order_sn/auto-sml/retry", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.RetryAutoSML)
 		api.GET("/shopee-operations/:shop_id/:order_sn/cancel-sml-document/preview", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocumentPreview)
 		api.POST("/shopee-operations/:shop_id/:order_sn/cancel-sml-document", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.CancelSMLDocument)
+		api.POST("/shopee-operations/:shop_id/:order_sn/cancel-sml-document/profile/retry", middleware.RequireRole("admin"), shopeeRealtimeH.RetrySMLCancellationProfile)
 		api.POST("/shopee-operations/:shop_id/:order_sn/save-erp", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.SaveERP)
 		api.GET("/shopee-operations/:shop_id/:order_sn/shipping-parameters", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ShippingParameters)
 		api.POST("/shopee-operations/:shop_id/:order_sn/reconcile-shipping", middleware.RequireRole("admin", "staff"), shopeeRealtimeH.ReconcileShipping)

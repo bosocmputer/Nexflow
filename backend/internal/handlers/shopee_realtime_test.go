@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -657,6 +658,65 @@ func TestCancellationShadowModeDoesNotWriteProfileExtensionFields(t *testing.T) 
 	}
 	if req.DocumentProfileVersion != "" || req.Remark2 != "" || req.Remark5 != "" || req.CreatorCode != "" || req.CashierCode != "" {
 		t.Fatalf("shadow request must preserve legacy Gateway writes: %+v", req)
+	}
+}
+
+func TestCancellationProfileReconciliationReusesImmutableDocumentWithoutRequeueingCoreOrStock(t *testing.T) {
+	requestBody := []byte(`{"document_profile_version":"sml-document-v1","doc_no":"CN-1","doc_date":"2026-09-03","remark_5":"NEXFLOW|shopee_realtime|ORDER-1"}`)
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.URL.Path != "/api/v1/ic/sale-invoices/BF-INV-1/cancel" {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != string(requestBody) {
+			t.Errorf("immutable request changed: got %s want %s", body, requestBody)
+		}
+		if r.Header.Get("X-Correlation-ID") != "trace-1" {
+			t.Errorf("correlation id=%q", r.Header.Get("X-Correlation-ID"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"status":"already_exists","doc_no":"CN-1","payload_hash":"hash-cn","core_status":"already_exists","profile_status":"complete","required_checks":["core","vat","ap_ar","main_log","erp_log"],"completed_checks":["core","vat","ap_ar","main_log","erp_log"],"reconciliation_required":false}}`))
+	}))
+	defer server.Close()
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)UPDATE sml_cancellation_profile_reconciliation_jobs SET.*status='complete'`).
+		WithArgs("job-1", "worker-1", int64(3), "hash-cn", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE shopee_sml_cancellations SET.*profile_status='complete'.*profile_reconciliation_required=FALSE`).
+		WithArgs("cancel-1", "hash-cn", sqlmock.AnyArg(), sml.InvoiceDocumentProfileVersion).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	h := &ShopeeRealtimeHandler{
+		repo: repository.NewShopeeRealtimeRepo(db).WithTenantKey("aoy"),
+		cancelClient: sml.NewSaleInvoiceCancelClient(sml.PartyConfig{
+			BaseURL: server.URL, GUID: "test", Provider: "SML", Database: "aoy",
+		}, nil),
+		cfg: &config.Config{ShopeeGatewayTenant: "aoy", SMLDocumentProfileRouteModes: map[string]string{"creditnote": smlprofile.ModeActive}},
+	}
+	job := &repository.SMLCancellationProfileReconciliationJob{
+		ID: "job-1", TenantKey: "aoy", CancellationID: "cancel-1", ProfileVersion: sml.InvoiceDocumentProfileVersion,
+		Route: "creditnote", PayloadHash: "hash-cn", LeaseOwner: "worker-1", LeaseToken: 3,
+		AttemptCount: 1, MaxAttempts: 10, ShopID: 1, OrderSN: "ORDER-1", SourceDocNo: "BF-INV-1",
+		CancelDocNo: "CN-1", RouteEndpoint: "/api/v1/ic/sale-invoices/:doc_no/cancel", RequestPayload: requestBody,
+		CorrelationID: "trace-1",
+	}
+	if failure := h.processSMLCancellationProfileReconciliation(context.Background(), job); failure != nil {
+		t.Fatalf("failure=%+v", failure)
+	}
+	if requestCount != 1 {
+		t.Fatalf("Gateway requests=%d, want exactly one idempotent Profile repair", requestCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
