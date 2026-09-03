@@ -1,6 +1,7 @@
 package sml
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,21 @@ func TestSaleOrderRawSendReplaysExactPayloadBytes(t *testing.T) {
 	}
 	if string(responseBytes) != `{"status":"success","data":{"doc_no":"BF-SO26080001"}}` {
 		t.Fatalf("response bytes = %s", responseBytes)
+	}
+}
+
+func TestSaleOrderProfileFieldsDoNotChangeLegacyMarshal(t *testing.T) {
+	wantBody := []byte(`{"doc_no":"BF-SO26080001","doc_date":"2026-08-24","doc_time":"10:00","doc_format_code":"SO","cust_code":"AR1","sale_code":"","sale_type":0,"vat_type":2,"vat_rate":0,"inquiry_type":0,"total_value":10,"total_discount":0,"total_before_vat":10,"total_vat_value":0,"total_except_vat":0,"total_after_vat":10,"total_amount":10,"items":[],"expand_set_items":false}`)
+	var payload SaleOrderPayload
+	if err := json.Unmarshal(wantBody, &payload); err != nil {
+		t.Fatal(err)
+	}
+	got, err := MarshalASCII(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(wantBody) {
+		t.Fatalf("legacy Sale Order wire changed\n got: %s\nwant: %s", got, wantBody)
 	}
 }
 

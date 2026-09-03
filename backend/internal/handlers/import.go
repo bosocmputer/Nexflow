@@ -18,6 +18,7 @@ import (
 	"nexflow/internal/services/anomaly"
 	"nexflow/internal/services/mapper"
 	"nexflow/internal/services/sml"
+	"nexflow/internal/services/smlprofile"
 )
 
 // ImportHandler handles Lazada/Shopee Excel imports (Phase 4)
@@ -553,7 +554,34 @@ func (h *ImportHandler) buildImportPayload(bill *models.Bill) (sml.SaleOrderPayl
 
 	docDate := bill.CreatedAt.Format("2006-01-02")
 	payload := sml.BuildSaleOrderPayload(docNo, docDate, "", "", items, cfg, "", sml.SaleOrderHeaderOptions{
+		Remark2:        def.Remark2,
 		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
+	mode := smlprofile.ModeOff
+	if h.cfg != nil {
+		mode = h.cfg.SMLDocumentProfileRouteModes["saleorder"]
+	}
+	opts := sml.InvoiceDocumentProfileOptions{
+		Mode: mode, Channel: channelDefaultKeyForBill(bill), ConfigVersion: def.ConfigVersion,
+		RouteSignature: smlprofile.RouteSignature(*def, mode),
+		Remark5:        "NEXFLOW|" + channelDefaultKeyForBill(bill) + "|" + firstNonEmpty(docRefFromBill(bill), docNo),
+	}
+	payload.Remark = strings.TrimSpace(firstNonEmpty(def.Remark, bill.Remark))
+	if isMarketplaceSource(bill.Source) {
+		opts.MarketplacePhysicalGoods = true
+		opts.ShipmentApplicability = "required"
+		opts.Shipment = invoiceShipmentFromJSON(bill.RawData)
+	} else {
+		opts.ShipmentApplicability = "not_applicable"
+	}
+	if err := sml.ApplySaleOrderDocumentProfile(&payload, opts); err != nil {
+		if mode == smlprofile.ModeActive {
+			return sml.SaleOrderPayload{}, "", fmt.Errorf("Document Profile ไม่พร้อม: %w", err)
+		}
+		payload.ProfileMode = mode
+		payload.ProfileConfigVersion = opts.ConfigVersion
+		payload.ProfileRouteSignature = opts.RouteSignature
+		payload.ProfileValidationError = err.Error()
+	}
 	return payload, docNo, nil
 }

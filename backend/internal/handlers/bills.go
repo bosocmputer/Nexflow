@@ -2090,10 +2090,23 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	if err != nil {
 		return retrySendResult{HTTPStatus: http.StatusBadRequest, Error: "เลขเอกสาร SML ไม่ถูกต้อง: " + err.Error(), Route: route}
 	}
-	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, req.Remark, sml.SaleOrderHeaderOptions{
-		Remark2:        req.Remark2,
+	profile, profileErr := h.resolveSaleOrderDocumentProfile(opts.Context, bill, def, req, reqDocNo)
+	if profileErr != nil && profile.Mode == smlprofile.ModeActive {
+		return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + profileErr.Error(), Route: route, Skipped: true}
+	}
+	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, profile.Remark, sml.SaleOrderHeaderOptions{
+		Remark2:        profile.Remark2,
 		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
+	if err := sml.ApplySaleOrderDocumentProfile(&payload, profile.Options); err != nil {
+		if profile.Mode == smlprofile.ModeActive {
+			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + err.Error(), Route: route, Skipped: true}
+		}
+		payload.ProfileMode = profile.Mode
+		payload.ProfileConfigVersion = profile.Options.ConfigVersion
+		payload.ProfileRouteSignature = profile.Options.RouteSignature
+		payload.ProfileValidationError = err.Error()
+	}
 	attempt, err := h.createSMLAttempt(opts.Context, bill, reqDocNo, route, payload, urlOverride, cfg, opts.LeaseOwner, opts)
 	if errors.Is(err, repository.ErrSMLAttemptExists) {
 		return retrySendResult{HTTPStatus: http.StatusConflict, Error: "มีการเริ่มส่งเอกสารนี้แล้ว กรุณารอสักครู่", Route: route, Skipped: true, LeaseBusy: true}
@@ -3056,13 +3069,28 @@ func (h *BillHandler) retrySaleOrder(c *gin.Context, bill *models.Bill, req Retr
 		h.writeDocNoError(c, err)
 		return
 	}
-	// Stamp doc_no on the bill BEFORE calling SML so a re-retry uses the same
-	// number (no counter inflation, no duplicate docs in SML on transient fail).
-	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
-	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, req.Remark, sml.SaleOrderHeaderOptions{
-		Remark2:        req.Remark2,
+	profile, profileErr := h.resolveSaleOrderDocumentProfile(c.Request.Context(), bill, def, req, reqDocNo)
+	if profileErr != nil && profile.Mode == smlprofile.ModeActive {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Document Profile ไม่พร้อม: " + profileErr.Error()})
+		return
+	}
+	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, profile.Remark, sml.SaleOrderHeaderOptions{
+		Remark2:        profile.Remark2,
 		ExpandSetItems: h.cfg != nil && h.cfg.SMLSetProductExpansionEnabled,
 	})
+	if err := sml.ApplySaleOrderDocumentProfile(&payload, profile.Options); err != nil {
+		if profile.Mode == smlprofile.ModeActive {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Document Profile ไม่พร้อม: " + err.Error()})
+			return
+		}
+		payload.ProfileMode = profile.Mode
+		payload.ProfileConfigVersion = profile.Options.ConfigVersion
+		payload.ProfileRouteSignature = profile.Options.RouteSignature
+		payload.ProfileValidationError = err.Error()
+	}
+	// Stamp doc_no only after Profile validation, but before the external call,
+	// so validation failures do not mutate the bill and retries stay idempotent.
+	_ = h.billRepo.UpdateStatus(id, bill.Status, &reqDocNo, nil, nil)
 	reqJSON, _ := json.Marshal(payload)
 
 	start := time.Now()

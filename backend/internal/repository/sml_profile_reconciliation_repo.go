@@ -28,6 +28,7 @@ type SMLProfileReconciliationJob struct {
 	LeaseUntil       time.Time
 	CorrelationID    string
 	DocNo            string
+	Route            string
 	PayloadBytes     []byte
 	RouteSettings    json.RawMessage
 }
@@ -170,13 +171,13 @@ func (r *BillRepo) ClaimSMLProfileReconciliationJob(ctx context.Context, owner s
 	)
 	SELECT c.id::text,c.tenant_key,c.sml_attempt_id::text,c.profile_version,c.payload_hash,c.status,
 	       c.required_checks,c.completed_checks,c.attempt_count,c.manual_retry_count,c.max_attempts,c.lease_owner,
-	       c.lease_token,c.lease_until,c.correlation_id,a.bill_id::text,a.doc_no,a.payload_bytes,a.route_settings
+	       c.lease_token,c.lease_until,c.correlation_id,a.bill_id::text,a.doc_no,a.route,a.payload_bytes,a.route_settings
 	  FROM claimed c JOIN bill_sml_attempts a ON a.id=c.sml_attempt_id`, owner, int64(leaseDuration/time.Second))
 	var job SMLProfileReconciliationJob
 	var required, completed []byte
 	err := row.Scan(&job.ID, &job.TenantKey, &job.SMLAttemptID, &job.ProfileVersion, &job.PayloadHash, &job.Status,
 		&required, &completed, &job.AttemptCount, &job.ManualRetryCount, &job.MaxAttempts, &job.LeaseOwner, &job.LeaseToken,
-		&job.LeaseUntil, &job.CorrelationID, &job.BillID, &job.DocNo, &job.PayloadBytes, &job.RouteSettings)
+		&job.LeaseUntil, &job.CorrelationID, &job.BillID, &job.DocNo, &job.Route, &job.PayloadBytes, &job.RouteSettings)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

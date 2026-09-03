@@ -19,9 +19,21 @@ type resolvedInvoiceDocumentProfile struct {
 }
 
 func (h *BillHandler) resolveInvoiceDocumentProfile(ctx context.Context, bill *models.Bill, def *models.ChannelDefault, req RetryRequest, docNo string) (resolvedInvoiceDocumentProfile, error) {
+	return h.resolveSalesDocumentProfile(ctx, bill, def, req, docNo, "saleinvoice")
+}
+
+func (h *BillHandler) resolveSaleOrderDocumentProfile(ctx context.Context, bill *models.Bill, def *models.ChannelDefault, req RetryRequest, docNo string) (resolvedInvoiceDocumentProfile, error) {
+	return h.resolveSalesDocumentProfile(ctx, bill, def, req, docNo, "saleorder")
+}
+
+func (h *BillHandler) resolveSalesDocumentProfile(ctx context.Context, bill *models.Bill, def *models.ChannelDefault, req RetryRequest, docNo, route string) (resolvedInvoiceDocumentProfile, error) {
 	mode := smlprofile.ModeOff
 	if h != nil && h.cfg != nil {
-		mode = h.cfg.SMLDocumentProfileMode
+		if configured, ok := h.cfg.SMLDocumentProfileRouteModes[route]; ok {
+			mode = configured
+		} else if route == "saleinvoice" {
+			mode = h.cfg.SMLDocumentProfileMode
+		}
 	}
 	channel := channelDefaultKeyForBill(bill)
 	orderRef := docRefFromBill(bill)

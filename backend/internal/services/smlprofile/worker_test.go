@@ -43,7 +43,7 @@ func TestReconciliationWorkerReplaysImmutablePayloadAndCompletesProfileOnly(t *t
 	mock.ExpectCommit()
 
 	cfg := &config.Config{SMLDocumentProfileMode: ModeActive, ShopeeGatewayTenant: "aoy"}
-	worker := NewReconciliationWorker(repository.NewBillRepo(db), sml.NewInvoiceClient(sml.InvoiceConfig{BaseURL: server.URL}, nil), cfg, nil, nil)
+	worker := NewReconciliationWorker(repository.NewBillRepo(db), sml.NewInvoiceClient(sml.InvoiceConfig{BaseURL: server.URL}, nil), nil, cfg, nil, nil)
 	job := &repository.SMLProfileReconciliationJob{
 		ID: "job-1", TenantKey: "aoy", SMLAttemptID: "attempt-1", ProfileVersion: Version,
 		PayloadHash: "hash-1", LeaseOwner: "worker-1", LeaseToken: 2, AttemptCount: 1, MaxAttempts: 10,
@@ -57,8 +57,52 @@ func TestReconciliationWorkerReplaysImmutablePayloadAndCompletesProfileOnly(t *t
 	}
 }
 
+func TestReconciliationWorkerReplaysSaleOrderWithoutResendingAnotherRoute(t *testing.T) {
+	wantBody := []byte(`{"document_profile_version":"sml-document-v1","doc_no":"BF-SO1","items":[]}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/ic/sale-orders" {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		got, _ := io.ReadAll(r.Body)
+		if string(got) != string(wantBody) {
+			t.Errorf("immutable body changed: %s", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"doc_no":"BF-SO1","status":"already_exists","payload_hash":"hash-so","core_status":"already_exists","profile_status":"complete","required_checks":["core","erp_log","main_log"],"completed_checks":["core","erp_log","main_log"],"reconciliation_required":false}}`))
+	}))
+	defer server.Close()
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE sml_document_profile_reconciliation_jobs SET`)).
+		WithArgs("job-so", "worker-so", int64(3), "hash-so", []byte(`["core","erp_log","main_log"]`)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE bill_sml_attempts SET`)).
+		WithArgs("attempt-so", "hash-so", []byte(`["core","erp_log","main_log"]`), Version).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	cfg := &config.Config{ShopeeGatewayTenant: "aoy", SMLDocumentProfileRouteModes: map[string]string{"saleorder": ModeActive}}
+	worker := NewReconciliationWorker(repository.NewBillRepo(db), nil, sml.NewSaleOrderClient(sml.SaleOrderConfig{BaseURL: server.URL}, nil), cfg, nil, nil)
+	job := &repository.SMLProfileReconciliationJob{
+		ID: "job-so", TenantKey: "aoy", SMLAttemptID: "attempt-so", ProfileVersion: Version,
+		PayloadHash: "hash-so", LeaseOwner: "worker-so", LeaseToken: 3, AttemptCount: 1, MaxAttempts: 10,
+		Route: "SaleOrder", PayloadBytes: wantBody, RouteSettings: []byte(`{}`),
+	}
+	if failure := worker.process(context.Background(), job); failure != nil {
+		t.Fatalf("failure=%+v", failure)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReconciliationWorkerRejectsCrossTenantBeforeGateway(t *testing.T) {
-	worker := NewReconciliationWorker(nil, nil, &config.Config{SMLDocumentProfileMode: ModeActive, ShopeeGatewayTenant: "aoy"}, nil, nil)
+	worker := NewReconciliationWorker(nil, nil, nil, &config.Config{SMLDocumentProfileMode: ModeActive, ShopeeGatewayTenant: "aoy"}, nil, nil)
 	failure := worker.process(context.Background(), &repository.SMLProfileReconciliationJob{TenantKey: "demo"})
 	if failure == nil || failure.Code != "tenant_mismatch" || !failure.Terminal {
 		t.Fatalf("failure=%+v", failure)
@@ -73,7 +117,7 @@ func TestReconciliationWorkerPreservesSafeGatewayRecoveryMessage(t *testing.T) {
 	defer server.Close()
 
 	cfg := &config.Config{SMLDocumentProfileMode: ModeActive, ShopeeGatewayTenant: "aoy"}
-	worker := NewReconciliationWorker(nil, sml.NewInvoiceClient(sml.InvoiceConfig{BaseURL: server.URL}, nil), cfg, nil, nil)
+	worker := NewReconciliationWorker(nil, sml.NewInvoiceClient(sml.InvoiceConfig{BaseURL: server.URL}, nil), nil, cfg, nil, nil)
 	failure := worker.process(context.Background(), &repository.SMLProfileReconciliationJob{
 		TenantKey: "aoy", ProfileVersion: Version, PayloadHash: "hash-1",
 		PayloadBytes: []byte(`{"document_profile_version":"sml-document-v1","doc_no":"BF-1"}`), RouteSettings: []byte(`{}`),

@@ -60,6 +60,25 @@ func TestResolveInvoiceDocumentProfileDoesNotReturnBuyerValuesInMissingError(t *
 	}
 }
 
+func TestResolveSaleOrderDocumentProfileUsesRouteScopedMode(t *testing.T) {
+	h := &BillHandler{cfg: &config.Config{
+		SMLDocumentProfileMode: smlprofile.ModeActive,
+		SMLDocumentProfileRouteModes: map[string]string{
+			"saleinvoice": smlprofile.ModeActive,
+			"saleorder":   smlprofile.ModeShadow,
+		},
+	}}
+	bill := &models.Bill{BillType: "sale", Source: "manual", Remark: "sale order"}
+	got, err := h.resolveSaleOrderDocumentProfile(context.Background(), bill,
+		&models.ChannelDefault{Channel: "manual", BillType: "sale", ConfigVersion: 2}, RetryRequest{}, "BF-SO1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != smlprofile.ModeShadow || got.Options.Mode != smlprofile.ModeShadow || got.Options.ShipmentApplicability != "not_applicable" {
+		t.Fatalf("sale order route profile=%+v", got)
+	}
+}
+
 func TestShopeeRouteSignatureIncludesProfileAuthority(t *testing.T) {
 	cfg := ShopeeConfigRequest{Endpoint: "saleinvoice", DocFormat: "SI", CustCode: "AR-1", WHCode: "AB-1", ShelfCode: "001", VATType: 1, VATRate: 7}
 	def := &models.ChannelDefault{Channel: "shopee_realtime", BillType: "sale", ConfigVersion: 1, Remark: "one"}

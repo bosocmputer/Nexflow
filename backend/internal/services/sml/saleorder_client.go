@@ -66,51 +66,80 @@ func (c *SaleOrderClient) headers() map[string]string {
 // at the payload level but each item has the same per-line shape as
 // saleinvoice/purchaseorder details.
 type SaleOrderItem struct {
-	ItemCode         string  `json:"item_code"`
-	ItemName         string  `json:"item_name,omitempty"`
-	LineNumber       int     `json:"line_number"`
-	IsPremium        int     `json:"is_permium"` // typo intentional (matches SML)
-	IsGetPrice       int     `json:"is_get_price"`
-	UnitCode         string  `json:"unit_code"`
-	WHCode           string  `json:"wh_code"`
-	ShelfCode        string  `json:"shelf_code"`
-	Qty              float64 `json:"qty"`
-	Price            float64 `json:"price"`
-	PriceExcludeVAT  float64 `json:"price_exclude_vat"`
-	DiscountAmount   float64 `json:"discount_amount"`
-	SumAmount        float64 `json:"sum_amount"`
-	VATAmount        float64 `json:"vat_amount"`
-	TaxType          int     `json:"tax_type"`
-	VATType          int     `json:"vat_type"`
-	SumAmountExclVAT float64 `json:"sum_amount_exclude_vat"`
+	ItemCode                string  `json:"item_code"`
+	ItemName                string  `json:"item_name,omitempty"`
+	LineNumber              int     `json:"line_number"`
+	IsPremium               int     `json:"is_permium"` // typo intentional (matches SML)
+	IsGetPrice              int     `json:"is_get_price"`
+	UnitCode                string  `json:"unit_code"`
+	WHCode                  string  `json:"wh_code"`
+	ShelfCode               string  `json:"shelf_code"`
+	Qty                     float64 `json:"qty"`
+	Price                   float64 `json:"price"`
+	PriceExcludeVAT         float64 `json:"price_exclude_vat"`
+	DiscountAmount          float64 `json:"discount_amount"`
+	SumAmount               float64 `json:"sum_amount"`
+	VATAmount               float64 `json:"vat_amount"`
+	TaxType                 int     `json:"tax_type"`
+	VATType                 int     `json:"vat_type"`
+	SumAmountExclVAT        float64 `json:"sum_amount_exclude_vat"`
+	QtyDecimal              string  `json:"qty_decimal,omitempty"`
+	PriceDecimal            string  `json:"price_decimal,omitempty"`
+	PriceExcludeVATDecimal  string  `json:"price_exclude_vat_decimal,omitempty"`
+	DiscountAmountDecimal   string  `json:"discount_amount_decimal,omitempty"`
+	SumAmountDecimal        string  `json:"sum_amount_decimal,omitempty"`
+	VATAmountDecimal        string  `json:"vat_amount_decimal,omitempty"`
+	SumAmountExclVATDecimal string  `json:"sum_amount_exclude_vat_decimal,omitempty"`
 }
 
 // SaleOrderPayload is the body for POST /api/v1/ic/sale-orders.
 type SaleOrderPayload struct {
-	DocNo          string          `json:"doc_no"` // required (non-empty), client-generated
-	DocDate        string          `json:"doc_date"`
-	DocTime        string          `json:"doc_time"`
-	DocRef         string          `json:"doc_ref,omitempty"`
-	DocRefDate     string          `json:"doc_ref_date,omitempty"`
-	DocFormatCode  string          `json:"doc_format_code"`
-	CustCode       string          `json:"cust_code"`
-	SaleCode       string          `json:"sale_code"`
-	BranchCode     string          `json:"branch_code,omitempty"`
-	SaleType       int             `json:"sale_type"`
-	VATType        int             `json:"vat_type"`
-	VATRate        float64         `json:"vat_rate"`
-	InquiryType    int             `json:"inquiry_type"`
-	TotalValue     float64         `json:"total_value"`
-	TotalDiscount  float64         `json:"total_discount"`
-	TotalBeforeVAT float64         `json:"total_before_vat"`
-	TotalVATValue  float64         `json:"total_vat_value"`
-	TotalExceptVAT float64         `json:"total_except_vat"`
-	TotalAfterVAT  float64         `json:"total_after_vat"`
-	TotalAmount    float64         `json:"total_amount"`
-	Items          []SaleOrderItem `json:"items"`
-	Remark         string          `json:"remark,omitempty"`
-	Remark2        string          `json:"remark_2,omitempty"`
-	ExpandSetItems bool            `json:"expand_set_items"`
+	DocumentProfileVersion   string           `json:"document_profile_version,omitempty"`
+	MarketplacePhysicalGoods bool             `json:"marketplace_physical_goods,omitempty"`
+	ShipmentApplicability    string           `json:"shipment_applicability,omitempty"`
+	Shipment                 *InvoiceShipment `json:"shipment,omitempty"`
+	CreatorCode              string           `json:"creator_code,omitempty"`
+	CashierCode              string           `json:"cashier_code,omitempty"`
+	CurrencyCode             string           `json:"currency_code,omitempty"`
+	ExchangeRateDecimal      string           `json:"exchange_rate_decimal,omitempty"`
+	DocNo                    string           `json:"doc_no"` // required (non-empty), client-generated
+	DocDate                  string           `json:"doc_date"`
+	DocTime                  string           `json:"doc_time"`
+	DocRef                   string           `json:"doc_ref,omitempty"`
+	DocRefDate               string           `json:"doc_ref_date,omitempty"`
+	DocFormatCode            string           `json:"doc_format_code"`
+	CustCode                 string           `json:"cust_code"`
+	SaleCode                 string           `json:"sale_code"`
+	BranchCode               string           `json:"branch_code,omitempty"`
+	SaleType                 int              `json:"sale_type"`
+	VATType                  int              `json:"vat_type"`
+	VATRate                  float64          `json:"vat_rate"`
+	InquiryType              int              `json:"inquiry_type"`
+	VATRateDecimal           string           `json:"vat_rate_decimal,omitempty"`
+	TotalValue               float64          `json:"total_value"`
+	TotalDiscount            float64          `json:"total_discount"`
+	TotalBeforeVAT           float64          `json:"total_before_vat"`
+	TotalVATValue            float64          `json:"total_vat_value"`
+	TotalExceptVAT           float64          `json:"total_except_vat"`
+	TotalAfterVAT            float64          `json:"total_after_vat"`
+	TotalAmount              float64          `json:"total_amount"`
+	TotalValueDecimal        string           `json:"total_value_decimal,omitempty"`
+	TotalDiscountDecimal     string           `json:"total_discount_decimal,omitempty"`
+	TotalBeforeVATDecimal    string           `json:"total_before_vat_decimal,omitempty"`
+	TotalVATValueDecimal     string           `json:"total_vat_value_decimal,omitempty"`
+	TotalExceptVATDecimal    string           `json:"total_except_vat_decimal,omitempty"`
+	TotalAfterVATDecimal     string           `json:"total_after_vat_decimal,omitempty"`
+	TotalAmountDecimal       string           `json:"total_amount_decimal,omitempty"`
+	Items                    []SaleOrderItem  `json:"items"`
+	Remark                   string           `json:"remark,omitempty"`
+	Remark2                  string           `json:"remark_2,omitempty"`
+	Remark5                  string           `json:"remark_5,omitempty"`
+	UserRequest              string           `json:"user_request,omitempty"`
+	ExpandSetItems           bool             `json:"expand_set_items"`
+	ProfileMode              string           `json:"-"`
+	ProfileConfigVersion     int64            `json:"-"`
+	ProfileRouteSignature    string           `json:"-"`
+	ProfileValidationError   string           `json:"-"`
 }
 
 // ─── Response ─────────────────────────────────────────────────────────────────
@@ -125,9 +154,16 @@ type SaleOrderResponse struct {
 	Error   any    `json:"error,omitempty"`
 	Code    string `json:"code,omitempty"`
 	Data    struct {
-		DocNo      string `json:"doc_no"`
-		LogStatus  string `json:"log_status,omitempty"`
-		LogWarning string `json:"log_warning,omitempty"`
+		DocNo                  string   `json:"doc_no"`
+		Status                 string   `json:"status,omitempty"`
+		LogStatus              string   `json:"log_status,omitempty"`
+		LogWarning             string   `json:"log_warning,omitempty"`
+		PayloadHash            string   `json:"payload_hash,omitempty"`
+		CoreStatus             string   `json:"core_status,omitempty"`
+		ProfileStatus          string   `json:"profile_status,omitempty"`
+		RequiredChecks         []string `json:"required_checks,omitempty"`
+		CompletedChecks        []string `json:"completed_checks,omitempty"`
+		ReconciliationRequired bool     `json:"reconciliation_required,omitempty"`
 	} `json:"data"`
 }
 
@@ -154,6 +190,32 @@ func (r *SaleOrderResponse) GetCode() string {
 		return code
 	}
 	return strings.TrimSpace(apiErrorCode(r.Error))
+}
+
+func (r *SaleOrderResponse) DocumentProfileResult(requestedVersion string) InvoiceDocumentProfileResult {
+	if r == nil || strings.TrimSpace(requestedVersion) == "" {
+		return InvoiceDocumentProfileResult{}
+	}
+	status := strings.TrimSpace(r.Data.ProfileStatus)
+	reconcile := r.Data.ReconciliationRequired
+	if status == "" {
+		status = "needs_reconciliation"
+		reconcile = true
+	}
+	coreStatus := strings.TrimSpace(r.Data.CoreStatus)
+	if coreStatus == "" {
+		coreStatus = strings.TrimSpace(r.Data.Status)
+	}
+	if coreStatus == "" {
+		coreStatus = "created"
+	}
+	return InvoiceDocumentProfileResult{
+		Version: requestedVersion, PayloadHash: strings.TrimSpace(r.Data.PayloadHash),
+		CoreStatus: coreStatus, ProfileStatus: status,
+		RequiredChecks:         append([]string(nil), r.Data.RequiredChecks...),
+		CompletedChecks:        append([]string(nil), r.Data.CompletedChecks...),
+		ReconciliationRequired: reconcile,
+	}
 }
 
 // ─── Create ───────────────────────────────────────────────────────────────────

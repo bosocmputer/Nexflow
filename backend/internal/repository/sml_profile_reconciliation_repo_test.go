@@ -20,9 +20,9 @@ func TestClaimSMLProfileReconciliationJobReclaimsExpiredWorkerLeaseWithFencingTo
 		WithArgs("worker-1", int64(120)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "tenant_key", "sml_attempt_id", "profile_version", "payload_hash", "status", "required_checks", "completed_checks",
-			"attempt_count", "manual_retry_count", "max_attempts", "lease_owner", "lease_token", "lease_until", "correlation_id", "bill_id", "doc_no", "payload_bytes", "route_settings",
+			"attempt_count", "manual_retry_count", "max_attempts", "lease_owner", "lease_token", "lease_until", "correlation_id", "bill_id", "doc_no", "route", "payload_bytes", "route_settings",
 		}).AddRow("job-1", "aoy", "attempt-1", "sml-document-v1", "hash", "running", []byte(`["core"]`), []byte(`[]`),
-			1, 0, 10, "worker-1", 4, now.Add(2*time.Minute), "trace-1", "bill-1", "BF-1", []byte(`{}`), []byte(`{}`)))
+			1, 0, 10, "worker-1", 4, now.Add(2*time.Minute), "trace-1", "bill-1", "BF-1", "SaleInvoice", []byte(`{}`), []byte(`{}`)))
 	job, err := NewBillRepo(db).ClaimSMLProfileReconciliationJob(context.Background(), "worker-1", 2*time.Minute)
 	if err != nil || job == nil || job.LeaseToken != 4 || job.AttemptCount != 1 || job.TenantKey != "aoy" {
 		t.Fatalf("job=%+v err=%v", job, err)

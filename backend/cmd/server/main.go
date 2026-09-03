@@ -310,7 +310,7 @@ func main() {
 	smlBulkJobRepo := repository.NewSMLBulkJobRepo(db)
 	billH := handlers.NewBillHandler(billRepo, mapperSvc, invoiceClient, saleOrderClient, nil, docNoClient, cfg, lineSvc, auditLogRepo, catalogRepo, channelDefaultRepo, docCounterRepo, smlBulkJobRepo, artifactSvc, warehouseCache, smlReadiness, appSettingsRepo, logger)
 	billH.RecoverInterruptedBulkSendJobs()
-	smlprofile.NewReconciliationWorker(billRepo, invoiceClient, cfg, auditLogRepo, logger).Start(appCtx)
+	smlprofile.NewReconciliationWorker(billRepo, invoiceClient, saleOrderClient, cfg, auditLogRepo, logger).Start(appCtx)
 	mappingH := handlers.NewMappingHandler(mappingRepo, mapperSvc, catalogRepo, auditLogRepo, logger)
 	dashH := handlers.NewDashboardHandler(billRepo, lineOARepo, logger)
 	dashH.SetSMLReadiness(smlReadiness)

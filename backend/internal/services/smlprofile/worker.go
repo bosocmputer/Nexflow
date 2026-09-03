@@ -20,12 +20,13 @@ import (
 const profileReconciliationLease = 2 * time.Minute
 
 type ReconciliationWorker struct {
-	bills    *repository.BillRepo
-	client   *sml.InvoiceClient
-	config   *config.Config
-	audit    *repository.AuditLogRepo
-	workerID string
-	log      *zap.Logger
+	bills           *repository.BillRepo
+	invoiceClient   *sml.InvoiceClient
+	saleOrderClient *sml.SaleOrderClient
+	config          *config.Config
+	audit           *repository.AuditLogRepo
+	workerID        string
+	log             *zap.Logger
 }
 
 type reconciliationRouteSnapshot struct {
@@ -38,16 +39,16 @@ type reconciliationFailure struct {
 	Terminal bool
 }
 
-func NewReconciliationWorker(bills *repository.BillRepo, client *sml.InvoiceClient, cfg *config.Config, audit *repository.AuditLogRepo, log *zap.Logger) *ReconciliationWorker {
+func NewReconciliationWorker(bills *repository.BillRepo, invoiceClient *sml.InvoiceClient, saleOrderClient *sml.SaleOrderClient, cfg *config.Config, audit *repository.AuditLogRepo, log *zap.Logger) *ReconciliationWorker {
 	tenant := profileInstanceTenant(cfg)
 	return &ReconciliationWorker{
-		bills: bills, client: client, config: cfg, audit: audit,
+		bills: bills, invoiceClient: invoiceClient, saleOrderClient: saleOrderClient, config: cfg, audit: audit,
 		workerID: fmt.Sprintf("%s-sml-profile-%d", firstNonEmptyValue(tenant, "nexflow"), time.Now().UnixNano()), log: log,
 	}
 }
 
 func (w *ReconciliationWorker) Start(ctx context.Context) {
-	if w == nil || w.bills == nil || w.client == nil || w.config == nil || w.config.SMLDocumentProfileMode != ModeActive {
+	if w == nil || w.bills == nil || w.config == nil || !profileReconciliationEnabled(w.config, w.invoiceClient != nil, w.saleOrderClient != nil) {
 		return
 	}
 	go func() {
@@ -165,7 +166,7 @@ func (w *ReconciliationWorker) process(ctx context.Context, job *repository.SMLP
 			status = failure.Code
 			failed = true
 		}
-		DefaultMetrics.ObserveRequest(job.TenantKey, "saleinvoice_reconciliation", job.ProfileVersion, status, time.Since(started), failed)
+		DefaultMetrics.ObserveRequest(job.TenantKey, strings.ToLower(firstNonEmptyValue(job.Route, "SaleInvoice"))+"_reconciliation", job.ProfileVersion, status, time.Since(started), failed)
 	}()
 	if err := repository.ValidateSMLProfileJobTenant(job.TenantKey, profileInstanceTenant(w.config)); err != nil {
 		return &reconciliationFailure{Code: "tenant_mismatch", Message: err.Error(), Terminal: true}
@@ -180,22 +181,52 @@ func (w *ReconciliationWorker) process(ctx context.Context, job *repository.SMLP
 	if err := json.Unmarshal(job.RouteSettings, &route); err != nil {
 		return &reconciliationFailure{Code: "route_snapshot_invalid", Message: "immutable route snapshot is invalid", Terminal: true}
 	}
-	statusCode, response, _, err := w.client.CreateInvoiceBytesWithCorrelation(job.PayloadBytes, route.URLOverride, job.CorrelationID)
+	var statusCode int
+	var result sml.InvoiceDocumentProfileResult
+	var responseCode, responseWarning string
+	var success bool
+	var responseReceived bool
+	var err error
+	switch firstNonEmptyValue(job.Route, "SaleInvoice") {
+	case "SaleInvoice":
+		if w.invoiceClient == nil {
+			return &reconciliationFailure{Code: "route_client_unavailable", Message: "Sale Invoice client is unavailable"}
+		}
+		var response *sml.InvoiceResponse
+		statusCode, response, _, err = w.invoiceClient.CreateInvoiceBytesWithCorrelation(job.PayloadBytes, route.URLOverride, job.CorrelationID)
+		if response != nil {
+			responseReceived = true
+			success, responseCode, responseWarning = response.IsSuccess(), response.GetCode(), response.Data.LogWarning
+			result = response.DocumentProfileResult(job.ProfileVersion)
+		}
+	case "SaleOrder":
+		if w.saleOrderClient == nil {
+			return &reconciliationFailure{Code: "route_client_unavailable", Message: "Sale Order client is unavailable"}
+		}
+		var response *sml.SaleOrderResponse
+		statusCode, response, _, err = w.saleOrderClient.CreateSaleOrderBytes(job.PayloadBytes, route.URLOverride)
+		if response != nil {
+			responseReceived = true
+			success, responseCode, responseWarning = response.IsSuccess(), response.GetCode(), response.Data.LogWarning
+			result = response.DocumentProfileResult(job.ProfileVersion)
+		}
+	default:
+		return &reconciliationFailure{Code: "route_unsupported", Message: "immutable Profile route is unsupported", Terminal: true}
+	}
 	if err != nil {
 		return &reconciliationFailure{Code: "gateway_unavailable", Message: "SML Gateway is unavailable"}
 	}
-	if response == nil {
+	if !responseReceived {
 		return &reconciliationFailure{Code: "gateway_response_missing", Message: "SML Gateway response is missing"}
 	}
-	if statusCode == http.StatusConflict && response.GetCode() == "doc_no_payload_mismatch" {
+	if statusCode == http.StatusConflict && responseCode == "doc_no_payload_mismatch" {
 		return &reconciliationFailure{Code: "doc_no_payload_mismatch", Message: "SML document payload does not match the immutable attempt", Terminal: true}
 	}
-	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices || !response.IsSuccess() {
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices || !success {
 		terminal := statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError && statusCode != http.StatusTooManyRequests
-		code := firstNonEmptyValue(response.GetCode(), "gateway_rejected")
+		code := firstNonEmptyValue(responseCode, "gateway_rejected")
 		return &reconciliationFailure{Code: code, Message: fmt.Sprintf("SML Gateway rejected profile reconciliation (HTTP %d)", statusCode), Terminal: terminal}
 	}
-	result := response.DocumentProfileResult(job.ProfileVersion)
 	if result.PayloadHash == "" {
 		return &reconciliationFailure{Code: "profile_hash_missing", Message: "SML Gateway did not return the canonical payload hash"}
 	}
@@ -204,7 +235,7 @@ func (w *ReconciliationWorker) process(ctx context.Context, job *repository.SMLP
 	}
 	if result.ProfileStatus != "complete" || result.ReconciliationRequired {
 		message := "SML document profile is still incomplete"
-		if warning := strings.TrimSpace(response.Data.LogWarning); warning != "" {
+		if warning := strings.TrimSpace(responseWarning); warning != "" {
 			message = warning
 		}
 		return &reconciliationFailure{Code: "profile_incomplete", Message: message}
@@ -220,6 +251,18 @@ func (w *ReconciliationWorker) process(ctx context.Context, job *repository.SMLP
 		"attempt_count": job.AttemptCount, "completed_checks": result.CompletedChecks,
 	})
 	return nil
+}
+
+func profileReconciliationEnabled(cfg *config.Config, invoiceAvailable, saleOrderAvailable bool) bool {
+	if cfg == nil {
+		return false
+	}
+	invoiceMode := cfg.SMLDocumentProfileMode
+	if mode, ok := cfg.SMLDocumentProfileRouteModes["saleinvoice"]; ok {
+		invoiceMode = mode
+	}
+	saleOrderMode := cfg.SMLDocumentProfileRouteModes["saleorder"]
+	return (invoiceAvailable && invoiceMode == ModeActive) || (saleOrderAvailable && saleOrderMode == ModeActive)
 }
 
 func (w *ReconciliationWorker) auditEvent(job *repository.SMLProfileReconciliationJob, action, level string, detail map[string]any) {

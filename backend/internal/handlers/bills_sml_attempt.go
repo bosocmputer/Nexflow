@@ -67,22 +67,35 @@ func (h *BillHandler) createSMLAttempt(
 		return nil, err
 	}
 	routeSnapshot := smlAttemptRouteSnapshot{URLOverride: urlOverride, Config: routeConfig}
-	var invoicePayload *sml.InvoicePayload
+	var profileMode, profileVersion, routeSignature, validationError string
+	var profileConfigVersion int64
 	switch value := payload.(type) {
 	case sml.InvoicePayload:
-		invoicePayload = &value
+		profileMode, profileVersion = value.ProfileMode, value.DocumentProfileVersion
+		profileConfigVersion, routeSignature, validationError = value.ProfileConfigVersion, value.ProfileRouteSignature, value.ProfileValidationError
 	case *sml.InvoicePayload:
-		invoicePayload = value
+		if value != nil {
+			profileMode, profileVersion = value.ProfileMode, value.DocumentProfileVersion
+			profileConfigVersion, routeSignature, validationError = value.ProfileConfigVersion, value.ProfileRouteSignature, value.ProfileValidationError
+		}
+	case sml.SaleOrderPayload:
+		profileMode, profileVersion = value.ProfileMode, value.DocumentProfileVersion
+		profileConfigVersion, routeSignature, validationError = value.ProfileConfigVersion, value.ProfileRouteSignature, value.ProfileValidationError
+	case *sml.SaleOrderPayload:
+		if value != nil {
+			profileMode, profileVersion = value.ProfileMode, value.DocumentProfileVersion
+			profileConfigVersion, routeSignature, validationError = value.ProfileConfigVersion, value.ProfileRouteSignature, value.ProfileValidationError
+		}
 	}
-	if invoicePayload != nil && invoicePayload.ProfileMode != "" && invoicePayload.ProfileMode != "off" {
+	if profileMode != "" && profileMode != "off" {
 		validationState := "valid"
-		if invoicePayload.ProfileValidationError != "" {
+		if validationError != "" {
 			validationState = "invalid"
 		}
 		routeSnapshot.DocumentProfile = &smlAttemptDocumentProfileSnapshot{
-			Mode: invoicePayload.ProfileMode, Version: invoicePayload.DocumentProfileVersion,
-			ConfigVersion: invoicePayload.ProfileConfigVersion, RouteSignature: invoicePayload.ProfileRouteSignature,
-			ValidationState: validationState, ValidationError: invoicePayload.ProfileValidationError,
+			Mode: profileMode, Version: profileVersion,
+			ConfigVersion: profileConfigVersion, RouteSignature: routeSignature,
+			ValidationState: validationState, ValidationError: validationError,
 		}
 	}
 	routeSettings, err := json.Marshal(routeSnapshot)
@@ -209,6 +222,9 @@ func (h *BillHandler) executeSMLAttempt(
 			responseDocNo = response.GetDocNo()
 			responseSuccess = response.IsSuccess()
 			responseCode = response.GetCode()
+			if routeSnapshot.DocumentProfile != nil {
+				profileResult = response.DocumentProfileResult(routeSnapshot.DocumentProfile.Version)
+			}
 		}
 	case "SaleInvoice":
 		if h.invoiceClient == nil {
