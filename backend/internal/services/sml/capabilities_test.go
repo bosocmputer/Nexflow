@@ -19,7 +19,7 @@ func TestGatewayCapabilityClientFetchesSingleVersionedContract(t *testing.T) {
 			t.Fatalf("missing authenticated tenant headers: %+v", r.Header)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"success":true,"data":{"contract_revision":"sml-sales-document-profile-v2-20260903","document_profile":{"versions":["sml-document-v1"],"routes":["creditnote","saleinvoice","saleinvoicecancel","saleorder","saleordercancel"],"max_request_bytes":2097152,"max_input_items":500,"max_expanded_items":500,"max_text_characters":255},"cancellation":{"full_document_only":true,"source_lock_wait_seconds":3},"correlation_header":"X-Correlation-ID"}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"contract_revision":"sml-sales-document-profile-v2-20260903","document_profile":{"versions":["sml-document-v1"],"routes":["creditnote","saleinvoice","saleinvoicecancel","saleorder","saleordercancel"],"max_request_bytes":2097152,"max_input_items":500,"max_expanded_items":500,"max_expanded_bytes":2097152,"max_text_characters":255},"cancellation":{"full_document_only":true,"source_lock_wait_seconds":3},"correlation_header":"X-Correlation-ID"}}`))
 	}))
 	defer server.Close()
 
@@ -48,7 +48,7 @@ func TestValidateGatewayProfileCapabilityRejectsMismatchOrInactiveRoute(t *testi
 		ContractRevision: SalesProfileContractRevision,
 		DocumentProfile: GatewayDocumentProfileCapability{
 			Versions: []string{InvoiceDocumentProfileVersion}, Routes: SalesDocumentProfileRoutes(),
-			MaxRequestBytes: MaxInvoiceDocumentBytes, MaxInputItems: 500, MaxExpandedItems: 500,
+			MaxRequestBytes: MaxInvoiceDocumentBytes, MaxInputItems: 500, MaxExpandedItems: 500, MaxExpandedBytes: MaxInvoiceDocumentBytes,
 		},
 		Cancellation: GatewayCancellationCapability{FullDocumentOnly: true, SourceLockWaitSeconds: 3},
 	}

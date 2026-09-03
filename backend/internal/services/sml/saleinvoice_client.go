@@ -346,9 +346,15 @@ func (c *InvoiceClient) CreateInvoiceBytes(body []byte, urlOverride string) (int
 }
 
 func (c *InvoiceClient) CreateInvoiceBytesWithCorrelation(body []byte, urlOverride, correlationID string) (int, *InvoiceResponse, []byte, error) {
+	if len(body) == 0 || len(body) > MaxInvoiceDocumentBytes {
+		return 0, nil, nil, fmt.Errorf("saleinvoice payload must be 1-%d bytes", MaxInvoiceDocumentBytes)
+	}
 	var payload InvoicePayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return 0, nil, nil, fmt.Errorf("decode immutable saleinvoice payload: %w", err)
+	}
+	if len(payload.Details) > MaxInvoiceDocumentItems {
+		return 0, nil, nil, fmt.Errorf("saleinvoice payload must contain no more than %d details", MaxInvoiceDocumentItems)
 	}
 
 	url := resolveSMLURL(c.cfg.BaseURL, "/api/v1/ic/sale-invoices", urlOverride)

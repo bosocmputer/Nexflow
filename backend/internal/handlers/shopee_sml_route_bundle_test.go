@@ -87,7 +87,7 @@ func validSalesGatewayCapability() *sml.GatewayCapabilities {
 		DocumentProfile: sml.GatewayDocumentProfileCapability{
 			Versions: []string{sml.InvoiceDocumentProfileVersion}, Routes: sml.SalesDocumentProfileRoutes(),
 			MaxRequestBytes: sml.MaxInvoiceDocumentBytes, MaxInputItems: sml.MaxInvoiceDocumentItems,
-			MaxExpandedItems: sml.MaxInvoiceDocumentItems, MaxTextCharacters: 255,
+			MaxExpandedItems: sml.MaxInvoiceDocumentItems, MaxExpandedBytes: sml.MaxInvoiceDocumentBytes, MaxTextCharacters: 255,
 		},
 		Cancellation: sml.GatewayCancellationCapability{FullDocumentOnly: true, SourceLockWaitSeconds: 3},
 	}

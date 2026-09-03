@@ -236,9 +236,15 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 // re-marshalling it. Retry paths use this method so a doc_no is always replayed
 // byte-for-byte with the same quantities, amounts, route and set-expansion flag.
 func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) (int, *SaleOrderResponse, []byte, error) {
+	if len(body) == 0 || len(body) > MaxInvoiceDocumentBytes {
+		return 0, nil, nil, fmt.Errorf("saleorder payload must be 1-%d bytes", MaxInvoiceDocumentBytes)
+	}
 	var payload SaleOrderPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return 0, nil, nil, fmt.Errorf("decode immutable saleorder payload: %w", err)
+	}
+	if len(payload.Items) > MaxInvoiceDocumentItems {
+		return 0, nil, nil, fmt.Errorf("saleorder payload must contain no more than %d items", MaxInvoiceDocumentItems)
 	}
 
 	url := resolveSMLURL(c.cfg.BaseURL, "/api/v1/ic/sale-orders", urlOverride)

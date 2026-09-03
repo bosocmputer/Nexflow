@@ -1405,6 +1405,14 @@ func (h *BillHandler) SMLDocumentProfileMetrics(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่านสถานะคิว Document Profile ไม่สำเร็จ"})
 		return
 	}
+	cancellationQueue := &repository.SMLProfileQueueMetrics{TenantKey: queue.TenantKey}
+	if h.shopeeRealtimeRepo != nil {
+		cancellationQueue, err = h.shopeeRealtimeRepo.SMLCancellationProfileQueueMetrics(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "อ่านสถานะคิว Cancellation Document Profile ไม่สำเร็จ"})
+			return
+		}
+	}
 	requests := smlprofile.DefaultMetrics.Snapshot()
 	gatewayP95OverBudget := false
 	for _, item := range requests {
@@ -1414,12 +1422,13 @@ func (h *BillHandler) SMLDocumentProfileMetrics(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"requests": requests,
-		"queue":    queue,
+		"requests":           requests,
+		"queue":              queue,
+		"cancellation_queue": cancellationQueue,
 		"alerts": gin.H{
-			"payload_mismatch":      queue.PayloadMismatchCount > 0,
-			"terminal_failure":      queue.TerminalCount > 0,
-			"queue_oldest_over_10m": queue.OldestAgeSeconds > 600,
+			"payload_mismatch":      queue.PayloadMismatchCount+cancellationQueue.PayloadMismatchCount > 0,
+			"terminal_failure":      queue.TerminalCount+cancellationQueue.TerminalCount > 0,
+			"queue_oldest_over_10m": queue.OldestAgeSeconds > 600 || cancellationQueue.OldestAgeSeconds > 600,
 			"gateway_p95_over_2s":   gatewayP95OverBudget,
 		},
 	})

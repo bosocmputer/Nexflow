@@ -115,3 +115,26 @@ func TestInvoiceRetryAfterUnknownPostCommitResultReplaysExactBytes(t *testing.T)
 		t.Fatalf("status=%d response=%#v calls=%d err=%v", status, response, calls.Load(), err)
 	}
 }
+
+func TestImmutableSalesPayloadLimitsFailBeforeNetwork(t *testing.T) {
+	invoiceClient := NewInvoiceClient(InvoiceConfig{BaseURL: "http://127.0.0.1:1"}, nil)
+	if _, _, _, err := invoiceClient.CreateInvoiceBytes(make([]byte, MaxInvoiceDocumentBytes+1), ""); err == nil {
+		t.Fatal("oversized invoice payload must fail before network access")
+	}
+	invoiceBody, err := json.Marshal(InvoicePayload{Details: make([]InvoiceDetail, MaxInvoiceDocumentItems+1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := invoiceClient.CreateInvoiceBytes(invoiceBody, ""); err == nil {
+		t.Fatal("invoice with more than 500 details must fail before network access")
+	}
+
+	saleOrderClient := NewSaleOrderClient(SaleOrderConfig{BaseURL: "http://127.0.0.1:1"}, nil)
+	orderBody, err := json.Marshal(SaleOrderPayload{Items: make([]SaleOrderItem, MaxInvoiceDocumentItems+1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := saleOrderClient.CreateSaleOrderBytes(orderBody, ""); err == nil {
+		t.Fatal("sale order with more than 500 items must fail before network access")
+	}
+}

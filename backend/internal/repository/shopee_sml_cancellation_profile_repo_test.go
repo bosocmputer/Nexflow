@@ -78,6 +78,25 @@ func TestClaimSMLCancellationProfileJobUsesTenantAndFencing(t *testing.T) {
 	}
 }
 
+func TestSMLCancellationProfileQueueMetricsAreTenantScoped(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery(`(?s)FROM sml_cancellation_profile_reconciliation_jobs WHERE tenant_key=\$1`).
+		WithArgs("aoy").
+		WillReturnRows(sqlmock.NewRows([]string{"depth", "oldest", "p95", "retries", "terminal", "mismatch"}).
+			AddRow(int64(2), 61.5, 45.0, int64(3), int64(1), int64(1)))
+	got, err := NewShopeeRealtimeRepo(db).WithTenantKey("aoy").SMLCancellationProfileQueueMetrics(context.Background())
+	if err != nil || got.QueueDepth != 2 || got.TerminalCount != 1 || got.PayloadMismatchCount != 1 || got.TenantKey != "aoy" {
+		t.Fatalf("metrics=%+v err=%v", got, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFailSMLCancellationProfileJobNeverChangesCoreOrStockState(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

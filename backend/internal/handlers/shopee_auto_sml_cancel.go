@@ -127,16 +127,49 @@ func (h *ShopeeRealtimeHandler) StartSMLCancellationWorkers(ctx context.Context)
 	go func() {
 		h.processSMLCancellationWorkers(ctx)
 		ticker := time.NewTicker(shopeeAutoSMLCancellationWorkerEvery)
+		alertTicker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
+		defer alertTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				h.processSMLCancellationWorkers(ctx)
+			case <-alertTicker.C:
+				h.emitSMLCancellationProfileAlerts(ctx)
 			}
 		}
 	}()
+}
+
+func (h *ShopeeRealtimeHandler) emitSMLCancellationProfileAlerts(ctx context.Context) {
+	if h == nil || h.repo == nil || h.logger == nil {
+		return
+	}
+	queue, err := h.repo.SMLCancellationProfileQueueMetrics(ctx)
+	if err != nil {
+		h.logger.Warn("sml_cancellation_profile_alert_metrics_failed", zap.Error(err))
+		return
+	}
+	reasons := make([]string, 0, 3)
+	if queue.PayloadMismatchCount > 0 {
+		reasons = append(reasons, "payload_mismatch")
+	}
+	if queue.TerminalCount > 0 {
+		reasons = append(reasons, "terminal_failure")
+	}
+	if queue.OldestAgeSeconds > 600 {
+		reasons = append(reasons, "queue_oldest_over_10m")
+	}
+	if len(reasons) == 0 {
+		return
+	}
+	h.logger.Warn("sml_cancellation_profile_alert",
+		zap.String("tenant", queue.TenantKey), zap.Strings("reasons", reasons),
+		zap.Int64("queue_depth", queue.QueueDepth), zap.Float64("queue_oldest_seconds", queue.OldestAgeSeconds),
+		zap.Float64("queue_age_p95_seconds", queue.QueueAgeP95Seconds), zap.Int64("terminal_count", queue.TerminalCount),
+		zap.Int64("payload_mismatch_count", queue.PayloadMismatchCount))
 }
 
 func (h *ShopeeRealtimeHandler) processSMLCancellationWorkers(ctx context.Context) {
@@ -181,8 +214,14 @@ func (h *ShopeeRealtimeHandler) processSMLCancellationProfileReconciliationBatch
 		return
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	started := time.Now()
 	failure := h.processSMLCancellationProfileReconciliation(runCtx, job)
 	cancel()
+	metricStatus, metricFailed := "complete", false
+	if failure != nil {
+		metricStatus, metricFailed = failure.Code, true
+	}
+	smlprofile.DefaultMetrics.ObserveRequest(job.TenantKey, job.Route+"_reconciliation", job.ProfileVersion, metricStatus, time.Since(started), metricFailed)
 	if failure == nil {
 		return
 	}
@@ -373,7 +412,22 @@ func (h *ShopeeRealtimeHandler) processAutoSMLCancellationJob(ctx context.Contex
 		h.blockAutoSMLCancellation(ctx, job, snap, "payload_prepare_failed", err.Error(), nil)
 		return
 	}
+	profileStarted := time.Now()
 	statusCode, resp, callErr := h.cancelClient.Create(ctx, cancelCtx.SaleDocNo, req)
+	if req.DocumentProfileVersion != "" {
+		metricStatus := "transport_error"
+		failed := callErr != nil || resp == nil
+		if resp != nil {
+			result := resp.DocumentProfileResult(req.DocumentProfileVersion)
+			metricStatus = firstNonEmpty(strings.TrimSpace(result.ProfileStatus), strings.TrimSpace(resp.GetCode()), "unknown")
+			failed = failed || !resp.IsSuccess() || statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices
+		}
+		tenant := "unknown"
+		if h.cfg != nil {
+			tenant = firstNonEmpty(strings.TrimSpace(h.cfg.ShopeeGatewayTenant), strings.TrimSpace(h.cfg.ShopeeSMLDatabase), tenant)
+		}
+		smlprofile.DefaultMetrics.ObserveRequest(tenant, cancelCtx.RouteMeta.StockRoute, req.DocumentProfileVersion, metricStatus, time.Since(profileStarted), failed)
+	}
 	if callErr != nil || resp == nil || (!resp.IsSuccess() && !smlCancelAlreadyExists(resp)) || statusCode >= 500 {
 		message := smlCancelErrorMessage(statusCode, resp, callErr)
 		if classifySMLCancellationFailure(statusCode, callErr) == "transient" {

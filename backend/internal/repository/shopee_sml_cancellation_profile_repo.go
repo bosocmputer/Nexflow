@@ -43,6 +43,28 @@ type SMLCancellationProfileReconciliationJob struct {
 	RequestPayload                                             json.RawMessage
 }
 
+func (r *ShopeeRealtimeRepo) SMLCancellationProfileQueueMetrics(ctx context.Context) (*SMLProfileQueueMetrics, error) {
+	if r == nil || r.db == nil || strings.TrimSpace(r.tenantKey) == "" {
+		return nil, errors.New("cancellation profile reconciliation repository is not configured")
+	}
+	result := &SMLProfileQueueMetrics{TenantKey: r.tenantKey}
+	err := r.db.QueryRowContext(ctx, `SELECT
+		COUNT(*) FILTER (WHERE status IN ('queued','running','retry_wait')),
+		COALESCE(EXTRACT(EPOCH FROM (NOW()-MIN(created_at) FILTER (WHERE status IN ('queued','running','retry_wait')))),0),
+		COALESCE(percentile_cont(0.95) WITHIN GROUP (
+		  ORDER BY EXTRACT(EPOCH FROM (NOW()-created_at))
+		) FILTER (WHERE status IN ('queued','running','retry_wait')),0),
+		COALESCE(SUM(attempt_count),0),
+		COUNT(*) FILTER (WHERE status IN ('terminal_failure','manual_reconciliation')),
+		COUNT(*) FILTER (WHERE last_error_code IN ('doc_no_payload_mismatch','profile_hash_mismatch'))
+		FROM sml_cancellation_profile_reconciliation_jobs WHERE tenant_key=$1`, r.tenantKey).
+		Scan(&result.QueueDepth, &result.OldestAgeSeconds, &result.QueueAgeP95Seconds, &result.RetryCount, &result.TerminalCount, &result.PayloadMismatchCount)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func normalizeSMLCancellationProfileResult(results ...SMLCancellationProfileResult) (SMLCancellationProfileResult, error) {
 	if len(results) == 0 {
 		return SMLCancellationProfileResult{RequiredChecks: []string{}, CompletedChecks: []string{}}, nil

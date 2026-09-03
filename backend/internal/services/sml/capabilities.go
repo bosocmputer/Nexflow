@@ -22,6 +22,7 @@ type GatewayDocumentProfileCapability struct {
 	MaxRequestBytes   int      `json:"max_request_bytes"`
 	MaxInputItems     int      `json:"max_input_items"`
 	MaxExpandedItems  int      `json:"max_expanded_items"`
+	MaxExpandedBytes  int      `json:"max_expanded_bytes"`
 	MaxTextCharacters int      `json:"max_text_characters"`
 }
 
@@ -113,7 +114,8 @@ func ValidateGatewayProfileCapability(capability *GatewayCapabilities, routeMode
 	}
 	if capability.DocumentProfile.MaxRequestBytes < MaxInvoiceDocumentBytes ||
 		capability.DocumentProfile.MaxInputItems < MaxInvoiceDocumentItems ||
-		capability.DocumentProfile.MaxExpandedItems < MaxInvoiceDocumentItems {
+		capability.DocumentProfile.MaxExpandedItems < MaxInvoiceDocumentItems ||
+		capability.DocumentProfile.MaxExpandedBytes < MaxInvoiceDocumentBytes {
 		return fmt.Errorf("SML Gateway document limits are below the required contract")
 	}
 	if !capability.Cancellation.FullDocumentOnly || capability.Cancellation.SourceLockWaitSeconds != 3 {
