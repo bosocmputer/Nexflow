@@ -363,7 +363,13 @@ func main() {
 	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, cfg.MarketplaceGroupedUIEnabled, logger)
 	settingsH := handlers.NewSettingsHandler(platformRepo, logger)
 	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, auditLogRepo, cfg, logger)
-	channelDefaultsH := handlers.NewChannelDefaultsHandler(channelDefaultRepo, auditLogRepo, cfg.PurchaseFlowEnabled, cfg.SMLDocumentProfileMode, logger)
+	smlCapabilityClient := sml.NewGatewayCapabilityClient(sml.PartyConfig{
+		BaseURL: cfg.ShopeeSMLURL, GUID: cfg.ShopeeSMLGUID, Provider: cfg.ShopeeSMLProvider,
+		ConfigFile: cfg.ShopeeSMLConfigFile, Database: cfg.ShopeeSMLDatabase,
+	})
+	channelDefaultsH := handlers.NewChannelDefaultsHandler(channelDefaultRepo, auditLogRepo, cfg.PurchaseFlowEnabled, cfg.SMLDocumentProfileMode, logger).
+		WithShopeeSMLRouteBundle(smlCapabilityClient, cfg.SMLDocumentProfileRouteModes, cfg.JWTSecret, tenantKey)
+	shopeeRealtimeH.SetSMLCapabilityClient(smlCapabilityClient)
 	smlPartyH := handlers.NewSMLPartyHandler(partyCache, partyClient, auditLogRepo, logger)
 	smlPartyH.SetSMLConfig(cfg.ShopeeSMLURL, cfg.ShopeeSMLGUID, cfg.ShopeeSMLDatabase)
 	smlWarehouseH := handlers.NewSMLWarehouseHandler(warehouseCache, logger)
@@ -633,6 +639,9 @@ func main() {
 		api.GET("/settings/channel-defaults", middleware.RequireRole("admin"), channelDefaultsH.List)
 		api.PUT("/settings/channel-defaults", middleware.RequireRole("admin"), channelDefaultsH.Upsert)
 		api.POST("/settings/channel-defaults/preview", middleware.RequireRole("admin"), channelDefaultsH.Preview)
+		api.GET("/settings/shopee-sml-route-bundle", middleware.RequireRole("admin"), channelDefaultsH.GetShopeeSMLRouteBundle)
+		api.POST("/settings/shopee-sml-route-bundle/preview", middleware.RequireRole("admin"), channelDefaultsH.PreviewShopeeSMLRouteBundle)
+		api.PUT("/settings/shopee-sml-route-bundle", middleware.RequireRole("admin"), channelDefaultsH.UpdateShopeeSMLRouteBundle)
 
 		// SML party master proxy — search customers/suppliers from cache
 		api.GET("/sml/customers", middleware.RequireRole("admin", "staff"), smlPartyH.SearchCustomers)

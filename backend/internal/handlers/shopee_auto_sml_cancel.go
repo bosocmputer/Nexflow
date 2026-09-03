@@ -32,11 +32,34 @@ func (h *ShopeeRealtimeHandler) maybeEnqueueAutoSMLCancellation(ctx context.Cont
 		!shouldEnqueueAutoSMLCancellation(h.cfg.ShopeeAutoSMLCancelEnabled && h.cfg.ShopeeSMLCancelDocumentsEnabled, before, after) {
 		return false
 	}
+	if h.autoSMLRepo == nil {
+		return false
+	}
+	setting, err := h.autoSMLRepo.GetSetting(ctx, after.ShopID)
+	if err != nil || !setting.Enabled || strings.TrimSpace(setting.PausedReason) != "" {
+		return false
+	}
 	routeDef, routeMeta, _, err := h.cancelSaleRoute(ctx)
 	if err != nil || routeDef == nil {
 		if h.logger != nil {
 			h.logger.Warn("shopee_auto_sml_cancel: route unavailable",
 				zap.Int64("shop_id", after.ShopID), zap.String("order_sn", after.OrderSN), zap.Error(err))
+		}
+		return false
+	}
+	mainDef, mainErr := h.importH.channelDefaults.Get("shopee_realtime", "sale")
+	mainRoute := routeNameFromEndpoint(mainDef, true)
+	if mainErr != nil || mainRoute == "" || h.capabilityClient == nil {
+		_ = h.autoSMLRepo.PauseForRouteChange(ctx, after.ShopID)
+		return false
+	}
+	capability, capabilityErr := h.capabilityClient.Fetch(ctx)
+	if capabilityErr != nil || sml.ValidateGatewayProfileCapability(capability, h.cfg.SMLDocumentProfileRouteModes,
+		[]string{mainRoute, routeMeta.StockRoute}, true) != nil {
+		_ = h.autoSMLRepo.PauseForRouteChange(ctx, after.ShopID)
+		if h.logger != nil {
+			h.logger.Warn("shopee_auto_sml_cancel: capability mismatch; automation paused",
+				zap.Int64("shop_id", after.ShopID), zap.String("route", routeMeta.StockRoute))
 		}
 		return false
 	}
@@ -75,7 +98,7 @@ func shopeeSMLCancellationRouteSignature(def *models.ChannelDefault, profileMode
 	if len(profileMode) > 0 && strings.TrimSpace(profileMode[0]) != "" {
 		mode = strings.TrimSpace(profileMode[0])
 	}
-	return smlprofile.RouteSignature(*def, mode)
+	return smlprofile.RouteSignature(*def, mode) + ":" + sml.SalesProfileContractRevision
 }
 
 func (h *ShopeeRealtimeHandler) StartSMLCancellationWorkers(ctx context.Context) {

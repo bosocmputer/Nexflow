@@ -18,6 +18,7 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	"nexflow/internal/services/shopeeapi"
+	"nexflow/internal/services/sml"
 )
 
 const (
@@ -803,6 +804,28 @@ func (h *ShopeeRealtimeHandler) autoSMLPreflight(ctx context.Context, shopID int
 	ready, _ := route["ready_to_send_sml"].(bool)
 	if !ready || h.realtimeRouteSignature(ctx) == "" {
 		return "route_not_ready", "เส้นทาง Shopee Realtime ไป SML ยังตั้งค่าไม่ครบ"
+	}
+	mainDef, err := h.importH.channelDefaults.Get("shopee_realtime", "sale")
+	if err != nil || mainDef == nil {
+		return "route_not_ready", "โหลดเส้นทางเอกสารหลัก Shopee ไม่สำเร็จ"
+	}
+	requiredRoutes := []string{routeNameFromEndpoint(mainDef, true)}
+	if h.cfg.ShopeeAutoSMLCancelEnabled {
+		cancelDef, cancelErr := h.importH.channelDefaults.Get("shopee_realtime_cancel", "sale")
+		if cancelErr != nil || cancelDef == nil {
+			return "route_not_ready", "โหลดเส้นทางเอกสารเมื่อ Shopee ยกเลิกไม่สำเร็จ"
+		}
+		requiredRoutes = append(requiredRoutes, routeNameFromEndpoint(cancelDef, false))
+	}
+	if h.capabilityClient == nil {
+		return "sml_capability_mismatch", "ยังไม่ได้ตั้งค่าตัวตรวจสอบรุ่น SML Gateway"
+	}
+	capability, err := h.capabilityClient.Fetch(ctx)
+	if err != nil {
+		return "sml_capability_mismatch", "ตรวจสอบรุ่น SML Gateway ไม่สำเร็จ ระบบหยุดไว้เพื่อป้องกันการส่งผิดรูปแบบ"
+	}
+	if err := sml.ValidateGatewayProfileCapability(capability, h.cfg.SMLDocumentProfileRouteModes, requiredRoutes, true); err != nil {
+		return "sml_capability_mismatch", "เส้นทางหรือรุ่น SML Gateway ยังไม่พร้อมสำหรับระบบอัตโนมัติ"
 	}
 	if h.billH == nil || !h.billH.checkSMLReadiness(ctx, true).Ready {
 		return "sml_not_ready", "SML ยังไม่พร้อมใช้งาน"

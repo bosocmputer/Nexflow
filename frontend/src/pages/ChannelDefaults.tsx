@@ -25,6 +25,7 @@ import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SH
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
+import { ShopeeSMLRouteBundleDialog } from './ChannelDefaults/ShopeeSMLRouteBundleDialog'
 import {
   CHANNEL_LABELS,
   destinationFor,
@@ -42,9 +43,6 @@ const SALES_CHANNEL_SLOTS: Array<{
     : []),
   ...(ENABLE_SHOPEE_REALTIME_OPS && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee_realtime' as ChannelKey, bill_type: 'sale' as const }]
-    : []),
-  ...(ENABLE_SHOPEE_REALTIME_OPS && ENABLE_SALES_ORDERS
-    ? [{ channel: 'shopee_realtime_cancel' as ChannelKey, bill_type: 'sale' as const }]
     : []),
   ...(ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'lazada' as ChannelKey, bill_type: 'sale' as const }]
@@ -93,7 +91,7 @@ function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'end
 
 function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
   if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
-    return 'งานหลักสำหรับ order ใหม่: รับจาก Push/Sync แล้วกดสร้างเอกสารใน Nexflow'
+    return 'ตั้งค่าเอกสารหลักและเอกสารเมื่อยกเลิก Shopee เป็นชุดเดียวกัน'
   }
   if (row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale') {
     return 'งานยกเลิกหลังส่ง SML: เลือกได้ว่าจะยกเลิกใบขายทั้งฉบับ หรือสร้างรับคืนสินค้า/ลดหนี้'
@@ -223,6 +221,7 @@ export default function ChannelDefaults() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<ChannelDefaultRow | null>(null)
   const [editOpen, setEditOpen] = useState(false)
+  const [shopeeBundleOpen, setShopeeBundleOpen] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -531,8 +530,12 @@ export default function ChannelDefaults() {
                   className="h-7 gap-1 px-2.5 text-xs"
                   onClick={(e) => {
                     e.stopPropagation()
-                    setEditing(r)
-                    setEditOpen(true)
+                    if (r.channel === 'shopee_realtime' && r.bill_type === 'sale') {
+                      setShopeeBundleOpen(true)
+                    } else {
+                      setEditing(r)
+                      setEditOpen(true)
+                    }
                   }}
                   title="แก้ไขปลายทาง SML, รหัสเอกสาร, prefix และเลขรัน"
                 >
@@ -549,6 +552,11 @@ export default function ChannelDefaults() {
         open={editOpen}
         onOpenChange={setEditOpen}
         row={editing}
+        onSaved={load}
+      />
+      <ShopeeSMLRouteBundleDialog
+        open={shopeeBundleOpen}
+        onOpenChange={setShopeeBundleOpen}
         onSaved={load}
       />
     </div>

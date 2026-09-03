@@ -93,6 +93,7 @@ export type EndpointKind =
   | 'arreceipt'
   | 'saleinvoicecancel'
   | 'creditnote'
+  | 'saleordercancel'
 
 export interface SmlDestinationOption {
   value: EndpointKind
@@ -165,6 +166,19 @@ export const SML_DESTINATION_OPTIONS: SmlDestinationOption[] = [
     phase1Enabled: true,
   },
   {
+    value: 'saleordercancel',
+    billType: 'sale',
+    label: 'ขาย -> ยกเลิกใบสั่งขาย',
+    apiPath: '/api/v1/ic/sale-orders/:doc_no/void',
+    screenCode: 'SSC',
+    docFormatCode: 'SSC',
+    docPrefix: 'SSC',
+    docRunningFormat: 'YYMM####',
+    statusLabel: 'ตรวจโครงสร้างจาก AOY แล้ว',
+    description: 'ยกเลิกใบสั่งขายเดิมทั้งฉบับ (TRANS_FLAG 37) และอ้างอิงรายการจากใบสั่งขายต้นทาง',
+    phase1Enabled: true,
+  },
+  {
     value: 'saleinvoicecancel',
     billType: 'sale',
     label: 'ขาย -> ยกเลิกขายสินค้าและบริการ',
@@ -213,7 +227,7 @@ export function destinationOptionsFor(
   return SML_DESTINATION_OPTIONS.filter((option) => (
     option.phase1Enabled &&
     (!billType || option.billType === billType) &&
-    (channel !== 'shopee_realtime_cancel' || option.value === 'saleinvoicecancel' || option.value === 'creditnote')
+    (channel !== 'shopee_realtime_cancel' || option.value === 'saleordercancel' || option.value === 'saleinvoicecancel' || option.value === 'creditnote')
   ))
 }
 
@@ -229,6 +243,7 @@ export function destinationKindFor(
   const lower = (override || '').toLowerCase()
   const format = docFormatCode.trim().toUpperCase()
   if (channel === 'shopee_settlement' || billType === 'ar_receipt' || lower.includes('ar/receipts')) return 'arreceipt'
+  if ((lower.includes('sale-orders') && lower.includes('/void')) || lower.includes('saleordercancel') || format === 'SSC') return 'saleordercancel'
   if (lower.includes('/void') || lower.includes('saleinvoicecancel') || format === 'SIC') return 'saleinvoicecancel'
   if (channel === 'shopee_realtime_cancel' || lower.includes('creditnote') || lower.includes('/cancel')) return 'creditnote'
   if (lower.includes('purchaseorder') || lower.includes('purchase-orders')) return 'purchaseorder'

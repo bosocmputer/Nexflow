@@ -60,6 +60,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   profile_retry_requested: { label: 'ลองแก้ไขข้อมูลประกอบ SML อีกครั้ง', emoji: '🔄', tone: 'info' },
   // Shopee Auto SML and cancelled-after-SML lifecycle
   shopee_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่าส่ง SML อัตโนมัติ', emoji: '⚙️', tone: 'info' },
+  shopee_sml_route_bundle_updated: { label: 'เปลี่ยนชุดเส้นทางเอกสาร Shopee', emoji: '⚙️', tone: 'info' },
   shopee_sml_cancel_payload_failed: { label: 'เตรียมเอกสารยกเลิก/รับคืนไม่สำเร็จ', emoji: '❌', tone: 'danger' },
   shopee_sml_cancel_failed: { label: 'สร้างเอกสารยกเลิก/รับคืนไม่สำเร็จ', emoji: '❌', tone: 'danger' },
   shopee_sml_cancel_created: { label: 'สร้างเอกสารยกเลิก/รับคืนแล้ว', emoji: '↩️', tone: 'success' },
@@ -396,6 +397,8 @@ export function summarize(log: AuditLog): string {
     case 'channel_default_updated':
     case 'channel_default_deleted':
       return [d.channel, d.bill_type, d.party_code].filter(Boolean).join(' / ')
+    case 'shopee_sml_route_bundle_updated':
+      return [d.main_route, d.cancellation_route, d.auto_sml_paused_for_reconfirmation ? 'พักระบบอัตโนมัติเพื่อตรวจสอบใหม่' : ''].filter(Boolean).join(' · ')
     case 'product_created':
       return d.code ? `${d.code} — ${d.name ?? ''}` : ''
     case 'catalog_refresh_one':

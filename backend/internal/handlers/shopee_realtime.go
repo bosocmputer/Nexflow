@@ -73,6 +73,7 @@ type ShopeeRealtimeHandler struct {
 	importH           *ShopeeImportHandler
 	billH             *BillHandler
 	cancelClient      *sml.SaleInvoiceCancelClient
+	capabilityClient  gatewayCapabilityFetcher
 	cfg               *config.Config
 	logger            *zap.Logger
 }
@@ -165,6 +166,12 @@ func (h *ShopeeRealtimeHandler) SetAutoSML(repo *repository.ShopeeAutoSMLRepo, l
 func (h *ShopeeRealtimeHandler) SetSMLCancelClient(client *sml.SaleInvoiceCancelClient) {
 	if h != nil {
 		h.cancelClient = client
+	}
+}
+
+func (h *ShopeeRealtimeHandler) SetSMLCapabilityClient(client gatewayCapabilityFetcher) {
+	if h != nil {
+		h.capabilityClient = client
 	}
 }
 
@@ -1358,6 +1365,7 @@ func shopeeRealtimeRouteSignature(cfg ShopeeConfigRequest, def *models.ChannelDe
 	parts := []string{
 		"shopee_realtime",
 		"sale",
+		sml.SalesProfileContractRevision,
 		shopeeImportRoute(cfg),
 		strings.TrimSpace(cfg.Endpoint),
 		strings.TrimSpace(cfg.DocFormat),

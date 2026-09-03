@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
+	"nexflow/internal/services/sml"
 	"nexflow/internal/services/smlprofile"
 )
 
@@ -23,6 +25,14 @@ type ChannelDefaultsHandler struct {
 	logger              *zap.Logger
 	purchaseFlowEnabled bool
 	profileMode         string
+	profileRouteModes   map[string]string
+	capabilityClient    gatewayCapabilityFetcher
+	previewSigningKey   string
+	tenantKey           string
+}
+
+type gatewayCapabilityFetcher interface {
+	Fetch(context.Context) (*sml.GatewayCapabilities, error)
 }
 
 func NewChannelDefaultsHandler(
@@ -39,6 +49,20 @@ func NewChannelDefaultsHandler(
 		profileMode:         profileMode,
 		logger:              logger,
 	}
+}
+
+func (h *ChannelDefaultsHandler) WithShopeeSMLRouteBundle(capabilityClient gatewayCapabilityFetcher, routeModes map[string]string, signingKey, tenantKey string) *ChannelDefaultsHandler {
+	if h == nil {
+		return h
+	}
+	h.capabilityClient = capabilityClient
+	h.profileRouteModes = make(map[string]string, len(routeModes))
+	for route, mode := range routeModes {
+		h.profileRouteModes[route] = mode
+	}
+	h.previewSigningKey = signingKey
+	h.tenantKey = strings.TrimSpace(tenantKey)
+	return h
 }
 
 // GET /api/settings/channel-defaults
@@ -75,6 +99,13 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 	if !validChannelBillTypeCombo(in.Channel, in.BillType) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "invalid channel/bill_type combo (e.g. shopee_shipped must be purchase)",
+		})
+		return
+	}
+	if h.capabilityClient != nil && in.BillType == "sale" && (in.Channel == "shopee_realtime" || in.Channel == "shopee_realtime_cancel") {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":  "route_bundle_required",
+			"error": "กรุณาบันทึกเส้นทางคำสั่งซื้อและเส้นทางยกเลิก Shopee พร้อมกัน",
 		})
 		return
 	}
