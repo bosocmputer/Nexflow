@@ -2,14 +2,14 @@
 
 ## Handoff
 
-- Last completed: reclassify the first-ten-document check as non-blocking
-  post-release monitoring on 2026-09-03
-- Active task: no release blocker; T11 deployed percentiles and additional AOY
-  document observations proceed only when organic production traffic exists
+- Last completed: fix and deploy the SML VAT effective-period/register-type
+  incident found by daily processing of `BF-INV26090002` on 2026-09-03
+- Active task: observe the first organic post-hotfix AOY VAT document through
+  SML daily processing; T11 percentiles remain non-blocking
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `16c550d`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `53393b6`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -23,6 +23,11 @@
 - Tests: both repositories pass `go test ./...`, `go test -race ./...`, and
   `go vet ./...`; frontend focused tests, lint (0 errors / 35 pre-existing
   warnings), and production build pass; sales-only release guard passes
+- VAT incident regression: Gateway tests prove a `2026-09-02` sale writes
+  `vat_effective_period=9`, `vat_effective_year=2569`, and VAT-register
+  `vat_type=0` while preserving header `vat_type=1`; a year-boundary test proves
+  `2027-01-01 -> 1/2570`. The exact INSERT passed read-only `PREPARE` against
+  Demo, AOY, Lanboon `lbk63`, and Ploy `ploy_test` schemas.
 - Security evidence: `govulncheck` reports no reachable Go vulnerabilities;
   production npm audit retains two moderate React Router advisories because the
   offered fix is a forced breaking v7 upgrade and was intentionally not applied
@@ -40,7 +45,7 @@
   artifact section is hidden; timelines and real artifacts remain available.
   Desktop 1280x720 and true 390x844 QA pass with no horizontal overflow and
   zero console warnings/errors.
-- Production evidence: Central Gateway `16c550d`; Demo, AOY, Lanboon and Ploy
+- Production evidence: Central Gateway `53393b6`; Demo, AOY, Lanboon and Ploy
   Nexflow `483160d` are deployed. Gateway readiness passes for
   demo/aoy/lbk63/ploy_test. Controlled
   order `26090216HNM1GJ` produced exactly one bill/attempt/document
@@ -49,6 +54,15 @@
   SML has header 1/detail 2/VAT 1/shipment 1/main log 1/erp_log 1; `erp_logs`
   contains all 11 frozen JSON sections. LINE success was delivered once to each
   of the two enabled recipients.
+- VAT incident evidence: before the SML user edit, the immutable BILLFLOW audit
+  stored effective period/year `0/0` and copied header VAT type 1 into the VAT
+  register. SML daily processing omitted output-VAT credit `215500` for 20.15,
+  leaving debit 434.96 versus credit 414.81. The SML user edit changed the
+  register to period 9/year 2569/type 0; reprocessing added the exact 20.15
+  credit and balanced 434.96/434.96. Gateway `53393b6` now derives those values
+  from the validated document date for future Profile V1 sales and writes the
+  same values into `erp_logs.data_new.screenvatsale`. It does not write
+  `gl_journal` or `gl_journal_detail`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; existing `tasks/plan.md` and
   `tasks/todo.md`; untracked `.serena/` and `scripts/__pycache__/`
@@ -72,19 +86,21 @@
   `.env.pre-sml-document-profile-active-20260903-024355` and Ploy
   `.env.pre-sml-document-profile-active-20260903-024430`; AOY runtime before
   shadow at `.env.pre-sml-profile-shadow-20260902-213500` and before active at
-  `.env.pre-sml-profile-active-20260902-220000`.
+  `.env.pre-sml-profile-active-20260902-220000`; VAT metadata hotfix backup is
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-vat-effective-period-20260903-034424`,
+  with rollback container
+  `nexflow-sml-api-bybos-pre-vat-20260903-034639`.
 - Controlled order: `26090216HNM1GJ` transitioned to `PROCESSED` at 21:51:10.
   Early writes exposed PostgreSQL 11 parameter inference conflicts and rolled
   back atomically; candidate lookup proved that no core existed. Gateway fixes
   `30d97db` and `16c550d` separated every VAT/shipment/main-log parameter context.
   Retrying the immutable attempt reused the same bill, attempt, payload hash and
   document number, then completed successfully without a duplicate.
-- Next action: passively inspect new AOY Profile documents as real orders arrive;
-  do not manufacture orders or delay production waiting for a fixed count.
-  Collect deployed p95/p99/queue-age evidence when traffic is sufficient. When
-  another tenant connects Shopee, validate its tenant-specific SML route/preview
-  before enabling that shop's Auto SML; no further Profile-mode change is
-  required.
+- Next action: inspect the first organic AOY VAT Profile document created after
+  Gateway `53393b6`, then have SML perform its normal daily processing and verify
+  the `215500` VAT credit and balanced GL. Do not manufacture or backfill an
+  order. When another tenant connects Shopee, validate its tenant-specific SML
+  route/preview before enabling that shop's Auto SML.
 
 ## Phase A — Proof and contract
 
@@ -158,6 +174,10 @@
 ## Post-release monitoring (non-blocking)
 
 - [x] Verify controlled AOY document `BF-INV26090002` end to end
+- [x] Diagnose its daily-processing VAT/GL incident and deploy the shared
+      Gateway correction to all four tenant routes
+- [ ] Verify the first organic post-`53393b6` AOY VAT document after normal SML
+      daily processing
 - [ ] Observe up to nine additional AOY documents only as real customer orders
       naturally arrive; there is no deadline and this does not block production
 - [ ] Complete deployed Settings/Gateway/queue/UI percentile evidence when the
@@ -493,6 +513,42 @@
   Evidence is accumulated only when real orders naturally arrive.
 - Next action: remain idle until organic AOY traffic provides a new document or
   production telemetry has enough samples for T11.
+
+### Shared Gateway VAT effective-period hotfix
+
+- Incident: SML daily processing of `BF-INV26090002` initially produced five GL
+  lines with no output-VAT credit. Debit exceeded credit by 20.15, exactly the
+  document VAT. The source header, detail, revenue, shipping, and cost amounts
+  were otherwise correct.
+- Root cause: Profile V1 omitted
+  `gl_journal_vat_sale.vat_effective_period/year`, stored `0/0` in
+  `erp_logs.data_new.screenvatsale`, and copied the route-controlled header
+  `vat_type=1` into a sale-register field whose verified SML value is 0.
+- Gateway fix: `53393b6` derives the effective month and Buddhist year from the
+  validated document date, writes them transactionally to the VAT register and
+  ERP audit JSON, and keeps header/register VAT types independent. No public
+  request field, UI setting, migration, direct GL write, or historical backfill
+  was added.
+- Tests: focused regression tests first failed with the old 14-argument INSERT,
+  zero audit period/year, and register type 1. After the fix, focused and full
+  `go test ./...`, `go test -race ./...`, and `go vet ./...` pass. The exact SQL
+  passed non-mutating `PREPARE` against all four production SML tenant schemas.
+- Deploy: the new image passed a separate canary container, authenticated
+  capability check, and readiness for `demo`, `aoy`, `lbk63`, and `ploy_test`
+  before the shared production container was switched. All four Nexflow
+  backends reach the new Gateway, all public health endpoints return HTTP 200,
+  and there are zero open Auto SML/Profile jobs and no fatal/panic/HTTP 5xx log.
+- Preservation: user-corrected `BF-INV26090002` remains register period 9/year
+  2569/type 0 with VAT credit 20.15 and balanced GL 434.96/434.96. Immutable
+  historical audit rows were not rewritten.
+- Rollback: backup
+  `/mnt/data/nextstep-node-2/deploy-backups/sml-vat-effective-period-20260903-034424`;
+  stopped prior container
+  `nexflow-sml-api-bybos-pre-vat-20260903-034639`; previous image remains tagged
+  inside the backup record. Restore the prior container only if the shared
+  Gateway becomes unhealthy; never delete SML documents during rollback.
+- Next action: verify the first naturally occurring post-hotfix VAT document
+  after the user's normal SML daily processing.
 
 For every completed task, update Handoff with:
 

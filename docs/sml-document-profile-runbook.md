@@ -10,6 +10,13 @@ but omits the opt-in field, so no supplemental SML rows are written.
 Never delete an SML document as recovery. Once Core is `created` or
 `already_exists`, operators may retry only the profile reconciliation job.
 
+For VAT sale invoices, verify the register row before daily processing:
+`gl_journal_vat_sale.vat_effective_period` must equal the month of `vat_date`,
+`vat_effective_year` must equal the Gregorian year plus 543, and the verified
+TRANS_FLAG 44 register `vat_type` is 0 even when `ic_trans.vat_type` is 1. Do
+not set the separate `gl_journal_vat_sale.period_number`; SML daily processing
+owns the accounting periods in `gl_journal` and `gl_journal_detail`.
+
 ## Status model
 
 | Layer | Success | Recoverable | Terminal |
@@ -59,12 +66,15 @@ Structured audit events are `profile_requested`, `core_committed`,
 `reconcile_queued`, `profile_complete`, `profile_terminal_failure`, and
 `profile_retry_requested`.
 
-## AOY rollout and rollback
+## Production rollout and rollback
 
 Back up the AOY Nexflow database/runtime and Central Gateway source/runtime/image
 before deployment. Deploy the Gateway compatibility release first, then Nexflow
-with mode `off`. Progress AOY through `shadow` and one controlled manual bill at
-`AB-1 / 001` before `active` Auto SML. Demo, Lanboon, and Ploy remain `off`.
+with mode `off`. Progress the first tenant through `shadow` and one controlled
+bill before enabling automatic sends. As of 2026-09-03, Document Profile mode is
+`active` for Demo, AOY, Lanboon, and Ploy by explicit operator decision; only
+AOY currently has an enabled Shopee Auto SML shop. A newly connected tenant must
+still pass its own route preview and shop-level enable confirmation.
 
 To roll back, pause Auto SML and set Profile mode to `off` before rolling code
 back. Keep additive migrations, immutable attempts, reconciliation jobs, and

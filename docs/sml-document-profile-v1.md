@@ -34,6 +34,17 @@ The manual header uses TRANS_FLAG 44, VAT included (`vat_type=1`, rate 7),
 `credit_date=doc_date`. Its detail uses `calc_flag=-1`, the selected warehouse and
 location, exact VAT/base amounts, and stable line numbers.
 
+The VAT-sale register has its own semantics and must not copy the header
+`vat_type`. For TRANS_FLAG 44, the verified SML register row uses `vat_type=0`
+while the VAT-included header remains `vat_type=1`. Profile V1 derives
+`vat_effective_period` from the month of `vat_date` and
+`vat_effective_year` from its Gregorian year plus 543. The current contract sets
+`vat_date=tax_doc_date=doc_date`, so a document dated `2026-09-02` writes period
+9 and year 2569. These derived values are written both to
+`gl_journal_vat_sale` and `erp_logs.data_new.screenvatsale`; callers do not send
+or configure them. The separate nullable `period_number` column in
+`gl_journal_vat_sale` remains unset, matching SML-created sale invoices.
+
 The manual `erp_logs.data_new` is UTF-8 JSON with these top-level sections:
 
 - `screentop`
@@ -55,7 +66,10 @@ when operationally required, stays inside the SML document/audit domain.
 ## Applicability rules
 
 - VAT relation is required when `vat_rate > 0` and `vat_type` is 1 or 2. It is
-  explicitly not applicable for no-VAT documents.
+  explicitly not applicable for no-VAT documents. For an applicable sale
+  invoice, the route-controlled header VAT mode remains unchanged while the
+  sale-register row uses `vat_type=0` and a non-zero derived effective month and
+  Buddhist year.
 - Shipment is required for Marketplace physical-goods sale invoices. If the
   selected source snapshot lacks the required shipment identity, active mode
   fails before creating the SML core document. Non-shipping/manual/service routes
