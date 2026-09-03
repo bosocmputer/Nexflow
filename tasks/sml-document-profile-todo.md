@@ -2,17 +2,16 @@
 
 ## Handoff
 
-- Last completed: T20 completed the Invoice Void (SIC) and Credit Note (CN)
-  Profile vertical slice. SIC is header-only with exact source state changes;
-  CN now writes VAT/AP-AR/source references and preserves per-line blank branch
-  values. Both use Profile ownership/hash checks and route-correct audit data,
-  without writing GL rows.
-- Active task: T21 durable cancellation Profile reconciliation. The original first-
+- Last completed: T21 added migration 093 and durable, fenced cancellation
+  Profile repair. Missing ERP audit is retried from byte-exact immutable payload
+  without changing the successful core status or the independent stock job.
+  Terminal work can be requeued only through an admin endpoint.
+- Active task: T22 atomic Shopee route bundle API and accessible dialog. The original first-
   organic-post-hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `8b8f349`
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `9a1f2e1`
 - Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4d93ebe`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
@@ -148,9 +147,8 @@
   retains one zero-base/zero-amount VAT-register row with period/year 9/2569.
   The detail reference and lot `00007` cost reversal remain intact after
   processing. The controlled pair may now be deleted.
-- Next action: add migration 093 and failing repository/worker tests for fenced
-  cancellation Profile reconciliation that can never resend the core document
-  or stock-recalculation job.
+- Next action: T22 bundle GET/Preview/PUT contract tests, signed ten-minute
+  preview token and one plain-language route dialog with safe capability states.
   Separately, inspect
   the first organic AOY VAT Profile document created after Gateway `53393b6`;
   do not manufacture or backfill a Shopee order.
@@ -282,18 +280,18 @@
   - [x] Add SSC Preview/Create/doc-number aliases and trans flag 37
   - [x] Add common source lock, source fingerprint and exact detail references
   - [x] Mark source `used_status=1` and queue stock recalculation after core
-- [ ] **Checkpoint B — SO/SSC parity and concurrency**
-  - [ ] SO/SSC match fixtures and contain no VAT/AP-AR/GL placeholders
-  - [ ] Lost response/concurrent cross-kind cancellation creates no duplicate
+- [x] **Checkpoint B — SO/SSC parity and concurrency**
+  - [x] SO/SSC match fixtures and contain no VAT/AP-AR/GL placeholders
+  - [x] Lost response/concurrent cross-kind cancellation creates no duplicate
 - [x] **T20 — Invoice Void and Credit Note Profile**
   - [x] Complete SIC main/ERP logs and uniform Profile response
   - [x] Complete CN VAT, AP-AR and exact source references
   - [x] Use `ref_amount/ref_diff=source.total_value` and preserve blank/detail branch
   - [x] Test VAT 0/1/2 and external source-state conflicts
-- [ ] **T21 — Durable cancellation reconciliation (migration 093)**
-  - [ ] Add Profile summary columns to `shopee_sml_cancellations`
-  - [ ] Add fenced reconciliation jobs, unique cancellation/version, max 10 tries
-  - [ ] Prove Profile retry cannot resend core or stock jobs
+- [x] **T21 — Durable cancellation reconciliation (migration 093)**
+  - [x] Add Profile summary columns to `shopee_sml_cancellations`
+  - [x] Add fenced reconciliation jobs, unique cancellation/version, max 10 tries
+  - [x] Prove Profile retry cannot resend core or stock jobs
 - [ ] **T22 — Atomic Shopee route bundle API and UI**
   - [ ] Add GET/Preview/PUT bundle with two config versions and 10-minute token
   - [ ] Save both rows/audit/Auto pause in one transaction; Enable stays separate
@@ -444,6 +442,39 @@
   SIC/CN. Checkpoint B remains open until that worker/fault matrix passes.
 - Next action: migration 093, fenced cancellation reconciliation repository,
   worker, and proof that retry cannot invoke core or enqueue stock twice.
+
+### T21 completion record
+
+- Completed task: T21 and local Checkpoint B
+- Nexflow commits: `eb53648` (`feat: persist cancellation profile repair jobs`)
+  and `9a1f2e1` (`feat: reconcile cancellation profiles safely`)
+- Gateway baseline: `4d93ebe` from T20; no additional Gateway change was
+  required for the durable Nexflow queue.
+- Migration: additive/idempotent 093 adds cancellation core/Profile summary,
+  byte-exact immutable request storage, and a unique
+  `cancellation_id + profile_version` repair queue with lease owner/token,
+  bounded exponential backoff, ten-attempt ceiling and manual-reconciliation
+  state.
+- Safety: core completion, Profile summary and initial repair job are persisted
+  in one Nexflow transaction. A repair claim requires the configured tenant and
+  a successful cancellation core row. Completion/failure/manual retry SQL only
+  changes Profile/job columns; it cannot change cancellation core status or
+  enqueue/reset the separate stock recalculation fields. An inactive route is
+  deferred without consuming an attempt. Admin retry is role-restricted.
+- Tests: repository tests prove transactional enqueue, tenant-scoped fenced
+  leases, ten-attempt terminal state, and Profile-only manual reopening. Handler
+  test sends the exact persisted bytes once with correlation ID and expects only
+  Profile/job completion SQL. Full Nexflow `go test ./...`,
+  `go test -race ./...`, `go vet ./...` and diff checks pass.
+- Feature mode: no runtime mode or production deployment changed. The worker
+  starts only when at least one cancellation route is `active`; current safe
+  defaults keep all new cancellation routes `off`.
+- Production evidence: none yet; migration 093 is committed but not applied.
+- Residual risk: PostgreSQL 16 migration replay, real logs-DB fault injection
+  and deployed worker recovery stay in T24. Configuration must be made atomic
+  and capability-bound in T22 before any new route can be activated.
+- Next action: implement the atomic main/cancellation route bundle APIs and the
+  unified admin dialog, then browser-test desktop and 390px.
 
 ## Per-Increment Completion Record
 
