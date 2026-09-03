@@ -2,17 +2,17 @@
 
 ## Handoff
 
-- Last completed: T22 added the atomic Shopee main/cancellation route bundle,
-  signed ten-minute Preview evidence, capability-bound optimistic writes and a
-  single plain-language dialog. Saving pauses enabled shops in the same
-  transaction as both config rows and the redacted audit entry.
-- Active task: T23 performance, security and observability hardening. The original first-
+- Last completed: T23 enforces 2 MiB/500-item limits before network/core writes
+  and after set expansion, batches all multi-line Gateway writes, applies the
+  20s transaction/3s source-lock/2s ERP-log budgets, and extends bounded
+  metrics and alerts to cancellation Profile jobs.
+- Active task: T24 full verification and staged rollout. The original first-
   organic-post-hotfix observation and T11 percentiles remain non-blocking.
 - Nexflow deployed application: Demo, AOY, Lanboon and Ploy all run
   `codex/marketplace-units-conversion` / `483160d`; durable production handoff
   continues on the same branch
-- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `ddf6669`
-- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `4d93ebe`
+- Nexflow branch/HEAD: `codex/marketplace-units-conversion` / `e243da3`
+- Gateway branch/HEAD: `codex/include-sml-unit-use-status-one` / `3e2ed0e`
 - Feature mode: Demo, AOY, Lanboon and Ploy are all `active` by the user's
   explicit request. AOY is the only tenant with an active Shopee connection and
   enabled Auto SML shop. Demo, Lanboon and Ploy each have zero active Shopee
@@ -36,10 +36,10 @@
 - Security evidence: `govulncheck` reports no reachable Go vulnerabilities;
   production npm audit retains two moderate React Router advisories because the
   offered fix is a forced breaking v7 upgrade and was intentionally not applied
-- Performance evidence: resolver benchmark 1/10/50/200 items =
-  1.539/7.854/35.891/140.596 microseconds; Gateway normalization/hash =
-  5.572/25.762/110.357/482.279 microseconds. HTTP/database p95 budgets still
-  require deployed telemetry.
+- Performance evidence: current Gateway Profile normalization/hash is
+  0.119/0.436/1.081 ms for 50/200/500 lines on Apple M1 Pro; the route-bundle
+  normalize/hash/sign/verify contract is 0.010 ms. HTTP/database p95 and UI INP
+  budgets still require T24 deployed telemetry.
 - Browser evidence: production AOY renders the back action inline before
   `BF-INV26090002`, followed by `ขาย -> ขายสินค้าและบริการ` and
   `ส่งแล้ว (AUTO)` in one compact header. The duplicate successful-status card
@@ -297,15 +297,15 @@
   - [x] Save both rows/audit/Auto pause in one transaction; Enable stays separate
   - [x] Reject incompatible route pairs, stale preview and absolute URL injection
   - [x] Build one accessible dialog; production desktop/390px evidence remains T24
-- [ ] **Checkpoint C — Configuration safety**
-  - [ ] Config races cannot overwrite newer values
-  - [ ] Automation cannot bypass Preview, capability or active route mode
-- [ ] **T23 — Performance, security and observability**
-  - [ ] Enforce 2 MiB and 500 items before/after expansion without N+1 writes
-  - [ ] Enforce 20s transaction, 3s lock wait and 2s ERP-log timeouts
-  - [ ] Verify admin/cross-tenant/PII/logging/SSRF protections
-  - [ ] Add bounded route/profile metrics and operational alerts
-  - [ ] Record 50/200/500-item and settings/UI performance evidence
+- [x] **Checkpoint C — Configuration safety**
+  - [x] Config races cannot overwrite newer values
+  - [x] Automation cannot bypass Preview, capability or active route mode
+- [x] **T23 — Performance, security and observability**
+  - [x] Enforce 2 MiB and 500 items before/after expansion without N+1 writes
+  - [x] Enforce 20s transaction, 3s lock wait and 2s ERP-log timeouts
+  - [x] Verify admin/cross-tenant/PII/logging/SSRF protections
+  - [x] Add bounded route/profile metrics and operational alerts
+  - [x] Record 50/200/500-item and local settings performance evidence; deployed UI INP remains T24
 
 ### T22 completion record
 
@@ -325,6 +325,41 @@
   Gateway/Nexflow staged deploy in T24
 - Next action: T23 request/expanded-item limits, batch-write and timeout audit,
   bounded operational signals and 50/200/500 regression evidence
+
+### T23 completion record
+
+- Completed task: T23 performance, security and observability hardening
+- Nexflow commits: `48b825f` (`perf: harden SML profile delivery limits`) and
+  `e243da3` (`test: benchmark SML route preview contract`)
+- Gateway commit: `3e2ed0e` (`perf: harden SML profile document writes`)
+- Limits and performance: both callers and Gateway reject requests over 2 MiB
+  and more than 500 input lines. Gateway rechecks the resolved payload after
+  set-product expansion before the header insert. INV/SO/CN/SSC detail writes
+  use one parameterized `pgx.Batch`, while reference validation remains bounded
+  set-based SQL. Gateway CPU validation/hash benchmarks are 0.119/0.436/1.081
+  ms at 50/200/500 lines; route Preview normalization/signing is 0.010 ms.
+- Timeouts: every sales/cancellation transaction uses request context plus
+  PostgreSQL `statement_timeout=20s`; cancellation uses a shared source advisory
+  lock with `lock_timeout=3s`; the independent ERP log retains its 2s timeout.
+- Observability: the admin Profile metrics response now includes the separate
+  cancellation queue. Core and reconciliation calls emit only bounded tenant,
+  route, profile and status dimensions. Cancellation mismatch, terminal state
+  and oldest queue over ten minutes emit periodic structured alerts.
+- Security: route allowlist/signed Preview/admin gates and authenticated tenant
+  context remain mandatory; oversized JSON returns 413 without echoing parser
+  internals. Both Go repositories report zero reachable vulnerabilities.
+  Production npm audit reports only the two known moderate React Router issues;
+  the offered forced breaking v7 upgrade was not applied.
+- Tests: both repositories pass full `go test ./...` and `go vet ./...`; focused
+  changed-package race suites and diff checks pass. Gateway limit/expanded-size,
+  hard-timeout and 500-line benchmarks pass. Nexflow immutable limit,
+  tenant-scoped cancellation metrics and Preview-contract benchmarks pass.
+- Feature modes and production evidence: code only; no runtime mode, database or
+  production service changed. Live PostgreSQL timings, UI INP and queue-age
+  evidence remain part of T24 staged rollout.
+- Next action: run T24 full race/build/migration/SQL/fault checks, create backups,
+  deploy Gateway capability first, then deploy the same Nexflow commit to all
+  four tenants with non-invoice routes kept shadow until controlled AOY parity.
 - [ ] **T24 — Full verification and staged rollout**
   - [ ] Full Go test/race/vet, frontend tests/lint/build and sales-only guard
   - [ ] PostgreSQL 11 statement preparation and PostgreSQL 16 migration replay
