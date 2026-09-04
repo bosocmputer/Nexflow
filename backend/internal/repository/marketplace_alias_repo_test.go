@@ -124,6 +124,153 @@ func TestMarketplaceAliasListUsableOnlyExcludesUnconfirmedScope(t *testing.T) {
 	}
 }
 
+func TestMarketplaceAliasReviewGroupsIncludesUnmappedShopeeCatalogProducts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM bill_items bi.*JOIN bills b.*WHERE.*b\.bill_type = \$1.*b\.source = \$2`).
+		WithArgs("sale", "shopee").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bill_id", "source", "account_key", "account_name", "bill_type", "item_id", "raw_name",
+			"source_sku", "external_item_id", "external_variant_id",
+		}))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM shopee_stock_products p.*NOT EXISTS.*COALESCE\(NULLIF\(btrim\(p\.model_sku\),''\),p\.item_sku,''\).*marketplace_item_aliases`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT p\.shop_id.*FROM shopee_stock_products p.*NOT EXISTS.*marketplace_item_aliases.*ORDER BY.*LIMIT \$1 OFFSET \$2`).
+		WithArgs(30, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"shop_id", "account_name", "item_id", "model_id", "item_name", "model_name", "item_sku", "model_sku",
+		}).AddRow(
+			int64(66610219), "Ploy", int64(26058910935), int64(187745336266),
+			"อัยน่าเอส กล่องขาว วีเนสต้า กล่องเหลือ", "1ก+ดีท็อก 1 แผง", "", "",
+		))
+
+	result, err := NewMarketplaceAliasRepo(db).ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
+		BillType: "sale", Source: "shopee", Sort: "impact", Page: 1, PerPage: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 1 || len(result.Groups) != 1 {
+		t.Fatalf("result=%+v, want one catalog-discovered review group", result)
+	}
+	group := result.Groups[0]
+	if !group.CatalogProduct || group.Source != "shopee" || group.AccountKey != "shop:66610219" {
+		t.Fatalf("group=%+v, want a Shopee catalog product scoped to the connected shop", group)
+	}
+	if group.ExternalItemID != "26058910935" || group.ExternalVariantID != "187745336266" {
+		t.Fatalf("group identity=%s/%s, want exact Shopee item/model identity", group.ExternalItemID, group.ExternalVariantID)
+	}
+	if group.RawName != "อัยน่าเอส กล่องขาว วีเนสต้า กล่องเหลือ · 1ก+ดีท็อก 1 แผง" {
+		t.Fatalf("raw_name=%q", group.RawName)
+	}
+	if group.ItemCount != 0 || group.BillCount != 0 {
+		t.Fatalf("catalog-only group must not claim pending orders: items=%d bills=%d", group.ItemCount, group.BillCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasReviewGroupsKeepsOrderIssuesAheadOfCatalogOnlyProducts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM bill_items bi.*JOIN bills b.*WHERE.*b\.bill_type = \$1`).
+		WithArgs("sale").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bill_id", "source", "account_key", "account_name", "bill_type", "item_id", "raw_name",
+			"source_sku", "external_item_id", "external_variant_id",
+		}).AddRow("bill-1", "lazada", "default", "", "sale", "item-1", "สินค้าในออเดอร์", "SKU-1", "", ""))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM shopee_stock_products p.*NOT EXISTS.*COALESCE\(NULLIF\(btrim\(p\.model_sku\),''\),p\.item_sku,''\).*marketplace_item_aliases`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
+
+	result, err := NewMarketplaceAliasRepo(db).ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
+		BillType: "sale", Sort: "impact", Page: 1, PerPage: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 5 || len(result.Groups) != 1 || result.Groups[0].CatalogProduct {
+		t.Fatalf("result=%+v, want the pending order first and an exact combined total", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasReviewGroupsPaginatesShopeeCatalogProducts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM bill_items bi.*JOIN bills b.*WHERE.*b\.bill_type = \$1.*b\.source = \$2`).
+		WithArgs("sale", "shopee").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bill_id", "source", "account_key", "account_name", "bill_type", "item_id", "raw_name",
+			"source_sku", "external_item_id", "external_variant_id",
+		}))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM shopee_stock_products p`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(34))
+	mock.ExpectQuery(`(?s)SELECT p\.shop_id.*FROM shopee_stock_products p.*LIMIT \$1 OFFSET \$2`).
+		WithArgs(30, 30).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"shop_id", "account_name", "item_id", "model_id", "item_name", "model_name", "item_sku", "model_sku",
+		}).AddRow(int64(66610219), "Ploy", int64(26058910935), int64(187745336266), "สินค้า", "ตัวเลือก", "", ""))
+
+	result, err := NewMarketplaceAliasRepo(db).ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
+		BillType: "sale", Source: "shopee", Sort: "impact", Page: 2, PerPage: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 34 || result.Page != 2 || len(result.Groups) != 1 {
+		t.Fatalf("result=%+v, want catalog page two with the combined total", result)
+	}
+	if !result.Groups[0].CatalogProduct || result.Groups[0].ExternalVariantID != "187745336266" {
+		t.Fatalf("group=%+v, want the exact catalog product from offset 30", result.Groups[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketplaceAliasReviewGroupsSkipsShopeeCatalogForAnotherSource(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM bill_items bi.*JOIN bills b.*WHERE.*b\.bill_type = \$1.*b\.source = \$2`).
+		WithArgs("sale", "lazada").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bill_id", "source", "account_key", "account_name", "bill_type", "item_id", "raw_name",
+			"source_sku", "external_item_id", "external_variant_id",
+		}))
+
+	result, err := NewMarketplaceAliasRepo(db).ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
+		BillType: "sale", Source: "lazada", Sort: "impact", Page: 1, PerPage: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 0 || len(result.Groups) != 0 {
+		t.Fatalf("result=%+v, want no Shopee catalog products in a Lazada-only filter", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMarketplaceAliasImpactExcludesItemsWithExactActiveSKU(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
+import { Boxes, ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
 import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceConversionReadiness, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
+import { marketplacePendingSummary } from '@/lib/marketplace-review'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -30,6 +31,13 @@ const PER_PAGE = 30
 type TabKey = 'pending' | 'saved'
 type SourceFilter = 'all' | 'shopee' | 'lazada' | 'tiktok'
 type StatusFilter = 'all' | 'ready' | 'fix' | 'disabled'
+type ShopeeCatalogConnection = {
+  shop_id: number
+  shop_name?: string
+  label?: string
+  disabled_at?: string
+  can_fetch: boolean
+}
 type ConversionConfig = {
   unitCode: string
   quantityMultiplier: number
@@ -77,6 +85,9 @@ export default function MarketplaceAliases() {
   const [activeJob, setActiveJob] = useState<MarketplaceMappingJob | null>(null)
   const [activePolicyJob, setActivePolicyJob] = useState<MarketplaceStockPolicyJob | null>(null)
   const [readiness, setReadiness] = useState<MarketplaceConversionReadiness | null>(null)
+  const [shopeeConnections, setShopeeConnections] = useState<ShopeeCatalogConnection[]>([])
+  const [shopeeShopID, setShopeeShopID] = useState('')
+  const [catalogSyncing, setCatalogSyncing] = useState(false)
   const jobPollToken = useRef(0)
   const policyJobPollToken = useRef(0)
 
@@ -84,6 +95,7 @@ export default function MarketplaceAliases() {
   const pages = groupedSaved ? groupCursorHistory.length + 1 + (nextGroupCursor ? 1 : 0) : Math.max(1, Math.ceil(total / PER_PAGE))
 	const currentPage = groupedSaved ? groupCursorHistory.length + 1 : page
   const pendingItems = useMemo(() => pending.reduce((sum, item) => sum + item.item_count, 0), [pending])
+  const catalogOnlyItems = useMemo(() => pending.filter((item) => item.catalog_product && item.bill_count === 0).length, [pending])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -131,6 +143,21 @@ export default function MarketplaceAliases() {
 
   useEffect(() => { void load() }, [load])
   useEffect(() => () => { jobPollToken.current += 1; policyJobPollToken.current += 1 }, [])
+  useEffect(() => {
+    if (!canManage) return
+    let active = true
+    client.get<{ data: ShopeeCatalogConnection[] }>('/api/shopee-api/connections')
+      .then((response) => {
+        if (!active) return
+        const connections = (response.data.data ?? []).filter((item) => !item.disabled_at)
+        setShopeeConnections(connections)
+        setShopeeShopID((current) => current || String(connections[0]?.shop_id ?? ''))
+      })
+      .catch(() => {
+        // Marketplace imports remain usable when Shopee is not configured.
+      })
+    return () => { active = false }
+  }, [canManage])
   useEffect(() => {
     let active = true
     let timer = 0
@@ -416,15 +443,61 @@ export default function MarketplaceAliases() {
 	  setPage((value) => value - 1)
 	}
 
+  const syncShopeeCatalog = async () => {
+    const connection = shopeeConnections.find((item) => String(item.shop_id) === shopeeShopID)
+    if (!connection) return
+    if (!connection.can_fetch) {
+      toast.error('ร้านนี้ต้องเชื่อมต่อ Shopee ใหม่ก่อนอัปเดตรายการสินค้า')
+      return
+    }
+    setCatalogSyncing(true)
+    try {
+      const response = await client.post<{ total_count: number }>(`/api/settings/shopee-stock/${connection.shop_id}/catalog-sync`, {}, { timeout: 180000 })
+      toast.success(`อัปเดตจาก Shopee แล้ว ${response.data.total_count.toLocaleString('th-TH')} ตัวเลือก`)
+      const pendingViewAlreadySelected = tab === 'pending' && page === 1 && source === 'shopee' && query === ''
+      setTab('pending')
+      setPage(1)
+      setSource('shopee')
+      setDraft('')
+      setQuery('')
+      setGroupCursor('')
+      setGroupCursorHistory([])
+      if (pendingViewAlreadySelected) {
+        await load()
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, 'อัปเดตรายการสินค้าจาก Shopee ไม่สำเร็จ'))
+    } finally {
+      setCatalogSyncing(false)
+    }
+  }
+
+  const selectedShopeeConnection = shopeeConnections.find((item) => String(item.shop_id) === shopeeShopID)
+
   return (
     <div className="space-y-4 p-4 sm:p-6">
       <PageHeader
         title="จับคู่สินค้า Marketplace"
-        description="ตรวจสินค้าที่ยังจับคู่ไม่ได้ และแก้ไขสินค้าที่ระบบจดจำไว้สำหรับออเดอร์ครั้งถัดไป"
+        description="จับคู่สินค้าที่อัปเดตจาก Shopee หรือพบในออเดอร์ และแก้ไขสินค้าที่ระบบจดจำไว้สำหรับครั้งถัดไป"
         actions={(
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> รีเฟรช
-          </Button>
+          <>
+            {canManage && shopeeConnections.length > 0 && (
+              <>
+                {shopeeConnections.length > 1 && (
+                  <Select value={shopeeShopID} onValueChange={setShopeeShopID} disabled={catalogSyncing}>
+                    <SelectTrigger className="h-9 w-full sm:w-[190px]" aria-label="เลือกร้าน Shopee ที่จะอัปเดต"><SelectValue /></SelectTrigger>
+                    <SelectContent>{shopeeConnections.map((item) => <SelectItem key={item.shop_id} value={String(item.shop_id)}>{item.label || item.shop_name || `Shop ${item.shop_id}`}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}
+                <Button variant="outline" size="sm" onClick={() => void syncShopeeCatalog()} disabled={catalogSyncing || !selectedShopeeConnection?.can_fetch} title={!selectedShopeeConnection?.can_fetch ? 'เชื่อมต่อร้าน Shopee ใหม่ก่อนอัปเดต' : undefined}>
+                  {catalogSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />} {catalogSyncing ? 'กำลังอัปเดต...' : 'อัปเดตรายการจาก Shopee'}
+                </Button>
+              </>
+            )}
+            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || catalogSyncing}>
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> รีเฟรช
+            </Button>
+          </>
         )}
       />
 
@@ -508,7 +581,7 @@ export default function MarketplaceAliases() {
           </TabsContent>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่ · ${pendingItems.toLocaleString()} รายการในหน้านี้` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า {currentPage}/{pages}</span>
+			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่${pendingItems > 0 ? ` · ${pendingItems.toLocaleString()} รายการจากออเดอร์ในหน้านี้` : ''}${catalogOnlyItems > 0 ? ` · ${catalogOnlyItems.toLocaleString()} ตัวเลือกจาก Shopee ในหน้านี้` : ''}` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า ${currentPage}/${pages}</span>
             <div className="flex gap-1">
 			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? groupCursorHistory.length === 0 : page <= 1) || loading} onClick={goPrevious} aria-label="หน้าก่อน"><ChevronLeft className="h-4 w-4" /></Button>
 			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? !nextGroupCursor : page >= pages) || loading} onClick={goNext} aria-label="หน้าถัดไป"><ChevronRight className="h-4 w-4" /></Button>
@@ -684,20 +757,23 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
 }
 
 function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; rows: MarketplaceAliasReviewGroup[]; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
-  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="ออเดอร์ใหม่ที่ระบบหารหัสสินค้า SML ไม่พบจะมาแสดงที่นี่" />
+  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="หลังอัปเดตรายการจาก Shopee หรือมีออเดอร์ใหม่ สินค้าที่ยังไม่พบคู่ใน SML จะมาแสดงที่นี่" />
   return (
     <div className="overflow-x-auto">
       <Table>
         <TableHeader><TableRow><TableHead>ช่องทางและร้าน</TableHead><TableHead className="min-w-[280px]">สินค้า Marketplace</TableHead><TableHead className="text-right">รายการที่รอ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
         <TableBody>
-          {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => (
-            <TableRow key={row.group_key}>
-              <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} /></TableCell>
-              <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono">{row.source_sku}</span></div>}</TableCell>
-              <TableCell className="text-right tabular-nums"><div>{row.item_count.toLocaleString()} รายการ</div><div className="text-xs text-muted-foreground">{row.bill_count.toLocaleString()} บิล</div></TableCell>
-              <TableCell className="text-right">{canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button> : <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>}</TableCell>
-            </TableRow>
-          ))}
+          {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => {
+            const summary = marketplacePendingSummary(row)
+            return (
+              <TableRow key={row.group_key}>
+                <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} /></TableCell>
+                <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono">{row.source_sku}</span></div>}</TableCell>
+                <TableCell className="text-right tabular-nums"><div>{summary.primary}</div><div className="text-xs text-muted-foreground">{summary.secondary}</div></TableCell>
+                <TableCell className="text-right">{canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button> : <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>}</TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>

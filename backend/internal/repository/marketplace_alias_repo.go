@@ -665,7 +665,7 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 		perPage = 100
 	}
 	sortKey := strings.TrimSpace(filter.Sort)
-	if sortKey == "" {
+	if sortKey != "source" && sortKey != "name" {
 		sortKey = "impact"
 	}
 
@@ -763,7 +763,11 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 		out = append(out, g.MarketplaceAliasReviewGroup)
 	}
 	sortMarketplaceReviewGroups(out, sortKey)
-	total := len(out)
+	catalogTotal, err := r.countShopeeCatalogReviewGroups(filter)
+	if err != nil {
+		return models.MarketplaceAliasReviewResult{}, err
+	}
+	total := len(out) + catalogTotal
 	start := (page - 1) * perPage
 	if start > total {
 		start = total
@@ -772,8 +776,50 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 	if end > total {
 		end = total
 	}
+
+	// Alternate sort modes are retained for API compatibility. Load only the
+	// catalog prefix that can affect the requested page, then merge it with the
+	// already-grouped open-document rows.
+	if sortKey != "impact" && catalogTotal > 0 && end > 0 {
+		catalogGroups, err := r.listShopeeCatalogReviewGroups(filter, end, 0)
+		if err != nil {
+			return models.MarketplaceAliasReviewResult{}, err
+		}
+		out = append(out, catalogGroups...)
+		sortMarketplaceReviewGroups(out, sortKey)
+		if end > len(out) {
+			end = len(out)
+		}
+		if start > end {
+			start = end
+		}
+		return models.MarketplaceAliasReviewResult{
+			Groups: out[start:end], Total: total, Page: page, PerPage: perPage,
+		}, nil
+	}
+
+	pageGroups := make([]models.MarketplaceAliasReviewGroup, 0, end-start)
+	if start < len(out) {
+		billEnd := end
+		if billEnd > len(out) {
+			billEnd = len(out)
+		}
+		pageGroups = append(pageGroups, out[start:billEnd]...)
+	}
+	remaining := perPage - len(pageGroups)
+	catalogOffset := start - len(out)
+	if catalogOffset < 0 {
+		catalogOffset = 0
+	}
+	if remaining > 0 && catalogOffset < catalogTotal {
+		catalogGroups, err := r.listShopeeCatalogReviewGroups(filter, remaining, catalogOffset)
+		if err != nil {
+			return models.MarketplaceAliasReviewResult{}, err
+		}
+		pageGroups = append(pageGroups, catalogGroups...)
+	}
 	return models.MarketplaceAliasReviewResult{
-		Groups:  out[start:end],
+		Groups:  pageGroups,
 		Total:   total,
 		Page:    page,
 		PerPage: perPage,

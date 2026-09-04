@@ -375,6 +375,7 @@ export interface MarketplaceAliasReviewGroup {
   normalized_key: string
   bill_count: number
   item_count: number
+  catalog_product: boolean
 }
 
 export interface MarketplaceItemAlias {
