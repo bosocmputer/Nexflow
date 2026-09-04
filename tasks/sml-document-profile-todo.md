@@ -1004,6 +1004,54 @@
 - Next action: verify the first naturally occurring post-hotfix VAT document
   after the user's normal SML daily processing.
 
+### Four-tenant Shopee first-mapping digest hotfix
+
+- Incident: Ploy shop `66610219` repeatedly returned HTTP 409
+  `Product Master หรือ stock job เปลี่ยนไปแล้ว` while saving its first mapping
+  for Shopee item/model `26058910935/187745336266` to SML `AINA-S / กล่อง`.
+  Read-only production evidence proved that the Catalog item/unit was valid,
+  no mapping lease/job was active, and no partial alias or mapping write had
+  occurred.
+- Root cause: the frontend impact preview hashed the combined product and model
+  display name, but the PUT handler hashed the trimmed model-name fallback.
+  The resulting `impact_digest` could never match for a new mapping that had
+  both names. Source SKU trimming also differed between the two paths.
+- Fix: application commit `e2fafe0` introduces one canonical model-first,
+  trimmed identity contract on both frontend preview and backend commit paths.
+  It includes an exact regression case for the reported Ploy product. No
+  migration, Product Master data rewrite, route/config change, SML write, or
+  user mapping attempt was performed.
+- Files: `backend/internal/handlers/shopee_stock.go`,
+  `backend/internal/handlers/shopee_stock_identity_test.go`,
+  `frontend/src/lib/shopee-stock-mapping.ts`,
+  `frontend/src/lib/shopee-stock-mapping.test.mjs`, and
+  `frontend/src/pages/ShopeeStock.tsx`.
+- Tests: focused frontend and Go regression tests passed after first proving the
+  old behavior failed; `go test ./...`, `go test -race ./...`, `go vet ./...`,
+  all 46 frontend Node tests, `npm run lint` (zero errors, 35 pre-existing
+  warnings), `npm run build`, and `scripts/check_sales_only_runtime.sh` pass.
+- Deploy: Demo, AOY, Lanboon and Ploy run exact commit
+  `e2fafe0f2a5f590b3e24eed2e2e1e50328fbeb03`. Database backups are Demo
+  `pre-deploy-20260904-102059.sql.gz`, AOY
+  `pre-deploy-20260904-102211.sql.gz`, Lanboon
+  `pre-deploy-20260904-102315.sql.gz`, and Ploy
+  `pre-deploy-20260904-102343.sql.gz`; the shared Shopee Gateway backup is
+  `gateway/pre-deploy-20260904-102023.sql.gz`.
+- Production evidence: each tenant passed fresh DB authentication, internal and
+  public health, frontend login status 200, protected-count equality before and
+  after deploy, Shopee Gateway health/connectivity, and recent severe-error
+  scans. Ploy retained 11 active Catalog products and zero aliases/verified
+  mappings, confirming that deployment did not silently perform the user's
+  requested mapping.
+- Feature modes remain tenant-scoped and unchanged: Document Profile is active
+  on all four; conversion is Demo/Lanboon `off`, AOY `active`, Ploy `shadow`;
+  Sale Invoice remains active while the newer route modes preserve their prior
+  shadow/active selections.
+- Residual risk and next action: browser caching may retain the old frontend
+  bundle until refresh. The USER will refresh Ploy's mapping page, retry the
+  mapping, and report the observed result; no automated production mapping write
+  should be substituted for that validation.
+
 For every completed task, update Handoff with:
 
 1. Exact commit(s) or explicit reason no commit was made
