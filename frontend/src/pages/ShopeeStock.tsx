@@ -49,6 +49,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
 import { marketplaceStockPauseCopy } from '@/lib/marketplace-stock-policy'
 import { buildShopeeStockGroupSummary } from '@/lib/shopee-stock-group-summary'
+import { shopeeStockMutationRawName, shopeeStockMutationSourceSKU } from '@/lib/shopee-stock-mapping'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -1783,8 +1784,8 @@ function MappingDialog({ product, shopID, onClose, onConfigurePool, onSaved }: {
         account_key: `shop:${shopID}`,
         external_item_id: String(product.item_id),
         external_variant_id: String(product.model_id),
-        source_sku: product.model_sku || product.item_sku || '',
-        raw_name: productDisplayName(product),
+        source_sku: shopeeStockMutationSourceSKU(product.item_sku, product.model_sku),
+        raw_name: shopeeStockMutationRawName(product.item_name, product.model_name),
         item_code: selected.item_code,
         unit_code: unitCode,
         quantity_multiplier: multiplier,

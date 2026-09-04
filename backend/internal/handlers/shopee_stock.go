@@ -36,6 +36,17 @@ func firstNonEmptyHandler(values ...string) string {
 	return ""
 }
 
+// shopeeStockMutationRawName is the canonical Product Master name bound into
+// the impact preview digest. Keep the browser preview and server commit on this
+// model-first fallback so a first-time mapping cannot conflict with itself.
+func shopeeStockMutationRawName(itemName, modelName string) string {
+	return firstNonEmptyHandler(modelName, itemName)
+}
+
+func shopeeStockMutationSourceSKU(itemSKU, modelSKU string) string {
+	return firstNonEmptyHandler(modelSKU, itemSKU)
+}
+
 func NewShopeeStockHandler(service *shopeestock.Service, aliases *repository.MarketplaceAliasRepo, audit *repository.AuditLogRepo, log *zap.Logger) *ShopeeStockHandler {
 	return &ShopeeStockHandler{service: service, aliases: aliases, audit: audit, log: log}
 }
@@ -299,7 +310,7 @@ func (h *ShopeeStockHandler) UpdateMapping(c *gin.Context) {
 		Identity: models.MarketplaceAliasIdentity{
 			Source: "shopee", AccountKey: "shop:" + strconv.FormatInt(shopID, 10),
 			ExternalItemID: strconv.FormatInt(itemID, 10), ExternalVariantID: strconv.FormatInt(modelID, 10),
-			SourceSKU: firstNonEmptyHandler(product.ModelSKU, product.ItemSKU), RawName: firstNonEmptyHandler(product.ModelName, product.ItemName),
+			SourceSKU: shopeeStockMutationSourceSKU(product.ItemSKU, product.ModelSKU), RawName: shopeeStockMutationRawName(product.ItemName, product.ModelName),
 		},
 		BillType: "sale", ItemCode: request.SMLItemCode, UnitCode: request.SMLUnitCode,
 		QuantityMultiplier: request.QuantityMultiplier, SalesEnabled: request.SalesEnabled, StockPolicy: request.StockPolicy,
