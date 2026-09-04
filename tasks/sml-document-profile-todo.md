@@ -1052,6 +1052,60 @@
   mapping, and report the observed result; no automated production mapping write
   should be substituted for that validation.
 
+### Four-tenant Shopee Catalog mapping queue
+
+- User outcome: `/marketplace-aliases` now combines unresolved products found
+  in open orders with active, unmatched variants from the connected Shopee
+  Catalog. Catalog-only rows say `รอจับคู่ / จากรายการสินค้า Shopee` and never
+  claim that an order or bill exists. The same page now exposes the existing
+  admin-only Catalog refresh action and selects the Shopee pending view after a
+  successful refresh.
+- Application commit: `52adb83` (`feat: show synced Shopee products in mapping
+  queue`). Files changed are
+  `backend/internal/models/marketplace_alias.go`,
+  `backend/internal/repository/marketplace_alias_catalog_review.go`,
+  `backend/internal/repository/marketplace_alias_repo.go`,
+  `backend/internal/repository/marketplace_alias_repo_test.go`,
+  `frontend/src/lib/marketplace-review.ts`,
+  `frontend/src/lib/marketplace-review.test.mjs`,
+  `frontend/src/pages/MarketplaceAliases.tsx`, and
+  `frontend/src/types/index.ts`.
+- Integrity rules: active Product Master identities and exact active SML SKU
+  matches are excluded; an unresolved Shopee variant already represented by an
+  open bill is shown once; order-derived issues remain ahead of Catalog-only
+  work; Catalog pagination is bounded and tested through Ploy's 30-row page
+  boundary. Mapping still uses the existing impact preview, optimistic
+  revision, tenant-scoped item/model identity, stock pause and reconciliation
+  worker.
+- Validation: focused repository and frontend regression tests pass; full
+  `go test ./...`, repository race tests, `go vet ./...`, all 48 frontend Node
+  tests, `npm run lint` (zero errors, 35 pre-existing warnings),
+  `npm run build`, and `scripts/check_sales_only_runtime.sh` pass. A fresh
+  dependency-audit request did not return before the bounded release window;
+  no dependency or lockfile changed in this increment.
+- Deploy: Demo, AOY, Lanboon and Ploy run exact commit
+  `52adb83e348a1ba74b457c83f299dbbc7662213a`. Database backups are Demo
+  `pre-deploy-20260904-112011.sql.gz`, AOY
+  `pre-deploy-20260904-112125.sql.gz`, Lanboon
+  `pre-deploy-20260904-112223.sql.gz`, and Ploy
+  `pre-deploy-20260904-112237.sql.gz`. The standard deployment also backed up
+  and health-checked the shared Shopee Gateway.
+- Production evidence: all four internal/public health checks, database
+  authentication, frontend login checks, protected-count comparisons and
+  severe-error scans passed. Every public frontend serves a bundle containing
+  the new Catalog refresh and Catalog-origin labels. Read-only Ploy evidence is
+  34 active Shopee variants, one linked active Product Master variant and 33
+  Catalog variants waiting to map. Reported item/model
+  `26058910935/187745336266` is the linked active variant, proving the preceding
+  409 digest fix succeeded before this deployment; this deployment performed no
+  mapping write.
+- Feature modes: tenant SML, Shopee, Document Profile, conversion, Auto SML and
+  stock modes were preserved without change; there is no migration or backfill.
+- Residual risk and next action: authenticated desktop/mobile interaction is
+  intentionally left to the USER's announced production test. Refresh Ploy's
+  page, confirm the 33 remaining variants appear in `รอจับคู่`, then map one
+  remaining variant and report any UI or workflow feedback.
+
 For every completed task, update Handoff with:
 
 1. Exact commit(s) or explicit reason no commit was made
