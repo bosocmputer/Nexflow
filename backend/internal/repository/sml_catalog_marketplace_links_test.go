@@ -29,11 +29,11 @@ func TestCatalogListAttachesMarketplaceSummariesInOneBatch(t *testing.T) {
 			"SKU-1", "สินค้า 1", "", "ชิ้น", "", "", "", nil, "disabled", nil, true,
 			0, nil, "", nil, nil, now, now, 0, 0, "", true, true, []byte(`[]`),
 		))
-	mock.ExpectQuery(`(?s)SELECT item_code, source, COUNT\(\*\).*FROM marketplace_item_aliases`).
+	mock.ExpectQuery(`(?s)SELECT a.item_code, a.source, COUNT\(\*\).*shopee_stock_mappings.*raw_data->>'flow'.*shopee_excel.*FROM marketplace_item_aliases a`).
 		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"item_code", "source", "mapping_count", "product_count", "account_count"}).
-			AddRow("SKU-1", "shopee", 3, 2, 1).
-			AddRow("SKU-1", "tiktok", 1, 1, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"item_code", "source", "mapping_count", "product_count", "account_count", "shopee_api_used", "shopee_excel_used"}).
+			AddRow("SKU-1", "shopee", 3, 2, 1, true, false).
+			AddRow("SKU-1", "tiktok", 1, 1, 1, false, false))
 
 	items, total, err := NewSMLCatalogRepo(db).List(1, 50, "", "")
 	if err != nil {
@@ -47,6 +47,9 @@ func TestCatalogListAttachesMarketplaceSummariesInOneBatch(t *testing.T) {
 	}
 	if got := items[0].MarketplaceSummaries[0]; got.Source != "shopee" || got.MappingCount != 3 || got.ProductCount != 2 || got.AccountCount != 1 {
 		t.Fatalf("Shopee summary = %#v", got)
+	}
+	if got := items[0].MarketplaceSummaries[0].InputChannels; len(got) != 1 || got[0] != "shopee" {
+		t.Fatalf("Shopee summary input channels = %v, want API only", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)
@@ -67,10 +70,11 @@ func TestCatalogMarketplaceLinksUsesBoundedKeysetPage(t *testing.T) {
 			"id", "source", "account_key", "account_name", "product_name", "variant_name",
 			"source_sku", "external_item_id", "external_variant_id", "unit_code",
 			"quantity_multiplier", "conversion_status", "scope_confirmed", "updated_at",
+			"shopee_api_used", "shopee_excel_used",
 		}).
-			AddRow("alias-2", "shopee", "shop:1", "AOY", "สินค้า A", "สีแดง", "SKU-A-R", "100", "200", "ชิ้น", 1, "ready", true, now).
-			AddRow("alias-3", "shopee", "shop:1", "AOY", "สินค้า A", "สีน้ำเงิน", "SKU-A-B", "100", "201", "ชิ้น", 2, "ready", true, now).
-			AddRow("alias-4", "tiktok", "default", "", "สินค้า B", "แบบปกติ", "SKU-B", "300", "400", "ชิ้น", 1, "needs_review", true, now))
+			AddRow("alias-2", "shopee", "shop:1", "AOY", "สินค้า A", "สีแดง", "SKU-A-R", "100", "200", "ชิ้น", 1, "ready", true, now, true, false).
+			AddRow("alias-3", "shopee", "shop:1", "AOY", "สินค้า A", "สีน้ำเงิน", "SKU-A-B", "100", "201", "ชิ้น", 2, "ready", true, now, true, true).
+			AddRow("alias-4", "tiktok", "default", "", "สินค้า B", "แบบปกติ", "SKU-B", "300", "400", "ชิ้น", 1, "needs_review", true, now, false, false))
 
 	links, hasMore, err := NewSMLCatalogRepo(db).MarketplaceLinks(t.Context(), CatalogMarketplaceLinkFilter{
 		ItemCode: "SKU-1", Limit: 2, AfterSource: "shopee", AfterAccountKey: "shop:1", AfterID: "alias-1",
@@ -83,6 +87,12 @@ func TestCatalogMarketplaceLinksUsesBoundedKeysetPage(t *testing.T) {
 	}
 	if links[1].QuantityMultiplier != 2 || links[1].VariantName != "สีน้ำเงิน" {
 		t.Fatalf("second link = %#v", links[1])
+	}
+	if got := links[0].InputChannels; len(got) != 1 || got[0] != "shopee" {
+		t.Fatalf("first link input channels = %v, want API only", got)
+	}
+	if got := links[1].InputChannels; len(got) != 2 || got[0] != "shopee" || got[1] != "shopee_excel" {
+		t.Fatalf("second link input channels = %v, want API and Excel", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)

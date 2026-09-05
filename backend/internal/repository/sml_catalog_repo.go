@@ -407,13 +407,24 @@ func (r *SMLCatalogRepo) attachMarketplaceSummaries(items []models.CatalogItem) 
 		return nil
 	}
 	rows, err := r.db.Query(`
-		SELECT item_code, source, COUNT(*)::int,
-		       COUNT(DISTINCT account_key||chr(31)||COALESCE(NULLIF(parent_key,''),NULLIF(external_parent_id,''),NULLIF(external_item_id,''),id::text))::int,
-		       COUNT(DISTINCT account_key)::int
-		FROM marketplace_item_aliases
-		WHERE is_active=true AND item_code=ANY($1)
-		GROUP BY item_code,source
-		ORDER BY item_code,source`, pq.Array(codes))
+		SELECT a.item_code, a.source, COUNT(*)::int,
+		       COUNT(DISTINCT a.account_key||chr(31)||COALESCE(NULLIF(a.parent_key,''),NULLIF(a.external_parent_id,''),NULLIF(a.external_item_id,''),a.id::text))::int,
+		       COUNT(DISTINCT a.account_key)::int,
+		       BOOL_OR(a.source='shopee' AND (
+		         EXISTS (SELECT 1 FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id=a.id)
+		         OR EXISTS (SELECT 1 FROM bill_items bi JOIN bills b ON b.id=bi.bill_id
+		                    WHERE bi.marketplace_alias_id=a.id
+		                      AND COALESCE(b.raw_data->>'flow','')<>'shopee_excel')
+		       )),
+		       BOOL_OR(a.source='shopee' AND EXISTS (
+		         SELECT 1 FROM bill_items bi JOIN bills b ON b.id=bi.bill_id
+		          WHERE bi.marketplace_alias_id=a.id
+		            AND b.raw_data->>'flow'='shopee_excel'
+		       ))
+		FROM marketplace_item_aliases a
+		WHERE a.is_active=true AND a.item_code=ANY($1)
+		GROUP BY a.item_code,a.source
+		ORDER BY a.item_code,a.source`, pq.Array(codes))
 	if err != nil {
 		return err
 	}
@@ -421,9 +432,14 @@ func (r *SMLCatalogRepo) attachMarketplaceSummaries(items []models.CatalogItem) 
 	for rows.Next() {
 		var itemCode string
 		var summary models.CatalogMarketplaceSummary
-		if err := rows.Scan(&itemCode, &summary.Source, &summary.MappingCount, &summary.ProductCount, &summary.AccountCount); err != nil {
+		var shopeeAPIUsed, shopeeExcelUsed bool
+		if err := rows.Scan(
+			&itemCode, &summary.Source, &summary.MappingCount, &summary.ProductCount, &summary.AccountCount,
+			&shopeeAPIUsed, &shopeeExcelUsed,
+		); err != nil {
 			return err
 		}
+		summary.InputChannels = observedShopeeInputChannels(summary.Source, shopeeAPIUsed, shopeeExcelUsed)
 		if index, ok := indexes[itemCode]; ok {
 			items[index].MarketplaceSummaries = append(items[index].MarketplaceSummaries, summary)
 		}
@@ -459,7 +475,18 @@ func (r *SMLCatalogRepo) MarketplaceLinks(ctx context.Context, filter CatalogMar
 		       COALESCE(NULLIF(a.source_product_name,''),NULLIF(split_part(a.raw_name,' / ',1),''),a.raw_name),
 		       COALESCE(NULLIF(a.source_variant_name,''),NULLIF(split_part(a.raw_name,' / ',2),''),a.raw_name),
 		       a.source_sku,a.external_item_id,a.external_variant_id,a.unit_code,
-		       a.quantity_multiplier,a.conversion_status,a.scope_confirmed,a.updated_at
+		       a.quantity_multiplier,a.conversion_status,a.scope_confirmed,a.updated_at,
+		       (a.source='shopee' AND (
+		         EXISTS (SELECT 1 FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id=a.id)
+		         OR EXISTS (SELECT 1 FROM bill_items bi JOIN bills b ON b.id=bi.bill_id
+		                    WHERE bi.marketplace_alias_id=a.id
+		                      AND COALESCE(b.raw_data->>'flow','')<>'shopee_excel')
+		       )),
+		       (a.source='shopee' AND EXISTS (
+		         SELECT 1 FROM bill_items bi JOIN bills b ON b.id=bi.bill_id
+		          WHERE bi.marketplace_alias_id=a.id
+		            AND b.raw_data->>'flow'='shopee_excel'
+		       ))
 		FROM marketplace_item_aliases a
 		LEFT JOIN shopee_api_connections sc
 		  ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
@@ -474,15 +501,17 @@ func (r *SMLCatalogRepo) MarketplaceLinks(ctx context.Context, filter CatalogMar
 	links := make([]models.CatalogMarketplaceLink, 0, filter.Limit+1)
 	for rows.Next() {
 		var link models.CatalogMarketplaceLink
+		var shopeeAPIUsed, shopeeExcelUsed bool
 		if err := rows.Scan(
 			&link.ID, &link.Source, &link.AccountKey, &link.AccountName,
 			&link.ProductName, &link.VariantName, &link.SourceSKU,
 			&link.ExternalItemID, &link.ExternalVariantID, &link.UnitCode,
 			&link.QuantityMultiplier, &link.ConversionStatus, &link.ScopeConfirmed,
-			&link.UpdatedAt,
+			&link.UpdatedAt, &shopeeAPIUsed, &shopeeExcelUsed,
 		); err != nil {
 			return nil, false, err
 		}
+		link.InputChannels = observedShopeeInputChannels(link.Source, shopeeAPIUsed, shopeeExcelUsed)
 		links = append(links, link)
 	}
 	if err := rows.Err(); err != nil {

@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/hooks/useAuth'
+import { marketplaceDisplayInputChannels } from '@/lib/billInputChannel'
 import { cn } from '@/lib/utils'
 import type { CatalogItem } from '@/types'
 
@@ -185,7 +186,12 @@ export default function CatalogSettings() {
                           <button type="button" className="rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setMarketplaceDetailsItem(item)} aria-label={`ดูสินค้า Marketplace ที่จับคู่กับ ${item.item_code}`}>
                             <span className="flex flex-wrap gap-1.5">
                               {marketplaceSummaries.map((summary) => (
-                                <MarketplaceSourceChannelBadges key={summary.source} source={summary.source} count={summary.mapping_count} />
+                                <MarketplaceSourceChannelBadges
+                                  key={summary.source}
+                                  source={summary.source}
+                                  count={summary.mapping_count}
+                                  channels={marketplaceDisplayInputChannels(summary.source, { inputChannels: summary.input_channels })}
+                                />
                               ))}
                             </span>
                             <span className="mt-1 block text-xs text-link">ดูชื่อสินค้าและตัวเลือก</span>

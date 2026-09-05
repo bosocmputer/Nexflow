@@ -6,6 +6,7 @@ import { MarketplaceSourceChannelBadges } from '@/components/marketplace/InputCh
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { marketplaceDisplayInputChannels } from '@/lib/billInputChannel'
 import type { CatalogMarketplaceLink } from '@/types'
 
 interface Props {
@@ -95,17 +96,19 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
                   const showVariant = link.variant_name && link.variant_name !== link.product_name
                   const needsReview = link.conversion_status !== 'ready' || !link.scope_confirmed
                   return (
-                    <div key={link.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[190px_minmax(0,1fr)] sm:gap-3">
-                      <div>
-                        <MarketplaceSourceChannelBadges source={link.source} accountName={link.account_name} />
+                    <div key={link.id} className="space-y-3 px-4 py-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <MarketplaceSourceChannelBadges
+                          source={link.source}
+                          accountName={link.account_name}
+                          channels={marketplaceDisplayInputChannels(link.source, { inputChannels: link.input_channels })}
+                        />
+                        {needsReview && <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">รอตรวจสอบ</Badge>}
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="min-w-0 font-medium leading-snug">{link.product_name || 'ไม่มีชื่อสินค้า'}</p>
-                          {needsReview && <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">รอตรวจสอบ</Badge>}
-                        </div>
-                        {showVariant && <p className="mt-0.5 text-sm text-muted-foreground">ตัวเลือก: {link.variant_name}</p>}
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <div className="min-w-0 space-y-1">
+                        <p className="break-words font-medium leading-snug">{link.product_name || 'ไม่มีชื่อสินค้า'}</p>
+                        {showVariant && <p className="break-words text-sm text-muted-foreground">ตัวเลือก: <span className="text-foreground">{link.variant_name}</span></p>}
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
                           {link.source_sku && <span>SKU: <code className="text-foreground">{link.source_sku}</code></span>}
                           {link.quantity_multiplier > 1 && <span>Marketplace 1 รายการ = {link.quantity_multiplier.toLocaleString()} {link.unit_code || 'หน่วย'} SML</span>}
                         </div>

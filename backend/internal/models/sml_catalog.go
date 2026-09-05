@@ -43,10 +43,11 @@ type CatalogItem struct {
 // catalog page. Marketplace product names are loaded only when the user opens
 // the detail dialog so the main catalog response stays small.
 type CatalogMarketplaceSummary struct {
-	Source       string `json:"source"`
-	MappingCount int    `json:"mapping_count"`
-	ProductCount int    `json:"product_count"`
-	AccountCount int    `json:"account_count"`
+	Source        string   `json:"source"`
+	MappingCount  int      `json:"mapping_count"`
+	ProductCount  int      `json:"product_count"`
+	AccountCount  int      `json:"account_count"`
+	InputChannels []string `json:"input_channels,omitempty"`
 }
 
 // CatalogMarketplaceLink is one active Product Master mapping that points to
@@ -65,6 +66,7 @@ type CatalogMarketplaceLink struct {
 	QuantityMultiplier int64     `json:"quantity_multiplier"`
 	ConversionStatus   string    `json:"conversion_status"`
 	ScopeConfirmed     bool      `json:"scope_confirmed"`
+	InputChannels      []string  `json:"input_channels,omitempty"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 

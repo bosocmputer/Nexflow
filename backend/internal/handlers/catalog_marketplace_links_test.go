@@ -30,9 +30,10 @@ func TestCatalogMarketplaceLinksReturnsBoundedPageAndCursor(t *testing.T) {
 			"id", "source", "account_key", "account_name", "product_name", "variant_name",
 			"source_sku", "external_item_id", "external_variant_id", "unit_code",
 			"quantity_multiplier", "conversion_status", "scope_confirmed", "updated_at",
+			"shopee_api_used", "shopee_excel_used",
 		}).
-			AddRow("alias-1", "shopee", "shop:1", "AOY", "สินค้า A", "สีแดง", "SKU-A-R", "100", "200", "ชิ้น", 1, "ready", true, now).
-			AddRow("alias-2", "tiktok", "default", "", "สินค้า B", "แบบปกติ", "SKU-B", "300", "400", "ชิ้น", 2, "needs_review", true, now))
+			AddRow("alias-1", "shopee", "shop:1", "AOY", "สินค้า A", "สีแดง", "SKU-A-R", "100", "200", "ชิ้น", 1, "ready", true, now, true, false).
+			AddRow("alias-2", "tiktok", "default", "", "สินค้า B", "แบบปกติ", "SKU-B", "300", "400", "ชิ้น", 2, "needs_review", true, now, false, false))
 
 	h := &CatalogHandler{catalogRepo: repository.NewSMLCatalogRepo(db), logger: zap.NewNop()}
 	router := gin.New()
@@ -56,6 +57,9 @@ func TestCatalogMarketplaceLinksReturnsBoundedPageAndCursor(t *testing.T) {
 	}
 	if response.Data[0].ProductName != "สินค้า A" {
 		t.Fatalf("first link = %#v", response.Data[0])
+	}
+	if got := response.Data[0].InputChannels; len(got) != 1 || got[0] != "shopee" {
+		t.Fatalf("first link input channels = %v, want API only", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)

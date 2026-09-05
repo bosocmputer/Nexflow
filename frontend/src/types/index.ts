@@ -126,6 +126,7 @@ export interface CatalogMarketplaceSummary {
   mapping_count: number
   product_count: number
   account_count: number
+  input_channels?: string[]
 }
 
 export interface CatalogMarketplaceLink {
@@ -142,6 +143,7 @@ export interface CatalogMarketplaceLink {
   quantity_multiplier: number
   conversion_status: string
   scope_confirmed: boolean
+  input_channels?: string[]
   updated_at: string
 }
 
