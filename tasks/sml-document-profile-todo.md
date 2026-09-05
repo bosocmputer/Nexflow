@@ -1106,6 +1106,51 @@
   page, confirm the 33 remaining variants appear in `รอจับคู่`, then map one
   remaining variant and report any UI or workflow feedback.
 
+### Four-tenant Thai audit labels and Shopee mapping provenance
+
+- User outcome: Ploy's `/logs` now presents the observed Catalog/Product Master
+  operations in Thai instead of falling back to technical action keys.
+  `/marketplace-aliases` now labels a product discovered by the connected
+  Shopee Catalog as `Shopee API` for that shop. `Shopee Excel` is added only
+  after an Excel bill actually uses the same Product Master mapping; both input
+  paths may still safely reuse one verified shop-scoped mapping.
+- Application commit: `a9dcc1c` (`fix: clarify Shopee mapping provenance`). The
+  change adds bounded, read-only provenance evidence to the existing alias APIs
+  and Thai metadata for `marketplace_backfill_completed`,
+  `sml_catalog_reconciliation_started`, and
+  `sml_catalog_generation_activated`. It does not broaden name matching,
+  rewrite mappings, or change mapping identity/revision checks.
+- Validation: the behavior was introduced test-first. Focused frontend tests
+  pass 13/13; all frontend library tests pass 53/53; full backend
+  `go test ./...`, `go test -race ./...`, and `go vet ./...` pass;
+  `npm run lint` passes with zero errors and 35 pre-existing warnings;
+  `npm run build`, targeted ESLint, `git diff --check`, and
+  `scripts/check_sales_only_runtime.sh` pass. The new lookup remains bounded by
+  the existing paginated alias queries and uses the existing alias-reference
+  indexes, with no request or row-level network N+1.
+- Deploy: Demo, AOY, Lanboon and Ploy run exact application commit
+  `a9dcc1c3f9cedfef3a7868d2fd6c792e7b7aca82`. Database backups are Demo
+  `pre-deploy-20260905-021836.sql.gz`, AOY
+  `pre-deploy-20260905-021947.sql.gz`, Lanboon
+  `pre-deploy-20260905-022045.sql.gz`, and Ploy
+  `pre-deploy-20260905-022058.sql.gz`. The standard deployment also backed up,
+  rebuilt and health-checked the shared Shopee Gateway.
+- Production evidence: all four tenants passed internal/public health,
+  database authentication, frontend login, protected-count equality and recent
+  severe-error scans. Their `/logs` and `/marketplace-aliases` routes return
+  HTTP 200. Ploy's deployed bundles contain the new Thai labels and channel
+  provenance copy. Read-only Ploy database evidence for mapping
+  `70db3643-9b42-428c-baf1-5c840f21bef8` shows shop `66610219`, item/model
+  `26058910935/187745336266`, Shopee API evidence true and Shopee Excel evidence
+  false, so the current row resolves to API-only as requested.
+- Feature modes and tenant data remain unchanged. There is no migration,
+  Product Master write, mapping write, route/config change, SML write, or
+  backfill in this increment.
+- Residual risk and next action: a browser with an older cached bundle may need
+  one refresh. The USER will refresh Ploy's `/logs` and
+  `/marketplace-aliases`, confirm the Thai labels and API-only shop badge, then
+  report any remaining workflow feedback.
+
 For every completed task, update Handoff with:
 
 1. Exact commit(s) or explicit reason no commit was made
