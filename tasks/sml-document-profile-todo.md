@@ -1151,6 +1151,52 @@
   `/marketplace-aliases`, confirm the Thai labels and API-only shop badge, then
   report any remaining workflow feedback.
 
+### Four-tenant Catalog provenance and detail-dialog layout
+
+- User outcome: `/settings/catalog` now uses the same observed input-channel
+  evidence as `/marketplace-aliases`. The Catalog summary and the lazy detail
+  dialog show `Shopee API` for a Catalog/stock mapping and add `Shopee Excel`
+  only after an Excel bill actually uses that Product Master row.
+- UI: the detail dialog no longer uses a fixed 190px channel column. Channel
+  and shop badges occupy their own wrapping row; product name, option, SKU and
+  multiplier are placed below with explicit spacing and word wrapping, so a
+  long shop label cannot overlap the product text on desktop or mobile.
+- Application commit: `7c5d5f1`
+  (`fix: align Catalog mapping provenance`). Files changed are
+  `backend/internal/handlers/catalog_marketplace_links_test.go`,
+  `backend/internal/models/sml_catalog.go`,
+  `backend/internal/repository/sml_catalog_marketplace_links_test.go`,
+  `backend/internal/repository/sml_catalog_repo.go`,
+  `frontend/src/components/catalog/CatalogMarketplaceLinksDialog.tsx`,
+  `frontend/src/pages/CatalogSettings.tsx`, and `frontend/src/types/index.ts`.
+- Validation: regression tests first failed because the Catalog summary/link
+  contracts lacked provenance fields. Focused repository/handler tests then
+  pass; full `go test ./...`, `go test -race ./...`, and `go vet ./...` pass;
+  all 53 frontend library tests, `npm run lint` with zero errors and 35
+  pre-existing warnings, `npm run build`, `git diff --check`, and
+  `scripts/check_sales_only_runtime.sh` pass. Read-only `EXPLAIN ANALYZE` on
+  Ploy's actual Catalog summary completed in 0.486 ms and used the existing
+  alias-reference index for bill evidence.
+- Deploy: Demo, AOY, Lanboon and Ploy run exact application commit
+  `7c5d5f18a186ec48f456b7eeae41c42ed58c1b57`. Database backups are Demo
+  `pre-deploy-20260905-023710.sql.gz`, AOY
+  `pre-deploy-20260905-023819.sql.gz`, Lanboon
+  `pre-deploy-20260905-023916.sql.gz`, and Ploy
+  `pre-deploy-20260905-023928.sql.gz`. The standard deployment also backed up,
+  rebuilt and health-checked the shared Shopee Gateway.
+- Production evidence: all four tenants passed internal/public health,
+  database authentication, frontend login, protected-count equality and recent
+  severe-error scans. All four public `/settings/catalog` routes return HTTP
+  200. Ploy's deployed asset contains the new provenance field and vertical
+  spacing classes. A post-deploy read-only query for SML item `AINA-S` returned
+  `source=shopee`, API evidence true and Excel evidence false, so both the table
+  summary and dialog resolve to API-only for the reported product.
+- Feature modes and tenant data remain unchanged. There is no migration,
+  mapping write, Catalog sync, SML write, route/config change, or backfill.
+- Residual risk and next action: authenticated visual confirmation remains with
+  the USER's active Ploy session. Refresh `/settings/catalog`, open `AINA-S`,
+  and confirm the single API shop badge plus the separated product layout.
+
 For every completed task, update Handoff with:
 
 1. Exact commit(s) or explicit reason no commit was made
