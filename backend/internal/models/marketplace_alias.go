@@ -44,6 +44,7 @@ type MarketplaceItemAlias struct {
 	ProductActive         bool       `json:"product_active"`
 	OpenItemCount         int        `json:"open_item_count"`
 	StockMappingCount     int        `json:"stock_mapping_count"`
+	InputChannels         []string   `json:"input_channels,omitempty"`
 }
 
 // MarketplaceAliasReviewGroup groups unmatched bill items by their normalized key
@@ -64,7 +65,8 @@ type MarketplaceAliasReviewGroup struct {
 	// CatalogProduct is true when the row came from a connected Shopee shop's
 	// local product snapshot. Catalog-only rows deliberately keep bill/item
 	// counts at zero so the UI never presents them as pending orders.
-	CatalogProduct bool `json:"catalog_product"`
+	CatalogProduct bool     `json:"catalog_product"`
+	InputChannels  []string `json:"input_channels,omitempty"`
 }
 
 type MarketplaceAliasIdentity struct {
@@ -182,5 +184,6 @@ type MarketplaceProductGroup struct {
 	ReadyCount    int       `json:"ready_count"`
 	FixCount      int       `json:"fix_count"`
 	DisabledCount int       `json:"disabled_count"`
+	InputChannels []string  `json:"input_channels,omitempty"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

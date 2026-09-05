@@ -22,6 +22,7 @@ import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
 import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceConversionReadiness, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
 import { marketplacePendingSummary } from '@/lib/marketplace-review'
+import { marketplaceDisplayInputChannels } from '@/lib/billInputChannel'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
@@ -767,7 +768,7 @@ function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; 
             const summary = marketplacePendingSummary(row)
             return (
               <TableRow key={row.group_key}>
-                <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} /></TableCell>
+                <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} inputChannels={row.input_channels} catalogProduct={row.catalog_product} /></TableCell>
                 <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono">{row.source_sku}</span></div>}</TableCell>
                 <TableCell className="text-right tabular-nums"><div>{summary.primary}</div><div className="text-xs text-muted-foreground">{summary.secondary}</div></TableCell>
                 <TableCell className="text-right">{canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button> : <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>}</TableCell>
@@ -881,7 +882,7 @@ function SavedGroupedTable({
 											{group.disabled_count > 0 && <Badge variant="secondary">ปิด {group.disabled_count}</Badge>}
 										</div>
 									</TableCell>
-									<TableCell><ChannelAccount source={group.source} accountName={group.account_name} accountKey={group.account_key} /></TableCell>
+									<TableCell><ChannelAccount source={group.source} accountName={group.account_name} accountKey={group.account_key} inputChannels={group.input_channels} /></TableCell>
 									<TableCell className="text-right"><Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => toggleGroup(group)} aria-label={isOpen ? 'ซ่อนตัวเลือก' : 'แสดงตัวเลือก'} aria-expanded={isOpen}><ChevronDown className={cn('h-4 w-4 transition-transform', isOpen && 'rotate-180')} /></Button></TableCell>
 								</TableRow>
 								{isOpen && (
@@ -946,7 +947,7 @@ function SavedTable({ loading, rows, canManage, onEdit, onDelete }: { loading: b
             <TableRow key={row.id}>
               <TableCell>
                 <div className="flex items-start gap-3">
-                  <ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} />
+                  <ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} inputChannels={row.input_channels} />
                   <div className="min-w-0">
                     <div className="line-clamp-2 font-medium">{row.raw_name || row.source_sku}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{row.source_sku ? <>SKU: <span className="font-mono">{row.source_sku}</span></> : 'ไม่มี SKU'}</div>
@@ -973,11 +974,12 @@ function actionDescription(action: PendingAction | null) {
   return `ต้นทาง: ${action.group.source_sku || action.group.raw_name}\nสินค้า SML: ${action.product.item_code} · ${action.product.item_name}\n${impactText}`
 }
 
-function ChannelAccount({ source, accountName, accountKey }: { source: string; accountName?: string; accountKey: string }) {
+function ChannelAccount({ source, accountName, accountKey, inputChannels, catalogProduct = false }: { source: string; accountName?: string; accountKey: string; inputChannels?: string[]; catalogProduct?: boolean }) {
   const name = accountName || (accountKey.startsWith('shop:') ? `ร้าน ${accountKey.slice(5)}` : '')
+  const channels = marketplaceDisplayInputChannels(source, { inputChannels, catalogProduct })
   return (
     <div className="shrink-0">
-      <MarketplaceSourceChannelBadges source={source} accountName={name} />
+      <MarketplaceSourceChannelBadges source={source} accountName={name} channels={channels} />
     </div>
   )
 }

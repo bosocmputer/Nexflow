@@ -1405,6 +1405,7 @@ export default function Logs() {
 	                  {PHASE >= 2 && <SelectItem value="tiktok">TikTok Excel</SelectItem>}
 	                  <SelectItem value="sml">SML</SelectItem>
                   <SelectItem value="catalog">สินค้า SML</SelectItem>
+                  <SelectItem value="sml_catalog">รายการสินค้า SML</SelectItem>
                   <SelectItem value="channel_defaults">ตั้งค่าเอกสาร</SelectItem>
                   <SelectItem value="system">ระบบ</SelectItem>
                 </SelectContent>

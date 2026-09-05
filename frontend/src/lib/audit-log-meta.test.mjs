@@ -112,3 +112,39 @@ test('labels SML recovery in plain Thai without implying that the document is re
   }, 'sml')), 'ไม่สร้างบิลซ้ำ · ผู้ดูแลลองครั้งที่ 2')
   assert.equal(isSMLAuditLog(audit('profile_complete', {}, 'sml')), true)
 })
+
+test('uses Thai operator labels for the Ploy catalog and Product Master events', () => {
+  const actions = [
+    'marketplace_mapping_reconcile_completed',
+    'marketplace_alias_confirmed',
+    'marketplace_backfill_completed',
+    'sml_catalog_generation_activated',
+    'sml_catalog_reconciliation_started',
+    'catalog_refresh_one',
+    'user_updated',
+  ]
+
+  for (const action of actions) {
+    assert.ok(ACTION_META[action], `${action} must not fall back to its technical key`)
+  }
+  assert.equal(SOURCE_LABELS.sml_catalog, 'รายการสินค้า SML')
+})
+
+test('summarizes catalog preparation without exposing internal job keys', () => {
+  assert.equal(summarize(audit('marketplace_backfill_completed', {
+    job_type: 'alias_conversion',
+  }, 'marketplace')), 'ตรวจหน่วยสินค้าใน Product Master แล้ว')
+  assert.equal(summarize(audit('marketplace_backfill_completed', {
+    job_type: 'bill_snapshots',
+  }, 'marketplace')), 'ตรวจข้อมูลสินค้าในบิลแล้ว')
+  assert.equal(summarize(audit('marketplace_backfill_completed', {
+    job_type: 'reservation_ledger',
+  }, 'marketplace')), 'ตรวจยอดจองสต๊อกแล้ว')
+  assert.equal(summarize(audit('sml_catalog_generation_activated', {
+    product_count: 6,
+    unit_count: 7,
+  }, 'sml_catalog')), 'สินค้า 6 รายการ · หน่วยนับ 7 รายการ')
+  assert.equal(summarize(audit('sml_catalog_reconciliation_started', {
+    stock_paused: true,
+  }, 'sml_catalog')), 'พักการซิงก์สต๊อกชั่วคราวระหว่างตรวจข้อมูล')
+})

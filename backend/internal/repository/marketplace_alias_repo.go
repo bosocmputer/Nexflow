@@ -76,6 +76,20 @@ func marketplaceAliasParentKeySQL(alias string) string {
 	'derived:'||md5(%[1]s.source||chr(31)||%[1]s.account_key||chr(31)||COALESCE(NULLIF(%[1]s.source_product_name,''),split_part(%[1]s.raw_name,' / ',1),%[1]s.normalized_key)))`, alias)
 }
 
+func observedShopeeInputChannels(source string, apiUsed, excelUsed bool) []string {
+	if strings.ToLower(strings.TrimSpace(source)) != "shopee" {
+		return nil
+	}
+	channels := make([]string, 0, 2)
+	if apiUsed {
+		channels = append(channels, "shopee")
+	}
+	if excelUsed {
+		channels = append(channels, "shopee_excel")
+	}
+	return channels
+}
+
 func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter MarketplaceProductGroupFilter) ([]models.MarketplaceProductGroup, bool, error) {
 	if filter.Limit < 1 || filter.Limit > 50 {
 		filter.Limit = 30
@@ -124,7 +138,18 @@ func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter Marketp
 	       COUNT(*) FILTER (WHERE a.conversion_status='ready' AND a.scope_confirmed=true AND a.sales_enabled=true)::int,
 	       COUNT(*) FILTER (WHERE a.conversion_status<>'ready' OR a.scope_confirmed=false)::int,
 	       COUNT(*) FILTER (WHERE a.sales_enabled=false OR a.stock_policy IN ('disabled_zero','manual_unmanaged'))::int,
-	       MAX(a.updated_at)
+	       MAX(a.updated_at),
+	       BOOL_OR(a.source='shopee' AND (
+	         EXISTS (SELECT 1 FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id=a.id)
+	         OR EXISTS (SELECT 1 FROM bill_items bi JOIN bills b ON b.id=bi.bill_id
+	                    WHERE bi.marketplace_alias_id=a.id
+	                      AND COALESCE(b.raw_data->>'flow','')<>'shopee_excel')
+	       )),
+	       BOOL_OR(a.source='shopee' AND EXISTS (
+	         SELECT 1 FROM bill_items bi JOIN bills b ON b.id=bi.bill_id
+	          WHERE bi.marketplace_alias_id=a.id
+	            AND b.raw_data->>'flow'='shopee_excel'
+	       ))
 	FROM matched_keys k
 	JOIN marketplace_item_aliases a ON a.is_active=true AND a.source=k.source AND a.account_key=k.account_key
 	 AND %s=k.group_key
@@ -140,10 +165,13 @@ func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter Marketp
 	groups := make([]models.MarketplaceProductGroup, 0, filter.Limit+1)
 	for rows.Next() {
 		var group models.MarketplaceProductGroup
+		var shopeeAPIUsed, shopeeExcelUsed bool
 		if err := rows.Scan(&group.Source, &group.AccountKey, &group.AccountName, &group.ParentKey, &group.ParentKeyKind,
-			&group.ProductName, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.DisabledCount, &group.UpdatedAt); err != nil {
+			&group.ProductName, &group.VariantCount, &group.ReadyCount, &group.FixCount, &group.DisabledCount, &group.UpdatedAt,
+			&shopeeAPIUsed, &shopeeExcelUsed); err != nil {
 			return nil, false, err
 		}
+		group.InputChannels = observedShopeeInputChannels(group.Source, shopeeAPIUsed, shopeeExcelUsed)
 		groups = append(groups, group)
 	}
 	if err := rows.Err(); err != nil {
@@ -536,7 +564,18 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 			             OR (a.external_item_id = '' AND a.source_sku = ''
 			                 AND btrim(replace(COALESCE(bi.source_sku, ''), chr(65279), '')) = ''
 			                 AND btrim(regexp_replace(replace(bi.raw_name, chr(65279), ''), '\s+', ' ', 'g')) = a.normalized_key))),
-		       (SELECT COUNT(*) FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id = a.id)
+		       (SELECT COUNT(*) FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id = a.id),
+		       (a.source='shopee' AND (
+		         EXISTS (SELECT 1 FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id=a.id)
+		         OR EXISTS (SELECT 1 FROM bill_items used_item JOIN bills used_bill ON used_bill.id=used_item.bill_id
+		                    WHERE used_item.marketplace_alias_id=a.id
+		                      AND COALESCE(used_bill.raw_data->>'flow','')<>'shopee_excel')
+		       )),
+		       (a.source='shopee' AND EXISTS (
+		         SELECT 1 FROM bill_items used_item JOIN bills used_bill ON used_bill.id=used_item.bill_id
+		          WHERE used_item.marketplace_alias_id=a.id
+		            AND used_bill.raw_data->>'flow'='shopee_excel'
+		       ))
 		FROM marketplace_item_aliases a
 		LEFT JOIN sml_catalog c ON c.item_code = a.item_code
 		LEFT JOIN users u ON u.id = a.confirmed_by
@@ -551,6 +590,7 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 	aliases := make([]models.MarketplaceItemAlias, 0, perPage)
 	for rows.Next() {
 		var alias models.MarketplaceItemAlias
+		var shopeeAPIUsed, shopeeExcelUsed bool
 		if err := rows.Scan(
 			&alias.ID, &alias.Source, &alias.AccountKey, &alias.ExternalItemID, &alias.ExternalVariantID,
 			&alias.SourceSKU, &alias.RawName,
@@ -565,9 +605,11 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 			&alias.AccountName,
 			&alias.ItemName, &alias.ConfirmedName, &alias.ProductActive,
 			&alias.OpenItemCount, &alias.StockMappingCount,
+			&shopeeAPIUsed, &shopeeExcelUsed,
 		); err != nil {
 			return nil, 0, err
 		}
+		alias.InputChannels = observedShopeeInputChannels(alias.Source, shopeeAPIUsed, shopeeExcelUsed)
 		aliases = append(aliases, alias)
 	}
 	return aliases, total, rows.Err()

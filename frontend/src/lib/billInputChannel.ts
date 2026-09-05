@@ -38,6 +38,23 @@ export function marketplaceSourceInputChannels(source: string): readonly BillInp
   return MARKETPLACE_SOURCE_INPUT_CHANNELS[source.trim().toLowerCase()] ?? []
 }
 
+export function marketplaceDisplayInputChannels(
+  source: string,
+  evidence: { inputChannels?: readonly string[]; catalogProduct?: boolean } = {},
+): readonly BillInputChannel[] {
+  const fallback = marketplaceSourceInputChannels(source)
+  if (source.trim().toLowerCase() !== 'shopee') return fallback
+
+  const observed = new Set((evidence.inputChannels ?? []).filter(isBillInputChannel))
+  if (observed.size > 0) {
+    return BILL_INPUT_CHANNEL_OPTIONS
+      .map((option) => option.value)
+      .filter((channel) => observed.has(channel))
+  }
+  if (evidence.catalogProduct) return ['shopee']
+  return fallback
+}
+
 export function classifyBillInputChannel(
   bill: Pick<Bill, 'source' | 'raw_data'>,
 ): BillInputChannel | null {

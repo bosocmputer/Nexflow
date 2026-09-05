@@ -76,6 +76,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   marketplace_mapping_job_retried: { label: 'ลองปรับรายการจาก Product Master อีกครั้ง', emoji: '🔄', tone: 'info' },
   marketplace_mapping_reconcile_completed: { label: 'ปรับ Product Master กับรายการเปิดสำเร็จ', emoji: '✅', tone: 'success' },
   marketplace_mapping_reconcile_failed: { label: 'ปรับ Product Master กับรายการเปิดไม่สำเร็จ', emoji: '❌', tone: 'danger' },
+  marketplace_backfill_completed: { label: 'เตรียมข้อมูล Product Master แล้ว', emoji: '✅', tone: 'success' },
   marketplace_amount_review_confirmed: { label: 'รับทราบส่วนต่างยอด Marketplace', emoji: '✅', tone: 'warning' },
   // Email/Shopee receive
   shopee_email_received: { label: 'รับอีเมล Shopee Order', emoji: '📧', tone: 'info' },
@@ -109,6 +110,8 @@ export const ACTION_META: Record<string, ActionMeta> = {
   product_created: { label: 'สร้างสินค้าใน SML', emoji: '🆕', tone: 'primary' },
   catalog_refresh_one: { label: 'ดึงสินค้า SML รายตัว', emoji: '🔄', tone: 'info' },
   catalog_delete_one: { label: 'ลบสินค้าออกจาก Catalog', emoji: '🗑️', tone: 'muted' },
+  sml_catalog_reconciliation_started: { label: 'เริ่มตรวจความพร้อม Product Master', emoji: '🔎', tone: 'info' },
+  sml_catalog_generation_activated: { label: 'อัปเดตรายการสินค้า SML แล้ว', emoji: '✅', tone: 'success' },
   hidden_item_code_detected: { label: 'พบรหัสสินค้ามีอักขระซ่อน', emoji: '⚠️', tone: 'warning' },
   sml_customer_created: { label: 'สร้างลูกค้าใน SML', emoji: '🆕', tone: 'primary' },
   sml_supplier_created: { label: 'สร้างผู้ขายใน SML', emoji: '🆕', tone: 'primary' },
@@ -172,6 +175,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   settings: 'ตั้งค่าระบบ',
   channel_defaults: 'ตั้งค่าเอกสาร',
   catalog: 'สินค้า SML',
+  sml_catalog: 'รายการสินค้า SML',
   shopee_api: 'Shopee API',
   shopee_realtime: 'Shopee API',
   shopee_settlement: 'รับชำระ Shopee',
@@ -193,6 +197,7 @@ export const SOURCE_TONE: Record<string, string> = {
   setup: 'bg-warning/10 text-warning',
   channel_defaults: 'bg-muted text-muted-foreground',
   catalog: 'bg-muted text-muted-foreground',
+  sml_catalog: 'bg-muted text-muted-foreground',
   settings: 'bg-muted text-muted-foreground',
   ui: 'bg-primary/10 text-accent-strong',
   shopee_api: 'bg-warning/10 text-warning',
@@ -432,6 +437,21 @@ export function summarize(log: AuditLog): string {
         d.processed_count != null ? `ปรับแล้ว ${Number(d.processed_count).toLocaleString('th-TH')} รายการ` : '',
         humanizeAuditError(d.error),
       ].filter(Boolean).join(' · ')
+    case 'marketplace_backfill_completed': {
+      const labels: Record<string, string> = {
+        alias_conversion: 'ตรวจหน่วยสินค้าใน Product Master แล้ว',
+        bill_snapshots: 'ตรวจข้อมูลสินค้าในบิลแล้ว',
+        reservation_ledger: 'ตรวจยอดจองสต๊อกแล้ว',
+      }
+      return labels[String(d.job_type ?? '')] ?? 'เตรียมข้อมูล Product Master แล้ว'
+    }
+    case 'sml_catalog_generation_activated':
+      return [
+        d.product_count != null ? `สินค้า ${Number(d.product_count).toLocaleString('th-TH')} รายการ` : '',
+        d.unit_count != null ? `หน่วยนับ ${Number(d.unit_count).toLocaleString('th-TH')} รายการ` : '',
+      ].filter(Boolean).join(' · ')
+    case 'sml_catalog_reconciliation_started':
+      return d.stock_paused ? 'พักการซิงก์สต๊อกชั่วคราวระหว่างตรวจข้อมูล' : 'กำลังตรวจความพร้อมของข้อมูลสินค้า'
     case 'marketplace_amount_review_confirmed':
       return [
         d.marketplace_order_amount != null ? `Order Amount ฿${Number(d.marketplace_order_amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',

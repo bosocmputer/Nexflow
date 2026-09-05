@@ -15,6 +15,14 @@ const CHANNEL_CLASS: Record<BillInputChannel, string> = {
   tiktok_excel: 'border-[#111817] bg-[#111817] text-white',
 }
 
+function shopeeChannelTitle(channels: readonly BillInputChannel[]) {
+  const hasAPI = channels.includes('shopee')
+  const hasExcel = channels.includes('shopee_excel')
+  if (hasAPI && hasExcel) return 'การจับคู่นี้มีการใช้งานกับ Shopee API และ Shopee Excel'
+  if (hasAPI) return 'รายการนี้มาจาก Shopee API ของร้านที่เชื่อมต่อ'
+  return 'รายการนี้มาจาก Shopee Excel'
+}
+
 export function InputChannelBadge({
   channel,
   count,
@@ -46,20 +54,20 @@ export function MarketplaceSourceChannelBadges({
   source,
   count,
   accountName,
+  channels: explicitChannels,
   className,
 }: {
   source: string
   count?: number
   accountName?: string
+  channels?: readonly BillInputChannel[]
   className?: string
 }) {
-  const channels = marketplaceSourceInputChannels(source)
+  const channels = explicitChannels ?? marketplaceSourceInputChannels(source)
   if (channels.length === 0) {
     return <Badge variant="secondary" className={className}>{source || 'Marketplace'}</Badge>
   }
-  const title = source === 'shopee'
-    ? 'การจับคู่นี้ใช้ร่วมกันได้ทั้ง Shopee API และ Shopee Excel'
-    : undefined
+  const title = source === 'shopee' ? shopeeChannelTitle(channels) : undefined
   return (
     <span className={cn('flex flex-wrap gap-1.5', className)} title={title}>
       {channels.map((channel) => (

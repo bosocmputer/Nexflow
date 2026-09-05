@@ -376,6 +376,7 @@ export interface MarketplaceAliasReviewGroup {
   bill_count: number
   item_count: number
   catalog_product: boolean
+  input_channels?: string[]
 }
 
 export interface MarketplaceItemAlias {
@@ -403,6 +404,7 @@ export interface MarketplaceItemAlias {
   product_active: boolean
   open_item_count: number
   stock_mapping_count: number
+	input_channels?: string[]
 	external_parent_id: string
 	parent_key: string
 	parent_key_kind: 'external' | 'derived'
@@ -430,6 +432,7 @@ export interface MarketplaceProductGroup {
 	ready_count: number
 	fix_count: number
 	disabled_count: number
+	input_channels?: string[]
 	updated_at: string
 }
 

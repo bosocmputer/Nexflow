@@ -38,6 +38,37 @@ func TestMarketplaceAliasProductGroupsUsesBoundedKeysetPage(t *testing.T) {
 	}
 }
 
+func TestMarketplaceAliasProductGroupsReportsObservedShopeeInputChannels(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	updatedAt := time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`(?s)WITH matched_keys AS.*shopee_stock_mappings.*raw_data->>'flow'.*shopee_excel.*FROM matched_keys`).
+		WithArgs("shopee", 31).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"source", "account_key", "account_name", "parent_key", "parent_key_kind", "product_name",
+			"variant_count", "ready_count", "fix_count", "disabled_count", "updated_at",
+			"shopee_api_used", "shopee_excel_used",
+		}).AddRow("shopee", "shop:66610219", "Ploy", "26058910935", "external", "สินค้า",
+			1, 1, 0, 0, updatedAt, true, false))
+
+	groups, more, err := NewMarketplaceAliasRepo(db).ProductGroups(context.Background(), MarketplaceProductGroupFilter{
+		Source: "shopee", Limit: 30,
+	})
+	if err != nil || more || len(groups) != 1 {
+		t.Fatalf("groups=%#v more=%v err=%v", groups, more, err)
+	}
+	if got := groups[0].InputChannels; len(got) != 1 || got[0] != "shopee" {
+		t.Fatalf("input channels=%v, want Shopee API only", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMarketplaceAliasGroupVariantsUsesChildKeysetWithoutOffset(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -160,6 +191,9 @@ func TestMarketplaceAliasReviewGroupsIncludesUnmappedShopeeCatalogProducts(t *te
 	group := result.Groups[0]
 	if !group.CatalogProduct || group.Source != "shopee" || group.AccountKey != "shop:66610219" {
 		t.Fatalf("group=%+v, want a Shopee catalog product scoped to the connected shop", group)
+	}
+	if len(group.InputChannels) != 1 || group.InputChannels[0] != "shopee" {
+		t.Fatalf("input channels=%v, want Shopee API only", group.InputChannels)
 	}
 	if group.ExternalItemID != "26058910935" || group.ExternalVariantID != "187745336266" {
 		t.Fatalf("group identity=%s/%s, want exact Shopee item/model identity", group.ExternalItemID, group.ExternalVariantID)
