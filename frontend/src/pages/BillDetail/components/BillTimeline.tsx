@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import type { ShopeeOrderEvent } from '@/types'
 import { stockJobSummary } from '../utils/presentation'
+import { SMLBillInfo } from '@/components/SMLBillInfo'
 
 interface Props {
   billId: string
@@ -154,28 +155,26 @@ export function BillTimeline({ billId, shopeeEvents = [], stockJobStatus }: Prop
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        {stockSummary && (
-          <div className="mb-4 rounded-md border border-border bg-muted/30 p-3 text-xs" role="status">
-            <p className="font-medium">{stockSummary}</p>
-            <p className="mt-1 text-muted-foreground">สถานะล่าสุดจากงานสต๊อกของบิลนี้ แสดงแยกจากเหตุการณ์ย้อนหลัง ไม่ใช่การส่งบิลซ้ำ</p>
-          </div>
-        )}
         {loading ? (
           <div className="space-y-2" aria-label="กำลังโหลดประวัติบิล">
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-3/4" />
             <Skeleton className="h-8 w-2/3" />
           </div>
-        ) : visibleCount > 0 ? (
+        ) : visibleCount > 0 || stockSummary ? (
           <div className="space-y-5">
             {sourceEvents.length > 0 && (
               <TimelineSection title="สถานะจาก Shopee">
                 <ShopeeTimeline events={sourceEvents} />
               </TimelineSection>
             )}
-            {auditEvents.length > 0 && (
+            {(auditEvents.length > 0 || stockSummary) && (
               <TimelineSection title="ประวัติระบบ">
                 <AuditTimeline billId={billId} items={groupedAuditEvents} />
+                {stockSummary && <div className="mt-3 rounded-md border border-border p-3 text-xs">
+                  <div className="flex items-center gap-2"><p className="font-medium">{stockSummary}</p><SMLBillInfo billId={billId} /></div>
+                  <p className="mt-1 text-muted-foreground">สถานะล่าสุดจากงานสต๊อกของบิลนี้ ไม่ใช่เหตุการณ์ย้อนหลัง</p>
+                </div>}
               </TimelineSection>
             )}
           </div>

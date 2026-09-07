@@ -69,6 +69,7 @@ import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
 import { useAuthStore } from '@/store/auth'
 import { OrderTimelineDrawer, type ShopeeOrderPaymentBreakdown } from './ShopeeOperationsTimelineDrawer'
 import { ShopeeCancellationDocumentCell } from './ShopeeCancellationDocumentCell'
+import { SMLBillInfo } from '@/components/SMLBillInfo'
 
 type Connection = {
   id: string
@@ -1803,6 +1804,7 @@ export default function ShopeeOperations() {
                           <ERPStatusBadge status={order.erp_status} automatic={mergeAutoSMLSuccess} />
                           <div className="mt-1 text-xs text-muted-foreground">
                             {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
+                            {order.bill_id && order.sml_doc_no && <SMLBillInfo billId={order.bill_id} />}
                           </div>
                           {showAutoSMLStatus && <AutoSMLStatusBadge job={order.auto_sml} />}
                         </>
