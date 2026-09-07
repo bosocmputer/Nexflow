@@ -2,23 +2,24 @@
 
 ## Handoff
 
-- Last completed: D04 safe historical resolution and D05 role-safe bill APIs
-  (commit pending in this checkpoint); D03 is `a9c729b`, D02 is `5fae167`, and
-  D01 is `bbfc64d`.
-- Active task: D06 Bill Timeline UX.
-- Branch/HEAD at D06 start: `codex/marketplace-units-conversion` / `a9c729b`.
+- Last completed: D06 Bill Timeline UX (commit pending in this checkpoint);
+  D04/D05 are `7363e76`, D03 is `a9c729b`, D02 is `5fae167`, and D01 is
+  `bbfc64d`.
+- Active task: D07/D08 LINE quota client, cache, and API.
+- Branch/HEAD at D07 start: `codex/marketplace-units-conversion` / `7363e76`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
 - Migration baseline: 093 is the latest checked-in migration; use 094 only if
   it remains free when D02 starts.
 - Tests: focused handlers/repositories/diagnostics and frontend audit/grouping
-  tests pass; TypeScript compilation passes. Role, raw-field stripping,
-  resolved retry, unknown result, and fail-closed enrichment are covered.
+  tests pass; TypeScript and focused ESLint pass. Role, raw-field stripping,
+  resolved retry, unknown result, safe attempt grouping, lazy Admin diagnostics,
+  and fail-closed enrichment are covered.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
 - Blocker: none.
-- Next action: replace the flat Bill Timeline with attempt grouping, expandable
-  chronology, and sanitized copy/download support.
+- Next action: implement the bounded LINE quota client, per-OA cache/singleflight,
+  stale-on-error behavior, refresh cooldown, and Admin API.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -82,11 +83,11 @@ next action.
 
 ## D06 — Bill timeline UX
 
-- [ ] Group SML events only when attempt/trace/document evidence is unambiguous.
-- [ ] Render the controlled bill as success after six retries.
-- [ ] Expand to chronological event details with resolved wording.
-- [ ] Add sanitized copy with download fallback.
-- [ ] Explain missing per-exchange evidence on historical records.
+- [x] Group SML events only when attempt/trace/document evidence is unambiguous.
+- [x] Render the controlled bill as success after six retries.
+- [x] Expand to chronological event details with resolved wording.
+- [x] Add sanitized copy with download fallback.
+- [x] Explain missing per-exchange evidence on historical records.
 - [ ] Verify keyboard, screen reader, reduced motion, desktop, and 390px.
 
 ## D07 — LINE quota client
