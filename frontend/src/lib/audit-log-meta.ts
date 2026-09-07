@@ -56,6 +56,9 @@ export const ACTION_META: Record<string, ActionMeta> = {
   sml_erp_log_warning: { label: 'บันทึก Log SML ไม่ครบ', emoji: '⚠️', tone: 'warning' },
   sml_readiness_blocked: { label: 'SML ยังไม่พร้อม', emoji: '⚠️', tone: 'warning' },
   sml_stock_recalc_ok: { label: 'คำนวณต้นทุนสต๊อก', emoji: '📊', tone: 'success' },
+  sml_stock_job_completed: { label: 'คำนวณต้นทุนและตรวจสอบสต๊อกสำเร็จ', emoji: '📊', tone: 'success' },
+  sml_stock_job_incomplete: { label: 'งานต้นทุนหรือสต๊อกยังไม่สำเร็จ (ผลล่าสุด)', emoji: '⚠️', tone: 'warning' },
+  shopee_auto_sml_profile_contract_paused: { label: 'พักส่ง SML อัตโนมัติ: รูปแบบข้อมูลยังไม่พร้อม', emoji: '⏸️', tone: 'warning' },
   sml_stock_recalc_failed: { label: 'คำนวณต้นทุนสต๊อกล้มเหลว', emoji: '⚠️', tone: 'warning' },
   profile_requested: { label: 'เริ่มตรวจข้อมูลประกอบ SML', emoji: '🔎', tone: 'info' },
   core_committed: { label: 'สร้างเอกสาร SML แล้ว', emoji: '✅', tone: 'success' },
@@ -307,6 +310,12 @@ export function humanizeAuditError(value: unknown): string {
 export function summarize(log: AuditLog): string {
   const d = log.detail ?? {}
   switch (log.action) {
+    case 'sml_stock_job_completed':
+      return `${d.doc_no || ''} · ยืนยันจากงานสต๊อกของบิลนี้`
+    case 'sml_stock_job_incomplete':
+      return `${d.doc_no || ''} · ต้องตรวจงานสต๊อก ไม่ส่งเอกสารหลักซ้ำ`
+    case 'shopee_auto_sml_profile_contract_paused':
+      return 'ระบบพักการส่งอัตโนมัติไว้เพื่อความปลอดภัย ให้ผู้ดูแลตรวจความพร้อมของเส้นทางเอกสารและ SML Gateway ก่อนเปิดอีกครั้ง'
     case 'bill_created':
       if (
         d.flow === 'shopee_email' ||

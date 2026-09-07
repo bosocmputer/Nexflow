@@ -77,3 +77,12 @@ Root cause of visibility gap:
 - Build and 10 Shopee status tests passed (initial test invocation from repository root failed to resolve Vite paths; rerun from frontend passed). No business logic/API changes.
 - AOY backup: `/mnt/data/nextstep-node-2/nexflow-backups/aoy/pre-deploy-20260907-090620.sql.gz`.
 - AOY application deployed; DB authentication, frontend/edge 200 and public health passed, recent backend error scan empty, counts unchanged. Other tenant applications untouched. User visual acceptance pending; no row-height browser measurement claimed.
+
+## Final requested history presentation / four-tenant rollout
+
+- User reversed the Shopee sale info decision: remove sale info controls, retain existing cancellation info. Removed unused shared info component and standalone bill stock box.
+- Bill timeline now reads persisted current-attempt stock job evidence through one bound query (2s timeout). Completed records require both processstock success and balance verification timestamps; timeline time is the real verification time. Failed/manual records are explicitly latest outcomes at their persisted update time, not fabricated HTTP failures. Existing legacy success for the same document is retained without duplicate projection.
+- Projection is read-only; no audit backfill, migration, core write, stock retry, or LINE send. Timeline stays at 200 events and sorts by actual timestamps. Read errors show retryable UI error rather than false empty history.
+- Added Thai label and safe explanation for `shopee_auto_sml_profile_contract_paused` in shared logs metadata.
+- Verification: Go full tests, handler/repository race tests, go vet passed; frontend build, focused audit/timeline tests passed; lint 0 errors / 35 existing warnings. Initial parallel frontend tests reported existing Vite HMR port contention but passed.
+- Authorized rollout scope: Demo, AOY, Lanboon, Ploy, same commit; preserve tenant business configuration. Backup/health evidence and user acceptance to follow.

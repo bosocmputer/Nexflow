@@ -35,13 +35,11 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import type { ShopeeOrderEvent } from '@/types'
-import { stockJobSummary } from '../utils/presentation'
-import { SMLBillInfo } from '@/components/SMLBillInfo'
+import { formatBangkokDateTime } from '../utils/presentation'
 
 interface Props {
   billId: string
   shopeeEvents?: ShopeeOrderEvent[]
-  stockJobStatus?: string
 }
 
 interface SMLExchangeEvidence {
@@ -107,19 +105,23 @@ interface SupportPackage {
 // The timeline keeps the original event count for auditability while presenting
 // unambiguous SML retries as one expandable attempt. HTTP evidence is lazy-loaded
 // only for admins, so the initial bill view never waits for a diagnostics query.
-export function BillTimeline({ billId, shopeeEvents = [], stockJobStatus }: Props) {
+export function BillTimeline({ billId, shopeeEvents = [] }: Props) {
   const [events, setEvents] = useState<AuditLog[] | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
+  const [reload, setReload] = useState(0)
 
   useEffect(() => {
     let alive = true
+    setLoading(true)
+    setLoadError(false)
     client
       .get<{ data: AuditLog[] | null }>(`/api/bills/${billId}/timeline`)
       .then((res) => {
         if (alive) setEvents(res.data.data ?? [])
       })
       .catch(() => {
-        if (alive) setEvents([])
+        if (alive) { setEvents([]); setLoadError(true) }
       })
       .finally(() => {
         if (alive) setLoading(false)
@@ -127,7 +129,7 @@ export function BillTimeline({ billId, shopeeEvents = [], stockJobStatus }: Prop
     return () => {
       alive = false
     }
-  }, [billId])
+  }, [billId, reload])
 
   const auditEvents = events ?? []
   const groupedAuditEvents = useMemo(
@@ -140,7 +142,6 @@ export function BillTimeline({ billId, shopeeEvents = [], stockJobStatus }: Prop
     return bTime - aTime
   })
   const visibleCount = sourceEvents.length + auditEvents.length
-  const stockSummary = stockJobSummary(stockJobStatus)
 
   return (
     <Card>
@@ -161,20 +162,18 @@ export function BillTimeline({ billId, shopeeEvents = [], stockJobStatus }: Prop
             <Skeleton className="h-8 w-3/4" />
             <Skeleton className="h-8 w-2/3" />
           </div>
-        ) : visibleCount > 0 || stockSummary ? (
+        ) : loadError ? (
+          <div role="alert" className="text-xs text-destructive">โหลดประวัติไม่สำเร็จ <Button variant="outline" size="sm" onClick={() => setReload((value) => value + 1)}>ลองใหม่</Button></div>
+        ) : visibleCount > 0 ? (
           <div className="space-y-5">
             {sourceEvents.length > 0 && (
               <TimelineSection title="สถานะจาก Shopee">
                 <ShopeeTimeline events={sourceEvents} />
               </TimelineSection>
             )}
-            {(auditEvents.length > 0 || stockSummary) && (
+            {auditEvents.length > 0 && (
               <TimelineSection title="ประวัติระบบ">
                 <AuditTimeline billId={billId} items={groupedAuditEvents} />
-                {stockSummary && <div className="mt-3 rounded-md border border-border p-3 text-xs">
-                  <div className="flex items-center gap-2"><p className="font-medium">{stockSummary}</p><SMLBillInfo billId={billId} /></div>
-                  <p className="mt-1 text-muted-foreground">สถานะล่าสุดจากงานสต๊อกของบิลนี้ ไม่ใช่เหตุการณ์ย้อนหลัง</p>
-                </div>}
               </TimelineSection>
             )}
           </div>
@@ -513,7 +512,7 @@ function Event({ event, isLast }: { event: AuditLog; isLast: boolean }) {
           <span className="text-base leading-none" aria-hidden>{meta.emoji}</span>
           <span className={cn('text-sm font-medium', isError ? 'text-destructive' : 'text-foreground')}>{meta.label}</span>
           {event.duration_ms != null && <span className="text-[10px] tabular-nums text-muted-foreground">{event.duration_ms}ms</span>}
-          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground" title={time.format('YYYY-MM-DD HH:mm:ss')}>{time.format('HH:mm:ss')}</span>
+          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground" title={time.toISOString()}>{formatBangkokDateTime(event.created_at)}</span>
         </div>
         {summary && <p className={cn('mt-0.5 truncate text-xs', isError ? 'text-destructive' : 'text-muted-foreground')} title={summary}>{summary}</p>}
       </div>

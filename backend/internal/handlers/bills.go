@@ -1160,6 +1160,11 @@ func (h *BillHandler) Timeline(c *gin.Context) {
 	if err := h.auditRepo.EnrichSMLResolution(c.Request.Context(), rows); err != nil && h.log != nil {
 		h.log.Warn("enrich bill timeline SML resolution failed", zap.String("bill_id", id), zap.Error(err))
 	}
+	rows, err = h.auditRepo.AppendStockTimeline(c.Request.Context(), id, rows)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "โหลดประวัติงานสต๊อกไม่สำเร็จ กรุณาลองใหม่"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": sanitizeAuditLogsForRole(rows, c.GetString("user_role"))})
 }
 

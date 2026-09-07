@@ -22,6 +22,13 @@ test.after(async () => {
   await vite.close()
 })
 
+test('explains contract pause and durable stock outcomes without raw technical keys', () => {
+  assert.equal(ACTION_META.shopee_auto_sml_profile_contract_paused.label, 'พักส่ง SML อัตโนมัติ: รูปแบบข้อมูลยังไม่พร้อม')
+  assert.match(summarize(audit('shopee_auto_sml_profile_contract_paused')), /ผู้ดูแล/)
+  assert.match(summarize(audit('sml_stock_job_completed', {doc_no:'INV-1'})), /INV-1.*งานสต๊อก/)
+  assert.match(summarize(audit('sml_stock_job_incomplete', {doc_no:'INV-1'})), /ไม่ส่งเอกสารหลักซ้ำ/)
+})
+
 function audit(action, detail = {}, source = 'shopee_realtime') {
   return {
     id: `test-${action}`,

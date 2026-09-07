@@ -432,7 +432,7 @@ export default function BillDetail() {
             emailGroup={bill.email_group}
             hideWhenEmpty={isShopeeRealtimeBill}
           />
-          <BillTimeline billId={bill.id} shopeeEvents={bill.shopee_events ?? []} stockJobStatus={bill.sml_stock_job_status} />
+          <BillTimeline billId={bill.id} shopeeEvents={bill.shopee_events ?? []} />
           <SmlPayloadSection
             bill={bill}
             smlPayload={bill.sml_payload}
