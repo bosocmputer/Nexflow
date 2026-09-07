@@ -1800,14 +1800,16 @@ export default function ShopeeOperations() {
                       {showCancellationDocument ? (
                         <ShopeeCancellationDocumentCell order={order} />
                       ) : (
-                        <>
-                          <ERPStatusBadge status={order.erp_status} automatic={mergeAutoSMLSuccess} />
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
+                        <div className="flex max-w-[300px] flex-col items-start gap-1 text-xs">
+                          <div className="flex min-w-0 items-center gap-1">
+                            <ERPStatusBadge status={order.erp_status} automatic={mergeAutoSMLSuccess} />
                             {order.bill_id && order.sml_doc_no && <SMLBillInfo billId={order.bill_id} />}
                           </div>
+                          <div className="whitespace-nowrap text-[11px] text-muted-foreground">
+                            {order.sml_doc_no ? <code>{order.sml_doc_no}</code> : order.bill_id ? 'สร้างเอกสารแล้ว' : 'รอสร้างเอกสาร'}
+                          </div>
                           {showAutoSMLStatus && <AutoSMLStatusBadge job={order.auto_sml} />}
-                        </>
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-2 align-top">

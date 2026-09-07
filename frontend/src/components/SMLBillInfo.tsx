@@ -23,13 +23,13 @@ export function SMLBillInfo({ billId }: { billId: string }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button type="button" aria-label="ดูรายละเอียดเอกสาร SML และสต๊อก" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={(event) => event.stopPropagation()}>
+        <button type="button" aria-label="ดูรายละเอียดเอกสาร SML และสต๊อก" title="ดูรายละเอียดเอกสาร SML และสต๊อก" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={(event) => event.stopPropagation()}>
           <Info className="h-3.5 w-3.5" aria-hidden />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] space-y-2 text-xs" onClick={(event) => event.stopPropagation()}>
-        <h4 className="font-semibold">รายละเอียดเอกสาร SML และสต๊อก</h4>
-        {error ? <p role="alert">โหลดรายละเอียดไม่สำเร็จ กรุณาปิดแล้วเปิดใหม่</p> : !bill ? <p role="status">กำลังโหลดรายละเอียด…</p> : <dl className="space-y-2 break-words">
+      <PopoverContent align="start" className="w-[min(20rem,calc(100vw-2rem))] space-y-2 p-3 text-xs" onClick={(event) => event.stopPropagation()}>
+        <h4 className="text-sm font-semibold">รายละเอียดเอกสาร SML และสต๊อก</h4>
+        {error ? <p role="alert">โหลดรายละเอียดไม่สำเร็จ กรุณาปิดแล้วเปิดใหม่</p> : !bill ? <p role="status">กำลังโหลดรายละเอียด…</p> : <dl className="grid grid-cols-2 gap-x-3 gap-y-2 break-words">
           <div><dt className="text-muted-foreground">เลขเอกสาร SML</dt><dd>{bill.sml_doc_no || 'ยังไม่มีเลขเอกสาร'}</dd></div>
           <div><dt className="text-muted-foreground">วิธีส่ง</dt><dd>{bill.sml_sent_automatically ? 'อัตโนมัติ (AUTO)' : 'ไม่ได้ระบุว่าเป็นการส่งอัตโนมัติ'}</dd></div>
           <div><dt className="text-muted-foreground">ต้นทุนและสต๊อก</dt><dd>{stockJobSummary(bill.sml_stock_job_status) || 'ไม่พบสถานะงานสต๊อกที่ยืนยันได้'}</dd></div>
