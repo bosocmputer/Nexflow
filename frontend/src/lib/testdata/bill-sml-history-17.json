@@ -1,0 +1,144 @@
+[
+  {
+    "id": "event-01",
+    "action": "bill_created",
+    "source": "shopee_realtime",
+    "trace_id": "trace-bill-created",
+    "detail": { "order_id": "ORDER-TEST-001", "items_count": 2 },
+    "created_at": "2026-09-02T14:42:00Z"
+  },
+  {
+    "id": "event-02",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T14:43:00Z"
+  },
+  {
+    "id": "event-03",
+    "action": "sml_failed",
+    "source": "sml",
+    "level": "error",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "failure_class": "failed_transient", "error_code": "sml_write_failed" },
+    "created_at": "2026-09-02T14:43:01Z"
+  },
+  {
+    "id": "event-04",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T14:48:00Z"
+  },
+  {
+    "id": "event-05",
+    "action": "sml_failed",
+    "source": "sml",
+    "level": "error",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "failure_class": "failed_transient", "error_code": "sml_write_failed" },
+    "created_at": "2026-09-02T14:48:01Z"
+  },
+  {
+    "id": "event-06",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T14:53:00Z"
+  },
+  {
+    "id": "event-07",
+    "action": "sml_failed",
+    "source": "sml",
+    "level": "error",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "failure_class": "failed_transient", "error_code": "sml_write_failed" },
+    "created_at": "2026-09-02T14:53:01Z"
+  },
+  {
+    "id": "event-08",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T14:58:00Z"
+  },
+  {
+    "id": "event-09",
+    "action": "sml_failed",
+    "source": "sml",
+    "level": "error",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "failure_class": "failed_transient", "error_code": "sml_write_failed" },
+    "created_at": "2026-09-02T14:58:01Z"
+  },
+  {
+    "id": "event-10",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T15:03:00Z"
+  },
+  {
+    "id": "event-11",
+    "action": "sml_failed",
+    "source": "sml",
+    "level": "error",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "failure_class": "failed_transient", "error_code": "sml_write_failed" },
+    "created_at": "2026-09-02T15:03:01Z"
+  },
+  {
+    "id": "event-12",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T15:08:00Z"
+  },
+  {
+    "id": "event-13",
+    "action": "sml_failed",
+    "source": "sml",
+    "level": "error",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "failure_class": "failed_transient", "error_code": "sml_write_failed" },
+    "created_at": "2026-09-02T15:08:01Z"
+  },
+  {
+    "id": "event-14",
+    "action": "profile_requested",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T15:30:00Z"
+  },
+  {
+    "id": "event-15",
+    "action": "core_committed",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "core_status": "created" },
+    "created_at": "2026-09-02T15:30:01Z"
+  },
+  {
+    "id": "event-16",
+    "action": "profile_complete",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "attempt_id": "attempt-001", "doc_no": "BF-INV26090002", "route": "SaleInvoice", "completed_checks": ["core", "vat", "shipment", "main_log", "erp_log"] },
+    "created_at": "2026-09-02T15:30:02Z"
+  },
+  {
+    "id": "event-17",
+    "action": "sml_sent",
+    "source": "sml",
+    "trace_id": "trace-sml-001",
+    "detail": { "doc_no": "BF-INV26090002", "route": "SaleInvoice", "via": "shopee_auto_sml" },
+    "created_at": "2026-09-02T15:30:03Z"
+  }
+]

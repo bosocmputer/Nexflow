@@ -7,6 +7,11 @@
 
 export interface AuditLog {
   id: string
+  attempt_id?: string
+  exchange_id?: string
+  resolution_status?: 'resolved' | 'succeeded' | 'unresolved' | 'unknown'
+  can_retry?: boolean
+  core_status?: string
   user_id?: string
   actor?: {
     id?: string

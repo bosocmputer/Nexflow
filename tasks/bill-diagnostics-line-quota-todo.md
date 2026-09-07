@@ -2,19 +2,21 @@
 
 ## Handoff
 
-- Last completed: none; D00 active.
-- Active task: D00 durable plan/todo and repository snapshot.
-- Branch/HEAD: `codex/marketplace-units-conversion` / `fe3cd81`.
+- Last completed: D01 fixtures and diagnostic security contract (commit pending
+  in this checkpoint).
+- Active task: D02 durable SML exchange repository.
+- Branch/HEAD at D02 start: `codex/marketplace-units-conversion` / `265b0fa`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
 - Migration baseline: 093 is the latest checked-in migration; use 094 only if
   it remains free when D02 starts.
-- Tests: not run for D00 documentation-only setup.
+- Tests: diagnostics Go tests, the 17-event frontend grouping tests, and
+  frontend TypeScript compilation pass.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
 - Blocker: none.
-- Next action: D01, freeze the anonymized 17-event fixture and diagnostic
-  security contract with failing tests.
+- Next action: add migration 094 and the exchange repository with parent-lock
+  sequence allocation and independent finalize semantics.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -25,15 +27,15 @@ next action.
 - [x] Create dedicated plan/todo files without overwriting existing tasks.
 - [x] Record branch, HEAD, dirty files, and migration baseline.
 - [x] Add the durable Handoff block.
-- [ ] Commit D00 without staging unrelated user files.
+- [x] Commit D00 without staging unrelated user files (`265b0fa`).
 
 ## D01 — Fixtures and security contract
 
-- [ ] Add an anonymized 17-event `BF-INV26090002` regression fixture.
-- [ ] Prove one immutable attempt, six transient failures, final success.
-- [ ] Define safe header allowlist and recursive secret/PII redaction limits.
-- [ ] Define staff/admin diagnostics and package V1 contracts.
-- [ ] Add failing grouping, redaction, depth, field-count, and size tests.
+- [x] Add an anonymized 17-event `BF-INV26090002` regression fixture.
+- [x] Prove one immutable attempt, six transient failures, final success.
+- [x] Define safe header allowlist and recursive secret/PII redaction limits.
+- [x] Define staff/admin diagnostics and package V1 contracts.
+- [x] Add failing grouping, redaction, depth, field-count, and size tests.
 
 ## D02 — Durable SML exchange repository
 
