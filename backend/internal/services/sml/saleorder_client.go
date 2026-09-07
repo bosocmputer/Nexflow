@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -236,6 +235,10 @@ func (c *SaleOrderClient) CreateSaleOrder(payload SaleOrderPayload, urlOverride 
 // re-marshalling it. Retry paths use this method so a doc_no is always replayed
 // byte-for-byte with the same quantities, amounts, route and set-expansion flag.
 func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) (int, *SaleOrderResponse, []byte, error) {
+	return c.CreateSaleOrderBytesWithDiagnostics(body, urlOverride, "", nil)
+}
+
+func (c *SaleOrderClient) CreateSaleOrderBytesWithDiagnostics(body []byte, urlOverride, correlationID string, hooks *HTTPExchangeHooks) (int, *SaleOrderResponse, []byte, error) {
 	if len(body) == 0 || len(body) > MaxInvoiceDocumentBytes {
 		return 0, nil, nil, fmt.Errorf("saleorder payload must be 1-%d bytes", MaxInvoiceDocumentBytes)
 	}
@@ -267,6 +270,9 @@ func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) 
 		for k, v := range c.headers() {
 			req.Header.Set(k, v)
 		}
+		if correlationID = strings.TrimSpace(correlationID); correlationID != "" {
+			req.Header.Set("X-Correlation-ID", correlationID)
+		}
 
 		if c.logger != nil {
 			c.logger.Info("sml_saleorder_request",
@@ -279,9 +285,14 @@ func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) 
 		}
 
 		start := time.Now()
+		exchangeID := beginHTTPExchange(hooks, HTTPExchangeRequest{
+			Method: http.MethodPost, CanonicalPath: "/api/v1/ic/sale-orders",
+			ContentType: "application/json; charset=utf-8", CorrelationID: correlationID,
+		})
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("sml saleorder: %w", err)
+			finishHTTPExchange(hooks, exchangeID, exchangeResult(nil, nil, "", 0, false, time.Since(start), false, "", err))
 			if c.logger != nil {
 				c.logger.Warn("sml_saleorder_failed",
 					zap.Error(err),
@@ -290,15 +301,24 @@ func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) 
 			}
 			continue
 		}
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, responseHash, responseSize, truncated, readErr := readDiagnosticResponse(resp)
 		resp.Body.Close()
 		durMs := time.Since(start).Milliseconds()
 
 		var r SaleOrderResponse
 		_ = json.Unmarshal(respBody, &r)
+		finishHTTPExchange(hooks, exchangeID, exchangeResult(
+			resp, respBody, responseHash, responseSize, truncated, time.Since(start),
+			readErr == nil && !truncated && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && r.IsSuccess(),
+			r.GetCode(), readErr,
+		))
 		lastResp = &r
 		lastRespBody = append(lastRespBody[:0], respBody...)
 		lastStatus = resp.StatusCode
+		if readErr != nil {
+			lastErr = fmt.Errorf("read SML saleorder response: %w", readErr)
+			continue
+		}
 		lastErr = nil
 
 		if r.IsSuccess() {
@@ -316,7 +336,6 @@ func (c *SaleOrderClient) CreateSaleOrderBytes(body []byte, urlOverride string) 
 			c.logger.Warn("sml_saleorder_response_failed",
 				zap.Int("status_code", resp.StatusCode),
 				zap.String("message", r.Message),
-				zap.String("body", string(respBody)),
 				zap.Int64("duration_ms", durMs),
 				zap.Int("attempt", attempt+1),
 			)

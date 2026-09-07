@@ -346,6 +346,10 @@ func (c *InvoiceClient) CreateInvoiceBytes(body []byte, urlOverride string) (int
 }
 
 func (c *InvoiceClient) CreateInvoiceBytesWithCorrelation(body []byte, urlOverride, correlationID string) (int, *InvoiceResponse, []byte, error) {
+	return c.CreateInvoiceBytesWithDiagnostics(body, urlOverride, correlationID, nil)
+}
+
+func (c *InvoiceClient) CreateInvoiceBytesWithDiagnostics(body []byte, urlOverride, correlationID string, hooks *HTTPExchangeHooks) (int, *InvoiceResponse, []byte, error) {
 	if len(body) == 0 || len(body) > MaxInvoiceDocumentBytes {
 		return 0, nil, nil, fmt.Errorf("saleinvoice payload must be 1-%d bytes", MaxInvoiceDocumentBytes)
 	}
@@ -379,8 +383,13 @@ func (c *InvoiceClient) CreateInvoiceBytesWithCorrelation(body []byte, urlOverri
 	}
 
 	start := time.Now()
+	exchangeID := beginHTTPExchange(hooks, HTTPExchangeRequest{
+		Method: http.MethodPost, CanonicalPath: "/api/v1/ic/sale-invoices",
+		ContentType: "application/json; charset=utf-8", CorrelationID: correlationID,
+	})
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		finishHTTPExchange(hooks, exchangeID, exchangeResult(nil, nil, "", 0, false, time.Since(start), false, "", err))
 		if c.logger != nil {
 			c.logger.Error("sml_invoice_failed",
 				zap.String("url", url),
@@ -392,9 +401,17 @@ func (c *InvoiceClient) CreateInvoiceBytesWithCorrelation(body []byte, urlOverri
 	defer resp.Body.Close()
 
 	durMs := time.Since(start).Milliseconds()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, responseHash, responseSize, truncated, readErr := readDiagnosticResponse(resp)
 	var r InvoiceResponse
 	_ = json.Unmarshal(respBody, &r)
+	finishHTTPExchange(hooks, exchangeID, exchangeResult(
+		resp, respBody, responseHash, responseSize, truncated, time.Since(start),
+		readErr == nil && !truncated && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && r.IsSuccess(),
+		r.GetCode(), readErr,
+	))
+	if readErr != nil {
+		return resp.StatusCode, &r, respBody, fmt.Errorf("read SML saleinvoice response: %w", readErr)
+	}
 
 	if c.logger != nil {
 		if r.IsSuccess() {

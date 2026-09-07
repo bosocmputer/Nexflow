@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -59,6 +60,12 @@ var deniedKeyFragments = []string{
 	"email",
 }
 
+var (
+	emailPattern      = regexp.MustCompile(`(?i)[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}`)
+	phonePattern      = regexp.MustCompile(`(?:\+?66|0)[0-9][0-9\- ]{7,12}[0-9]`)
+	secretTextPattern = regexp.MustCompile(`(?i)(authorization|token|password|passwd|secret|guid|provider|database)(\s*[:=]\s*)[^\s,;]+`)
+)
+
 func digest(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
@@ -89,6 +96,9 @@ type sanitizeState struct {
 }
 
 func truncateString(value string, state *sanitizeState) string {
+	value = emailPattern.ReplaceAllString(value, RedactedValue)
+	value = phonePattern.ReplaceAllString(value, RedactedValue)
+	value = secretTextPattern.ReplaceAllString(value, `$1$2`+RedactedValue)
 	if len(value) <= maxStoredString {
 		return value
 	}
@@ -254,9 +264,16 @@ func SanitizeHeaders(headers map[string][]string) map[string]string {
 			continue
 		}
 		value := strings.TrimSpace(values[0])
-		if value != "" {
+		if len(value) > 512 {
+			value = value[:512]
+		}
+		if value != "" && !hasControl(value) {
 			result[canonical] = value
 		}
 	}
 	return result
+}
+
+func hasControl(value string) bool {
+	return strings.IndexFunc(value, unicode.IsControl) >= 0
 }

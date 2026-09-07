@@ -16,6 +16,7 @@ import (
 
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
+	"nexflow/internal/services/diagnostics"
 	"nexflow/internal/services/sml"
 	"nexflow/internal/services/smlprofile"
 )
@@ -209,6 +210,7 @@ func (h *BillHandler) executeSMLAttempt(
 	var responseCode string
 	var profileResult sml.InvoiceDocumentProfileResult
 	var sendErr error
+	exchangeHooks := h.smlExchangeHooks(attempt, opts)
 	switch attempt.Route {
 	case "SaleOrder":
 		if h.saleOrderClient == nil {
@@ -216,7 +218,7 @@ func (h *BillHandler) executeSMLAttempt(
 			break
 		}
 		var response *sml.SaleOrderResponse
-		statusCode, response, responseBytes, sendErr = h.saleOrderClient.CreateSaleOrderBytes(attempt.PayloadBytes, routeSnapshot.URLOverride)
+		statusCode, response, responseBytes, sendErr = h.saleOrderClient.CreateSaleOrderBytesWithDiagnostics(attempt.PayloadBytes, routeSnapshot.URLOverride, opts.TraceID, exchangeHooks)
 		if response != nil {
 			responseMessage = response.GetMessage()
 			responseDocNo = response.GetDocNo()
@@ -232,7 +234,7 @@ func (h *BillHandler) executeSMLAttempt(
 			break
 		}
 		var response *sml.InvoiceResponse
-		statusCode, response, responseBytes, sendErr = h.invoiceClient.CreateInvoiceBytesWithCorrelation(attempt.PayloadBytes, routeSnapshot.URLOverride, opts.TraceID)
+		statusCode, response, responseBytes, sendErr = h.invoiceClient.CreateInvoiceBytesWithDiagnostics(attempt.PayloadBytes, routeSnapshot.URLOverride, opts.TraceID, exchangeHooks)
 		if response != nil {
 			responseMessage = response.GetMessage()
 			responseDocNo = response.GetDocNo()
@@ -322,6 +324,8 @@ func (h *BillHandler) executeSMLAttempt(
 				})
 			}
 		}
+		opts.SMLAttemptID = attempt.ID
+		opts.SMLPayloadHash = attempt.PayloadHash
 		h.recordSuccessForSend(bill.ID, bill.Source, responseBytes, responseDocNo, attempt.Route, start, opts)
 		if h.cfg == nil || !h.cfg.MarketplaceReservationLedgerEnabled {
 			h.triggerStockRecalculation(bill.ID, responseDocNo, attempt.Route, opts.BulkJobID, billItemCodes(bill))
@@ -358,6 +362,55 @@ func (h *BillHandler) executeSMLAttempt(
 	}
 	h.recordSMLAttemptFailureAudit(bill, attempt, opts, start, errMessage, failureClass)
 	return retrySendResult{HTTPStatus: http.StatusBadGateway, Error: "SML send failed: " + errMessage, FailureClass: failureClass, DocNoAttempted: attempt.DocNo, Route: attempt.Route}
+}
+
+func (h *BillHandler) smlExchangeHooks(attempt *models.BillSMLAttempt, opts retrySendOptions) *sml.HTTPExchangeHooks {
+	if h == nil || h.billRepo == nil || attempt == nil {
+		return nil
+	}
+	return &sml.HTTPExchangeHooks{
+		Before: func(request sml.HTTPExchangeRequest) string {
+			started := time.Now()
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			exchange, err := h.billRepo.BeginSMLAttemptExchange(ctx, repository.SMLExchangeStart{
+				AttemptID: attempt.ID, TraceID: opts.TraceID, Route: attempt.Route,
+				Method: request.Method, CanonicalPath: request.CanonicalPath,
+				ContentType: request.ContentType, CorrelationID: request.CorrelationID,
+			})
+			if err != nil {
+				diagnostics.DefaultEvidenceMetrics.Observe(attempt.Route, "start_failed", time.Since(started))
+				if h.log != nil {
+					h.log.Warn("sml_exchange_diagnostic_start_failed",
+						zap.String("attempt_id", attempt.ID), zap.String("route", attempt.Route), zap.Error(err))
+				}
+				return ""
+			}
+			diagnostics.DefaultEvidenceMetrics.Observe(attempt.Route, "started", time.Since(started))
+			return exchange.ID
+		},
+		After: func(exchangeID string, result sml.HTTPExchangeResult) {
+			started := time.Now()
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			_, err := h.billRepo.FinishSMLAttemptExchange(ctx, repository.SMLExchangeFinish{
+				ExchangeID: exchangeID, Status: result.Status, HTTPStatus: result.HTTPStatus,
+				ResponseHeaders: result.ResponseHeaders, ResponseBody: result.Body,
+				ResponseHash: result.ResponseHash, ResponseSize: result.ResponseSize,
+				ResponseTruncated: result.Truncated, ErrorCode: result.ErrorCode,
+				ErrorClass: result.ErrorClass, SafeErrorSummary: result.SafeErrorSummary,
+			})
+			if err != nil {
+				diagnostics.DefaultEvidenceMetrics.Observe(attempt.Route, "finish_failed", time.Since(started))
+				if h.log != nil {
+					h.log.Warn("sml_exchange_diagnostic_finish_failed",
+						zap.String("attempt_id", attempt.ID), zap.String("route", attempt.Route), zap.Error(err))
+				}
+				return
+			}
+			diagnostics.DefaultEvidenceMetrics.Observe(attempt.Route, result.Status, time.Since(started))
+		},
+	}
 }
 
 func (h *BillHandler) recordSMLProfileAudit(bill *models.Bill, attempt *models.BillSMLAttempt, opts retrySendOptions, action, level string, detail map[string]any) {

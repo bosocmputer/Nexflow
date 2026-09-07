@@ -8,7 +8,7 @@ import (
 
 func TestSanitizeJSONRedactsSecretsAndBuyerPIIRecursively(t *testing.T) {
 	raw := []byte(`{
-		"result":"ok",
+		"result":"contact buyer@example.test or 0812345678; token=message-secret",
 		"nested":{
 			"access_token":"token-value",
 			"Password":"secret-value",
@@ -24,7 +24,7 @@ func TestSanitizeJSONRedactsSecretsAndBuyerPIIRecursively(t *testing.T) {
 		t.Fatal("expected valid JSON")
 	}
 	text := string(got.Body)
-	for _, forbidden := range []string{"token-value", "secret-value", "0812345678", "buyer@example.test", "hidden"} {
+	for _, forbidden := range []string{"token-value", "secret-value", "message-secret", "0812345678", "buyer@example.test", "hidden"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("sanitized JSON contains %q: %s", forbidden, text)
 		}

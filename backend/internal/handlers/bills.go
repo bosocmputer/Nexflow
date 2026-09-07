@@ -21,6 +21,7 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	"nexflow/internal/services/artifact"
+	"nexflow/internal/services/diagnostics"
 	"nexflow/internal/services/events"
 	"nexflow/internal/services/itemcode"
 	lineservice "nexflow/internal/services/line"
@@ -1190,6 +1191,8 @@ type retrySendOptions struct {
 	BulkJobItemID     string
 	BulkItemSequence  int
 	SuppressLineAlert bool
+	SMLAttemptID      string
+	SMLPayloadHash    string
 }
 
 type retrySendResult struct {
@@ -1422,9 +1425,10 @@ func (h *BillHandler) SMLDocumentProfileMetrics(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"requests":           requests,
-		"queue":              queue,
-		"cancellation_queue": cancellationQueue,
+		"requests":            requests,
+		"diagnostic_evidence": diagnostics.DefaultEvidenceMetrics.Snapshot(),
+		"queue":               queue,
+		"cancellation_queue":  cancellationQueue,
 		"alerts": gin.H{
 			"payload_mismatch":      queue.PayloadMismatchCount+cancellationQueue.PayloadMismatchCount > 0,
 			"terminal_failure":      queue.TerminalCount+cancellationQueue.TerminalCount > 0,
@@ -3798,6 +3802,12 @@ func (h *BillHandler) recordSuccessForSend(id, source string, respJSON []byte, d
 		"route":         route,
 		"response_size": len(respJSON),
 		"via":           opts.Via,
+	}
+	if opts.SMLAttemptID != "" {
+		detail["attempt_id"] = opts.SMLAttemptID
+	}
+	if opts.SMLPayloadHash != "" {
+		detail["payload_hash"] = opts.SMLPayloadHash
 	}
 	if opts.BulkJobID != "" {
 		detail["bulk_job_id"] = opts.BulkJobID

@@ -65,8 +65,8 @@ func boundedEvidenceText(value string, maximum int) string {
 func validExchangeStart(in SMLExchangeStart) bool {
 	method := strings.ToUpper(strings.TrimSpace(in.Method))
 	path := strings.TrimSpace(in.CanonicalPath)
-	return strings.TrimSpace(in.AttemptID) != "" &&
-		strings.TrimSpace(in.Route) != "" && len(in.Route) <= 64 &&
+	validRoute := in.Route == "SaleInvoice" || in.Route == "SaleOrder"
+	return strings.TrimSpace(in.AttemptID) != "" && validRoute &&
 		method != "" && len(method) <= 16 && !hasControlCharacters(method) &&
 		strings.HasPrefix(path, "/") && len(path) <= 512 &&
 		!strings.Contains(path, "://") && !strings.ContainsAny(path, "?#") &&
@@ -74,6 +74,19 @@ func validExchangeStart(in SMLExchangeStart) bool {
 		len(in.CorrelationID) <= 128 && len(in.ContentType) <= 128 &&
 		!hasControlCharacters(in.TraceID) && !hasControlCharacters(in.CorrelationID) &&
 		!hasControlCharacters(in.ContentType)
+}
+
+func safeEvidenceCode(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if len(value) > 128 || strings.IndexFunc(value, func(character rune) bool {
+		return !unicode.IsLetter(character) && !unicode.IsDigit(character) && character != '_' && character != '-' && character != '.'
+	}) >= 0 {
+		return "upstream_error"
+	}
+	return value
 }
 
 func (r *BillRepo) BeginSMLAttemptExchange(ctx context.Context, in SMLExchangeStart) (*models.BillSMLAttemptExchange, error) {
@@ -156,8 +169,8 @@ func (r *BillRepo) FinishSMLAttemptExchange(ctx context.Context, in SMLExchangeF
 	if err != nil {
 		return nil, err
 	}
-	in.ErrorCode = boundedEvidenceText(in.ErrorCode, 128)
-	in.ErrorClass = boundedEvidenceText(in.ErrorClass, 128)
+	in.ErrorCode = safeEvidenceCode(in.ErrorCode)
+	in.ErrorClass = safeEvidenceCode(in.ErrorClass)
 	in.SafeErrorSummary = boundedEvidenceText(in.SafeErrorSummary, 1000)
 
 	exchange, err := scanSMLAttemptExchange(r.db.QueryRowContext(ctx, `UPDATE bill_sml_attempt_exchanges SET

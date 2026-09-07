@@ -2,21 +2,22 @@
 
 ## Handoff
 
-- Last completed: D02 durable SML exchange repository (commit pending in this
-  checkpoint); D01 is commit `bbfc64d`.
-- Active task: D03 immutable SML send instrumentation.
-- Branch/HEAD at D03 start: `codex/marketplace-units-conversion` / `bbfc64d`.
+- Last completed: D03 immutable SML send instrumentation (commit pending in
+  this checkpoint); D02 is commit `5fae167` and D01 is `bbfc64d`.
+- Active task: D04 safe historical resolution.
+- Branch/HEAD at D04 start: `codex/marketplace-units-conversion` / `5fae167`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
 - Migration baseline: 093 is the latest checked-in migration; use 094 only if
   it remains free when D02 starts.
-- Tests: migration 094, exchange repository, diagnostics sanitizer, the
-  17-event frontend grouping tests, and frontend TypeScript compilation pass.
+- Tests: focused SML clients, diagnostics, exchange repository, handlers, and
+  migration packages pass; Sale Order records both internal retries and the
+  diagnostic-hook failure test proves the SML result is unchanged.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
 - Blocker: none.
-- Next action: wrap Sale Invoice and Sale Order clients with per-outbound-call
-  evidence hooks while preserving their legacy return contracts.
+- Next action: compute backend-owned resolution/can-retry fields from the
+  current immutable attempt and remove resolved Core retry paths from `/logs`.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -47,12 +48,12 @@ next action.
 
 ## D03 — Instrument immutable SML sends
 
-- [ ] Instrument Sale Invoice and Sale Order immutable attempt paths.
-- [ ] Preserve legacy client method contracts.
-- [ ] Capture every retry, transport error, HTTP error, and business failure.
-- [ ] Add attempt ID and payload hash to new audit success/failure events.
-- [ ] Bound SML response reads to 2 MiB.
-- [ ] Measure local overhead against the pre-change baseline.
+- [x] Instrument Sale Invoice and Sale Order immutable attempt paths.
+- [x] Preserve legacy client method contracts.
+- [x] Capture every retry, transport error, HTTP error, and business failure.
+- [x] Add attempt ID and payload hash to new audit success/failure events.
+- [x] Bound SML response reads to 2 MiB.
+- [ ] Measure local overhead against the pre-change baseline (final D10 gate).
 
 ## D04 — Safe historical resolution
 
