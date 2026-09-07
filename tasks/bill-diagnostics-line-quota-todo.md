@@ -2,24 +2,24 @@
 
 ## Handoff
 
-- Last completed: D06 Bill Timeline UX (commit pending in this checkpoint);
-  D04/D05 are `7363e76`, D03 is `a9c729b`, D02 is `5fae167`, and D01 is
-  `bbfc64d`.
-- Active task: D07/D08 LINE quota client, cache, and API.
-- Branch/HEAD at D07 start: `codex/marketplace-units-conversion` / `7363e76`.
+- Last completed: D09 LINE Notifications UX (commit pending in this checkpoint);
+  D07/D08 are `63f9021`, D06 is `1436e4f`, D04/D05 are `7363e76`, D03 is
+  `a9c729b`, D02 is `5fae167`, and D01 is `bbfc64d`.
+- Active task: D10 full verification and browser QA.
+- Branch/HEAD at D10 start: `codex/marketplace-units-conversion` / `63f9021`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
 - Migration baseline: 093 is the latest checked-in migration; use 094 only if
   it remains free when D02 starts.
-- Tests: focused handlers/repositories/diagnostics and frontend audit/grouping
-  tests pass; TypeScript and focused ESLint pass. Role, raw-field stripping,
-  resolved retry, unknown result, safe attempt grouping, lazy Admin diagnostics,
-  and fail-closed enrichment are covered.
+- Tests: focused backend LINE service/handler race tests, frontend quota,
+  audit/grouping tests, TypeScript, and focused ESLint pass. Limited/unlimited/
+  none, 401/429/timeout, partial-OA failure, cache, singleflight, stale fallback,
+  refresh cooldown, safe attempt grouping, and lazy Admin diagnostics are covered.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
 - Blocker: none.
-- Next action: implement the bounded LINE quota client, per-OA cache/singleflight,
-  stale-on-error behavior, refresh cooldown, and Admin API.
+- Next action: run broad backend/frontend verification, migration replay,
+  performance/security checks, then browser QA before the four-tenant rollout.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -92,28 +92,29 @@ next action.
 
 ## D07 — LINE quota client
 
-- [ ] Call LINE quota and consumption endpoints with response validation.
-- [ ] Support limited/unlimited/none and clamp remaining to zero.
-- [ ] Bound concurrency to four, request timeout to 5s, handler to 8s.
-- [ ] Retry once only for 429/5xx, respecting Retry-After up to 2s.
-- [ ] Never expose token or raw unsafe LINE error bodies.
+- [x] Call LINE quota and consumption endpoints with response validation.
+- [x] Support limited/unlimited/none and clamp remaining to zero.
+- [x] Bound concurrency to four, request timeout to 5s, handler to 8s.
+- [x] Retry once only for 429/5xx, respecting Retry-After up to 2s.
+- [x] Never expose token or raw unsafe LINE error bodies.
 
 ## D08 — LINE quota cache and API
 
-- [ ] Add a 30-second per-OA cache and concurrent-request coalescing.
-- [ ] Let manual refresh fetch fresh LINE data with a 10-second cooldown.
-- [ ] Serve last success for up to 15 minutes with `is_stale=true` on failure.
-- [ ] Keep failures independent per OA and Overview independent from quota.
-- [ ] Add structured bounded logs for status and duration.
+- [x] Add a 30-second per-OA cache and concurrent-request coalescing.
+- [x] Let manual refresh fetch fresh LINE data with a 10-second cooldown.
+- [x] Serve last success for up to 15 minutes with `is_stale=true` on failure.
+- [x] Keep failures independent per OA and Overview independent from quota.
+- [x] Add structured bounded logs for status and duration.
 
 ## D09 — LINE Notifications UX
 
-- [ ] Load Overview and quota independently.
-- [ ] Show used/limit, remaining, freshness, and stale/error states per OA.
-- [ ] Support warning/full, unlimited, and none without color-only meaning.
-- [ ] Add safe refresh loading/cooldown behavior.
-- [ ] Remove user-facing hardcoded monthly quota copy.
-- [ ] Verify no polling or request waterfall.
+- [x] Load Overview and quota independently.
+- [x] Show used/limit, remaining, freshness, and stale/error states per OA.
+- [x] Support warning/full, unlimited, and none without color-only meaning.
+- [x] Add safe refresh loading/cooldown behavior.
+- [x] Remove user-facing hardcoded monthly quota copy.
+- [x] Verify no polling or request waterfall in the implementation; browser
+  network verification remains in D10.
 
 ## Checkpoint B — UX, performance, and failures
 

@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   MessageCircle,
+  MessageSquareText,
   Plus,
   RefreshCw,
   Send,
@@ -36,6 +37,12 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DataTable } from '@/components/common/DataTable'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
+import {
+  lineQuotaErrorLabel,
+  presentLineQuota,
+  type LineOAQuota,
+} from '@/lib/line-quota'
+import { cn } from '@/lib/utils'
 
 interface LineSender {
   id: string
@@ -122,6 +129,11 @@ const statusTone: Record<string, string> = {
 export default function LineNotifications() {
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
+  const [quotaByOA, setQuotaByOA] = useState<Record<string, LineOAQuota>>({})
+  const [quotaLoading, setQuotaLoading] = useState(true)
+  const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set())
+  const [quotaLoadError, setQuotaLoadError] = useState(false)
+  const [quotaCooldowns, setQuotaCooldowns] = useState<Record<string, number>>({})
   const [senderDialog, setSenderDialog] = useState<LineSender | 'new' | null>(null)
   const [recipientDialog, setRecipientDialog] = useState<LineRecipient | null>(null)
   const [deleteRecipient, setDeleteRecipient] = useState<LineRecipient | null>(null)
@@ -142,9 +154,86 @@ export default function LineNotifications() {
     }
   }
 
+  const loadQuota = async ({ refresh = false, oaID = '' }: { refresh?: boolean; oaID?: string } = {}) => {
+    if (oaID) {
+      setQuotaRefreshing((current) => new Set(current).add(oaID))
+    } else if (refresh) {
+      setQuotaRefreshing(new Set(data?.senders.map((sender) => sender.id) ?? []))
+    } else if (!refresh) {
+      setQuotaLoading(true)
+    }
+    try {
+      const response = await client.get<{ data: LineOAQuota[] }>(
+        '/api/settings/line-notifications/quota',
+        { params: { ...(refresh ? { refresh: 'true' } : {}), ...(oaID ? { oa_id: oaID } : {}) } },
+      )
+      setQuotaByOA((current) => {
+        const next = oaID ? { ...current } : {}
+        response.data.data.forEach((quota) => {
+          next[quota.line_oa_id] = quota
+        })
+        return next
+      })
+      setQuotaLoadError(false)
+      if (refresh) {
+        const now = Date.now()
+        const cooldowns: Record<string, number> = {}
+        response.data.data.forEach((quota) => {
+          cooldowns[quota.line_oa_id] = now + Math.max(10, quota.retry_after_seconds ?? 0) * 1000
+        })
+        setQuotaCooldowns((current) => ({ ...current, ...cooldowns }))
+        window.setTimeout(() => {
+          setQuotaCooldowns((current) => {
+            const next = { ...current }
+            Object.entries(next).forEach(([id, until]) => {
+              if (until <= Date.now()) delete next[id]
+            })
+            return next
+          })
+        }, 10_100)
+      }
+    } catch (error: any) {
+      setQuotaLoadError(true)
+      if (oaID) {
+        setQuotaByOA((current) => ({
+          ...current,
+          [oaID]: {
+            line_oa_id: oaID,
+            name: data?.senders.find((sender) => sender.id === oaID)?.name || 'LINE OA',
+            quota_type: undefined,
+            limit: null,
+            used: null,
+            remaining: null,
+            status: 'error',
+            checked_at: null,
+            is_stale: false,
+            error_code: error?.response?.data?.error_code || 'line_unavailable',
+          },
+        }))
+      }
+    } finally {
+      if (oaID) {
+        setQuotaRefreshing((current) => {
+          const next = new Set(current)
+          next.delete(oaID)
+          return next
+        })
+      } else {
+        setQuotaLoading(false)
+        if (refresh) setQuotaRefreshing(new Set())
+      }
+    }
+  }
+
   useEffect(() => {
-    load()
+    void load()
+    void loadQuota()
   }, [])
+
+  const refreshPage = () => {
+    void load()
+    void loadQuota({ refresh: true })
+  }
 
   const readiness = data?.readiness
   const ready = !!readiness?.enabled_sender_count && !!readiness.enabled_recipient_count
@@ -226,7 +315,7 @@ export default function LineNotifications() {
         description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={refreshPage} disabled={loading || quotaLoading || quotaRefreshing.size > 0}>
               <RefreshCw className="h-3.5 w-3.5" />
               รีเฟรช
             </Button>
@@ -267,7 +356,7 @@ export default function LineNotifications() {
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
                 <h2 className="text-base font-semibold">LINE OA sender</h2>
-                <p className="text-sm text-muted-foreground">เพิ่ม OA แล้วนำ Webhook URL ไปใส่ใน LINE Developers ของ OA นั้น</p>
+                <p className="text-sm text-muted-foreground">เพิ่ม OA แล้วนำ Webhook URL ไปใส่ใน LINE Developers ของ OA นั้น โควตาด้านล่างเป็นค่าประมาณจาก LINE และรวมข้อความที่ส่งผ่าน OA Manager</p>
               </div>
             </div>
             <div className="mb-3 grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
@@ -293,9 +382,17 @@ export default function LineNotifications() {
                   key: 'name',
                   header: 'ชื่อ',
                   cell: (s) => (
-                    <div>
+                    <div className="min-w-[220px]">
                       <div className="font-medium">{s.name}</div>
                       <div className="font-mono text-[11px] text-muted-foreground">{s.bot_user_id ? `bot ${shortId(s.bot_user_id)}` : 'ยังไม่ได้ทดสอบ token'}</div>
+                      <LineQuotaSummary
+                        quota={quotaByOA[s.id]}
+                        loading={quotaLoading && !quotaByOA[s.id]}
+                        refreshing={quotaRefreshing.has(s.id)}
+                        cooldown={!!quotaCooldowns[s.id] && quotaCooldowns[s.id] > Date.now()}
+                        initialLoadFailed={quotaLoadError}
+                        onRefresh={() => void loadQuota({ refresh: true, oaID: s.id })}
+                      />
                     </div>
                   ),
                 },
@@ -540,7 +637,10 @@ export default function LineNotifications() {
         open={!!senderDialog}
         sender={senderDialog === 'new' ? null : senderDialog}
         onOpenChange={(open) => !open && setSenderDialog(null)}
-        onSaved={load}
+        onSaved={() => {
+          void load()
+          void loadQuota()
+        }}
       />
       <RecipientDialog
         open={!!recipientDialog}
@@ -584,6 +684,105 @@ export default function LineNotifications() {
         variant="destructive"
         onConfirm={runHideCandidate}
       />
+    </div>
+  )
+}
+
+function LineQuotaSummary({
+  quota,
+  loading,
+  refreshing,
+  cooldown,
+  initialLoadFailed,
+  onRefresh,
+}: {
+  quota?: LineOAQuota
+  loading: boolean
+  refreshing: boolean
+  cooldown: boolean
+  initialLoadFailed: boolean
+  onRefresh: () => void
+}) {
+  if (loading) {
+    return (
+      <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground" aria-live="polite">
+        <RefreshCw className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+        กำลังดึงโควตาจาก LINE
+      </div>
+    )
+  }
+  if (!quota) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5 text-[11px]">
+        <span className="text-warning">{initialLoadFailed ? 'โหลดโควตาไม่สำเร็จ' : 'ยังไม่มีข้อมูลโควตา'}</span>
+        <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-[10px]" onClick={onRefresh} disabled={refreshing || cooldown}>
+          <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin motion-reduce:animate-none')} />
+          ลองใหม่
+        </Button>
+      </div>
+    )
+  }
+
+  const presentation = presentLineQuota(quota)
+  const tone = presentation.severity === 'full' || presentation.severity === 'error'
+    ? 'text-destructive'
+    : presentation.severity === 'warning'
+      ? 'text-warning'
+      : 'text-foreground'
+  const progressTone = presentation.severity === 'full'
+    ? 'bg-destructive'
+    : presentation.severity === 'warning'
+      ? 'bg-warning'
+      : 'bg-success'
+
+  return (
+    <div className="mt-2 rounded-md border border-border/70 bg-muted/30 px-2 py-1.5" aria-live="polite">
+      <div className="flex items-start gap-2">
+        <MessageSquareText className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', tone)} aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={cn('text-[11px] font-semibold', tone)}>{presentation.headline}</span>
+            {quota.is_stale && (
+              <Badge variant="outline" className="border-warning/30 px-1.5 py-0 text-[9px] text-warning">ข้อมูลล่าสุดที่มี</Badge>
+            )}
+            {presentation.severity === 'warning' && quota.quota_type === 'limited' && (
+              <span className="text-[9px] font-medium text-warning">ใกล้เต็ม</span>
+            )}
+            {presentation.severity === 'full' && (
+              <span className="text-[9px] font-medium text-destructive">เต็มแล้ว</span>
+            )}
+          </div>
+          <div className="mt-0.5 text-[10px] text-muted-foreground">{presentation.detail}</div>
+          {presentation.percentage != null && (
+            <div
+              className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-label="สัดส่วนการใช้โควตา LINE"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(presentation.percentage)}
+            >
+              <div className={cn('h-full rounded-full', progressTone)} style={{ width: `${presentation.percentage}%` }} />
+            </div>
+          )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] text-muted-foreground">
+            {quota.checked_at && <span>ตรวจล่าสุด {dayjs(quota.checked_at).format('DD/MM/YY HH:mm:ss')}</span>}
+            {quota.is_stale && quota.error_code && <span>{lineQuotaErrorLabel(quota.error_code)}</span>}
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 w-6 shrink-0 p-0"
+          onClick={onRefresh}
+          disabled={refreshing || cooldown}
+          title={cooldown ? 'กรุณารอ 10 วินาทีก่อนรีเฟรชอีกครั้ง' : 'ดึงโควตาล่าสุดจาก LINE'}
+          aria-label={cooldown ? 'รอก่อนรีเฟรชโควตาอีกครั้ง' : 'รีเฟรชโควตาจาก LINE'}
+        >
+          <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin motion-reduce:animate-none')} />
+        </Button>
+      </div>
     </div>
   )
 }

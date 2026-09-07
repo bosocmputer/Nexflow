@@ -179,7 +179,7 @@ export function MessageBubble({ message, onExtract, onPhoneSaved }: Props) {
           {isOutgoing && message.delivery_status === 'sent' && message.delivery_method === 'push' && (
             <span
               className="text-muted-foreground/70"
-              title="ส่งผ่าน Push API — นับ quota เดือนนี้ (ฟรี OA = 200/เดือน)"
+              title="ส่งผ่าน Push API — นับโควตารายเดือนของ LINE OA นี้"
             >
               Push
             </span>

@@ -42,7 +42,7 @@ export type ChatDirection = 'incoming' | 'outgoing' | 'system'
 export type ChatKind = 'text' | 'image' | 'file' | 'audio' | 'system'
 export type ChatDelivery = 'sent' | 'failed' | 'pending'
 // Reply = LINE's free Reply API (used cached replyToken from inbound).
-// Push  = LINE Push API — counts toward 200/month free OA quota.
+// Push  = LINE Push API — counts toward the configured OA's monthly quota.
 export type ChatDeliveryMethod = 'reply' | 'push'
 
 export interface ChatMedia {
