@@ -239,6 +239,7 @@ export default function LineNotifications() {
   const ready = !!readiness?.enabled_sender_count && !!readiness.enabled_recipient_count
   const enabledRecipients = data?.recipients.filter((r) => r.enabled).length ?? 0
   const sampleText = data?.sample_texts?.[sampleSource] || data?.sample_text || 'กำลังโหลดตัวอย่างข้อความ'
+  const quotaCooldownActive = Object.values(quotaCooldowns).some((until) => until > Date.now())
 
   const senderNameById = useMemo(() => {
     const map = new Map<string, string>()
@@ -315,7 +316,14 @@ export default function LineNotifications() {
         description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={refreshPage} disabled={loading || quotaLoading || quotaRefreshing.size > 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={refreshPage}
+              disabled={loading || quotaLoading || quotaRefreshing.size > 0 || quotaCooldownActive}
+              title={quotaCooldownActive ? 'กรุณารอ 10 วินาทีก่อนดึงโควตาจาก LINE อีกครั้ง' : 'รีเฟรชข้อมูลและดึงโควตาล่าสุดจาก LINE'}
+            >
               <RefreshCw className="h-3.5 w-3.5" />
               รีเฟรช
             </Button>

@@ -89,6 +89,29 @@ func TestGetMessageQuotaRetries429OnceAndHonorsBoundedRetryAfter(t *testing.T) {
 	}
 }
 
+func TestGetMessageQuotaRetriesServerErrorOnce(t *testing.T) {
+	var quotaCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/bot/message/quota" && quotaCalls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporary upstream failure"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/consumption") {
+			_, _ = w.Write([]byte(`{"totalUsage":18}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"type":"limited","value":300}`))
+	}))
+	defer server.Close()
+
+	got, err := quotaTestService(server).GetMessageQuota(context.Background())
+	if err != nil || quotaCalls.Load() != 2 || got.Used != 18 {
+		t.Fatalf("quota=%#v calls=%d err=%v", got, quotaCalls.Load(), err)
+	}
+}
+
 func TestGetMessageQuotaDoesNotRetryAuthenticationOrExposeRawBody(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +141,18 @@ func TestGetMessageQuotaRejectsMalformedResponses(t *testing.T) {
 
 	_, err := quotaTestService(server).GetMessageQuota(context.Background())
 	if err == nil || QuotaErrorCode(err) != "invalid_quota_response" {
+		t.Fatalf("err=%v code=%s", err, QuotaErrorCode(err))
+	}
+}
+
+func TestGetMessageQuotaRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"type":"limited","padding":"` + strings.Repeat("x", maxQuotaResponseBytes) + `","value":300}`))
+	}))
+	defer server.Close()
+
+	_, err := quotaTestService(server).GetMessageQuota(context.Background())
+	if err == nil || QuotaErrorCode(err) != "line_response_too_large" {
 		t.Fatalf("err=%v code=%s", err, QuotaErrorCode(err))
 	}
 }
