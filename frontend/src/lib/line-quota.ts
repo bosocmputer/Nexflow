@@ -79,6 +79,8 @@ export function lineQuotaErrorLabel(code?: string): string {
     case 'invalid_consumption_response':
     case 'unsupported_quota_type':
       return 'รูปแบบข้อมูลโควตาจาก LINE ไม่ถูกต้อง'
+    case 'quota_config_changed':
+      return 'การตั้งค่า OA เพิ่งเปลี่ยน กรุณารีเฟรชอีกครั้ง'
     default:
       return 'ติดต่อ LINE ไม่สำเร็จ กรุณาลองใหม่'
   }

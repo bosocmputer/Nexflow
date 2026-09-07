@@ -32,9 +32,10 @@ type quotaCacheEntry struct {
 }
 
 type quotaCall struct {
-	done   chan struct{}
-	result CachedMessageQuota
-	err    error
+	done       chan struct{}
+	generation uint64
+	result     CachedMessageQuota
+	err        error
 }
 
 // QuotaCache coalesces per-OA calls and bounds the total number of simultaneous
@@ -44,6 +45,7 @@ type QuotaCache struct {
 	entries     map[string]quotaCacheEntry
 	inflight    map[string]*quotaCall
 	lastRefresh map[string]time.Time
+	generations map[string]uint64
 	semaphore   chan struct{}
 	now         func() time.Time
 }
@@ -53,6 +55,7 @@ func NewQuotaCache() *QuotaCache {
 		entries:     make(map[string]quotaCacheEntry),
 		inflight:    make(map[string]*quotaCall),
 		lastRefresh: make(map[string]time.Time),
+		generations: make(map[string]uint64),
 		semaphore:   make(chan struct{}, quotaMaxConcurrency),
 		now:         time.Now,
 	}
@@ -93,14 +96,18 @@ func (q *QuotaCache) Get(ctx context.Context, oaID string, refresh bool, fetch Q
 			return call.result, call.err
 		}
 	}
-	call := &quotaCall{done: make(chan struct{})}
+	call := &quotaCall{done: make(chan struct{}), generation: q.generations[oaID]}
 	q.inflight[oaID] = call
 	q.mu.Unlock()
 
 	result, err := q.fetch(ctx, fetch)
 	completedAt := q.currentTime()
 	q.mu.Lock()
-	if err == nil {
+	generationCurrent := call.generation == q.generations[oaID]
+	if !generationCurrent {
+		call.result = CachedMessageQuota{ErrorCode: "quota_config_changed"}
+		call.err = &QuotaAPIError{Code: "quota_config_changed"}
+	} else if err == nil {
 		q.entries[oaID] = quotaCacheEntry{quota: result, checkedAt: completedAt}
 		call.result = CachedMessageQuota{Quota: result, CheckedAt: completedAt}
 	} else if current, ok := q.entries[oaID]; ok && completedAt.Sub(current.checkedAt) <= quotaStaleTTL {
@@ -113,7 +120,9 @@ func (q *QuotaCache) Get(ctx context.Context, oaID string, refresh bool, fetch Q
 		call.result = CachedMessageQuota{IsStale: false, ErrorCode: QuotaErrorCode(err)}
 		call.err = err
 	}
-	delete(q.inflight, oaID)
+	if q.inflight[oaID] == call {
+		delete(q.inflight, oaID)
+	}
 	close(call.done)
 	q.mu.Unlock()
 	return call.result, call.err
@@ -124,8 +133,10 @@ func (q *QuotaCache) Invalidate(oaID string) {
 		return
 	}
 	q.mu.Lock()
+	q.generations[oaID]++
 	delete(q.entries, oaID)
 	delete(q.lastRefresh, oaID)
+	delete(q.inflight, oaID)
 	q.mu.Unlock()
 }
 

@@ -174,3 +174,38 @@ func TestQuotaCacheBoundsExternalConcurrencyToFour(t *testing.T) {
 		t.Fatalf("maximum=%d", maximum.Load())
 	}
 }
+
+func TestQuotaCacheInvalidationFencesAnOldTokenFetch(t *testing.T) {
+	cache := NewQuotaCache()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	oldResult := make(chan error, 1)
+	go func() {
+		_, err := cache.Get(context.Background(), "oa-1", false, func(context.Context) (MessageQuota, error) {
+			close(started)
+			<-release
+			return testLimitedQuota(), nil
+		})
+		oldResult <- err
+	}()
+	<-started
+	cache.Invalidate("oa-1")
+	newQuota := testLimitedQuota()
+	newQuota.Used = 20
+	if _, err := cache.Get(context.Background(), "oa-1", false, func(context.Context) (MessageQuota, error) {
+		return newQuota, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-oldResult; QuotaErrorCode(err) != "quota_config_changed" {
+		t.Fatalf("old result err=%v", err)
+	}
+	got, err := cache.Get(context.Background(), "oa-1", false, func(context.Context) (MessageQuota, error) {
+		t.Fatal("new cache entry was overwritten by old fetch")
+		return MessageQuota{}, nil
+	})
+	if err != nil || got.Quota.Used != 20 {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+}
