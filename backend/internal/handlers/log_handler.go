@@ -42,6 +42,10 @@ func (h *LogHandler) List(c *gin.Context) {
 	if result.Logs == nil {
 		result.Logs = []models.AuditLog{}
 	}
+	if err := h.auditRepo.EnrichSMLResolution(c.Request.Context(), result.Logs); err != nil {
+		h.log.Warn("enrich audit SML resolution failed", zap.Error(err))
+	}
+	result.Logs = sanitizeAuditLogsForRole(result.Logs, c.GetString("user_role"))
 
 	resp := gin.H{
 		"data":        result.Logs,

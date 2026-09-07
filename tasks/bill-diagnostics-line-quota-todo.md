@@ -2,22 +2,23 @@
 
 ## Handoff
 
-- Last completed: D03 immutable SML send instrumentation (commit pending in
-  this checkpoint); D02 is commit `5fae167` and D01 is `bbfc64d`.
-- Active task: D04 safe historical resolution.
-- Branch/HEAD at D04 start: `codex/marketplace-units-conversion` / `5fae167`.
+- Last completed: D04 safe historical resolution and D05 role-safe bill APIs
+  (commit pending in this checkpoint); D03 is `a9c729b`, D02 is `5fae167`, and
+  D01 is `bbfc64d`.
+- Active task: D06 Bill Timeline UX.
+- Branch/HEAD at D06 start: `codex/marketplace-units-conversion` / `a9c729b`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
 - Migration baseline: 093 is the latest checked-in migration; use 094 only if
   it remains free when D02 starts.
-- Tests: focused SML clients, diagnostics, exchange repository, handlers, and
-  migration packages pass; Sale Order records both internal retries and the
-  diagnostic-hook failure test proves the SML result is unchanged.
+- Tests: focused handlers/repositories/diagnostics and frontend audit/grouping
+  tests pass; TypeScript compilation passes. Role, raw-field stripping,
+  resolved retry, unknown result, and fail-closed enrichment are covered.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
 - Blocker: none.
-- Next action: compute backend-owned resolution/can-retry fields from the
-  current immutable attempt and remove resolved Core retry paths from `/logs`.
+- Next action: replace the flat Bill Timeline with attempt grouping, expandable
+  chronology, and sanitized copy/download support.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -57,11 +58,11 @@ next action.
 
 ## D04 — Safe historical resolution
 
-- [ ] Compute resolution and retry eligibility on the backend.
-- [ ] Mark failures from a subsequently sent attempt as resolved.
-- [ ] Permit core retry only for the unresolved current attempt before core success.
-- [ ] Remove/hide retry for resolved rows in `/logs` and never add it to timeline.
-- [ ] Keep profile-only and stock-only recovery separate from core resend.
+- [x] Compute resolution and retry eligibility on the backend.
+- [x] Mark failures from a subsequently sent attempt as resolved.
+- [x] Permit core retry only for the unresolved current attempt before core success.
+- [x] Remove/hide retry for resolved rows in `/logs` and never add it to timeline.
+- [x] Keep profile-only and stock-only recovery separate from core resend.
 
 ## Checkpoint A — Core safety
 
@@ -73,11 +74,11 @@ next action.
 
 ## D05 — Role-safe bill APIs
 
-- [ ] Add server-generated `sml_summary` for staff.
-- [ ] Return raw bill/SML fields only to admins.
-- [ ] Apply role-aware timeline sanitization with the 200-row cap unchanged.
-- [ ] Add admin-only SML diagnostics endpoint and authorization tests.
-- [ ] Restrict `/logs` raw/dev mode to admins.
+- [x] Add server-generated `sml_summary` for staff.
+- [x] Return raw bill/SML fields only to admins.
+- [x] Apply role-aware timeline sanitization with the 200-row cap unchanged.
+- [x] Add admin-only SML diagnostics endpoint and authorization tests.
+- [x] Restrict `/logs` raw/dev mode to admins.
 
 ## D06 — Bill timeline UX
 

@@ -1,11 +1,14 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/lib/pq"
 	"nexflow/internal/models"
 )
 
@@ -206,6 +209,107 @@ func (r *AuditLogRepo) ListByTarget(targetID string) ([]models.AuditLog, error) 
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+type smlAuditResolution struct {
+	State      string
+	CoreStatus string
+	BillStatus string
+	Current    bool
+}
+
+func auditDetailIdentity(detail json.RawMessage) (attemptID, exchangeID string) {
+	if len(detail) == 0 {
+		return "", ""
+	}
+	var raw struct {
+		AttemptID  string `json:"attempt_id"`
+		ExchangeID string `json:"exchange_id"`
+	}
+	if json.Unmarshal(detail, &raw) != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(raw.AttemptID), strings.TrimSpace(raw.ExchangeID)
+}
+
+func coreAlreadyCreated(state, coreStatus, billStatus string) bool {
+	if state == "sent" || billStatus == "sent" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(coreStatus)) {
+	case "created", "already_exists", "complete":
+		return true
+	default:
+		return false
+	}
+}
+
+// EnrichSMLResolution adds backend-owned retry eligibility. Failure to enrich
+// is safe: CanRetry defaults false, so callers never expose an unsafe resend.
+func (r *AuditLogRepo) EnrichSMLResolution(ctx context.Context, logs []models.AuditLog) error {
+	if r == nil || r.db == nil || len(logs) == 0 {
+		return nil
+	}
+	attemptIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for index := range logs {
+		attemptID, exchangeID := auditDetailIdentity(logs[index].Detail)
+		logs[index].AttemptID = attemptID
+		logs[index].ExchangeID = exchangeID
+		if attemptID == "" {
+			continue
+		}
+		if _, ok := seen[attemptID]; !ok {
+			seen[attemptID] = struct{}{}
+			attemptIDs = append(attemptIDs, attemptID)
+		}
+	}
+	if len(attemptIDs) == 0 {
+		return nil
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT a.id::text,a.state,COALESCE(a.core_status,''),b.status,
+		(b.current_sml_attempt_id=a.id) AS is_current
+		FROM bill_sml_attempts a JOIN bills b ON b.id=a.bill_id
+		WHERE a.id=ANY($1::uuid[])`, pq.Array(attemptIDs))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	resolutions := make(map[string]smlAuditResolution, len(attemptIDs))
+	for rows.Next() {
+		var id string
+		var value smlAuditResolution
+		if err := rows.Scan(&id, &value.State, &value.CoreStatus, &value.BillStatus, &value.Current); err != nil {
+			return err
+		}
+		resolutions[id] = value
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for index := range logs {
+		value, ok := resolutions[logs[index].AttemptID]
+		if !ok {
+			continue
+		}
+		created := coreAlreadyCreated(value.State, value.CoreStatus, value.BillStatus)
+		switch {
+		case logs[index].Action == "sml_failed" && created:
+			logs[index].ResolutionStatus = "resolved"
+		case logs[index].Action == "sml_failed" && (value.State == "unknown" || value.State == "sending"):
+			logs[index].ResolutionStatus = "unknown"
+		case logs[index].Action == "sml_failed":
+			logs[index].ResolutionStatus = "unresolved"
+			logs[index].CanRetry = value.Current && value.State == "failed_exact_retry" && !created
+		case created:
+			logs[index].ResolutionStatus = "succeeded"
+		case value.State == "unknown" || value.State == "sending":
+			logs[index].ResolutionStatus = "unknown"
+		default:
+			logs[index].ResolutionStatus = "unresolved"
+		}
+	}
+	return nil
 }
 
 type auditScanner interface {

@@ -33,11 +33,11 @@ type SanitizedJSON struct {
 	SafeSummary  string
 }
 
-var safeResponseHeaders = map[string]struct{}{
-	"Content-Type":     {},
-	"X-Correlation-Id": {},
-	"X-Request-Id":     {},
-	"Retry-After":      {},
+var safeResponseHeaders = map[string]string{
+	"content-type":     "Content-Type",
+	"x-correlation-id": "X-Correlation-ID",
+	"x-request-id":     "X-Request-ID",
+	"retry-after":      "Retry-After",
 }
 
 var deniedKeyFragments = []string{
@@ -260,7 +260,8 @@ func SanitizeHeaders(headers map[string][]string) map[string]string {
 	result := make(map[string]string, len(safeResponseHeaders))
 	for key, values := range headers {
 		canonical := http.CanonicalHeaderKey(key)
-		if _, ok := safeResponseHeaders[canonical]; !ok || len(values) == 0 {
+		display, ok := safeResponseHeaders[strings.ToLower(canonical)]
+		if !ok || len(values) == 0 {
 			continue
 		}
 		value := strings.TrimSpace(values[0])
@@ -268,7 +269,7 @@ func SanitizeHeaders(headers map[string][]string) map[string]string {
 			value = value[:512]
 		}
 		if value != "" && !hasControl(value) {
-			result[canonical] = value
+			result[display] = value
 		}
 	}
 	return result

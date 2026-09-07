@@ -251,6 +251,11 @@ export function isSMLAuditLog(log: AuditLog): boolean {
     log.source === 'sml'
 }
 
+export function isActionableAuditLog(log: AuditLog): boolean {
+  if (log.action === 'sml_failed' && log.resolution_status === 'resolved') return false
+  return log.level === 'error' || log.level === 'warn'
+}
+
 export function humanizeAuditError(value: unknown): string {
   if (value == null || value === '') return ''
   const text = String(value)
@@ -327,7 +332,7 @@ export function summarize(log: AuditLog): string {
       const route = err.route ?? d.route
       const docNo = err.doc_no_attempted ?? d.doc_no
       const message = humanizeAuditError(err.error ?? d.error ?? '')
-      return [route ? smlRouteLabel(route) : '', docNo, message].filter(Boolean).join(' · ')
+      return [log.resolution_status === 'resolved' ? 'แก้ไขแล้ว' : '', route ? smlRouteLabel(route) : '', docNo, message].filter(Boolean).join(' · ')
     }
     case 'sml_readiness_blocked':
       return [d.via ? auditViaLabel(d.via) : '', d.tenant ? `ฐานข้อมูล ${d.tenant}` : '', d.message].filter(Boolean).join(' · ')

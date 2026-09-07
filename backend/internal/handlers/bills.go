@@ -798,6 +798,7 @@ func (h *BillHandler) Get(c *gin.Context) {
 		return
 	}
 	shopeeRealtimeLinked := h.hasShopeeRealtimeSnapshot(c.Request.Context(), bill.ID)
+	smlSummary, _ := h.loadBillSMLSummary(c.Request.Context(), bill)
 
 	// Resolve which SML route + endpoint + doc_format this bill would use
 	// today. Mirror the channel lookup that retry would do — same key
@@ -842,16 +843,21 @@ func (h *BillHandler) Get(c *gin.Context) {
 	// Wrap bill + preview in a single response. The bill struct is
 	// preserved unchanged at the top level so existing consumers keep
 	// working without a type migration.
-	billJSON, _ := json.Marshal(bill)
+	roleBill := billForRole(bill, c.GetString("user_role"))
+	billJSON, marshalErr := json.Marshal(roleBill)
 	out := gin.H{}
-	if err := json.Unmarshal(billJSON, &out); err == nil {
+	if marshalErr == nil {
+		marshalErr = json.Unmarshal(billJSON, &out)
+	}
+	if marshalErr == nil {
 		out["preview"] = preview
 		out["shopee_realtime_linked"] = shopeeRealtimeLinked
+		out["sml_summary"] = smlSummary
 		c.JSON(http.StatusOK, out)
 		return
 	}
-	// Fallback if marshal/unmarshal hiccups — return the bill alone.
-	c.JSON(http.StatusOK, bill)
+	h.log.Error("serialize role-safe bill", zap.Error(marshalErr))
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "serialize bill failed"})
 }
 
 type archiveBillRequest struct {
@@ -1151,7 +1157,10 @@ func (h *BillHandler) Timeline(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rows})
+	if err := h.auditRepo.EnrichSMLResolution(c.Request.Context(), rows); err != nil && h.log != nil {
+		h.log.Warn("enrich bill timeline SML resolution failed", zap.String("bill_id", id), zap.Error(err))
+	}
+	c.JSON(http.StatusOK, gin.H{"data": sanitizeAuditLogsForRole(rows, c.GetString("user_role"))})
 }
 
 // POST /api/bills/:id/retry

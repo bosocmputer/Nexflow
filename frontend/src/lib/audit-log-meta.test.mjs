@@ -13,6 +13,7 @@ const {
   ACTION_META,
   SOURCE_LABELS,
   auditViaLabel,
+  isActionableAuditLog,
   isSMLAuditLog,
   summarize,
 } = await vite.ssrLoadModule('/src/lib/audit-log-meta.ts')
@@ -111,6 +112,17 @@ test('labels SML recovery in plain Thai without implying that the document is re
     manual_retry_count: 2,
   }, 'sml')), 'ไม่สร้างบิลซ้ำ · ผู้ดูแลลองครั้งที่ 2')
   assert.equal(isSMLAuditLog(audit('profile_complete', {}, 'sml')), true)
+})
+
+test('resolved SML failures are informational and never actionable', () => {
+  const resolved = {
+    ...audit('sml_failed', { doc_no: 'BF-INV26090002', route: 'SaleInvoice' }, 'sml'),
+    level: 'error',
+    resolution_status: 'resolved',
+    can_retry: false,
+  }
+  assert.equal(isActionableAuditLog(resolved), false)
+  assert.match(summarize(resolved), /^แก้ไขแล้ว/)
 })
 
 test('uses Thai operator labels for the Ploy catalog and Product Master events', () => {

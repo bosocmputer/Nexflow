@@ -19,6 +19,7 @@ type RequestMetadata struct {
 type ExchangeEvidence struct {
 	ID                  string            `json:"id"`
 	Sequence            int               `json:"sequence"`
+	TraceID             string            `json:"trace_id,omitempty"`
 	Status              string            `json:"status"`
 	StartedAt           time.Time         `json:"started_at"`
 	FinishedAt          *time.Time        `json:"finished_at,omitempty"`

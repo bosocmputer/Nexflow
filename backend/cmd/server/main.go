@@ -491,6 +491,7 @@ func main() {
 		api.POST("/bills/bulk-send-jobs/:job_id/retry-failed", middleware.RequireRole("admin", "staff"), billH.RetryFailedBulkSendJob)
 		api.GET("/bills/:id", billH.Get)
 		api.GET("/bills/:id/timeline", billH.Timeline)
+		api.GET("/bills/:id/sml-diagnostics", middleware.RequireRole("admin"), billH.SMLDiagnostics)
 		api.POST("/bills/:id/retry", billH.Retry)
 		api.POST("/bills/:id/sml-document-profile/retry", middleware.RequireRole("admin"), billH.RetrySMLDocumentProfile)
 		api.GET("/metrics/sml-document-profile", middleware.RequireRole("admin"), billH.SMLDocumentProfileMetrics)

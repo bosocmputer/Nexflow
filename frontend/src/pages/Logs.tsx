@@ -47,6 +47,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import api from '@/api/client'
 import { displayOperatorEmail, displayOperatorName } from '@/lib/operator-display'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/store/auth'
 import {
   ACTION_META,
   SOURCE_LABELS,
@@ -54,6 +55,7 @@ import {
   TONE_DOT,
   auditViaLabel,
   humanizeAuditError,
+  isActionableAuditLog,
   isSMLAuditLog,
   smlRouteLabel,
   type AuditLog,
@@ -230,6 +232,13 @@ function guidanceFor(log: AuditLog): LogGuidance | null {
   }
 
   if (log.action === 'sml_failed') {
+    if (log.resolution_status === 'resolved') {
+      return {
+        title: 'แก้ไขแล้ว — เอกสาร SML สำเร็จในครั้งถัดมา',
+        description: 'เหตุการณ์นี้เป็นความล้มเหลวชั่วคราวของ attempt เดิม ระบบยืนยันผลสำเร็จแล้วและไม่อนุญาตให้ส่ง Core ซ้ำ',
+        tone: 'info',
+      }
+    }
     if (errorText.includes('timeout') || errorText.includes('deadline') || errorText.includes('eof') || errorText.includes('connection refused')) {
       return {
         title: 'ส่งให้ทีมระบบ/SML API ตรวจ: เชื่อมต่อหรือรอคำตอบไม่สำเร็จ',
@@ -710,18 +719,23 @@ function LogRow({ log, onRetried, devMode }: { log: AuditLog; onRetried: () => v
   const [showRaw, setShowRaw] = useState(false)
   const [retrying, setRetrying] = useState(false)
 
-  const meta = ACTION_META[log.action] ?? {
+  const resolvedFailure = log.action === 'sml_failed' && log.resolution_status === 'resolved'
+  const meta = resolvedFailure ? {
+    label: 'ส่ง SML ล้มเหลวชั่วคราว (แก้ไขแล้ว)',
+    emoji: '✓',
+    tone: 'muted' as Tone,
+  } : ACTION_META[log.action] ?? {
     label: log.action,
     emoji: '•',
     tone: 'muted' as Tone,
   }
   const summary = summarize(log)
-  const isError = log.level === 'error'
+  const isError = log.level === 'error' && !resolvedFailure
   const source = displaySourceKey(log)
   const docNo = primaryDocNo(log)
   const docNoIssue = hasDocNoQualityIssue(log)
-  // Inline retry available only on sml_failed rows that have a bill target.
-  const canRetry = log.action === 'sml_failed' && !!log.target_id
+  // Retry authority comes from the backend's current immutable attempt state.
+  const canRetry = log.action === 'sml_failed' && log.can_retry === true && !!log.target_id
 
   const handleRetry = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -1134,7 +1148,7 @@ function groupByDate(logs: AuditLog[]): DateGroup[] {
 function quickViewMatch(log: AuditLog, quickView: QuickView): boolean {
   switch (quickView) {
     case 'actionable':
-      return log.level === 'error' || log.level === 'warn' || hasDocNoQualityIssue(log)
+      return isActionableAuditLog(log) || hasDocNoQualityIssue(log)
     case 'sml':
       return isSMLAuditLog(log)
     case 'imports':
@@ -1219,6 +1233,7 @@ function ActorBadge({ log }: { log: AuditLog }) {
 }
 
 export default function Logs() {
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin')
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [total, setTotal] = useState<number | null>(null)
   const [nextCursor, setNextCursor] = useState('')
@@ -1233,6 +1248,10 @@ export default function Logs() {
   const [quickView, setQuickView] = useState<QuickView>('actionable')
   const [devMode, setDevMode] = useState(false)
   const pageSize = 50
+
+  useEffect(() => {
+    if (!isAdmin) setDevMode(false)
+  }, [isAdmin])
 
   const load = async (opts: { cursor?: string; append?: boolean; includeTotal?: boolean } = {}) => {
     setLoading(true)
@@ -1282,7 +1301,7 @@ export default function Logs() {
 
   // Stats: count errors + warnings within current page result for quick scan
   const errorCount = useMemo(
-    () => visibleLogs.filter((l) => l.level === 'error').length,
+    () => visibleLogs.filter((l) => l.level === 'error' && l.resolution_status !== 'resolved').length,
     [visibleLogs],
   )
   const warnCount = useMemo(
@@ -1323,13 +1342,15 @@ export default function Logs() {
           description="ตรวจย้อนหลังว่าระบบนำเข้ารายการขาย จับคู่สินค้า และส่งเข้า SML สำเร็จหรือไม่"
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex h-9 items-center gap-2 rounded-md border bg-card px-2.5">
-                <Bug className="h-3.5 w-3.5 text-muted-foreground" />
-                <Label htmlFor="logs-dev-mode" className="cursor-pointer text-xs text-muted-foreground">
-                  DEV
-                </Label>
-                <Switch id="logs-dev-mode" checked={devMode} onCheckedChange={setDevMode} />
-              </div>
+              {isAdmin && (
+                <div className="flex h-9 items-center gap-2 rounded-md border bg-card px-2.5">
+                  <Bug className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Label htmlFor="logs-dev-mode" className="cursor-pointer text-xs text-muted-foreground">
+                    DEV
+                  </Label>
+                  <Switch id="logs-dev-mode" checked={devMode} onCheckedChange={setDevMode} />
+                </div>
+              )}
               <Button
                 variant="outline"
                 size="sm"

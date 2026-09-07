@@ -6,17 +6,21 @@ import (
 )
 
 type AuditLog struct {
-	ID         string          `json:"id"`
-	UserID     *string         `json:"user_id,omitempty"`
-	Actor      *AuditActor     `json:"actor,omitempty"`
-	Action     string          `json:"action"`
-	TargetID   *string         `json:"target_id,omitempty"`
-	Source     string          `json:"source,omitempty"`
-	Level      string          `json:"level,omitempty"`
-	DurationMs *int            `json:"duration_ms,omitempty"`
-	TraceID    string          `json:"trace_id,omitempty"`
-	Detail     json.RawMessage `json:"detail,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ID               string          `json:"id"`
+	UserID           *string         `json:"user_id,omitempty"`
+	Actor            *AuditActor     `json:"actor,omitempty"`
+	Action           string          `json:"action"`
+	TargetID         *string         `json:"target_id,omitempty"`
+	Source           string          `json:"source,omitempty"`
+	Level            string          `json:"level,omitempty"`
+	DurationMs       *int            `json:"duration_ms,omitempty"`
+	TraceID          string          `json:"trace_id,omitempty"`
+	Detail           json.RawMessage `json:"detail,omitempty"`
+	AttemptID        string          `json:"attempt_id,omitempty"`
+	ExchangeID       string          `json:"exchange_id,omitempty"`
+	ResolutionStatus string          `json:"resolution_status,omitempty"`
+	CanRetry         bool            `json:"can_retry"`
+	CreatedAt        time.Time       `json:"created_at"`
 }
 
 type AuditActor struct {

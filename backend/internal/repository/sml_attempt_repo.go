@@ -262,6 +262,28 @@ func (r *BillRepo) RenewSMLAttemptLease(ctx context.Context, attemptID, leaseOwn
 	return nil
 }
 
+func (r *BillRepo) FindCurrentSMLAttempt(ctx context.Context, billID string) (*models.BillSMLAttempt, error) {
+	if r == nil || r.db == nil || strings.TrimSpace(billID) == "" {
+		return nil, ErrBillNotSendable
+	}
+	attempt, err := scanSMLAttempt(r.db.QueryRowContext(ctx, `SELECT `+smlAttemptSelectColumns+`
+		FROM bill_sml_attempts WHERE id=(SELECT current_sml_attempt_id FROM bills WHERE id=$1)`, billID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return attempt, err
+}
+
+func (r *BillRepo) CountSMLAttemptFailures(ctx context.Context, billID, attemptID string) (int, error) {
+	if r == nil || r.db == nil || strings.TrimSpace(billID) == "" || strings.TrimSpace(attemptID) == "" {
+		return 0, nil
+	}
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_logs
+		WHERE target_id=$1 AND action='sml_failed' AND detail->>'attempt_id'=$2`, billID, attemptID).Scan(&count)
+	return count, err
+}
+
 func (r *BillRepo) FinishSMLAttempt(
 	ctx context.Context,
 	attemptID, leaseOwner, attemptState, billStatus string,
