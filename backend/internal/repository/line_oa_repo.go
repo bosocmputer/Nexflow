@@ -38,7 +38,11 @@ func scanLineOA(s interface{ Scan(...any) error }) (*models.LineOAAccount, error
 // ListAll returns all OAs (enabled and disabled), ordered by name.
 // Used by both the admin UI and the LineRegistry on boot.
 func (r *LineOAAccountRepo) ListAll() ([]*models.LineOAAccount, error) {
-	rows, err := r.db.Query(`SELECT ` + lineOACols + ` FROM line_oa_accounts ORDER BY name`)
+	return r.ListAllContext(context.Background())
+}
+
+func (r *LineOAAccountRepo) ListAllContext(ctx context.Context) ([]*models.LineOAAccount, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+lineOACols+` FROM line_oa_accounts ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list line_oa_accounts: %w", err)
 	}

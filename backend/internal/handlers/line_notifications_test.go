@@ -1,18 +1,22 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
 	"nexflow/internal/config"
+	"nexflow/internal/models"
 	"nexflow/internal/repository"
+	lineservice "nexflow/internal/services/line"
 )
 
 func TestLineNotificationStatusReturnsOnlyReadinessCounts(t *testing.T) {
@@ -145,5 +149,101 @@ func TestLineNotificationDestinationFromWebhookSource(t *testing.T) {
 				t.Fatalf("lineNotificationDestination = (%q, %q), want (%q, %q)", gotType, gotID, tt.wantType, tt.wantID)
 			}
 		})
+	}
+}
+
+func TestLineNotificationQuotaKeepsOAResultsIndependent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	now := time.Now()
+	rows := sqlmock.NewRows([]string{
+		"id", "name", "channel_secret", "channel_access_token", "bot_user_id",
+		"admin_user_id", "greeting", "enabled", "mark_as_read_enabled", "created_at", "updated_at",
+	}).
+		AddRow("oa-ok", "OA พร้อมใช้", "secret-one", "token-one", "U1", "", "", true, false, now, now).
+		AddRow("oa-bad", "OA ต้องตรวจสอบ", "secret-two", "token-two", "U2", "", "", true, false, now, now)
+	mock.ExpectQuery("SELECT .* FROM line_oa_accounts ORDER BY name").WillReturnRows(rows)
+
+	limit, remaining := int64(300), int64(282)
+	h := &LineNotificationHandler{
+		lineOARepo: repository.NewLineOAAccountRepo(db),
+		logger:     zap.NewNop(),
+		quotaCache: lineservice.NewQuotaCache(),
+		quotaFetch: func(_ context.Context, account *models.LineOAAccount) (lineservice.MessageQuota, error) {
+			if account.ID == "oa-bad" {
+				return lineservice.MessageQuota{}, &lineservice.QuotaAPIError{Code: "line_token_invalid", HTTPStatus: http.StatusUnauthorized}
+			}
+			return lineservice.MessageQuota{Type: "limited", Limit: &limit, Used: 18, Remaining: &remaining}, nil
+		},
+	}
+	router := gin.New()
+	router.GET("/api/settings/line-notifications/quota", h.Quota)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/settings/line-notifications/quota", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data []lineOAQuotaDTO `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 2 {
+		t.Fatalf("data=%#v", response.Data)
+	}
+	byID := map[string]lineOAQuotaDTO{}
+	for _, item := range response.Data {
+		byID[item.LineOAID] = item
+	}
+	if got := byID["oa-ok"]; got.Status != "ok" || got.Used == nil || *got.Used != 18 || got.Remaining == nil || *got.Remaining != 282 {
+		t.Fatalf("ok item=%#v", got)
+	}
+	if got := byID["oa-bad"]; got.Status != "error" || got.ErrorCode != "line_token_invalid" {
+		t.Fatalf("bad item=%#v", got)
+	}
+	for _, forbidden := range []string{"token-one", "token-two", "secret-one", "secret-two", "channel_access_token", "channel_secret"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("quota response leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLineNotificationQuotaValidatesRefreshAndTarget(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+	h := &LineNotificationHandler{lineOARepo: repository.NewLineOAAccountRepo(db), logger: zap.NewNop()}
+	router := gin.New()
+	router.GET("/quota", h.Quota)
+
+	invalid := httptest.NewRecorder()
+	router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/quota?refresh=yes", nil))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid refresh status=%d", invalid.Code)
+	}
+
+	now := time.Now()
+	mock.ExpectQuery("SELECT .* FROM line_oa_accounts ORDER BY name").WillReturnRows(
+		sqlmock.NewRows([]string{
+			"id", "name", "channel_secret", "channel_access_token", "bot_user_id",
+			"admin_user_id", "greeting", "enabled", "mark_as_read_enabled", "created_at", "updated_at",
+		}).AddRow("oa-1", "OA", "secret", "token", "U1", "", "", true, false, now, now),
+	)
+	missing := httptest.NewRecorder()
+	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/quota?oa_id=not-found", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

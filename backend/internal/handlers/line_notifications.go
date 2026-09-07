@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"io"
@@ -26,6 +27,8 @@ type LineNotificationHandler struct {
 	auditRepo  *repository.AuditLogRepo
 	cfg        *config.Config
 	logger     *zap.Logger
+	quotaCache *lineservice.QuotaCache
+	quotaFetch func(context.Context, *models.LineOAAccount) (lineservice.MessageQuota, error)
 }
 
 func NewLineNotificationHandler(
@@ -36,7 +39,13 @@ func NewLineNotificationHandler(
 	cfg *config.Config,
 	logger *zap.Logger,
 ) *LineNotificationHandler {
-	return &LineNotificationHandler{lineOARepo: lineOARepo, repo: repo, registry: registry, auditRepo: auditRepo, cfg: cfg, logger: logger}
+	h := &LineNotificationHandler{
+		lineOARepo: lineOARepo, repo: repo, registry: registry,
+		auditRepo: auditRepo, cfg: cfg, logger: logger,
+		quotaCache: lineservice.NewQuotaCache(),
+	}
+	h.quotaFetch = h.fetchLineQuota
+	return h
 }
 
 func (h *LineNotificationHandler) Overview(c *gin.Context) {
@@ -145,6 +154,7 @@ func (h *LineNotificationHandler) CreateSender(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "เพิ่ม LINE OA ไม่สำเร็จ"})
 		return
 	}
+	h.quotaCacheForRequest().Invalidate(a.ID)
 	h.tryFillBotUserID(a)
 	h.reloadRegistry()
 	h.audit(c, "line_notification_sender_created", a.ID, gin.H{"name": a.Name})
@@ -166,6 +176,7 @@ func (h *LineNotificationHandler) UpdateSender(c *gin.Context) {
 	if strings.TrimSpace(in.ChannelAccessToken) != "" {
 		h.tryFillBotUserID(updated)
 	}
+	h.quotaCacheForRequest().Invalidate(id)
 	h.reloadRegistry()
 	h.audit(c, "line_notification_sender_updated", id, gin.H{"name": updated.Name})
 	c.JSON(http.StatusOK, maskAccount(updated))

@@ -27,7 +27,7 @@ const (
 
 // Delivery method for outgoing messages — "reply" uses LINE's free Reply API
 // (single-use replyToken from a recent inbound webhook); "push" uses Push API
-// which counts toward the monthly quota (200/month free OA plan).
+// which counts toward the configured LINE OA's monthly quota.
 const (
 	ChatDeliveryMethodReply = "reply"
 	ChatDeliveryMethodPush  = "push"

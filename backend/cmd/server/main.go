@@ -452,6 +452,7 @@ func main() {
 		{
 			lineNotificationGroup.GET("", lineNotificationH.Overview)
 			lineNotificationGroup.GET("/status", lineNotificationH.Status)
+			lineNotificationGroup.GET("/quota", lineNotificationH.Quota)
 			lineNotificationGroup.POST("/senders", lineNotificationH.CreateSender)
 			lineNotificationGroup.PUT("/senders/:id", lineNotificationH.UpdateSender)
 			lineNotificationGroup.POST("/senders/:id/test", lineNotificationH.TestSender)

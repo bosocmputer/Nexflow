@@ -19,6 +19,7 @@ type Service struct {
 	adminUserID   string
 	accessToken   string
 	httpClient    *http.Client
+	apiBaseURL    string
 }
 
 func New(channelSecret, accessToken, adminUserID string) (*Service, error) {
@@ -32,6 +33,7 @@ func New(channelSecret, accessToken, adminUserID string) (*Service, error) {
 		adminUserID:   adminUserID,
 		accessToken:   accessToken,
 		httpClient:    &http.Client{Timeout: 10 * time.Second},
+		apiBaseURL:    "https://api.line.me",
 	}, nil
 }
 
@@ -110,8 +112,8 @@ func (s *Service) PushAdmin(text string) error {
 // PushText sends a plain-text Push to an arbitrary LINE userID. Used by the
 // human-chat inbox for admin → customer replies. Push has no reply-window
 // constraint so it works any time the user has us as a friend; counts toward
-// the LINE OA monthly push quota (200/mo on free Light Plan; Reply API path
-// is preferred and is free — see chat_inbox.sendOutgoingText).
+// the LINE OA monthly push quota. Reply API is preferred when available — see
+// chat_inbox.sendOutgoingText.
 func (s *Service) PushText(userID, text string) error {
 	if userID == "" {
 		return fmt.Errorf("userID required")
