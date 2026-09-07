@@ -70,3 +70,10 @@ Root cause of visibility gap:
 - Build and 7 presentation tests passed; focused lint 0 errors / 24 existing ShopeeOperations warnings; sales-only deploy guard passed.
 - AOY-only deploy initiated; backup `/mnt/data/nextstep-node-2/nexflow-backups/aoy/pre-deploy-20260907-085505.sql.gz`.
 - Deploy completed successfully at `e68d085`: DB authentication, backend/public health, frontend/edge login 200 and Gateway health passed; recent backend error scan empty. Counts unchanged. Other tenant applications untouched. User browser acceptance remains next action; no full responsive/popover browser QA claimed for this follow-up.
+
+## Compact row alignment — AOY
+
+- `3279888`: sale info button moved beside the first-line status badge; size 24px, parent flex column gap 4px and document-only second line match the cancellation layout. Popover details use two columns, 320px maximum width with narrow viewport bound.
+- Build and 10 Shopee status tests passed (initial test invocation from repository root failed to resolve Vite paths; rerun from frontend passed). No business logic/API changes.
+- AOY backup: `/mnt/data/nextstep-node-2/nexflow-backups/aoy/pre-deploy-20260907-090620.sql.gz`.
+- AOY application deployed; DB authentication, frontend/edge 200 and public health passed, recent backend error scan empty, counts unchanged. Other tenant applications untouched. User visual acceptance pending; no row-height browser measurement claimed.
