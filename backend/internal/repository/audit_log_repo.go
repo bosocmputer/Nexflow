@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -212,24 +213,50 @@ func (r *AuditLogRepo) ListByTarget(targetID string) ([]models.AuditLog, error) 
 }
 
 type smlAuditResolution struct {
+	BillID     string
+	DocNo      string
+	Route      string
 	State      string
 	CoreStatus string
 	BillStatus string
 	Current    bool
 }
 
-func auditDetailIdentity(detail json.RawMessage) (attemptID, exchangeID string) {
+func auditDetailIdentity(detail json.RawMessage) (attemptID, exchangeID, docNo, route string) {
 	if len(detail) == 0 {
-		return "", ""
+		return "", "", "", ""
 	}
 	var raw struct {
-		AttemptID  string `json:"attempt_id"`
-		ExchangeID string `json:"exchange_id"`
+		AttemptID      string `json:"attempt_id"`
+		ExchangeID     string `json:"exchange_id"`
+		DocNo          string `json:"doc_no"`
+		DocNoAttempted string `json:"doc_no_attempted"`
+		Route          string `json:"route"`
 	}
 	if json.Unmarshal(detail, &raw) != nil {
-		return "", ""
+		return "", "", "", ""
 	}
-	return strings.TrimSpace(raw.AttemptID), strings.TrimSpace(raw.ExchangeID)
+	docNo = strings.TrimSpace(raw.DocNo)
+	if docNo == "" {
+		docNo = strings.TrimSpace(raw.DocNoAttempted)
+	}
+	return strings.TrimSpace(raw.AttemptID), strings.TrimSpace(raw.ExchangeID), docNo, strings.TrimSpace(raw.Route)
+}
+
+var auditUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+
+var smlAttemptAuditActions = map[string]struct{}{
+	"profile_requested": {}, "core_committed": {}, "reconcile_queued": {},
+	"profile_complete": {}, "profile_terminal_failure": {}, "profile_retry_requested": {},
+	"sml_sent": {}, "sml_failed": {}, "sml_erp_log_warning": {},
+	"sml_stock_recalc_ok": {}, "sml_stock_recalc_failed": {},
+}
+
+func legacySMLAttemptKey(billID, docNo, route string) string {
+	if billID == "" || docNo == "" || route == "" {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(billID) + "\x00" + strings.TrimSpace(docNo) + "\x00" + strings.TrimSpace(route))
 }
 
 func coreAlreadyCreated(state, coreStatus, billStatus string) bool {
@@ -251,12 +278,32 @@ func (r *AuditLogRepo) EnrichSMLResolution(ctx context.Context, logs []models.Au
 		return nil
 	}
 	attemptIDs := make([]string, 0)
+	billIDs := make([]string, 0)
 	seen := make(map[string]struct{})
+	seenBills := make(map[string]struct{})
+	traceAttempts := make(map[string]map[string]struct{})
 	for index := range logs {
-		attemptID, exchangeID := auditDetailIdentity(logs[index].Detail)
+		attemptID, exchangeID, _, _ := auditDetailIdentity(logs[index].Detail)
 		logs[index].AttemptID = attemptID
 		logs[index].ExchangeID = exchangeID
+		if attemptID != "" && strings.TrimSpace(logs[index].TraceID) != "" {
+			ids := traceAttempts[logs[index].TraceID]
+			if ids == nil {
+				ids = make(map[string]struct{})
+				traceAttempts[logs[index].TraceID] = ids
+			}
+			ids[attemptID] = struct{}{}
+		}
 		if attemptID == "" {
+			if _, relevant := smlAttemptAuditActions[logs[index].Action]; relevant && logs[index].TargetID != nil {
+				billID := strings.TrimSpace(*logs[index].TargetID)
+				if auditUUIDPattern.MatchString(billID) {
+					if _, ok := seenBills[billID]; !ok {
+						seenBills[billID] = struct{}{}
+						billIDs = append(billIDs, billID)
+					}
+				}
+			}
 			continue
 		}
 		if _, ok := seen[attemptID]; !ok {
@@ -264,28 +311,52 @@ func (r *AuditLogRepo) EnrichSMLResolution(ctx context.Context, logs []models.Au
 			attemptIDs = append(attemptIDs, attemptID)
 		}
 	}
-	if len(attemptIDs) == 0 {
+	if len(attemptIDs) == 0 && len(billIDs) == 0 {
 		return nil
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT a.id::text,a.state,COALESCE(a.core_status,''),b.status,
+	rows, err := r.db.QueryContext(ctx, `SELECT a.id::text,a.bill_id::text,a.doc_no,a.route,a.state,COALESCE(a.core_status,''),b.status,
 		(b.current_sml_attempt_id=a.id) AS is_current
 		FROM bill_sml_attempts a JOIN bills b ON b.id=a.bill_id
-		WHERE a.id=ANY($1::uuid[])`, pq.Array(attemptIDs))
+		WHERE a.id=ANY($1::uuid[]) OR a.bill_id=ANY($2::uuid[])`, pq.Array(attemptIDs), pq.Array(billIDs))
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	resolutions := make(map[string]smlAuditResolution, len(attemptIDs))
+	legacyMatches := make(map[string][]string)
 	for rows.Next() {
 		var id string
 		var value smlAuditResolution
-		if err := rows.Scan(&id, &value.State, &value.CoreStatus, &value.BillStatus, &value.Current); err != nil {
+		if err := rows.Scan(&id, &value.BillID, &value.DocNo, &value.Route, &value.State, &value.CoreStatus, &value.BillStatus, &value.Current); err != nil {
 			return err
 		}
 		resolutions[id] = value
+		key := legacySMLAttemptKey(value.BillID, value.DocNo, value.Route)
+		if key != "" {
+			legacyMatches[key] = append(legacyMatches[key], id)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	for index := range logs {
+		if logs[index].AttemptID != "" {
+			continue
+		}
+		if ids := traceAttempts[strings.TrimSpace(logs[index].TraceID)]; len(ids) == 1 {
+			for id := range ids {
+				logs[index].AttemptID = id
+			}
+			continue
+		}
+		if logs[index].TargetID == nil {
+			continue
+		}
+		_, _, docNo, route := auditDetailIdentity(logs[index].Detail)
+		key := legacySMLAttemptKey(*logs[index].TargetID, docNo, route)
+		if ids := legacyMatches[key]; len(ids) == 1 {
+			logs[index].AttemptID = ids[0]
+		}
 	}
 	for index := range logs {
 		value, ok := resolutions[logs[index].AttemptID]

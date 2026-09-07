@@ -60,6 +60,12 @@ var deniedKeyFragments = []string{
 	"email",
 }
 
+var deniedExactKeys = map[string]struct{}{
+	"customername": {}, "custname": {}, "receivername": {}, "contactname": {},
+	"firstname": {}, "lastname": {}, "fullname": {}, "taxid": {},
+	"nationalid": {}, "identitynumber": {},
+}
+
 var (
 	emailPattern      = regexp.MustCompile(`(?i)[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}`)
 	phonePattern      = regexp.MustCompile(`(?:\+?66|0)[0-9][0-9\- ]{7,12}[0-9]`)
@@ -82,6 +88,9 @@ func normalizeKey(key string) string {
 
 func deniedKey(key string) bool {
 	normalized := normalizeKey(key)
+	if _, denied := deniedExactKeys[normalized]; denied {
+		return true
+	}
 	for _, fragment := range deniedKeyFragments {
 		if strings.Contains(normalized, fragment) {
 			return true

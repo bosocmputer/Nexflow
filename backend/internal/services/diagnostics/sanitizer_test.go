@@ -14,6 +14,8 @@ func TestSanitizeJSONRedactsSecretsAndBuyerPIIRecursively(t *testing.T) {
 			"Password":"secret-value",
 			"buyer_phone":"0812345678",
 			"email":"buyer@example.test",
+			"customer_name":"Buyer Name",
+			"tax_id":"1234567890123",
 			"safe":"visible"
 		},
 		"items":[{"provider_secret":"hidden","item_code":"SKU-001"}]
@@ -24,7 +26,7 @@ func TestSanitizeJSONRedactsSecretsAndBuyerPIIRecursively(t *testing.T) {
 		t.Fatal("expected valid JSON")
 	}
 	text := string(got.Body)
-	for _, forbidden := range []string{"token-value", "secret-value", "message-secret", "0812345678", "buyer@example.test", "hidden"} {
+	for _, forbidden := range []string{"token-value", "secret-value", "message-secret", "0812345678", "buyer@example.test", "Buyer Name", "1234567890123", "hidden"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("sanitized JSON contains %q: %s", forbidden, text)
 		}

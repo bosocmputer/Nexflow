@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"nexflow/internal/models"
@@ -98,5 +99,12 @@ func TestSMLDiagnosticsRejectsStaffBeforeRepositoryAccess(t *testing.T) {
 	(&BillHandler{}).SMLDiagnostics(context)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSMLExchangeEvidenceWorstCaseLocalWaitStaysWithinBudget(t *testing.T) {
+	const maximumLocalOverhead = 50 * time.Millisecond
+	if twoWrites := 2 * smlExchangeEvidenceTimeout; twoWrites > maximumLocalOverhead {
+		t.Fatalf("diagnostic evidence can block %s, budget is %s", twoWrites, maximumLocalOverhead)
 	}
 }

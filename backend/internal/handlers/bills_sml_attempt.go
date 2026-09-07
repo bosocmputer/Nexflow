@@ -21,7 +21,10 @@ import (
 	"nexflow/internal/services/smlprofile"
 )
 
-const smlAttemptLeaseDuration = 5 * time.Minute
+const (
+	smlAttemptLeaseDuration    = 5 * time.Minute
+	smlExchangeEvidenceTimeout = 20 * time.Millisecond
+)
 
 type smlAttemptRouteSnapshot struct {
 	URLOverride     string                             `json:"url_override,omitempty"`
@@ -371,7 +374,7 @@ func (h *BillHandler) smlExchangeHooks(attempt *models.BillSMLAttempt, opts retr
 	return &sml.HTTPExchangeHooks{
 		Before: func(request sml.HTTPExchangeRequest) string {
 			started := time.Now()
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), smlExchangeEvidenceTimeout)
 			defer cancel()
 			exchange, err := h.billRepo.BeginSMLAttemptExchange(ctx, repository.SMLExchangeStart{
 				AttemptID: attempt.ID, TraceID: opts.TraceID, Route: attempt.Route,
@@ -391,7 +394,7 @@ func (h *BillHandler) smlExchangeHooks(attempt *models.BillSMLAttempt, opts retr
 		},
 		After: func(exchangeID string, result sml.HTTPExchangeResult) {
 			started := time.Now()
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), smlExchangeEvidenceTimeout)
 			defer cancel()
 			_, err := h.billRepo.FinishSMLAttemptExchange(ctx, repository.SMLExchangeFinish{
 				ExchangeID: exchangeID, Status: result.Status, HTTPStatus: result.HTTPStatus,
