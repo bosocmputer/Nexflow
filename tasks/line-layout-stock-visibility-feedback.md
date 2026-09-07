@@ -43,3 +43,21 @@ Root cause of visibility gap:
 - Complete responsive/console QA and release UI through normal backup/canary/deploy workflow when releasing this follow-up.
 - Proposed separate visibility fix: expose existing durable stock-job outcome in bill history/summary, explicitly labelled as job evidence (do not fabricate historical HTTP exchanges or audit timestamps).
 - Do not resend core or stock: no missing processing was found for the requested/recent bills. User asked to diagnose this part; no business-flow change implemented.
+
+## Authorized AOY follow-up release
+
+- User authorized fixing the visibility gap and deploying AOY only; user will do UI acceptance testing.
+- Code commit `0d533b82ee4aa625fee36132d30e3208e9492588` adds a stock summary above the bill timeline, using the existing `sml_stock_job_status` only. It does not add synthetic historical events or timestamps, and missing/unknown status never implies success.
+- Verification: 7 bill-presentation tests passed; production build passed; lint 0 errors / 35 pre-existing warnings; sales-only guard and diff whitespace check passed.
+- Deployment started with `--target aoy --ref 0d533b8`. No new migration. Demo/Lanboon/Ploy and SML API BY BOS are outside this release.
+- Rollback: deploy prior application `175cbb1` to AOY, retaining all data and migration 094.
+- Next action: record backup, health, DB authentication and deployment outcome; user performs UI acceptance.
+
+### Release result
+
+- AOY deploy completed successfully at `0d533b8` on 2026-09-07. No other tenant application deployed; existing shared edge remained running.
+- Backup: `/mnt/data/nextstep-node-2/nexflow-backups/aoy/pre-deploy-20260907-084250.sql.gz` (1.1 MiB).
+- Backend health/database authentication passed, frontend/edge login returned 200, public HTTPS health returned database/status ok; recent backend error scan empty.
+- Catalog/alias/mapping counts unchanged at 65/74/43. Gateway health ok; internal gateway API remains externally blocked (404).
+- Existing deploy sanitizer removed `PURCHASE_FLOW_ENABLED` (disabled default); no Shopee/SML/LINE business settings changed.
+- User acceptance of LINE layout and bill stock summary is pending as requested. No test LINE send, SML resend, or stock recalculation was triggered.
