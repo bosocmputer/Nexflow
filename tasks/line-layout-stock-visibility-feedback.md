@@ -61,3 +61,12 @@ Root cause of visibility gap:
 - Catalog/alias/mapping counts unchanged at 65/74/43. Gateway health ok; internal gateway API remains externally blocked (404).
 - Existing deploy sanitizer removed `PURCHASE_FLOW_ENABLED` (disabled default); no Shopee/SML/LINE business settings changed.
 - User acceptance of LINE layout and bill stock summary is pending as requested. No test LINE send, SML resend, or stock recalculation was triggered.
+
+## Info-button follow-up
+
+- User clarified that stock outcome belongs inside “ประวัติระบบ”, and authorized an info button like the existing cancellation popover.
+- `e68d085`: moved current stock-job summary under system history, clearly labelled as current state rather than a historical event; added shared info popover there and beside sale SML document numbers in Shopee Operations. Existing cancellation popover remains unchanged.
+- Popover loads only on open through the existing authorized bill GET, displays document/method/stock outcome, and has loading/error/unknown states. No per-row request waterfall; no business writes or synthetic audit records.
+- Build and 7 presentation tests passed; focused lint 0 errors / 24 existing ShopeeOperations warnings; sales-only deploy guard passed.
+- AOY-only deploy initiated; backup `/mnt/data/nextstep-node-2/nexflow-backups/aoy/pre-deploy-20260907-085505.sql.gz`.
+- Deploy completed successfully at `e68d085`: DB authentication, backend/public health, frontend/edge login 200 and Gateway health passed; recent backend error scan empty. Counts unchanged. Other tenant applications untouched. User browser acceptance remains next action; no full responsive/popover browser QA claimed for this follow-up.
