@@ -86,3 +86,12 @@ Root cause of visibility gap:
 - Added Thai label and safe explanation for `shopee_auto_sml_profile_contract_paused` in shared logs metadata.
 - Verification: Go full tests, handler/repository race tests, go vet passed; frontend build, focused audit/timeline tests passed; lint 0 errors / 35 existing warnings. Initial parallel frontend tests reported existing Vite HMR port contention but passed.
 - Authorized rollout scope: Demo, AOY, Lanboon, Ploy, same commit; preserve tenant business configuration. Backup/health evidence and user acceptance to follow.
+
+### Four-tenant production result (2026-09-07)
+
+- All four applications deployed at `953a91ca8a1b3b7d2b7ade070589a6c20430628e`. Public HTTPS health returns database/status ok for Demo, AOY, Lanboon and Ploy; DB authentication passed for all four. Catalog/alias/mapping counts unchanged.
+- Initial all-target deploy stopped on transient SSH authentication rejection during AOY frontend smoke, after AOY backend and DB checks passed. Continued only remaining Lanboon/Ploy using the same ref; both completed. AOY public page and bill timeline verified directly in browser afterwards.
+- Backups under `/mnt/data/nextstep-node-2/nexflow-backups`: demo `pre-deploy-20260907-091910.sql.gz`; aoy `pre-deploy-20260907-092051.sql.gz`; lanboon `pre-deploy-20260907-092252.sql.gz`; ploy `pre-deploy-20260907-092413.sql.gz`.
+- AOY live browser: BF-INV26090004 shows 6 history events with separate stock completion row at 07/09/2026 09:42 (Thailand), derived from persisted verification time. Logs shows Thai contract-pause label and explanation for the 03/09/26 17:05 event. Shopee Operations screenshot confirms sale info removed and cancellation info on 260827ECCFMCSC retained.
+- No SML document, audit backfill, test LINE send or manual stock recalculation triggered. Standard deploy refreshed shared Shopee Gateway and kept disabled purchase behavior; SML API BY BOS unchanged.
+- Next action: user acceptance/feedback. Full mobile QA and performance percentile measurement not performed in this change. Rollback uses previous application ref, retaining all DB records.
