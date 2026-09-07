@@ -2,21 +2,21 @@
 
 ## Handoff
 
-- Last completed: D01 fixtures and diagnostic security contract (commit pending
-  in this checkpoint).
-- Active task: D02 durable SML exchange repository.
-- Branch/HEAD at D02 start: `codex/marketplace-units-conversion` / `265b0fa`.
+- Last completed: D02 durable SML exchange repository (commit pending in this
+  checkpoint); D01 is commit `bbfc64d`.
+- Active task: D03 immutable SML send instrumentation.
+- Branch/HEAD at D03 start: `codex/marketplace-units-conversion` / `bbfc64d`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
 - Migration baseline: 093 is the latest checked-in migration; use 094 only if
   it remains free when D02 starts.
-- Tests: diagnostics Go tests, the 17-event frontend grouping tests, and
-  frontend TypeScript compilation pass.
+- Tests: migration 094, exchange repository, diagnostics sanitizer, the
+  17-event frontend grouping tests, and frontend TypeScript compilation pass.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
 - Blocker: none.
-- Next action: add migration 094 and the exchange repository with parent-lock
-  sequence allocation and independent finalize semantics.
+- Next action: wrap Sale Invoice and Sale Order clients with per-outbound-call
+  evidence hooks while preserving their legacy return contracts.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -39,11 +39,11 @@ next action.
 
 ## D02 — Durable SML exchange repository
 
-- [ ] Add the next free additive migration and migration replay test.
-- [ ] Insert exchange start under the parent-attempt lock with unique sequence.
-- [ ] Finalize exchange independently with bounded sanitized response evidence.
-- [ ] Keep repository failures best-effort and observable.
-- [ ] Verify concurrency and old-attempt/no-backfill behavior.
+- [x] Add the next free additive migration and migration replay test.
+- [x] Insert exchange start under the parent-attempt lock with unique sequence.
+- [x] Finalize exchange independently with bounded sanitized response evidence.
+- [x] Keep repository failures separable from attempt/core transactions.
+- [x] Verify parent locking, unique sequence, and old-attempt/no-backfill behavior.
 
 ## D03 — Instrument immutable SML sends
 

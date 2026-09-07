@@ -120,6 +120,33 @@ func TestMigration087IsAdditiveAndSchemaOnly(t *testing.T) {
 	}
 }
 
+func TestMigration094AddsBoundedSMLExchangeEvidenceWithoutBackfill(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/094_bill_sml_attempt_exchanges.sql")
+	if err != nil {
+		t.Fatalf("read migration 094: %v", err)
+	}
+	sqlText := string(data)
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS bill_sml_attempt_exchanges",
+		"sml_attempt_id UUID NOT NULL REFERENCES bill_sml_attempts(id) ON DELETE RESTRICT",
+		"UNIQUE (sml_attempt_id, exchange_sequence)",
+		"CHECK (status IN ('started','succeeded','failed','unknown'))",
+		"response_json JSONB",
+		"response_truncated BOOLEAN NOT NULL DEFAULT FALSE",
+		"bill_sml_attempt_exchanges_attempt_created_idx",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Errorf("migration 094 missing %q", required)
+		}
+	}
+	for _, line := range strings.Split(sqlText, "\n") {
+		trimmed := strings.ToUpper(strings.TrimSpace(line))
+		if strings.HasPrefix(trimmed, "UPDATE ") || strings.HasPrefix(trimmed, "DELETE ") {
+			t.Errorf("migration 094 must not backfill or mutate existing data: %q", line)
+		}
+	}
+}
+
 func TestMigration088OnlyNormalizesLegacyShopeeCancelRoute(t *testing.T) {
 	data, err := migrationFS.ReadFile("migrations/088_shopee_sml_cancel_destinations.sql")
 	if err != nil {

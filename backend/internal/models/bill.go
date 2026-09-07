@@ -88,6 +88,32 @@ type BillSMLAttempt struct {
 	UpdatedAt                time.Time       `json:"updated_at"`
 }
 
+type BillSMLAttemptExchange struct {
+	ID                 string            `json:"id"`
+	SMLAttemptID       string            `json:"sml_attempt_id"`
+	Sequence           int               `json:"sequence"`
+	TraceID            string            `json:"trace_id,omitempty"`
+	Route              string            `json:"route"`
+	Status             string            `json:"status"`
+	RequestMethod      string            `json:"request_method"`
+	RequestPath        string            `json:"request_path"`
+	RequestContentType string            `json:"request_content_type,omitempty"`
+	CorrelationID      string            `json:"correlation_id,omitempty"`
+	StartedAt          time.Time         `json:"started_at"`
+	FinishedAt         *time.Time        `json:"finished_at,omitempty"`
+	DurationMS         *int64            `json:"duration_ms,omitempty"`
+	HTTPStatus         *int              `json:"http_status,omitempty"`
+	ResponseHeaders    map[string]string `json:"response_headers,omitempty"`
+	ResponseJSON       json.RawMessage   `json:"response_json,omitempty"`
+	ResponseHash       string            `json:"response_hash,omitempty"`
+	ResponseSize       int64             `json:"response_size"`
+	ResponseTruncated  bool              `json:"response_truncated"`
+	ErrorCode          string            `json:"error_code,omitempty"`
+	ErrorClass         string            `json:"error_class,omitempty"`
+	SafeErrorSummary   string            `json:"safe_error_summary,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+}
+
 type BillEmailGroup struct {
 	MessageID          string                 `json:"message_id"`
 	GroupKey           string                 `json:"group_key"`
