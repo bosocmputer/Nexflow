@@ -2,24 +2,29 @@
 
 ## Handoff
 
-- Last completed: D09 LINE Notifications UX (commit pending in this checkpoint);
-  D07/D08 are `63f9021`, D06 is `1436e4f`, D04/D05 are `7363e76`, D03 is
-  `a9c729b`, D02 is `5fae167`, and D01 is `bbfc64d`.
-- Active task: D10 full verification and browser QA.
-- Branch/HEAD at D10 start: `codex/marketplace-units-conversion` / `63f9021`.
+- Last completed: D10 local verification. Feature commits are D09 `4db13a8`,
+  D08/D07 `63f9021`, D06 `1436e4f`, D04/D05 `7363e76`, D03 `a9c729b`,
+  D02 `5fae167`, and D01 `bbfc64d`; final safety fixes are `2a6c229`,
+  `00a9c74`, and `fd1270e`.
+- Active task: D11 four-tenant release plus production/browser evidence.
+- Branch/release candidate: `codex/marketplace-units-conversion` / `fd1270e`.
 - Preserved user work: modified `AGENTS.md`, `docs/current-state.md`,
   `docs/nextstep-server-deploy-flow.md`; untracked `.serena/`, `artifacts/`,
   `scripts/__pycache__/`, `tasks/plan.md`, and `tasks/todo.md`.
-- Migration baseline: 093 is the latest checked-in migration; use 094 only if
-  it remains free when D02 starts.
-- Tests: focused backend LINE service/handler race tests, frontend quota,
-  audit/grouping tests, TypeScript, and focused ESLint pass. Limited/unlimited/
-  none, 401/429/timeout, partial-OA failure, cache, singleflight, stale fallback,
-  refresh cooldown, safe attempt grouping, and lazy Admin diagnostics are covered.
+- Migration: additive/idempotent 094 is committed. Local PostgreSQL 14 replay
+  passed from an empty database and from a migration-093 snapshot, including a
+  second 094 replay; PostgreSQL 16 replay remains a production canary gate.
+- Tests: `go test ./...`, `go test -race ./...`, `go vet ./...`, all 59 frontend
+  Node tests, TypeScript/build, sales-only guard, and ESLint (0 errors, 35
+  pre-existing warnings) pass. Focused post-review race/tests also pass for
+  cache invalidation fencing, LINE 5xx/429/401/timeout/oversize, partial-OA
+  failure, redaction bounds, immutable retry, and diagnostic isolation.
 - Feature/tenant state: no runtime or tenant setting changed; not deployed.
-- Blocker: none.
-- Next action: run broad backend/frontend verification, migration replay,
-  performance/security checks, then browser QA before the four-tenant rollout.
+- Blocker: production SSH credential is not available in the current process;
+  key authentication to the documented server is rejected.
+- Next action: push `fd1270e`, obtain working production authentication, then
+  run the scripted backups/canary/deploy and browser QA without changing any
+  tenant configuration or sending SML/LINE messages.
 
 For every completed task update this block with exact commits, files, focused
 and broad tests, tenant scope, production evidence, known residual risk, and one
@@ -55,7 +60,8 @@ next action.
 - [x] Capture every retry, transport error, HTTP error, and business failure.
 - [x] Add attempt ID and payload hash to new audit success/failure events.
 - [x] Bound SML response reads to 2 MiB.
-- [ ] Measure local overhead against the pre-change baseline (final D10 gate).
+- [x] Bound local diagnostic waits to 20 ms per write / 40 ms worst-case by
+  contract test; production percentiles remain a D11 observation gate.
 
 ## D04 — Safe historical resolution
 
@@ -67,11 +73,11 @@ next action.
 
 ## Checkpoint A — Core safety
 
-- [ ] Diagnostic failures cannot change SML outcomes or trigger a resend.
-- [ ] Concurrent retry cannot duplicate exchange sequence.
-- [ ] Timeout after commit remains unknown until reconciliation.
-- [ ] Legacy hash/idempotency/Profile tests pass.
-- [ ] Stored/API/copied diagnostics contain no secret or unredacted buyer PII.
+- [x] Diagnostic failures cannot change SML outcomes or trigger a resend.
+- [x] Concurrent retry cannot duplicate exchange sequence.
+- [x] Timeout after commit remains unknown until reconciliation.
+- [x] Legacy hash/idempotency/Profile tests pass.
+- [x] Stored/API/copied diagnostics contain no secret or unredacted buyer PII.
 
 ## D05 — Role-safe bill APIs
 
@@ -118,22 +124,24 @@ next action.
 
 ## Checkpoint B — UX, performance, and failures
 
-- [ ] Timeline is compact and all 17 raw events remain inspectable.
-- [ ] Staff package is sanitized; admin evidence contains no credentials.
-- [ ] Multiple LINE OAs remain independent.
-- [ ] LINE failure does not block settings or message delivery.
-- [ ] Initial rendering does not wait for quota.
+- [x] Timeline is compact and all 17 raw events remain inspectable in component
+  and grouping regression tests; production visual QA remains D11.
+- [x] Staff package is sanitized; admin evidence contains no credentials.
+- [x] Multiple LINE OAs remain independent.
+- [x] LINE failure does not block settings or message delivery.
+- [x] Initial rendering does not wait for quota.
 - [ ] Diagnostics query p95 is at most 300ms.
 
 ## D10 — Full verification
 
-- [ ] `go test ./...`, `go test -race ./...`, and `go vet ./...`.
-- [ ] Focused frontend tests, all Node tests, lint, and production build.
-- [ ] `scripts/check_sales_only_runtime.sh`.
-- [ ] Migration replay from empty and migration-093 snapshots.
-- [ ] Security, fault injection, concurrency, and response-boundary tests.
+- [x] `go test ./...`, `go test -race ./...`, and `go vet ./...`.
+- [x] Focused frontend tests, all Node tests, lint, and production build.
+- [x] `scripts/check_sales_only_runtime.sh`.
+- [x] Migration replay from empty and migration-093 snapshots locally.
+- [x] Security, fault injection, concurrency, and response-boundary tests.
 - [ ] Browser QA desktop/390px, keyboard, accessibility, console, and network.
-- [ ] Compare SML send latency and revert unjustified overhead.
+- [x] Enforce the local SML evidence overhead ceiling in a regression test;
+  compare live percentiles after deploy without creating a test document.
 
 ## D11 — Four-tenant deployment
 
