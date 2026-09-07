@@ -15,10 +15,21 @@ const {
   billSMLStatusLabel,
   formatBangkokDateTime,
   smlInquiryTypeLabel,
+  stockJobSummary,
 } = await vite.ssrLoadModule('/src/pages/BillDetail/utils/presentation.ts')
 
 test.after(async () => {
   await vite.close()
+})
+
+test('stock summary uses only a recorded job outcome, never assumes missing status is success', () => {
+  assert.match(stockJobSummary('completed'), /สำเร็จแล้ว/)
+  assert.match(stockJobSummary('queued'), /รอคำนวณ/)
+  assert.match(stockJobSummary('running'), /กำลังคำนวณ/)
+  assert.match(stockJobSummary('failed'), /ยังไม่สำเร็จ/)
+  assert.match(stockJobSummary('manual_reconciliation'), /ผู้ดูแล/)
+  assert.equal(stockJobSummary(undefined), null)
+  assert.equal(stockJobSummary('unknown'), null)
 })
 
 test('formats an ISO order timestamp in Asia/Bangkok using a Gregorian year', () => {

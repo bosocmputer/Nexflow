@@ -35,10 +35,12 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import type { ShopeeOrderEvent } from '@/types'
+import { stockJobSummary } from '../utils/presentation'
 
 interface Props {
   billId: string
   shopeeEvents?: ShopeeOrderEvent[]
+  stockJobStatus?: string
 }
 
 interface SMLExchangeEvidence {
@@ -104,7 +106,7 @@ interface SupportPackage {
 // The timeline keeps the original event count for auditability while presenting
 // unambiguous SML retries as one expandable attempt. HTTP evidence is lazy-loaded
 // only for admins, so the initial bill view never waits for a diagnostics query.
-export function BillTimeline({ billId, shopeeEvents = [] }: Props) {
+export function BillTimeline({ billId, shopeeEvents = [], stockJobStatus }: Props) {
   const [events, setEvents] = useState<AuditLog[] | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -137,6 +139,7 @@ export function BillTimeline({ billId, shopeeEvents = [] }: Props) {
     return bTime - aTime
   })
   const visibleCount = sourceEvents.length + auditEvents.length
+  const stockSummary = stockJobSummary(stockJobStatus)
 
   return (
     <Card>
@@ -151,6 +154,12 @@ export function BillTimeline({ billId, shopeeEvents = [] }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
+        {stockSummary && (
+          <div className="mb-4 rounded-md border border-border bg-muted/30 p-3 text-xs" role="status">
+            <p className="font-medium">{stockSummary}</p>
+            <p className="mt-1 text-muted-foreground">สถานะล่าสุดจากงานสต๊อกของบิลนี้ แสดงแยกจากเหตุการณ์ย้อนหลัง ไม่ใช่การส่งบิลซ้ำ</p>
+          </div>
+        )}
         {loading ? (
           <div className="space-y-2" aria-label="กำลังโหลดประวัติบิล">
             <Skeleton className="h-8 w-full" />

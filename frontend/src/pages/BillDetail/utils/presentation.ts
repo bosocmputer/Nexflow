@@ -59,3 +59,13 @@ export function artifactEvidenceState(
   if (visibleItemCount > 0) return 'list'
   return hideWhenEmpty ? 'hidden' : 'empty'
 }
+export function stockJobSummary(status?: string): string | null {
+  switch (status) {
+    case 'completed': return 'คำนวณต้นทุนและตรวจสอบสต๊อกสำเร็จแล้ว'
+    case 'queued': return 'รอคำนวณต้นทุนและตรวจสอบสต๊อก'
+    case 'running': return 'กำลังคำนวณต้นทุนและตรวจสอบสต๊อก'
+    case 'failed': return 'งานคำนวณต้นทุนหรือการตรวจสอบสต๊อกยังไม่สำเร็จ'
+    case 'manual_reconciliation': return 'งานคำนวณต้นทุนหรือการตรวจสอบสต๊อกต้องให้ผู้ดูแลตรวจสอบ'
+    default: return null
+  }
+}

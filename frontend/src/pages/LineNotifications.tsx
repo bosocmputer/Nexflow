@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import {
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   Edit3,
   Eye,
   EyeOff,
+  History,
   MessageCircle,
   MessageSquareText,
   Plus,
@@ -141,6 +142,8 @@ export default function LineNotifications() {
   const [candidateToAdd, setCandidateToAdd] = useState<LineCandidate | null>(null)
   const [candidateToHide, setCandidateToHide] = useState<LineCandidate | null>(null)
   const [sampleSource, setSampleSource] = useState<LineSampleSource>('shopee')
+  const [supportDialog, setSupportDialog] = useState<'sample' | 'history' | null>(null)
+  const supportTriggerRef = useRef<HTMLButtonElement | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -310,12 +313,18 @@ export default function LineNotifications() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
         description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
+            <Button variant="outline" size="icon" aria-label="ดูตัวอย่างข้อความสำรอง" title="ตัวอย่างข้อความสำรอง" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('sample') }}>
+              <MessageSquareText className="h-4 w-4" aria-hidden />
+            </Button>
+            <Button variant="outline" size="icon" aria-label="ดูประวัติการส่งล่าสุด" title="ประวัติการส่งล่าสุด" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('history') }}>
+              <History className="h-4 w-4" aria-hidden />
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -358,8 +367,8 @@ export default function LineNotifications() {
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-5">
+      <section className="min-w-0">
+        <div className="min-w-0 space-y-5">
           <div className="rounded-lg border border-border/80 bg-card/95 p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
@@ -390,9 +399,17 @@ export default function LineNotifications() {
                   key: 'name',
                   header: 'ชื่อ',
                   cell: (s) => (
-                    <div className="min-w-[220px]">
+                    <div className="min-w-[160px]">
                       <div className="font-medium">{s.name}</div>
                       <div className="font-mono text-[11px] text-muted-foreground">{s.bot_user_id ? `bot ${shortId(s.bot_user_id)}` : 'ยังไม่ได้ทดสอบ token'}</div>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'quota',
+                  header: 'โควตาข้อความ',
+                  cell: (s) => (
+                    <div className="min-w-[240px] max-w-[320px]">
                       <LineQuotaSummary
                         quota={quotaByOA[s.id]}
                         loading={quotaLoading && !quotaByOA[s.id]}
@@ -595,9 +612,15 @@ export default function LineNotifications() {
           </div>
         </div>
 
-        <aside className="space-y-5">
-          <div className="rounded-lg border border-border/80 bg-card/95 p-4">
-            <h2 className="text-base font-semibold">ตัวอย่างข้อความสำรอง</h2>
+      </section>
+
+      <Dialog open={supportDialog !== null} onOpenChange={(open) => !open && setSupportDialog(null)}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl" onCloseAutoFocus={(event) => { event.preventDefault(); supportTriggerRef.current?.focus() }}>
+          <DialogHeader>
+            <DialogTitle>{supportDialog === 'sample' ? 'ตัวอย่างข้อความสำรอง' : 'ประวัติการส่งล่าสุด'}</DialogTitle>
+            <DialogDescription>{supportDialog === 'sample' ? 'ดูตัวอย่างข้อความเมื่อส่ง Flex ไม่สำเร็จ การเปิดหน้าต่างนี้ไม่ส่งข้อความ LINE' : 'ผลการส่งล่าสุดที่โหลดไว้ กดรีเฟรชในหน้าหลักเพื่ออัปเดตข้อมูล'}</DialogDescription>
+          </DialogHeader>
+          {supportDialog === 'sample' ? <div className="min-w-0">
             <div className="mt-2 flex rounded-md border border-border bg-muted/30 p-1">
               {(['shopee', 'nextstep_marketplace'] as LineSampleSource[]).map((source) => (
                 <Button
@@ -613,13 +636,10 @@ export default function LineNotifications() {
               ))}
             </div>
             <p className="mt-2 text-sm text-muted-foreground">ปุ่มทดสอบจะส่ง Flex ของ {sampleSourceLabel(sampleSource)} ก่อน ข้อความด้านล่างใช้เป็น fallback เมื่อ LINE Flex ส่งไม่สำเร็จ และไม่ใส่ข้อมูลลูกค้า</p>
-            <pre className="mt-3 whitespace-pre-wrap rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-foreground">
+            <pre className="mt-3 whitespace-pre-wrap break-words rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-foreground">
               {sampleText}
             </pre>
-          </div>
-
-          <div className="rounded-lg border border-border/80 bg-card/95 p-4">
-            <h2 className="text-base font-semibold">ประวัติการส่งล่าสุด</h2>
+          </div> : <div className="min-w-0 break-words">
             <div className="mt-3 space-y-2">
               {(data?.deliveries ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">ยังไม่มีการส่ง LINE แจ้งเตือนออเดอร์</p>
@@ -637,9 +657,9 @@ export default function LineNotifications() {
                 ))
               )}
             </div>
-          </div>
-        </aside>
-      </section>
+          </div>}
+        </DialogContent>
+      </Dialog>
 
       <SenderDialog
         open={!!senderDialog}
