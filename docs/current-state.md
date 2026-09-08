@@ -11,8 +11,11 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 - Demo, AOY, and Lanboon run the same application feature baseline `966b027`.
   Ploy remains on isolated bootstrap commit `5497558`, while the shared
   release/edge checkout is `c74ec6a` so the four-tenant registry remains
-  current. Tenant databases, SML settings, credentials, channel routes, and
-  feature flags remain isolated. Central SML Gateway baseline: `42992f5`.
+  current. Tenant databases, SML settings, channel routes, and feature flags
+  remain isolated. At the user's explicit risk acceptance, only the Nexflow
+  application DB role password is shared across the four tenants as of
+  2026-09-02; all other credentials remain tenant-scoped. Central SML Gateway
+  baseline: `42992f5`.
 - Demo, AOY, Lanboon, Ploy, and Central Shopee Gateway health endpoints returned
   HTTP 200 with database status `ok` on 2026-08-27.
 - Migrations through 090 are installed on every tenant. AOY has grouped UI,
@@ -110,7 +113,7 @@ ploy (isolated test tenant; public HTTPS active):
   Public:    https://nexflow-ploy.nextstep-soft.com
   Backend:   nexflow-ploy-backend   :127.0.0.1:8113
   Frontend:  nexflow-ploy-frontend  :127.0.0.1:16326
-  Postgres:  nexflow-ploy-postgres  :127.0.0.1:5443
+  Postgres:  nexflow-ploy-postgres  :10.121.20.83:5443
   SML DB:    ploy_test (reachable, product Catalog currently empty)
 
 edge:      nexflow-edge          :6323  → host-based routing for production domains

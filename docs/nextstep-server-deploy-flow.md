@@ -1,6 +1,6 @@
 # Nexflow NextStep Production Deploy Flow
 
-Updated: 2026-08-31
+Updated: 2026-09-02
 
 This is the current production server topology. The old `192.168.2.109` /
 ngrok deployment is DEV/legacy only and must not be used for production deploys.
@@ -12,7 +12,7 @@ ngrok deployment is DEV/legacy only and must not be used for production deploys.
 | demo | `https://nexflow.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow` | `127.0.0.1:16323 -> 80` | `8110 -> 8090` | `5440 -> 5432` | `demo` |
 | aoy | `https://nexflow-aoy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-aoy` | `127.0.0.1:16324 -> 80` | `8111 -> 8090` | `5441 -> 5432` | `aoy` |
 | lanboon | `https://nextflow-lanboon.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-lanboon` | `127.0.0.1:16325 -> 80` | `8112 -> 8090` | `5442 -> 5432` | `lbk63` |
-| ploy | `https://nexflow-ploy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-ploy` | `127.0.0.1:16326 -> 80` | `127.0.0.1:8113 -> 8090` | `127.0.0.1:5443 -> 5432` | `ploy_test` |
+| ploy | `https://nexflow-ploy.nextstep-soft.com` | `/mnt/data/nextstep-node-2/nexflow-ploy` | `127.0.0.1:16326 -> 80` | `127.0.0.1:8113 -> 8090` | `10.121.20.83:5443 -> 5432` | `ploy_test` |
 
 Public entrypoint:
 
@@ -82,7 +82,7 @@ flowchart TB
     subgraph Ploy["ploy test instance"]
       PloyFE["nexflow-ploy-frontend<br/>127.0.0.1:16326 -> nginx :80"]
       PloyBE["nexflow-ploy-backend<br/>127.0.0.1:8113 -> Go :8090"]
-      PloyDB["nexflow-ploy-postgres<br/>127.0.0.1:5443 -> PostgreSQL"]
+      PloyDB["nexflow-ploy-postgres<br/>10.121.20.83:5443 -> PostgreSQL"]
       PloyFE -->|"same-origin /api"| PloyBE
       PloyBE --> PloyDB
     end

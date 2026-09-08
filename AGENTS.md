@@ -21,9 +21,12 @@ Read this section first when resuming work in a new session.
   retains the four-tenant registry. The Central
   SML Gateway is on `42992f5`
   (`feat: separate SML sale cancellations from credit notes`).
-- Tenant databases, SML tenants, credentials, channel routes, feature flags, and
-  deployment revisions remain isolated and must never be copied between
-  instances without an explicit migration request.
+- Tenant databases, SML tenants, channel routes, feature flags, and deployment
+  revisions remain isolated and must never be copied between instances without
+  an explicit migration request. The Nexflow application DB role password is
+  the sole credential exception: the user explicitly unified it across the four
+  tenants on 2026-09-02. SML, Shopee, LINE, admin, JWT, and media credentials
+  remain tenant-scoped.
 - Verified on 2026-08-25 after deploying application commit `82baa4a`:
   Demo, AOY, Lanboon, and both Central Gateway health endpoints returned HTTP
   200. Each tenant backend resolved the Central Shopee Gateway on the shared
@@ -591,6 +594,32 @@ Current AOY UAT scope:
     `.env.bak.20260831-100436` and `pre-deploy-20260831-100436.sql.gz`, plus SML
     Gateway `backups/pre-ploy-test-20260831-095952`; the stopped rollback
     container is `nexflow-sml-api-bybos-pre-ploy-test-20260831-100312`.
+39. Ploy's isolated Nexflow PostgreSQL port was aligned with the other three
+    instances on 2026-09-02 at the user's explicit request. Its runtime Compose
+    mapping changed from `127.0.0.1:5443:5432` to the ZeroTier-specific
+    `10.121.20.83:5443:5432`; only `nexflow-ploy-postgres` was recreated and it
+    retained volume `nexflow-ploy_pgdata`. The preserved database remained
+    `nexflow`, user `nexflow`, and 14 MB after recreation. PostgreSQL health,
+    the Ploy backend health endpoint, the public login, and an external
+    `10.121.20.83:5443` readiness/TCP probe all passed. Packet capture proved
+    the DBeaver path arrives over ZeroTier from `10.121.20.70`; the Docker
+    listener does not bind the WAN interface. The rollback Compose copy is
+    `docker-compose.yml.pre-db-port-20260902-072034`; the verified database
+    backup is `backups/pre-db-port-20260902-072034.sql.gz`. No application code,
+    migration, database content, credential, or other tenant was changed.
+40. The user explicitly accepted the cross-tenant security risk and unified the
+    Nexflow application PostgreSQL role password across Demo, AOY, Lanboon, and
+    Ploy on 2026-09-02. The secret is intentionally not recorded in source or
+    this handoff. Each tenant's PostgreSQL role, runtime `.env`, running
+    Postgres container environment, and freshly recreated backend now agree.
+    The rollout was sequential and retained all four existing volumes. New
+    authenticated TCP connections through `10.121.20.83:5440`–`5443`, all four
+    public database health endpoints, the shared Shopee Gateway network
+    attachment, and the post-rotation backend error scan passed. Per-tenant
+    rollback environment copies are `.env.pre-db-password-20260902-075834`;
+    verified database dumps are
+    `backups/pre-db-password-20260902-075834.sql.gz`. No SML, Shopee, LINE,
+    admin-login, JWT, media-signing, or Central Gateway credential changed.
 
 Known deferred or incomplete validation:
 
@@ -641,7 +670,7 @@ Production ports:
 | demo | edge **6323**, debug **127.0.0.1:16323** | **8110** | **5440** |
 | aoy | edge **6323**, debug **127.0.0.1:16324** | **8111** | **5441** |
 | lanboon | edge **6323**, debug **127.0.0.1:16325** | **8112** | **5442** |
-| ploy | edge **6323**, debug **127.0.0.1:16326** | **127.0.0.1:8113** | **127.0.0.1:5443** |
+| ploy | edge **6323**, debug **127.0.0.1:16326** | **127.0.0.1:8113** | **10.121.20.83:5443** |
 
 ---
 
@@ -846,4 +875,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-08-31 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
+Last updated: 2026-09-02 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
