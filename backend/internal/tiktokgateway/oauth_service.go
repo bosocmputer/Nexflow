@@ -13,6 +13,7 @@ import (
 var (
 	ErrOAuthServiceNotConfigured = errors.New("TikTok Shop OAuth service is not configured")
 	ErrTenantNotAvailable        = errors.New("Nexflow tenant is not available for TikTok Shop authorization")
+	ErrInvalidOAuthRequest       = errors.New("invalid TikTok Shop OAuth request")
 	ErrInvalidOAuthCallback      = errors.New("invalid or expired TikTok Shop OAuth callback")
 	ErrAuthorizationDenied       = errors.New("TikTok Shop seller authorization was denied")
 	ErrRequiredScopeMissing      = errors.New("required TikTok Shop API scope was not granted")
@@ -91,7 +92,7 @@ func (s *OAuthService) BeginAuthorization(ctx context.Context, tenantSlug, userI
 		return nil, ErrTenantNotAvailable
 	}
 	if err := ValidateTenantReturnURL(tenant.PublicBaseURL, returnURL); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrInvalidOAuthRequest, err)
 	}
 	now := s.config.Now()
 	state, claims, err := s.stateSigner.Create(tenant.Slug, userID, returnURL, now)
