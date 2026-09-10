@@ -113,6 +113,11 @@ NX_PASS=... python3 scripts/deploy_nextstep_instances.py --target aoy --ref <rev
 
 deployment จะเพิ่ม network `nexflow-tiktok-shop-gateway_default` ให้ backend เฉพาะ tenant ที่มี `TIKTOK_SHOP_OPEN_API_ENABLED=true` และตรวจ health จากภายใน backend หลัง recreate
 
+AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `admin` หรือ `staff`) โดยทั้งสอง route เป็น read-only และยังไม่สร้าง bill:
+
+- `POST /api/tiktok-shop-api/orders/search`
+- `POST /api/tiktok-shop-api/orders/detail`
+
 ## AOY OAuth UAT
 
 1. Backup AOY database ก่อนใช้ migration 095-096

@@ -17,6 +17,8 @@ type TikTokShopGateway interface {
 	Configured() bool
 	CreateAuthURL(context.Context, tiktokshop.GatewayAuthURLRequest) (*tiktokshop.GatewayAuthURLResponse, error)
 	ListConnections(context.Context) ([]tiktokshop.GatewayConnection, error)
+	SearchOrders(context.Context, tiktokshop.GatewayOrderSearchRequest) (*tiktokshop.GatewayOrderSearchResponse, error)
+	GetOrderDetails(context.Context, tiktokshop.GatewayOrderDetailsRequest) (*tiktokshop.GatewayOrderDetailsResponse, error)
 }
 
 type TikTokShopConnectionSyncer interface {
@@ -102,6 +104,62 @@ func (h *TikTokShopAPIHandler) ListConnections(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": connections})
 }
 
+func (h *TikTokShopAPIHandler) SearchOrders(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured {
+		h.error(c, http.StatusServiceUnavailable, "gateway_not_configured", "TikTok Shop Gateway ของ tenant ยังไม่พร้อม")
+		return
+	}
+	var input tiktokshop.GatewayOrderSearchRequest
+	if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.ShopID) == "" || input.Search.Validate() != nil {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลค้นหาออเดอร์ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	result, err := h.gateway.SearchOrders(c.Request.Context(), input)
+	if err != nil {
+		h.logger.Warn("tiktok_shop_order_search_failed", zap.Error(err))
+		h.error(c, http.StatusBadGateway, "gateway_request_failed", "โหลดรายการออเดอร์ TikTok Shop ไม่สำเร็จ")
+		return
+	}
+	if result == nil {
+		h.error(c, http.StatusBadGateway, "gateway_response_invalid", "Gateway ส่งข้อมูลออเดอร์ไม่สมบูรณ์")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *TikTokShopAPIHandler) GetOrderDetails(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured {
+		h.error(c, http.StatusServiceUnavailable, "gateway_not_configured", "TikTok Shop Gateway ของ tenant ยังไม่พร้อม")
+		return
+	}
+	var input tiktokshop.GatewayOrderDetailsRequest
+	if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.ShopID) == "" || !validTikTokOrderIDs(input.OrderIDs) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลออเดอร์ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	result, err := h.gateway.GetOrderDetails(c.Request.Context(), input)
+	if err != nil {
+		h.logger.Warn("tiktok_shop_order_detail_failed", zap.Error(err))
+		h.error(c, http.StatusBadGateway, "gateway_request_failed", "โหลดรายละเอียดออเดอร์ TikTok Shop ไม่สำเร็จ")
+		return
+	}
+	if result == nil {
+		h.error(c, http.StatusBadGateway, "gateway_response_invalid", "Gateway ส่งรายละเอียดออเดอร์ไม่สมบูรณ์")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
 func (h *TikTokShopAPIHandler) readiness() (enabled, configured bool) {
 	if h == nil || h.config == nil {
 		return false, false
@@ -123,4 +181,22 @@ func tenantTikTokReturnURL(publicBaseURL string) (string, error) {
 	query.Set("connected", "1")
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+func validTikTokOrderIDs(orderIDs []string) bool {
+	if len(orderIDs) == 0 || len(orderIDs) > 50 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(orderIDs))
+	for i := range orderIDs {
+		orderIDs[i] = strings.TrimSpace(orderIDs[i])
+		if orderIDs[i] == "" {
+			return false
+		}
+		if _, exists := seen[orderIDs[i]]; exists {
+			return false
+		}
+		seen[orderIDs[i]] = struct{}{}
+	}
+	return true
 }
