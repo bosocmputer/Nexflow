@@ -3,6 +3,7 @@ package tiktokshop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -58,7 +59,19 @@ func TestGatewayClientRejectsUseWhenNotConfigured(t *testing.T) {
 	if client.Configured() {
 		t.Fatal("empty gateway client must not be configured")
 	}
-	if _, err := client.ListConnections(context.Background()); err == nil {
-		t.Fatal("expected unconfigured error")
+	if _, err := client.ListConnections(context.Background()); !errors.Is(err, ErrGatewayNotConfigured) {
+		t.Fatalf("ListConnections() error = %v, want ErrGatewayNotConfigured", err)
+	}
+}
+
+func TestGatewayClientRejectsInvalidBaseURLAsNotConfigured(t *testing.T) {
+	client := NewGatewayClient(GatewayClientConfig{
+		BaseURL: "https://gateway.example.test?unexpected=1", Tenant: "aoy", SharedSecret: "tenant-secret",
+	})
+	if client.Configured() {
+		t.Fatal("gateway client with query-bearing base URL must not be configured")
+	}
+	if _, err := client.ListConnections(context.Background()); !errors.Is(err, ErrGatewayNotConfigured) {
+		t.Fatalf("ListConnections() error = %v, want ErrGatewayNotConfigured", err)
 	}
 }

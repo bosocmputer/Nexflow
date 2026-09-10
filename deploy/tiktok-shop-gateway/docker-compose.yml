@@ -24,7 +24,7 @@ services:
       - .env
     environment:
       PORT: "8092"
-      DATABASE_URL: postgresql://nexflow_tiktok_gateway:${TIKTOK_SHOP_GATEWAY_DB_PASSWORD}@postgres:5432/nexflow_tiktok_shop_gateway?sslmode=disable
+      DATABASE_URL: "host=postgres port=5432 user=nexflow_tiktok_gateway password=${TIKTOK_SHOP_GATEWAY_DB_PASSWORD} dbname=nexflow_tiktok_shop_gateway sslmode=disable"
       TIKTOK_SHOP_GATEWAY_TENANT_REGISTRY: /app/config/nextstep-instances.json
     volumes:
       - ${NEXFLOW_RELEASE_DIR:-/mnt/data/nextstep-node-2/nexflow-release}/deploy/nextstep-instances.json:/app/config/nextstep-instances.json:ro

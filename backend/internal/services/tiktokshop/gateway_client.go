@@ -103,7 +103,14 @@ func NewGatewayClient(config GatewayClientConfig) *GatewayClient {
 }
 
 func (c *GatewayClient) Configured() bool {
-	return c != nil && c.baseURL != "" && c.tenant != "" && c.sharedSecret != ""
+	if c == nil || c.tenant == "" || c.sharedSecret == "" {
+		return false
+	}
+	baseURL, err := url.Parse(c.baseURL)
+	return err == nil &&
+		(baseURL.Scheme == "http" || baseURL.Scheme == "https") &&
+		baseURL.Host != "" && baseURL.User == nil &&
+		baseURL.RawQuery == "" && baseURL.Fragment == ""
 }
 
 func (c *GatewayClient) CreateAuthURL(ctx context.Context, input GatewayAuthURLRequest) (*GatewayAuthURLResponse, error) {
@@ -136,7 +143,7 @@ func (c *GatewayClient) call(ctx context.Context, path string, input, output any
 		return ErrGatewayNotConfigured
 	}
 	baseURL, err := url.Parse(c.baseURL)
-	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+	if err != nil {
 		return ErrGatewayNotConfigured
 	}
 	body, err := json.Marshal(input)

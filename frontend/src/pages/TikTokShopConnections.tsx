@@ -138,7 +138,7 @@ export default function TikTokShopConnections() {
             <div>
               <h2 className="text-sm font-semibold text-foreground">{ready ? 'Gateway พร้อมเชื่อมร้าน' : 'Gateway ยังไม่พร้อม'}</h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                {ready ? 'รอบ UAT นี้เปิดเฉพาะการยืนยันร้านและอ่านข้อมูลคำสั่งซื้อ ยังไม่ส่งสต๊อก ยืนยันจัดส่ง หรือสร้างเอกสาร SML อัตโนมัติ' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
+                {ready ? 'รอบ UAT แรกตรวจ OAuth และข้อมูลร้านก่อน ระบบขอเฉพาะสิทธิ์อ่านข้อมูลร้านและคำสั่งซื้อ แต่ยังไม่เปิดการดึงออเดอร์ ส่งสต๊อก ยืนยันจัดส่ง หรือสร้างเอกสาร SML อัตโนมัติ' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
               </p>
               {status?.redirect_url && <p className="mt-2 break-all font-mono text-xs text-muted-foreground">Callback: {status.redirect_url}</p>}
             </div>
