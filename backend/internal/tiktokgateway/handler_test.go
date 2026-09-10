@@ -25,6 +25,12 @@ type handlerOAuthServiceFake struct {
 	authCode    string
 	state       string
 	callbackErr string
+	connections []ConnectionView
+}
+
+func (f *handlerOAuthServiceFake) ListConnections(_ context.Context, tenant string) ([]ConnectionView, error) {
+	f.tenant = tenant
+	return append([]ConnectionView(nil), f.connections...), f.err
 }
 
 func (f *handlerOAuthServiceFake) BeginAuthorization(_ context.Context, tenant, userID, returnURL string) (*AuthorizationStart, error) {
@@ -101,6 +107,25 @@ func TestTikTokGatewayHandlerRejectsUnsignedInternalRequest(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, GatewayOAuthPath, strings.NewReader(`{}`)))
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "invalid_internal_auth") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokGatewayHandlerListsConnectionsWithoutCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &handlerOAuthServiceFake{connections: []ConnectionView{{
+		GatewayConnectionID: "connection-1", ShopID: "7000714532876273420", ShopName: "AOY Main", ShopRegion: "TH",
+		GrantedScopes: []string{"seller.authorization.info", "seller.order.info"}, AccessExpiresAt: "2026-09-11T10:00:00Z",
+	}}}
+	handler := NewHandler(service, handlerVerifierFake{}, nil, Config{}, nil)
+	router := gin.New()
+	handler.Register(router)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, GatewayConnectionsPath, nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "7000714532876273420") {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "token") || service.tenant != "aoy" {
+		t.Fatalf("response exposed credentials or tenant mismatch: %s", response.Body.String())
 	}
 }
 

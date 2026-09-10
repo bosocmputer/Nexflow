@@ -24,6 +24,7 @@ var requiredOAuthScopes = []string{"seller.authorization.info", "seller.order.in
 
 type OAuthStore interface {
 	TenantBySlug(context.Context, string) (*Tenant, error)
+	ListConnectionsByTenantID(context.Context, string) ([]ConnectionMetadata, error)
 	CreateOAuthState(context.Context, OAuthStateRecord) error
 	ConsumeOAuthState(context.Context, string) (*OAuthStateRecord, error)
 	UpsertConnections(context.Context, []EncryptedConnection) error
@@ -72,6 +73,21 @@ type AuthorizationResult struct {
 	Shops      []ConnectedShop
 }
 
+type ConnectionView struct {
+	GatewayConnectionID string   `json:"gateway_connection_id"`
+	ShopID              string   `json:"shop_id"`
+	ShopName            string   `json:"shop_name"`
+	ShopRegion          string   `json:"shop_region"`
+	SellerType          string   `json:"seller_type"`
+	ShopCode            string   `json:"shop_code"`
+	GrantedScopes       []string `json:"granted_scopes"`
+	AccessExpiresAt     string   `json:"access_expires_at"`
+	RefreshExpiresAt    string   `json:"refresh_expires_at"`
+	Disabled            bool     `json:"disabled"`
+	ConnectedAt         string   `json:"connected_at"`
+	UpdatedAt           string   `json:"updated_at"`
+}
+
 func NewOAuthService(config OAuthServiceConfig, store OAuthStore, signer *OAuthStateSigner, cipher *TokenCipher, tokens TokenExchanger, shops AuthorizedShopLister) (*OAuthService, error) {
 	if !serviceIDPattern.MatchString(strings.TrimSpace(config.ServiceID)) || config.EncryptionKeyVersion <= 0 || store == nil || signer == nil || cipher == nil || tokens == nil || shops == nil {
 		return nil, ErrOAuthServiceNotConfigured
@@ -111,6 +127,31 @@ func (s *OAuthService) BeginAuthorization(ctx context.Context, tenantSlug, userI
 		return nil, err
 	}
 	return &AuthorizationStart{AuthorizationURL: authorizationURL, State: state, ExpiresAt: record.ExpiresAt}, nil
+}
+
+func (s *OAuthService) ListConnections(ctx context.Context, tenantSlug string) ([]ConnectionView, error) {
+	if s == nil {
+		return nil, ErrOAuthServiceNotConfigured
+	}
+	tenant, err := s.store.TenantBySlug(ctx, strings.ToLower(strings.TrimSpace(tenantSlug)))
+	if err != nil || tenant == nil || !tenant.Enabled {
+		return nil, ErrTenantNotAvailable
+	}
+	connections, err := s.store.ListConnectionsByTenantID(ctx, tenant.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list TikTok Shop connections: %w", err)
+	}
+	views := make([]ConnectionView, 0, len(connections))
+	for _, connection := range connections {
+		views = append(views, ConnectionView{
+			GatewayConnectionID: connection.ID, ShopID: connection.ShopID, ShopName: connection.ShopName,
+			ShopRegion: connection.ShopRegion, SellerType: connection.SellerType, ShopCode: connection.ShopCode,
+			GrantedScopes:   append([]string(nil), connection.GrantedScopes...),
+			AccessExpiresAt: connection.AccessExpiresAt.UTC().Format(time.RFC3339), RefreshExpiresAt: connection.RefreshExpiresAt.UTC().Format(time.RFC3339),
+			Disabled: connection.DisabledAt.Valid, ConnectedAt: connection.ConnectedAt.UTC().Format(time.RFC3339), UpdatedAt: connection.UpdatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return views, nil
 }
 
 func (s *OAuthService) CompleteAuthorization(ctx context.Context, authCode, state, callbackError string) (*AuthorizationResult, error) {

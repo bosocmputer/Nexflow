@@ -171,6 +171,41 @@ func TestRepositoryTenantBySlugReturnsNoRows(t *testing.T) {
 	}
 }
 
+func TestRepositoryListsOnlyTenantConnectionMetadata(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	accessExpiresAt := time.Now().Add(time.Hour)
+	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+	connectedAt := time.Now().Add(-time.Hour)
+	updatedAt := time.Now()
+	mock.ExpectQuery("SELECT id::text, shop_id, shop_name").
+		WithArgs("11111111-1111-1111-1111-111111111111").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "shop_id", "shop_name", "shop_region", "seller_type", "shop_code", "granted_scopes",
+			"access_expires_at", "refresh_expires_at", "disabled_at", "connected_at", "updated_at",
+		}).AddRow(
+			"22222222-2222-2222-2222-222222222222", "7000714532876273420", "AOY Main", "TH", "LOCAL", "THAOY1", []byte(`["seller.authorization.info","seller.order.info"]`),
+			accessExpiresAt, refreshExpiresAt, nil, connectedAt, updatedAt,
+		))
+
+	connections, err := NewRepository(db).ListConnectionsByTenantID(t.Context(), "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("ListConnectionsByTenantID() error = %v", err)
+	}
+	if len(connections) != 1 || connections[0].ShopID != "7000714532876273420" || connections[0].ShopName != "AOY Main" || connections[0].DisabledAt.Valid {
+		t.Fatalf("connections = %+v", connections)
+	}
+	if len(connections[0].GrantedScopes) != 2 || connections[0].GrantedScopes[1] != "seller.order.info" {
+		t.Fatalf("scopes = %#v", connections[0].GrantedScopes)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func validEncryptedConnection(shopID string) EncryptedConnection {
 	return EncryptedConnection{
 		TenantID: "11111111-1111-1111-1111-111111111111",

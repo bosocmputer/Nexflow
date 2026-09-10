@@ -77,6 +77,10 @@ func TestOAuthServiceConnectsEveryAuthorizedShopToOneTenant(t *testing.T) {
 	if err != nil || refresh != "refresh-secret" {
 		t.Fatalf("decrypted refresh token = %q, %v", refresh, err)
 	}
+	views, err := service.ListConnections(context.Background(), "aoy")
+	if err != nil || len(views) != 2 || views[0].ShopID != first.ShopID || views[0].GatewayConnectionID == "" {
+		t.Fatalf("ListConnections() = %+v, %v", views, err)
+	}
 
 	if _, err := service.CompleteAuthorization(context.Background(), "one-time-code", start.State, ""); !errors.Is(err, ErrInvalidOAuthCallback) {
 		t.Fatalf("replayed CompleteAuthorization() error = %v", err)
@@ -175,6 +179,22 @@ func (s *fakeOAuthStore) ConsumeOAuthState(_ context.Context, hash string) (*OAu
 func (s *fakeOAuthStore) UpsertConnections(_ context.Context, connections []EncryptedConnection) error {
 	s.connections = append([]EncryptedConnection(nil), connections...)
 	return nil
+}
+
+func (s *fakeOAuthStore) ListConnectionsByTenantID(_ context.Context, tenantID string) ([]ConnectionMetadata, error) {
+	output := make([]ConnectionMetadata, 0, len(s.connections))
+	for i, connection := range s.connections {
+		if connection.TenantID != tenantID {
+			continue
+		}
+		output = append(output, ConnectionMetadata{
+			ID: "gateway-connection-" + connection.ShopID, ShopID: connection.ShopID, ShopName: connection.ShopName,
+			ShopRegion: connection.ShopRegion, SellerType: connection.SellerType, ShopCode: connection.ShopCode,
+			GrantedScopes: connection.GrantedScopes, AccessExpiresAt: connection.AccessExpiresAt,
+			RefreshExpiresAt: connection.RefreshExpiresAt, ConnectedAt: time.Now().Add(time.Duration(i) * time.Second), UpdatedAt: time.Now(),
+		})
+	}
+	return output, nil
 }
 
 type fakeTokenExchanger struct {

@@ -57,6 +57,21 @@ type EncryptedConnection struct {
 	DisabledAt           sql.NullTime
 }
 
+type ConnectionMetadata struct {
+	ID               string
+	ShopID           string
+	ShopName         string
+	ShopRegion       string
+	SellerType       string
+	ShopCode         string
+	GrantedScopes    []string
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+	DisabledAt       sql.NullTime
+	ConnectedAt      time.Time
+	UpdatedAt        time.Time
+}
+
 type Repository struct {
 	db *sql.DB
 }
@@ -111,6 +126,46 @@ func (r *Repository) TenantBySlug(ctx context.Context, slug string) (*Tenant, er
 		return nil, err
 	}
 	return &tenant, nil
+}
+
+func (r *Repository) ListConnectionsByTenantID(ctx context.Context, tenantID string) ([]ConnectionMetadata, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("TikTok gateway repository is not configured")
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id::text, shop_id, shop_name, shop_region, seller_type, shop_code, granted_scopes,
+		        access_expires_at, refresh_expires_at, disabled_at, connected_at, updated_at
+		   FROM shop_connections
+		  WHERE tenant_id = $1::uuid
+		  ORDER BY connected_at, shop_id
+		  LIMIT 1001`, strings.TrimSpace(tenantID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	connections := make([]ConnectionMetadata, 0)
+	for rows.Next() {
+		var connection ConnectionMetadata
+		var scopes []byte
+		if err := rows.Scan(
+			&connection.ID, &connection.ShopID, &connection.ShopName, &connection.ShopRegion,
+			&connection.SellerType, &connection.ShopCode, &scopes, &connection.AccessExpiresAt,
+			&connection.RefreshExpiresAt, &connection.DisabledAt, &connection.ConnectedAt, &connection.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(scopes, &connection.GrantedScopes); err != nil {
+			return nil, fmt.Errorf("decode TikTok Shop connection scopes: %w", err)
+		}
+		connections = append(connections, connection)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(connections) > 1000 {
+		return nil, errors.New("TikTok Shop connection limit exceeded")
+	}
+	return connections, nil
 }
 
 func (r *Repository) CreateOAuthState(ctx context.Context, record OAuthStateRecord) error {

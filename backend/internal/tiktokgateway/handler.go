@@ -18,16 +18,19 @@ import (
 	"go.uber.org/zap"
 
 	"nexflow/internal/services/gatewayauth"
+	"nexflow/internal/services/tiktokshop"
 )
 
 const (
-	GatewayOAuthPath       = "/internal/v1/tiktok-shop/oauth/auth-url"
+	GatewayOAuthPath       = tiktokshop.GatewayOAuthPath
+	GatewayConnectionsPath = tiktokshop.GatewayConnectionsPath
 	maxInternalRequestSize = 1 << 20
 )
 
 type OAuthGatewayService interface {
 	BeginAuthorization(context.Context, string, string, string) (*AuthorizationStart, error)
 	CompleteAuthorization(context.Context, string, string, string) (*AuthorizationResult, error)
+	ListConnections(context.Context, string) ([]ConnectionView, error)
 }
 
 type InternalRequestVerifier interface {
@@ -62,6 +65,26 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.GET("/health", h.Health)
 	router.GET("/api/tiktok-shop/callback", h.OAuthCallback)
 	router.POST(GatewayOAuthPath, h.CreateAuthURL)
+	router.POST(GatewayConnectionsPath, h.ListConnections)
+}
+
+func (h *Handler) ListConnections(c *gin.Context) {
+	_, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "list_connections", statusCode, startedAt, errorCode, requestID) }()
+
+	connections, err := h.service.ListConnections(c.Request.Context(), identity.Tenant)
+	if err != nil {
+		statusCode, errorCode = oauthErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, oauthErrorMessage(errorCode), false, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": connections})
 }
 
 func (h *Handler) Health(c *gin.Context) {
