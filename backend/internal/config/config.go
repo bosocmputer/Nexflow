@@ -86,6 +86,11 @@ type Config struct {
 	ShopeeGatewayPublicURL             string
 	ShopeeGatewayTenant                string
 	ShopeeGatewayInternalSecret        string
+	TikTokShopOpenAPIEnabled           bool
+	TikTokShopGatewayBaseURL           string
+	TikTokShopGatewayPublicURL         string
+	TikTokShopGatewayTenant            string
+	TikTokShopGatewayInternalSecret    string
 	ShopeeRealtimeOpsEnabled           bool
 	ShopeeAdvancedDropoffEnabled       bool
 	ShopeeShippingActionsEnabled       bool
@@ -186,6 +191,11 @@ func Load() *Config {
 		ShopeeGatewayPublicURL:              getEnv("SHOPEE_GATEWAY_PUBLIC_URL", ""),
 		ShopeeGatewayTenant:                 getEnv("SHOPEE_GATEWAY_TENANT", ""),
 		ShopeeGatewayInternalSecret:         getEnv("SHOPEE_GATEWAY_INTERNAL_SECRET", ""),
+		TikTokShopOpenAPIEnabled:            getEnvBool("TIKTOK_SHOP_OPEN_API_ENABLED", false),
+		TikTokShopGatewayBaseURL:            getEnv("TIKTOK_SHOP_GATEWAY_BASE_URL", ""),
+		TikTokShopGatewayPublicURL:          getEnv("TIKTOK_SHOP_GATEWAY_PUBLIC_URL", ""),
+		TikTokShopGatewayTenant:             getEnv("TIKTOK_SHOP_GATEWAY_TENANT", ""),
+		TikTokShopGatewayInternalSecret:     getEnv("TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET", ""),
 		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),

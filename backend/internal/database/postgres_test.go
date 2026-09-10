@@ -290,6 +290,45 @@ func TestMigration093AddsDurableSMLCancellationProfileReconciliation(t *testing.
 	}
 }
 
+func TestMigration095StoresOnlyTenantTikTokGatewayMetadata(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/095_tiktok_shop_gateway_connections.sql")
+	if err != nil {
+		t.Fatalf("read migration 095: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists tiktok_shop_connections", "gateway_connection_id uuid primary key",
+		"shop_id", "shop_region", "granted_scopes", "access_expires_at", "refresh_expires_at",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 095 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"access_token", "refresh_token", "app_secret", "shop_cipher", "delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 095 contains forbidden credential or destructive term %q", forbidden)
+		}
+	}
+}
+
+func TestMigration096AddsTikTokShopMenuForExistingAdminsOnly(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/096_tiktok_shop_menu_permission.sql")
+	if err != nil {
+		t.Fatalf("read migration 096: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{"insert into user_menu_permissions", "tiktok_shop_connections", "role = 'admin'", "on conflict"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 096 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 096 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

@@ -13,6 +13,9 @@ export const ENABLE_LAZADA_EXCEL =
 export const ENABLE_TIKTOK_EXCEL =
   import.meta.env.VITE_ENABLE_TIKTOK_EXCEL !== 'false'
 
+export const ENABLE_TIKTOK_SHOP_API =
+  import.meta.env.VITE_ENABLE_TIKTOK_SHOP_API === 'true'
+
 export const ENABLE_LINE_MYSHOP =
   import.meta.env.VITE_ENABLE_LINE_MYSHOP !== 'false'
 

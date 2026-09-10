@@ -42,6 +42,7 @@ var menuPermissionDefaults = []menuPermissionDefault{
 	{"setup", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"channel_defaults", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"shopee_connections", true, true, true, true, false, false, false, false, false, false, false, false},
+	{"tiktok_shop_connections", true, true, false, false, false, false, false, false, false, false, false, false},
 	{"instance_settings", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"settings_users", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"settings_menu_permissions", true, false, true, false, false, false, false, false, false, false, false, false},

@@ -69,6 +69,10 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ร้าน Shopee' }],
   },
   {
+    pattern: '/settings/tiktok-shop',
+    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ร้าน TikTok Shop' }],
+  },
+  {
     pattern: '/settings/shopee-stock',
     crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'ซิงก์สต๊อก Shopee' }],
   },

@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexflow-tiktok-shop-gateway-postgres
+    environment:
+      POSTGRES_USER: nexflow_tiktok_gateway
+      POSTGRES_PASSWORD: ${TIKTOK_SHOP_GATEWAY_DB_PASSWORD:?required}
+      POSTGRES_DB: nexflow_tiktok_shop_gateway
+    volumes:
+      - gateway_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexflow_tiktok_gateway -d nexflow_tiktok_shop_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ${NEXFLOW_RELEASE_DIR:-/mnt/data/nextstep-node-2/nexflow-release}/backend
+      dockerfile: Dockerfile.tiktok-gateway
+    container_name: nexflow-tiktok-shop-gateway
+    env_file:
+      - .env
+    environment:
+      PORT: "8092"
+      DATABASE_URL: postgresql://nexflow_tiktok_gateway:${TIKTOK_SHOP_GATEWAY_DB_PASSWORD}@postgres:5432/nexflow_tiktok_shop_gateway?sslmode=disable
+      TIKTOK_SHOP_GATEWAY_TENANT_REGISTRY: /app/config/nextstep-instances.json
+    volumes:
+      - ${NEXFLOW_RELEASE_DIR:-/mnt/data/nextstep-node-2/nexflow-release}/deploy/nextstep-instances.json:/app/config/nextstep-instances.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - tiktok-shop-gateway
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+volumes:
+  gateway_postgres_data:

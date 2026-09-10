@@ -51,7 +51,7 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		Port:                defaultValue(getenv("PORT"), "8092"),
 		DatabaseURL:         strings.TrimSpace(getenv("DATABASE_URL")),
 		PublicBaseURL:       publicBaseURL,
-		TikTokShopBaseURL:   strings.TrimRight(defaultValue(getenv("TIKTOK_SHOP_GATEWAY_BASE_URL"), defaultTikTokShopBaseURL), "/"),
+		TikTokShopBaseURL:   strings.TrimRight(defaultValue(getenv("TIKTOK_SHOP_API_BASE_URL"), defaultTikTokShopBaseURL), "/"),
 		ServiceID:           strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_SERVICE_ID")),
 		AppKey:              strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_APP_KEY")),
 		AppSecret:           strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_APP_SECRET")),
@@ -79,7 +79,7 @@ func (c Config) Validate() error {
 		return errors.New("TIKTOK_SHOP_GATEWAY_SERVICE_ID must be a numeric service ID")
 	}
 	if err := validateHTTPSURL(c.TikTokShopBaseURL); err != nil {
-		return fmt.Errorf("TIKTOK_SHOP_GATEWAY_BASE_URL: %w", err)
+		return fmt.Errorf("TIKTOK_SHOP_API_BASE_URL: %w", err)
 	}
 	for name, value := range map[string]string{
 		"TIKTOK_SHOP_GATEWAY_TOKEN_ENCRYPTION_KEY": c.TokenEncryptionKey,

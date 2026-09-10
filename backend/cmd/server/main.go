@@ -37,6 +37,7 @@ import (
 	"nexflow/internal/services/sml"
 	"nexflow/internal/services/smlprofile"
 	"nexflow/internal/services/stockrecalc"
+	"nexflow/internal/services/tiktokshop"
 	"nexflow/internal/worker"
 )
 
@@ -354,6 +355,11 @@ func main() {
 	shopeeRealtimeH.SetAutoSML(shopeeAutoSMLRepo, lineNotificationRepo)
 	shopeeRealtimeH.SetSMLCancelClient(saleInvoiceCancelClient)
 	shopeeGatewayInternalH := handlers.NewShopeeGatewayInternalHandler(db, cfg, shopeeRealtimeH, logger)
+	tiktokGatewayClient := tiktokshop.NewGatewayClient(tiktokshop.GatewayClientConfig{
+		BaseURL: cfg.TikTokShopGatewayBaseURL, Tenant: cfg.TikTokShopGatewayTenant,
+		SharedSecret: cfg.TikTokShopGatewayInternalSecret, HTTPClient: &http.Client{Timeout: 30 * time.Second},
+	})
+	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokshop.NewTenantConnectionStore(db), logger)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
@@ -566,6 +572,9 @@ func main() {
 		api.GET("/shopee-api/connections", middleware.RequireRole("admin", "staff"), shopeeH.ListAPIConnections)
 		api.PATCH("/shopee-api/connections/:id", middleware.RequireRole("admin"), shopeeH.UpdateAPIConnection)
 		api.POST("/shopee-api/auth-url", middleware.RequireRole("admin"), shopeeH.CreateAPIAuthURL)
+		api.GET("/settings/tiktok-shop-api/status", middleware.RequireRole("admin", "staff"), tiktokAPIH.Status)
+		api.GET("/tiktok-shop-api/connections", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListConnections)
+		api.POST("/tiktok-shop-api/auth-url", middleware.RequireRole("admin"), tiktokAPIH.CreateAuthURL)
 		api.GET("/shopee-settlements", middleware.RequireRole("admin", "staff"), shopeeH.ListSettlementRuns)
 		api.GET("/shopee-settlements/counts", middleware.RequireRole("admin", "staff"), shopeeH.SettlementRunCounts)
 		api.POST("/shopee-settlements/preview", middleware.RequireRole("admin", "staff"), shopeeH.CreateSettlementPreview)

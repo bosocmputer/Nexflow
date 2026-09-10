@@ -18,6 +18,7 @@ func TestLoadConfigBuildsTikTokShopGatewayCallbacks(t *testing.T) {
 		"TIKTOK_SHOP_GATEWAY_TENANT_REGISTRY":       "/app/config/nextstep-instances.json",
 		"TIKTOK_SHOP_GATEWAY_EXTERNAL_HTTP_TIMEOUT": "20s",
 		"TIKTOK_SHOP_GATEWAY_TENANT_HTTP_TIMEOUT":   "10s",
+		"TIKTOK_SHOP_API_BASE_URL":                  "https://open-api.tiktokglobalshop.com",
 	}
 	cfg, err := loadConfig(func(key string) string { return values[key] })
 	if err != nil {

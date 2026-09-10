@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
-import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL } from './lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API } from './lib/featureFlags'
 import { canViewMenu, firstVisibleNavPath } from './lib/navigation'
 
 const Login = lazy(() => import('./pages/Login'))
@@ -16,6 +16,7 @@ const ShopeeOperations = lazy(() => import('./pages/ShopeeOperations'))
 const ShopeeSettlement = lazy(() => import('./pages/ShopeeSettlement'))
 const LazadaImport = lazy(() => import('./pages/LazadaImport'))
 const TikTokImport = lazy(() => import('./pages/TikTokImport'))
+const TikTokShopConnections = lazy(() => import('./pages/TikTokShopConnections'))
 const OldDataSettings = lazy(() => import('./pages/OldDataSettings'))
 const Logs = lazy(() => import('./pages/Logs'))
 const BulkSendJobs = lazy(() => import('./pages/BulkSendJobs'))
@@ -78,7 +79,10 @@ export default function App() {
       <Suspense fallback={routeFallback}>
         <Routes>
         {import.meta.env.DEV && (
-          <Route path="/dev/showcase" element={<Showcase />} />
+          <>
+            <Route path="/dev/showcase" element={<Showcase />} />
+            <Route path="/dev/tiktok-shop-connections" element={<TikTokShopConnections />} />
+          </>
         )}
         <Route path="/login" element={<Login />} />
         <Route
@@ -115,6 +119,7 @@ export default function App() {
           <Route path="settings/catalog" element={<RequireMenu menuKey="catalog"><CatalogSettings /></RequireMenu>} />
           <Route path="settings/email" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><RequireMenu menuKey="shopee_connections"><ShopeeConnections /></RequireMenu></RequireAdmin>} />
+          <Route path="settings/tiktok-shop" element={ENABLE_TIKTOK_SHOP_API ? <RequireAdmin><RequireMenu menuKey="tiktok_shop_connections"><TikTokShopConnections /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/shopee-stock" element={<RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu>} />
           <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><RequireMenu menuKey="line_myshop"><LineMyShopSettings /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/channels" element={<RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu>} />

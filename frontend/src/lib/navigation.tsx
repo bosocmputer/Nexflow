@@ -28,6 +28,7 @@ import {
   ENABLE_SHOPEE_EXCEL,
   ENABLE_SHOPEE_REALTIME_OPS,
   ENABLE_TIKTOK_EXCEL,
+  ENABLE_TIKTOK_SHOP_API,
 } from '@/lib/featureFlags'
 import type { User, UserMenuPermission } from '@/types'
 
@@ -135,6 +136,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'setup', to: '/setup', label: 'สถานะพร้อมใช้งาน', icon: ClipboardCheck, hint: 'ตรวจความพร้อมร้าน' },
       { menuKey: 'channel_defaults', to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'Document Routing' },
       { menuKey: 'shopee_connections', to: '/settings/shopee-connections', label: 'ร้าน Shopee', icon: Store, hint: 'เชื่อมต่อและจัดการร้าน Shopee', adminOnly: true, enabled: ENABLE_SHOPEE_EXCEL },
+      { menuKey: 'tiktok_shop_connections', to: '/settings/tiktok-shop', label: 'ร้าน TikTok Shop', icon: Store, hint: 'เชื่อมต่อร้านผ่าน TikTok Shop Open API', adminOnly: true, enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'instance_settings', to: '/settings/instance', label: 'ข้อมูลร้านและการเชื่อมต่อ', icon: Settings2, hint: 'ข้อมูลร้านและสถานะบริการ', adminOnly: true },
     ],
   },
