@@ -32,7 +32,7 @@ API อ้างอิงหลัก: [Authorization overview](https://partner.
 
 ก่อน deploy ต้องเห็น app/service ที่เปิด API แล้ว และต้องตรวจค่าต่อไปนี้ใน Partner Center:
 
-1. Service `Nextstep Software & Hardware`, Service ID `7683174272727025429`, สถานะ Open
+1. Custom API App `Nexflow TikTok Shop Connector`, Service ID `7683750742427944722`, สถานะ Open (Thailand Beta Testing; สูงสุด 25 ผู้ขายที่อนุญาต)
 2. Target market Thailand
 3. API enabled
 4. Redirect URL ตรงทุกตัวอักษรกับ `https://tiktok-shop-gateway.nextstep-soft.com/api/tiktok-shop/callback`
@@ -59,7 +59,7 @@ openssl rand -base64 32  # database password
 ```dotenv
 PUBLIC_BASE_URL=https://tiktok-shop-gateway.nextstep-soft.com
 TIKTOK_SHOP_API_BASE_URL=https://open-api.tiktokglobalshop.com
-TIKTOK_SHOP_GATEWAY_SERVICE_ID=7683174272727025429
+TIKTOK_SHOP_GATEWAY_SERVICE_ID=7683750742427944722
 TIKTOK_SHOP_GATEWAY_APP_KEY=<Partner Center App Key>
 TIKTOK_SHOP_GATEWAY_APP_SECRET=<Partner Center App Secret>
 ```
