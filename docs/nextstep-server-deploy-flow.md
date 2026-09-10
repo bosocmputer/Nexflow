@@ -414,6 +414,32 @@ missing or stale it restarts the gateway and waits for the committed registry
 to sync. Gateway deploys force-recreate the container because the registry is a
 mounted file and an unchanged image alone does not reload it.
 
+## Central TikTok Shop Gateway
+
+TikTok Shop uses a separate central gateway, database, Docker network, keys,
+and public host `tiktok-shop-gateway.nextstep-soft.com`. It is intentionally not
+part of `--target all`; this keeps existing tenant/Shopee deploys independent
+until the TikTok Partner app credentials have passed preflight.
+
+Deploy it explicitly:
+
+```bash
+NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --target tiktok-gateway --ref <reviewed-commit>
+```
+
+The deploy backs up the TikTok Gateway runtime, force-recreates only that
+gateway, checks its internal database-backed health, then adds its network and
+public callback host to the edge. The edge returns 404 for `/internal/` and
+`/webhook/`; tenant backends reach the signed internal API only through
+`nexflow-tiktok-shop-gateway_default`.
+
+A tenant joins that network only when its own
+`TIKTOK_SHOP_OPEN_API_ENABLED=true`. Use
+`scripts/tiktok_gateway_tenant_mode.py` to derive a unique tenant HMAC identity
+from the TikTok Gateway master key and to change backend/frontend feature gates
+together. See `docs/tiktok-shop-gateway-runbook.md` for AOY OAuth and read-only
+Order List/Detail UAT gates.
+
 ## Smoke Checks
 
 ```bash

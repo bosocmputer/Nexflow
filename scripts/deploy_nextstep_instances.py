@@ -9,6 +9,7 @@ Production layout:
 - lanboon:       /mnt/data/nextstep-node-2/nexflow-lanboon  frontend edge, backend 8112
 - edge:          /mnt/data/nextstep-node-2/nexflow-edge public 6323
 - Shopee gateway:/mnt/data/nextstep-node-2/nexflow-shopee-gateway
+- TikTok gateway:/mnt/data/nextstep-node-2/nexflow-tiktok-shop-gateway
 
 Instance definitions live in deploy/nextstep-instances.json. Use
 scripts/nextstep_instance_registry.py to add future customers and render edge
@@ -26,6 +27,7 @@ Usage:
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target aoy
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target lanboon
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target gateway
+  NX_PASS=... python scripts/deploy_nextstep_instances.py --target tiktok-gateway
   NX_PASS=... python scripts/deploy_nextstep_instances.py --target <newshop> --bootstrap-runtime
   NX_PASS=... python scripts/deploy_nextstep_instances.py --ref d52de63
   python scripts/deploy_nextstep_instances.py --list-targets
@@ -73,6 +75,11 @@ GATEWAY_HOSTNAME = "shopee-gateway.nextstep-soft.com"
 GATEWAY_CONTAINER = "nexflow-shopee-gateway"
 GATEWAY_POSTGRES_CONTAINER = "nexflow-shopee-gateway-postgres"
 GATEWAY_NETWORK = "nexflow-shopee-gateway_default"
+TIKTOK_GATEWAY_DIR = f"{SERVER_ROOT}/nexflow-tiktok-shop-gateway"
+TIKTOK_GATEWAY_HOSTNAME = "tiktok-shop-gateway.nextstep-soft.com"
+TIKTOK_GATEWAY_CONTAINER = "nexflow-tiktok-shop-gateway"
+TIKTOK_GATEWAY_POSTGRES_CONTAINER = "nexflow-tiktok-shop-gateway-postgres"
+TIKTOK_GATEWAY_NETWORK = "nexflow-tiktok-shop-gateway_default"
 EDGE_PORT = 6323
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = ROOT / "deploy" / "nextstep-instances.json"
@@ -296,11 +303,19 @@ chown -R {shlex.quote(remote_user)}:{shlex.quote(remote_user)} {shlex.quote(RELE
     return sudo(script, label=f"prepare release clone ({resolved_ref})", timeout=300).splitlines()[-1].strip()
 
 
-def render_instance_override(target: Target) -> str:
+def render_instance_override(target: Target, *, include_tiktok_gateway: bool = False) -> str:
     extra_hosts = ""
     if target.backend_extra_hosts:
         host_lines = "\n".join(f'      - "{value}"' for value in target.backend_extra_hosts)
         extra_hosts = f"    extra_hosts:\n{host_lines}\n"
+    tiktok_service_network = "      - tiktok_gateway\n" if include_tiktok_gateway else ""
+    tiktok_network_definition = (
+        "  tiktok_gateway:\n"
+        f"    name: {TIKTOK_GATEWAY_NETWORK}\n"
+        "    external: true\n"
+        if include_tiktok_gateway
+        else ""
+    )
     return (
         "# Managed by scripts/deploy_nextstep_instances.py.\n"
         "# Keeps tenant-specific upstream routing stable across container rebuilds.\n"
@@ -310,15 +325,38 @@ def render_instance_override(target: Target) -> str:
         "    networks:\n"
         "      - default\n"
         "      - shopee_gateway\n"
+        f"{tiktok_service_network}"
+        "  frontend:\n"
+        "    build:\n"
+        "      args:\n"
+        "        VITE_ENABLE_TIKTOK_SHOP_API: ${VITE_ENABLE_TIKTOK_SHOP_API:-false}\n"
         "networks:\n"
         "  shopee_gateway:\n"
         f"    name: {GATEWAY_NETWORK}\n"
         "    external: true\n"
+        f"{tiktok_network_definition}"
     )
 
 
-def ensure_instance_compose(target: Target) -> None:
-    managed_override = render_instance_override(target)
+def target_tiktok_gateway_enabled(target: Target) -> bool:
+    result = sudo(
+        "value=$(sed -n 's/^TIKTOK_SHOP_OPEN_API_ENABLED=//p' "
+        f"{shlex.quote(target.remote)}/.env | tail -n 1); "
+        'if [ "$value" = "true" ]; then printf true; else printf false; fi',
+        label=f"check {target.name} TikTok Shop gateway mode",
+        timeout=30,
+    )
+    return result.strip().splitlines()[-1:] == ["true"]
+
+
+def ensure_instance_compose(target: Target) -> bool:
+    include_tiktok_gateway = target_tiktok_gateway_enabled(target)
+    if include_tiktok_gateway and not tiktok_gateway_network_available():
+        fail(
+            f"{target.name} enables TikTok Shop Open API but the central gateway network is missing; "
+            "deploy --target tiktok-gateway first"
+        )
+    managed_override = render_instance_override(target, include_tiktok_gateway=include_tiktok_gateway)
     script = f"""
 set -euo pipefail
 python3 - <<'PY'
@@ -369,6 +407,7 @@ elif override_path.exists() and override_path.read_text().startswith(managed_hea
 PY
 """
     sudo(script, label=f"ensure instance compose {target.name}", timeout=60)
+    return include_tiktok_gateway
 
 
 def bootstrap_target_runtime(target: Target) -> None:
@@ -453,7 +492,9 @@ def edge_network_name(target: Target) -> str:
     return f"{target.folder}_default"
 
 
-def render_edge_nginx(targets: dict[str, Target] | None = None) -> str:
+def render_edge_nginx(
+    targets: dict[str, Target] | None = None, *, include_tiktok_gateway: bool = False
+) -> str:
     targets = targets or TARGETS
     parts = [
         "server {",
@@ -557,12 +598,47 @@ def render_edge_nginx(targets: dict[str, Target] | None = None) -> str:
             "",
         ]
     )
+    if include_tiktok_gateway:
+        parts.extend(
+            [
+                "server {",
+                "    listen 80;",
+                f"    server_name {TIKTOK_GATEWAY_HOSTNAME};",
+                "",
+                "    location /internal/ { return 404; }",
+                "    location /webhook/ { return 404; }",
+                "",
+                "    location = /health {",
+                f"        proxy_pass http://{TIKTOK_GATEWAY_CONTAINER}:8092;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "",
+                "    location = /api/tiktok-shop/callback {",
+                f"        proxy_pass http://{TIKTOK_GATEWAY_CONTAINER}:8092;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "",
+                "    location / { return 404; }",
+                "}",
+                "",
+            ]
+        )
     return "\n".join(parts).rstrip() + "\n"
 
 
-def render_edge_compose(targets: dict[str, Target] | None = None) -> str:
+def render_edge_compose(
+    targets: dict[str, Target] | None = None, *, include_tiktok_gateway: bool = False
+) -> str:
     targets = targets or TARGETS
     networks = [*(edge_network_name(target) for target in targets.values()), GATEWAY_NETWORK]
+    if include_tiktok_gateway:
+        networks.append(TIKTOK_GATEWAY_NETWORK)
     network_lines = "\n".join(f"      - {network}" for network in networks)
     external_lines = "\n".join(f"  {network}:\n    external: true" for network in networks)
     return f"""services:
@@ -582,12 +658,13 @@ networks:
 """
 
 
-def ensure_edge_config() -> None:
+def ensure_edge_config(*, include_tiktok_gateway: bool = False) -> None:
+    tiktok_arg = " --include-tiktok-gateway" if include_tiktok_gateway else ""
     sudo(
         "set -euo pipefail; "
         f"mkdir -p {shlex.quote(EDGE_DIR)}; "
-        f"python3 {shlex.quote(RELEASE_DIR)}/scripts/deploy_nextstep_instances.py --print-edge-compose > {shlex.quote(EDGE_DIR)}/docker-compose.yml; "
-        f"python3 {shlex.quote(RELEASE_DIR)}/scripts/deploy_nextstep_instances.py --print-edge-nginx > {shlex.quote(EDGE_DIR)}/nginx.conf; "
+        f"python3 {shlex.quote(RELEASE_DIR)}/scripts/deploy_nextstep_instances.py --print-edge-compose{tiktok_arg} > {shlex.quote(EDGE_DIR)}/docker-compose.yml; "
+        f"python3 {shlex.quote(RELEASE_DIR)}/scripts/deploy_nextstep_instances.py --print-edge-nginx{tiktok_arg} > {shlex.quote(EDGE_DIR)}/nginx.conf; "
         f"touch {shlex.quote(EDGE_DIR)}/.env; "
         f"grep -q '^EDGE_BIND=' {shlex.quote(EDGE_DIR)}/.env "
         f"&& sed -i 's#^EDGE_BIND=.*#EDGE_BIND={EDGE_PORT}:80#' {shlex.quote(EDGE_DIR)}/.env "
@@ -606,7 +683,7 @@ def start_edge() -> None:
     )
 
 
-def smoke_edge(targets: list[Target]) -> None:
+def smoke_edge(targets: list[Target], *, include_tiktok_gateway: bool = False) -> None:
     for target in targets:
         login_status = ssh(
             f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Host: {target.hostname}' http://localhost:{EDGE_PORT}/login",
@@ -641,6 +718,28 @@ def smoke_edge(targets: list[Target]) -> None:
     )
     if internal_status.strip() != "404":
         fail(f"Shopee gateway internal API is publicly reachable: {internal_status!r}")
+    if include_tiktok_gateway:
+        tiktok_health = ssh(
+            f"curl -s -m 10 -H 'Host: {TIKTOK_GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/health",
+            label="edge health TikTok Shop gateway",
+            timeout=30,
+        )
+        if '"status":"ok"' not in tiktok_health:
+            fail("TikTok Shop gateway edge health check failed")
+        tiktok_internal_status = ssh(
+            f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Host: {TIKTOK_GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/internal/v1/tiktok-shop/connections",
+            label="edge blocks TikTok Shop gateway internal API",
+            timeout=30,
+        )
+        if tiktok_internal_status.strip() != "404":
+            fail(f"TikTok Shop gateway internal API is publicly reachable: {tiktok_internal_status!r}")
+        tiktok_webhook_status = ssh(
+            f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Host: {TIKTOK_GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/webhook/tiktok-shop",
+            label="edge keeps TikTok Shop webhook closed",
+            timeout=30,
+        )
+        if tiktok_webhook_status.strip() != "404":
+            fail(f"TikTok Shop webhook became publicly reachable before its receiver exists: {tiktok_webhook_status!r}")
 
 
 def backup_target(target: Target) -> None:
@@ -766,6 +865,57 @@ def deploy_gateway() -> None:
         fail("Shopee gateway health check failed")
 
 
+def ensure_tiktok_gateway_runtime() -> None:
+    script = f"""
+set -euo pipefail
+mkdir -p {shlex.quote(TIKTOK_GATEWAY_DIR)}
+if [ -f {shlex.quote(TIKTOK_GATEWAY_DIR)}/docker-compose.yml ]; then
+  cp -p {shlex.quote(TIKTOK_GATEWAY_DIR)}/docker-compose.yml {shlex.quote(TIKTOK_GATEWAY_DIR)}/docker-compose.yml.bak.$(date +%Y%m%d-%H%M%S)
+fi
+cp {shlex.quote(RELEASE_DIR)}/deploy/tiktok-shop-gateway/docker-compose.yml {shlex.quote(TIKTOK_GATEWAY_DIR)}/docker-compose.yml
+test -f {shlex.quote(TIKTOK_GATEWAY_DIR)}/.env || {{
+  echo 'Missing {TIKTOK_GATEWAY_DIR}/.env. Provision TikTok Shop gateway secrets before deploy.' >&2
+  exit 1
+}}
+chmod 600 {shlex.quote(TIKTOK_GATEWAY_DIR)}/.env
+cd {shlex.quote(TIKTOK_GATEWAY_DIR)}
+docker compose config >/dev/null
+"""
+    sudo(script, label="ensure TikTok Shop gateway runtime", timeout=60)
+
+
+def backup_tiktok_gateway() -> None:
+    script = f"""
+set -euo pipefail
+ts=$(date +%Y%m%d-%H%M%S)
+mkdir -p {shlex.quote(BACKUP_DIR)}/tiktok-gateway
+cp -p {shlex.quote(TIKTOK_GATEWAY_DIR)}/.env {shlex.quote(BACKUP_DIR)}/tiktok-gateway/.env.bak.$ts
+if docker inspect {shlex.quote(TIKTOK_GATEWAY_POSTGRES_CONTAINER)} >/dev/null 2>&1; then
+  docker exec {shlex.quote(TIKTOK_GATEWAY_POSTGRES_CONTAINER)} pg_dump -U nexflow_tiktok_gateway -d nexflow_tiktok_shop_gateway \
+    | gzip > {shlex.quote(BACKUP_DIR)}/tiktok-gateway/pre-deploy-$ts.sql.gz
+fi
+"""
+    sudo(script, label="backup TikTok Shop gateway", timeout=300)
+
+
+def deploy_tiktok_gateway() -> None:
+    ensure_tiktok_gateway_runtime()
+    backup_tiktok_gateway()
+    sudo(
+        f"cd {shlex.quote(TIKTOK_GATEWAY_DIR)} && docker compose up -d --build --force-recreate gateway",
+        label="docker up TikTok Shop gateway",
+        timeout=1200,
+    )
+    health = sudo(
+        f"docker run --rm --network {shlex.quote(TIKTOK_GATEWAY_NETWORK)} curlimages/curl:8.12.1 -fsS http://{shlex.quote(TIKTOK_GATEWAY_CONTAINER)}:8092/health",
+        label="TikTok Shop gateway internal health",
+        timeout=60,
+    )
+    if '"status":"ok"' not in health:
+        sudo(f"docker logs {shlex.quote(TIKTOK_GATEWAY_CONTAINER)} --tail=150", label="TikTok Shop gateway logs", timeout=30)
+        fail("TikTok Shop gateway health check failed")
+
+
 def connect_target_to_gateway(target: Target) -> None:
     script = f"""
 set -euo pipefail
@@ -786,11 +936,49 @@ docker exec {shlex.quote(target.backend_container)} sh -lc \
     sudo(script, label=f"connect {target.name} backend to Shopee gateway network", timeout=30)
 
 
+def connect_target_to_tiktok_gateway(target: Target) -> None:
+    script = f"""
+set -euo pipefail
+enabled=$(sed -n 's/^TIKTOK_SHOP_OPEN_API_ENABLED=//p' {shlex.quote(target.remote)}/.env | tail -n 1)
+if [ "$enabled" != "true" ]; then
+  exit 0
+fi
+if ! docker network inspect {shlex.quote(TIKTOK_GATEWAY_NETWORK)} >/dev/null 2>&1; then
+  echo 'TikTok Shop gateway network is missing for an enabled tenant' >&2
+  exit 1
+fi
+if ! docker inspect {shlex.quote(target.backend_container)} --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{TIKTOK_GATEWAY_NETWORK}"'; then
+  docker network connect {shlex.quote(TIKTOK_GATEWAY_NETWORK)} {shlex.quote(target.backend_container)}
+fi
+docker exec {shlex.quote(target.backend_container)} sh -lc \
+  'wget -qO- http://{TIKTOK_GATEWAY_CONTAINER}:8092/health' | grep -q '"status":"ok"'
+"""
+    sudo(script, label=f"connect {target.name} backend to TikTok Shop gateway network", timeout=30)
+
+
+def tiktok_gateway_network_available() -> bool:
+    result = sudo(
+        f"if docker network inspect {shlex.quote(TIKTOK_GATEWAY_NETWORK)} >/dev/null 2>&1; then printf true; else printf false; fi",
+        label="check TikTok Shop gateway network",
+        timeout=30,
+    )
+    return result.strip().splitlines()[-1:] == ["true"]
+
+
 def provision_target_gateway_identity(target: Target) -> None:
     sudo(
         f"cd {shlex.quote(RELEASE_DIR)} && "
         f"python3 scripts/shopee_gateway_tenant_mode.py --target {shlex.quote(target.name)} --identity-only",
         label=f"provision {target.name} Shopee gateway identity",
+        timeout=60,
+    )
+
+
+def provision_target_tiktok_gateway_identity(target: Target) -> None:
+    sudo(
+        f"cd {shlex.quote(RELEASE_DIR)} && "
+        f"python3 scripts/tiktok_gateway_tenant_mode.py --target {shlex.quote(target.name)} --identity-only",
+        label=f"provision {target.name} TikTok Shop gateway identity",
         timeout=60,
     )
 
@@ -853,8 +1041,10 @@ def deploy_target(target: Target) -> None:
         label=f"current health {target.name}",
         timeout=30,
     )
-    ensure_instance_compose(target)
+    tiktok_enabled = ensure_instance_compose(target)
     provision_target_gateway_identity(target)
+    if tiktok_enabled is True:
+        provision_target_tiktok_gateway_identity(target)
     ensure_target_gateway_registration(target)
     snapshot_target_sales_counts(target, "before")
     backup_target(target)
@@ -865,6 +1055,7 @@ def deploy_target(target: Target) -> None:
         timeout=1200,
     )
     connect_target_to_gateway(target)
+    connect_target_to_tiktok_gateway(target)
     health = ssh(
         f"curl -s -m 10 http://localhost:{target.backend_port}/health",
         label=f"backend health {target.name}",
@@ -900,10 +1091,15 @@ def deploy_target(target: Target) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Deploy Nexflow to NextStep production instances from server Git")
-    parser.add_argument("--target", choices=["all", "gateway", *TARGETS.keys()], default="all")
+    parser.add_argument("--target", choices=["all", "gateway", "tiktok-gateway", *TARGETS.keys()], default="all")
     parser.add_argument("--ref", default="origin/main", help="server git ref to deploy, default origin/main")
     parser.add_argument("--print-edge-nginx", action="store_true", help="render edge nginx.conf from registry and exit")
     parser.add_argument("--print-edge-compose", action="store_true", help="render edge docker-compose.yml from registry and exit")
+    parser.add_argument(
+        "--include-tiktok-gateway",
+        action="store_true",
+        help="include TikTok Shop gateway host and network in rendered edge files",
+    )
     parser.add_argument("--list-targets", action="store_true", help="list deploy targets from registry and exit")
     parser.add_argument(
         "--bootstrap-runtime",
@@ -916,40 +1112,46 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.print_edge_nginx:
-        print(render_edge_nginx(), end="")
+        print(render_edge_nginx(include_tiktok_gateway=args.include_tiktok_gateway), end="")
         return
     if args.print_edge_compose:
-        print(render_edge_compose(), end="")
+        print(render_edge_compose(include_tiktok_gateway=args.include_tiktok_gateway), end="")
         return
     if args.list_targets:
         print(f"gateway\t{GATEWAY_HOSTNAME}\t{GATEWAY_DIR}\t-")
+        print(f"tiktok-gateway\t{TIKTOK_GATEWAY_HOSTNAME}\t{TIKTOK_GATEWAY_DIR}\t-")
         for target in TARGETS.values():
             print(f"{target.name}\t{target.hostname}\t{target.remote}\t{target.sml_tenant}")
         return
 
-    if args.bootstrap_runtime and args.target in {"all", "gateway"}:
+    if args.bootstrap_runtime and args.target in {"all", "gateway", "tiktok-gateway"}:
         fail("--bootstrap-runtime requires one registered tenant target")
 
     run_sales_only_release_guard()
     require_tool("sshpass")
-    selected = list(TARGETS.values()) if args.target == "all" else ([] if args.target == "gateway" else [TARGETS[args.target]])
+    gateway_targets = {"gateway", "tiktok-gateway"}
+    selected = list(TARGETS.values()) if args.target == "all" else ([] if args.target in gateway_targets else [TARGETS[args.target]])
     deployed_commit = ensure_release_clone(args.ref)
     print(f"Deploying commit: {deployed_commit}")
     if args.bootstrap_runtime:
         target = selected[0]
         bootstrap_target_runtime(target)
-        ensure_edge_config()
+        include_tiktok_gateway = tiktok_gateway_network_available()
+        ensure_edge_config(include_tiktok_gateway=include_tiktok_gateway)
         start_edge()
-        smoke_edge(list(TARGETS.values()))
+        smoke_edge(list(TARGETS.values()), include_tiktok_gateway=include_tiktok_gateway)
         print(f"\nBootstrap complete: {target.public_url}")
         return
     if args.target in {"all", "gateway"}:
         deploy_gateway()
+    if args.target == "tiktok-gateway":
+        deploy_tiktok_gateway()
     for target in selected:
         deploy_target(target)
-    ensure_edge_config()
+    include_tiktok_gateway = args.target == "tiktok-gateway" or tiktok_gateway_network_available()
+    ensure_edge_config(include_tiktok_gateway=include_tiktok_gateway)
     start_edge()
-    smoke_edge(selected)
+    smoke_edge(selected, include_tiktok_gateway=include_tiktok_gateway)
     print("\nDeploy complete.")
 
 

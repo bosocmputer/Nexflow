@@ -36,6 +36,20 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("      - shopee_gateway", rendered)
         self.assertIn(f"    name: {deploy.GATEWAY_NETWORK}", rendered)
         self.assertIn("    external: true", rendered)
+        self.assertIn(
+            "VITE_ENABLE_TIKTOK_SHOP_API: ${VITE_ENABLE_TIKTOK_SHOP_API:-false}",
+            rendered,
+        )
+
+    def test_instance_override_adds_tiktok_network_only_for_enabled_tenant(self) -> None:
+        disabled = deploy.render_instance_override(self.make_target())
+        enabled = deploy.render_instance_override(
+            self.make_target(), include_tiktok_gateway=True
+        )
+
+        self.assertNotIn("tiktok_gateway", disabled)
+        self.assertIn("      - tiktok_gateway", enabled)
+        self.assertIn(f"    name: {deploy.TIKTOK_GATEWAY_NETWORK}", enabled)
 
     def test_instance_override_preserves_backend_extra_hosts(self) -> None:
         rendered = deploy.render_instance_override(
@@ -107,6 +121,53 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             sudo.call_args_list[0].args[0],
         )
 
+    def test_tiktok_gateway_deploy_is_explicit_and_health_checked(self) -> None:
+        with (
+            patch.object(deploy, "ensure_tiktok_gateway_runtime"),
+            patch.object(deploy, "backup_tiktok_gateway"),
+            patch.object(deploy, "sudo", side_effect=["", '{"status":"ok"}']) as sudo,
+        ):
+            deploy.deploy_tiktok_gateway()
+
+        self.assertIn(
+            "docker compose up -d --build --force-recreate gateway",
+            sudo.call_args_list[0].args[0],
+        )
+        self.assertIn(deploy.TIKTOK_GATEWAY_NETWORK, sudo.call_args_list[1].args[0])
+        self.assertIn("nexflow-tiktok-shop-gateway:8092/health", sudo.call_args_list[1].args[0])
+
+    def test_edge_exposes_only_public_tiktok_callbacks_when_enabled(self) -> None:
+        default_nginx = deploy.render_edge_nginx({"aoy": self.make_target()})
+        enabled_nginx = deploy.render_edge_nginx(
+            {"aoy": self.make_target()}, include_tiktok_gateway=True
+        )
+        enabled_compose = deploy.render_edge_compose(
+            {"aoy": self.make_target()}, include_tiktok_gateway=True
+        )
+
+        self.assertNotIn(deploy.TIKTOK_GATEWAY_HOSTNAME, default_nginx)
+        self.assertIn(f"server_name {deploy.TIKTOK_GATEWAY_HOSTNAME};", enabled_nginx)
+        self.assertIn("location /internal/ { return 404; }", enabled_nginx)
+        self.assertIn("location = /api/tiktok-shop/callback", enabled_nginx)
+        self.assertIn("location /webhook/ { return 404; }", enabled_nginx)
+        self.assertIn(deploy.TIKTOK_GATEWAY_NETWORK, enabled_compose)
+
+    def test_tiktok_gateway_connection_probe_runs_only_for_enabled_tenant(self) -> None:
+        target = self.make_target()
+        with patch.object(deploy, "sudo") as sudo:
+            deploy.connect_target_to_tiktok_gateway(target)
+
+        script = sudo.call_args.args[0]
+        self.assertIn("TIKTOK_SHOP_OPEN_API_ENABLED", script)
+        self.assertIn(
+            "docker network connect nexflow-tiktok-shop-gateway_default nexflow-aoy-backend",
+            script,
+        )
+        self.assertIn(
+            "wget -qO- http://nexflow-tiktok-shop-gateway:8092/health",
+            script,
+        )
+
     def test_fresh_runtime_compose_is_isolated_and_local_only(self) -> None:
         target = self.make_target()
 
@@ -140,6 +201,9 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("SHOPEE_AUTO_SML_ENABLED=false", rendered)
         self.assertIn("SHOPEE_AUTO_SML_CANCEL_ENABLED=false", rendered)
         self.assertIn("SHOPEE_SET_STOCK_ENABLED=false", rendered)
+        self.assertIn("TIKTOK_SHOP_OPEN_API_ENABLED=false", rendered)
+        self.assertIn("TIKTOK_SHOP_GATEWAY_TENANT=aoy", rendered)
+        self.assertIn("VITE_ENABLE_TIKTOK_SHOP_API=false", rendered)
         self.assertIn("SML_SET_PRODUCT_EXPANSION_ENABLED=false", rendered)
         self.assertNotIn("aoy-password", rendered)
 
@@ -163,6 +227,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             patch.object(deploy, "sudo") as sudo,
             patch.object(deploy, "provision_target_gateway_identity"),
             patch.object(deploy, "connect_target_to_gateway"),
+            patch.object(deploy, "connect_target_to_tiktok_gateway"),
             patch.object(deploy, "snapshot_target_sales_counts"),
             patch.object(deploy, "ssh", return_value='{"status":"ok"}') as ssh,
         ):
@@ -191,6 +256,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             patch.object(deploy, "backup_target"),
             patch.object(deploy, "sanitize_target_disabled_env"),
             patch.object(deploy, "connect_target_to_gateway"),
+            patch.object(deploy, "connect_target_to_tiktok_gateway"),
         ):
             deploy.deploy_target(target)
 
