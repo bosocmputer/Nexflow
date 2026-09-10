@@ -39,6 +39,10 @@ type EncryptedConnection struct {
 	TenantSlug           string
 	ShopID               string
 	ShopCipher           string
+	ShopName             string
+	ShopRegion           string
+	SellerType           string
+	ShopCode             string
 	OpenID               string
 	SellerName           string
 	SellerBaseRegion     string
@@ -184,12 +188,17 @@ func upsertConnection(ctx context.Context, execer connectionExecer, connection E
 	}
 	result, err := execer.ExecContext(ctx,
 		`INSERT INTO shop_connections
-		   (tenant_id, shop_id, shop_cipher, open_id, seller_name, seller_base_region, granted_scopes,
+		   (tenant_id, shop_id, shop_cipher, shop_name, shop_region, seller_type, shop_code,
+		    open_id, seller_name, seller_base_region, granted_scopes,
 		    access_token_cipher, access_token_nonce, refresh_token_cipher, refresh_token_nonce,
 		    encryption_key_version, access_expires_at, refresh_expires_at)
-		 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)
+		 VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, $16, $17, $18)
 		 ON CONFLICT (shop_id) DO UPDATE
 		    SET shop_cipher = EXCLUDED.shop_cipher,
+		        shop_name = EXCLUDED.shop_name,
+		        shop_region = EXCLUDED.shop_region,
+		        seller_type = EXCLUDED.seller_type,
+		        shop_code = EXCLUDED.shop_code,
 		        open_id = EXCLUDED.open_id,
 		        seller_name = EXCLUDED.seller_name,
 		        seller_base_region = EXCLUDED.seller_base_region,
@@ -206,8 +215,9 @@ func upsertConnection(ctx context.Context, execer connectionExecer, connection E
 		        updated_at = NOW(),
 		        last_error_code = ''
 		  WHERE shop_connections.tenant_id = EXCLUDED.tenant_id`,
-		connection.TenantID, connection.ShopID, connection.ShopCipher, connection.OpenID,
-		connection.SellerName, connection.SellerBaseRegion, scopes,
+		connection.TenantID, connection.ShopID, connection.ShopCipher,
+		connection.ShopName, connection.ShopRegion, connection.SellerType, connection.ShopCode,
+		connection.OpenID, connection.SellerName, connection.SellerBaseRegion, scopes,
 		connection.AccessTokenCipher, connection.AccessTokenNonce,
 		connection.RefreshTokenCipher, connection.RefreshTokenNonce,
 		connection.EncryptionKeyVersion, connection.AccessExpiresAt, connection.RefreshExpiresAt,
