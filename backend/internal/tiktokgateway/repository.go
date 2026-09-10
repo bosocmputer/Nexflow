@@ -432,9 +432,14 @@ func (r *Repository) UpsertConnections(ctx context.Context, connections []Encryp
 	if len(connections) == 0 {
 		return ErrInvalidConnection
 	}
+	tenantID := strings.TrimSpace(connections[0].TenantID)
+	openID := strings.TrimSpace(connections[0].OpenID)
 	for _, connection := range connections {
 		if err := validateEncryptedConnection(connection); err != nil {
 			return err
+		}
+		if strings.TrimSpace(connection.TenantID) != tenantID || strings.TrimSpace(connection.OpenID) != openID {
+			return ErrInvalidConnection
 		}
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -442,6 +447,14 @@ func (r *Repository) UpsertConnections(ctx context.Context, connections []Encryp
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	lockKey := tenantID + "\x00" + openID
+	var locked bool
+	if err := tx.QueryRowContext(ctx, `SELECT TRUE FROM pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey).Scan(&locked); err != nil || !locked {
+		if err != nil {
+			return err
+		}
+		return errors.New("TikTok Shop authorization lock was not acquired")
+	}
 	for _, connection := range connections {
 		if err := upsertConnection(ctx, tx, connection); err != nil {
 			return err

@@ -105,6 +105,9 @@ func TestRepositoryUpsertsMultipleConnectionsAtomically(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT TRUE FROM pg_advisory_xact_lock").
+		WithArgs("11111111-1111-1111-1111-111111111111\x00open-id").
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -126,6 +129,9 @@ func TestRepositoryRollsBackAllConnectionsWhenOneShopBelongsToAnotherTenant(t *t
 	}
 	defer db.Close()
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT TRUE FROM pg_advisory_xact_lock").
+		WithArgs("11111111-1111-1111-1111-111111111111\x00open-id").
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()

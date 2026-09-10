@@ -75,3 +75,58 @@ func TestGatewayClientRejectsInvalidBaseURLAsNotConfigured(t *testing.T) {
 		t.Fatalf("ListConnections() error = %v, want ErrGatewayNotConfigured", err)
 	}
 }
+
+func TestGatewayClientReadsOrdersThroughTenantScopedGateway(t *testing.T) {
+	now := time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		tenant := r.Header.Get(gatewayauth.HeaderTenant)
+		timestamp := r.Header.Get(gatewayauth.HeaderTimestamp)
+		nonce := r.Header.Get(gatewayauth.HeaderNonce)
+		want := gatewayauth.Sign("tenant-secret", r.Method, r.URL.RequestURI(), tenant, timestamp, nonce, body)
+		if tenant != "aoy" || r.Header.Get(gatewayauth.HeaderSignature) != want {
+			t.Fatalf("invalid signed request headers: %v", r.Header)
+		}
+		switch r.URL.Path {
+		case GatewayOrderSearchPath:
+			var input GatewayOrderSearchRequest
+			if err := json.Unmarshal(body, &input); err != nil || input.ShopID != "shop-1" || input.Search.PageSize != 20 {
+				t.Fatalf("search input = %+v, %v", input, err)
+			}
+			_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"tts-list","next_page_token":"next","total_count":1,"orders":[{"id":"order-1","status":"AWAITING_SHIPMENT"}]}}`))
+		case GatewayOrderDetailsPath:
+			var input GatewayOrderDetailsRequest
+			if err := json.Unmarshal(body, &input); err != nil || input.ShopID != "shop-1" || len(input.OrderIDs) != 1 {
+				t.Fatalf("details input = %+v, %v", input, err)
+			}
+			_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"tts-detail","orders":[{"id":"order-1","status":"COMPLETED"}]}}`))
+		default:
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := NewGatewayClient(GatewayClientConfig{
+		BaseURL: server.URL, Tenant: "aoy", SharedSecret: "tenant-secret", HTTPClient: server.Client(), Now: func() time.Time { return now },
+	})
+
+	search, err := client.SearchOrders(context.Background(), GatewayOrderSearchRequest{
+		ShopID: "shop-1", Search: SearchOrdersRequest{PageSize: 20, Filters: OrderSearchFilters{OrderStatus: OrderStatusAwaitingShipment}},
+	})
+	if err != nil || search.UpstreamRequestID != "tts-list" || search.TotalCount != 1 || len(search.Orders) != 1 {
+		t.Fatalf("SearchOrders() = %+v, %v", search, err)
+	}
+	details, err := client.GetOrderDetails(context.Background(), GatewayOrderDetailsRequest{ShopID: "shop-1", OrderIDs: []string{"order-1"}})
+	if err != nil || details.UpstreamRequestID != "tts-detail" || len(details.Orders) != 1 || details.Orders[0].Status != OrderStatusCompleted {
+		t.Fatalf("GetOrderDetails() = %+v, %v", details, err)
+	}
+}
+
+func TestGatewayClientRejectsInvalidOrderReadBeforeNetwork(t *testing.T) {
+	client := NewGatewayClient(GatewayClientConfig{BaseURL: "https://gateway.example", Tenant: "aoy", SharedSecret: "tenant-secret"})
+	if _, err := client.SearchOrders(context.Background(), GatewayOrderSearchRequest{ShopID: "shop-1", Search: SearchOrdersRequest{PageSize: 0}}); !errors.Is(err, ErrInvalidGatewayInput) {
+		t.Fatalf("SearchOrders() error = %v", err)
+	}
+	if _, err := client.GetOrderDetails(context.Background(), GatewayOrderDetailsRequest{ShopID: "shop-1", OrderIDs: nil}); !errors.Is(err, ErrInvalidGatewayInput) {
+		t.Fatalf("GetOrderDetails() error = %v", err)
+	}
+}

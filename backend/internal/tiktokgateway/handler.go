@@ -3,6 +3,7 @@ package tiktokgateway
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,8 +42,22 @@ type APILogRecorder interface {
 	RecordAPIResult(context.Context, string, string, string, int, int, string, string) error
 }
 
+type OrderGatewayService interface {
+	SearchOrders(context.Context, string, string, tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error)
+	GetOrderDetails(context.Context, string, string, []string) (*OrderDetailsResult, error)
+}
+
+type HandlerOption func(*Handler)
+
+func WithOrderGatewayService(service OrderGatewayService) HandlerOption {
+	return func(handler *Handler) {
+		handler.orders = service
+	}
+}
+
 type Handler struct {
 	service  OAuthGatewayService
+	orders   OrderGatewayService
 	verifier InternalRequestVerifier
 	audit    APILogRecorder
 	config   Config
@@ -54,11 +69,27 @@ type authURLRequest struct {
 	ReturnURL string `json:"return_url"`
 }
 
-func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, audit APILogRecorder, config Config, logger *zap.Logger) *Handler {
+type orderSearchRequest struct {
+	ShopID string                         `json:"shop_id"`
+	Search tiktokshop.SearchOrdersRequest `json:"search"`
+}
+
+type orderDetailsRequest struct {
+	ShopID   string   `json:"shop_id"`
+	OrderIDs []string `json:"order_ids"`
+}
+
+func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, audit APILogRecorder, config Config, logger *zap.Logger, options ...HandlerOption) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &Handler{service: service, verifier: verifier, audit: audit, config: config, logger: logger}
+	handler := &Handler{service: service, verifier: verifier, audit: audit, config: config, logger: logger}
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
+	return handler
 }
 
 func (h *Handler) Register(router *gin.Engine) {
@@ -66,6 +97,76 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.GET("/api/tiktok-shop/callback", h.OAuthCallback)
 	router.POST(GatewayOAuthPath, h.CreateAuthURL)
 	router.POST(GatewayConnectionsPath, h.ListConnections)
+	router.POST(tiktokshop.GatewayOrderSearchPath, h.SearchOrders)
+	router.POST(tiktokshop.GatewayOrderDetailsPath, h.GetOrderDetails)
+}
+
+func (h *Handler) SearchOrders(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "order_search", statusCode, startedAt, errorCode, requestID) }()
+	if h.orders == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, oauthErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input orderSearchRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || input.Search.Validate() != nil {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_order_request"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.orders.SearchOrders(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
+	if err != nil {
+		statusCode, errorCode = orderErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *Handler) GetOrderDetails(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "order_detail", statusCode, startedAt, errorCode, requestID) }()
+	if h.orders == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, oauthErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input orderDetailsRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || !validOrderIDCount(input.OrderIDs) {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_order_request"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.orders.GetOrderDetails(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.OrderIDs)
+	if err != nil {
+		statusCode, errorCode = orderErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 func (h *Handler) ListConnections(c *gin.Context) {
@@ -233,6 +334,63 @@ func oauthErrorMessage(code string) string {
 	default:
 		return "Gateway ประมวลผลไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
 	}
+}
+
+func orderErrorMeta(err error) (int, string) {
+	var apiError *tiktokshop.APIError
+	switch {
+	case errors.Is(err, tiktokshop.ErrInvalidOrderInput):
+		return http.StatusBadRequest, "invalid_order_request"
+	case errors.Is(err, sql.ErrNoRows):
+		return http.StatusNotFound, "connection_not_found"
+	case errors.Is(err, ErrRefreshTokenExpired), errors.Is(err, ErrInvalidTokenCredential), errors.Is(err, ErrInvalidTokenRefresh):
+		return http.StatusConflict, "reconnect_required"
+	case errors.Is(err, ErrTokenServiceNotConfigured), errors.Is(err, ErrOrderServiceNotConfigured):
+		return http.StatusServiceUnavailable, "gateway_not_ready"
+	case errors.As(err, &apiError):
+		return http.StatusBadGateway, "tiktok_api_error"
+	default:
+		return http.StatusInternalServerError, "internal_error"
+	}
+}
+
+func orderErrorMessage(code string) string {
+	switch code {
+	case "invalid_order_request":
+		return "ข้อมูลคำขออ่านออเดอร์ TikTok Shop ไม่ถูกต้อง"
+	case "connection_not_found":
+		return "ไม่พบร้าน TikTok Shop ที่เชื่อมต่อกับ Nexflow นี้"
+	case "reconnect_required":
+		return "สิทธิ์เชื่อมต่อ TikTok Shop หมดอายุหรือไม่สมบูรณ์ กรุณาเชื่อมต่อร้านใหม่"
+	case "gateway_not_ready":
+		return "TikTok Shop Gateway ยังไม่พร้อมใช้งาน"
+	case "tiktok_api_error":
+		return "TikTok Shop ไม่สามารถส่งข้อมูลออเดอร์ได้ในขณะนี้"
+	default:
+		return "Gateway ประมวลผลข้อมูลออเดอร์ไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
+	}
+}
+
+func orderErrorRetryable(code string) bool {
+	return code == "gateway_not_ready" || code == "tiktok_api_error" || code == "internal_error"
+}
+
+func validOrderIDCount(orderIDs []string) bool {
+	if len(orderIDs) == 0 || len(orderIDs) > 50 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(orderIDs))
+	for i := range orderIDs {
+		orderIDs[i] = strings.TrimSpace(orderIDs[i])
+		if orderIDs[i] == "" {
+			return false
+		}
+		if _, exists := seen[orderIDs[i]]; exists {
+			return false
+		}
+		seen[orderIDs[i]] = struct{}{}
+	}
+	return true
 }
 
 func decodeStrictJSON(body []byte, output any) error {

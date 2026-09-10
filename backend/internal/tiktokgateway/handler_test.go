@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/services/gatewayauth"
+	"nexflow/internal/services/tiktokshop"
 )
 
 type handlerOAuthServiceFake struct {
@@ -55,6 +56,26 @@ func (v handlerVerifierFake) Verify(context.Context, *http.Request, []byte) (*ga
 type handlerAuditFake struct {
 	tenant, nonce, operation, errorCode, requestID string
 	status, calls                                  int
+}
+
+type handlerOrderServiceFake struct {
+	searchResult *OrderSearchResult
+	detailResult *OrderDetailsResult
+	err          error
+	tenant       string
+	shopID       string
+	searchInput  tiktokshop.SearchOrdersRequest
+	orderIDs     []string
+}
+
+func (f *handlerOrderServiceFake) SearchOrders(_ context.Context, tenant, shopID string, input tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error) {
+	f.tenant, f.shopID, f.searchInput = tenant, shopID, input
+	return f.searchResult, f.err
+}
+
+func (f *handlerOrderServiceFake) GetOrderDetails(_ context.Context, tenant, shopID string, orderIDs []string) (*OrderDetailsResult, error) {
+	f.tenant, f.shopID, f.orderIDs = tenant, shopID, append([]string(nil), orderIDs...)
+	return f.detailResult, f.err
 }
 
 func (f *handlerAuditFake) RecordAPIResult(_ context.Context, tenant, nonce, operation string, statusCode, _ int, errorCode, requestID string) error {
@@ -158,5 +179,62 @@ func TestTikTokGatewayHandlerDoesNotExposeCallbackInternals(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tiktok-shop/callback?error=access_denied&state=signed-state", nil))
 	if response.Code != http.StatusBadRequest || strings.Contains(response.Body.String(), "access-token-secret") || strings.Contains(response.Body.String(), "access_denied") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokGatewayHandlerSearchesOrdersWithoutExposingCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	orders := &handlerOrderServiceFake{searchResult: &OrderSearchResult{
+		UpstreamRequestID: "tts-request-1", TotalCount: 1,
+		Orders: []tiktokshop.Order{{ID: "order-1", Status: tiktokshop.OrderStatusAwaitingShipment}},
+	}}
+	audit := &handlerAuditFake{}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, audit, Config{}, nil, WithOrderGatewayService(orders))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayOrderSearchPath, strings.NewReader(`{"shop_id":"shop-1","search":{"page_size":20,"sort_field":"update_time","filters":{"update_time_ge":1724990000}}}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"order-1"`) || strings.Contains(response.Body.String(), "access") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if orders.tenant != "aoy" || orders.shopID != "shop-1" || orders.searchInput.PageSize != 20 || orders.searchInput.Filters.UpdateTimeGE != 1724990000 {
+		t.Fatalf("orders = %+v", orders)
+	}
+	if audit.operation != "order_search" || audit.status != http.StatusOK {
+		t.Fatalf("audit = %+v", audit)
+	}
+}
+
+func TestTikTokGatewayHandlerGetsOrderDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	orders := &handlerOrderServiceFake{detailResult: &OrderDetailsResult{
+		UpstreamRequestID: "tts-request-2", Orders: []tiktokshop.Order{{ID: "order-1", Status: tiktokshop.OrderStatusCompleted}},
+	}}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil, Config{}, nil, WithOrderGatewayService(orders))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayOrderDetailsPath, strings.NewReader(`{"shop_id":"shop-1","order_ids":["order-1"]}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || len(orders.orderIDs) != 1 || orders.orderIDs[0] != "order-1" {
+		t.Fatalf("status=%d body=%s orders=%+v", response.Code, response.Body.String(), orders)
+	}
+}
+
+func TestTikTokGatewayHandlerRequiresReconnectWhenRefreshExpired(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	orders := &handlerOrderServiceFake{err: ErrRefreshTokenExpired}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil, Config{}, nil, WithOrderGatewayService(orders))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayOrderSearchPath, strings.NewReader(`{"shop_id":"shop-1","search":{"page_size":20,"filters":{}}}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "reconnect_required") || strings.Contains(response.Body.String(), "refresh token") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

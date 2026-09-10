@@ -81,11 +81,11 @@ type OrderClient struct {
 // reconciliation do not require buyer identifiers, so accepting that filter
 // would expand the PII surface without an operational need.
 type SearchOrdersRequest struct {
-	PageSize  int
-	PageToken string
-	SortField OrderSortField
-	SortOrder OrderSortOrder
-	Filters   OrderSearchFilters
+	PageSize  int                `json:"page_size"`
+	PageToken string             `json:"page_token,omitempty"`
+	SortField OrderSortField     `json:"sort_field,omitempty"`
+	SortOrder OrderSortOrder     `json:"sort_order,omitempty"`
+	Filters   OrderSearchFilters `json:"filters"`
 }
 
 type OrderSearchFilters struct {
@@ -209,7 +209,7 @@ func NewOrderClient(config OrderClientConfig) (*OrderClient, error) {
 func (c *OrderClient) SearchOrders(ctx context.Context, accessToken, shopCipher string, input SearchOrdersRequest) (*SearchOrdersResult, string, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	shopCipher = strings.TrimSpace(shopCipher)
-	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || validateSearchOrdersRequest(&input) != nil {
+	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || input.Validate() != nil {
 		return nil, "", ErrInvalidOrderInput
 	}
 	body, err := json.Marshal(input.Filters)
@@ -312,7 +312,7 @@ func (c *OrderClient) do(ctx context.Context, method, path string, query url.Val
 	return &payload, requestID, nil
 }
 
-func validateSearchOrdersRequest(input *SearchOrdersRequest) error {
+func (input *SearchOrdersRequest) Validate() error {
 	if input == nil || input.PageSize < 1 || input.PageSize > 100 {
 		return ErrInvalidOrderInput
 	}

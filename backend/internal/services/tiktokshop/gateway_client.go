@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	GatewayOAuthPath       = "/internal/v1/tiktok-shop/oauth/auth-url"
-	GatewayConnectionsPath = "/internal/v1/tiktok-shop/connections"
-	maxGatewayResponseSize = 2 << 20
+	GatewayOAuthPath        = "/internal/v1/tiktok-shop/oauth/auth-url"
+	GatewayConnectionsPath  = "/internal/v1/tiktok-shop/connections"
+	GatewayOrderSearchPath  = "/internal/v1/tiktok-shop/orders/search"
+	GatewayOrderDetailsPath = "/internal/v1/tiktok-shop/orders/detail"
+	maxGatewayResponseSize  = 8 << 20
 )
 
 var (
@@ -66,6 +68,28 @@ type GatewayConnection struct {
 	Disabled            bool     `json:"disabled"`
 	ConnectedAt         string   `json:"connected_at"`
 	UpdatedAt           string   `json:"updated_at"`
+}
+
+type GatewayOrderSearchRequest struct {
+	ShopID string              `json:"shop_id"`
+	Search SearchOrdersRequest `json:"search"`
+}
+
+type GatewayOrderDetailsRequest struct {
+	ShopID   string   `json:"shop_id"`
+	OrderIDs []string `json:"order_ids"`
+}
+
+type GatewayOrderSearchResponse struct {
+	UpstreamRequestID string  `json:"upstream_request_id"`
+	NextPageToken     string  `json:"next_page_token"`
+	TotalCount        int64   `json:"total_count"`
+	Orders            []Order `json:"orders"`
+}
+
+type GatewayOrderDetailsResponse struct {
+	UpstreamRequestID string  `json:"upstream_request_id"`
+	Orders            []Order `json:"orders"`
 }
 
 type GatewayError struct {
@@ -136,6 +160,45 @@ func (c *GatewayClient) ListConnections(ctx context.Context) ([]GatewayConnectio
 		output = make([]GatewayConnection, 0)
 	}
 	return output, nil
+}
+
+func (c *GatewayClient) SearchOrders(ctx context.Context, input GatewayOrderSearchRequest) (*GatewayOrderSearchResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	if input.ShopID == "" || input.Search.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayOrderSearchResponse
+	if err := c.call(ctx, GatewayOrderSearchPath, input, &output); err != nil {
+		return nil, err
+	}
+	if err := validateOrders(output.Orders, 100, nil); err != nil || output.TotalCount < int64(len(output.Orders)) {
+		return nil, errors.New("TikTok Shop gateway returned invalid order search data")
+	}
+	if output.Orders == nil {
+		output.Orders = make([]Order, 0)
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) GetOrderDetails(ctx context.Context, input GatewayOrderDetailsRequest) (*GatewayOrderDetailsResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	orderIDs, err := normalizeOrderIDs(input.OrderIDs)
+	if input.ShopID == "" || err != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	input.OrderIDs = orderIDs
+	var output GatewayOrderDetailsResponse
+	if err := c.call(ctx, GatewayOrderDetailsPath, input, &output); err != nil {
+		return nil, err
+	}
+	expected := make(map[string]struct{}, len(orderIDs))
+	for _, orderID := range orderIDs {
+		expected[orderID] = struct{}{}
+	}
+	if err := validateOrders(output.Orders, 50, expected); err != nil || len(output.Orders) != len(orderIDs) {
+		return nil, errors.New("TikTok Shop gateway returned invalid order detail data")
+	}
+	return &output, nil
 }
 
 func (c *GatewayClient) call(ctx context.Context, path string, input, output any) error {

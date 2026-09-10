@@ -55,6 +55,12 @@ func main() {
 	if err != nil {
 		logger.Fatal("tiktok_gateway_shop_client_invalid", zap.Error(err))
 	}
+	orderClient, err := tiktokshop.NewOrderClient(tiktokshop.OrderClientConfig{
+		BaseURL: config.TikTokShopBaseURL, AppKey: config.AppKey, AppSecret: config.AppSecret, HTTPClient: externalClient,
+	})
+	if err != nil {
+		logger.Fatal("tiktok_gateway_order_client_invalid", zap.Error(err))
+	}
 	stateSigner, err := tiktokgateway.NewOAuthStateSigner(config.OAuthSigningKey)
 	if err != nil {
 		logger.Fatal("tiktok_gateway_oauth_signer_invalid", zap.Error(err))
@@ -68,6 +74,16 @@ func main() {
 	}, repository, stateSigner, tokenCipher, tokenClient, shopClient)
 	if err != nil {
 		logger.Fatal("tiktok_gateway_oauth_service_invalid", zap.Error(err))
+	}
+	tokenService, err := tiktokgateway.NewTokenService(tiktokgateway.TokenServiceConfig{
+		EncryptionKeyVersion: 1, RefreshSkew: 10 * time.Minute,
+	}, repository, tokenCipher, tokenClient)
+	if err != nil {
+		logger.Fatal("tiktok_gateway_token_service_invalid", zap.Error(err))
+	}
+	orderService, err := tiktokgateway.NewOrderService(tokenService, orderClient)
+	if err != nil {
+		logger.Fatal("tiktok_gateway_order_service_invalid", zap.Error(err))
 	}
 
 	verifier := gatewayauth.Verifier{
@@ -83,7 +99,7 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	tiktokgateway.NewHandler(oauthService, verifier, repository, config, logger).Register(router)
+	tiktokgateway.NewHandler(oauthService, verifier, repository, config, logger, tiktokgateway.WithOrderGatewayService(orderService)).Register(router)
 
 	server := &http.Server{
 		Addr: ":" + config.Port, Handler: router,
