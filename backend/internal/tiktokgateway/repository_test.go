@@ -98,6 +98,49 @@ func TestRepositoryRejectsInvalidConnectionBeforeDatabase(t *testing.T) {
 	}
 }
 
+func TestRepositoryUpsertsMultipleConnectionsAtomically(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	first := validEncryptedConnection("749000000000000001")
+	second := validEncryptedConnection("749000000000000002")
+	if err := NewRepository(db).UpsertConnections(t.Context(), []EncryptedConnection{first, second}); err != nil {
+		t.Fatalf("UpsertConnections() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryRollsBackAllConnectionsWhenOneShopBelongsToAnotherTenant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO shop_connections").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	first := validEncryptedConnection("749000000000000001")
+	second := validEncryptedConnection("749000000000000002")
+	err = NewRepository(db).UpsertConnections(t.Context(), []EncryptedConnection{first, second})
+	if !errors.Is(err, ErrShopAlreadyOwned) {
+		t.Fatalf("UpsertConnections() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRepositoryRejectsReplayedInternalNonce(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -125,5 +168,14 @@ func TestRepositoryTenantBySlugReturnsNoRows(t *testing.T) {
 	_, err = NewRepository(db).TenantBySlug(t.Context(), "missing")
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("TenantBySlug() error = %v", err)
+	}
+}
+
+func validEncryptedConnection(shopID string) EncryptedConnection {
+	return EncryptedConnection{
+		TenantID: "11111111-1111-1111-1111-111111111111",
+		ShopID:   shopID, ShopCipher: "cipher-" + shopID, OpenID: "open-id", SellerName: "AOY", SellerBaseRegion: "TH",
+		AccessTokenCipher: []byte("a"), AccessTokenNonce: []byte("b"), RefreshTokenCipher: []byte("c"), RefreshTokenNonce: []byte("d"),
+		EncryptionKeyVersion: 1, AccessExpiresAt: time.Now(), RefreshExpiresAt: time.Now().Add(time.Hour), GrantedScopes: []string{"seller.authorization.info"},
 	}
 }

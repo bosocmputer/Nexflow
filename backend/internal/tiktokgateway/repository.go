@@ -136,14 +136,53 @@ func (r *Repository) ConsumeOAuthState(ctx context.Context, stateHash string) (*
 }
 
 func (r *Repository) UpsertConnection(ctx context.Context, connection EncryptedConnection) error {
+	if r == nil || r.db == nil {
+		return errors.New("TikTok gateway repository is not configured")
+	}
 	if err := validateEncryptedConnection(connection); err != nil {
 		return err
 	}
+	return upsertConnection(ctx, r.db, connection)
+}
+
+// UpsertConnections writes every shop returned by one seller authorization as
+// a unit. This prevents a multi-shop authorization from being only partially
+// bound to a Nexflow tenant when one shop conflicts or a database write fails.
+func (r *Repository) UpsertConnections(ctx context.Context, connections []EncryptedConnection) error {
+	if r == nil || r.db == nil {
+		return errors.New("TikTok gateway repository is not configured")
+	}
+	if len(connections) == 0 {
+		return ErrInvalidConnection
+	}
+	for _, connection := range connections {
+		if err := validateEncryptedConnection(connection); err != nil {
+			return err
+		}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, connection := range connections {
+		if err := upsertConnection(ctx, tx, connection); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+type connectionExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func upsertConnection(ctx context.Context, execer connectionExecer, connection EncryptedConnection) error {
 	scopes, err := json.Marshal(connection.GrantedScopes)
 	if err != nil {
 		return err
 	}
-	result, err := r.db.ExecContext(ctx,
+	result, err := execer.ExecContext(ctx,
 		`INSERT INTO shop_connections
 		   (tenant_id, shop_id, shop_cipher, open_id, seller_name, seller_base_region, granted_scopes,
 		    access_token_cipher, access_token_nonce, refresh_token_cipher, refresh_token_nonce,
