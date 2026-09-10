@@ -19,6 +19,7 @@ type Config struct {
 	DatabaseURL         string
 	PublicBaseURL       string
 	TikTokShopBaseURL   string
+	ServiceID           string
 	AppKey              string
 	AppSecret           string
 	TokenEncryptionKey  string
@@ -51,6 +52,7 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		DatabaseURL:         strings.TrimSpace(getenv("DATABASE_URL")),
 		PublicBaseURL:       publicBaseURL,
 		TikTokShopBaseURL:   strings.TrimRight(defaultValue(getenv("TIKTOK_SHOP_GATEWAY_BASE_URL"), defaultTikTokShopBaseURL), "/"),
+		ServiceID:           strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_SERVICE_ID")),
 		AppKey:              strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_APP_KEY")),
 		AppSecret:           strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_APP_SECRET")),
 		TokenEncryptionKey:  strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_TOKEN_ENCRYPTION_KEY")),
@@ -72,6 +74,9 @@ func (c Config) Validate() error {
 	}
 	if c.AppKey == "" || c.AppSecret == "" {
 		return errors.New("TikTok Shop app key and app secret are required")
+	}
+	if !serviceIDPattern.MatchString(c.ServiceID) {
+		return errors.New("TIKTOK_SHOP_GATEWAY_SERVICE_ID must be a numeric service ID")
 	}
 	if err := validateHTTPSURL(c.TikTokShopBaseURL); err != nil {
 		return fmt.Errorf("TIKTOK_SHOP_GATEWAY_BASE_URL: %w", err)
