@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -166,6 +167,223 @@ func (r *Repository) ListConnectionsByTenantID(ctx context.Context, tenantID str
 		return nil, errors.New("TikTok Shop connection limit exceeded")
 	}
 	return connections, nil
+}
+
+func (r *Repository) AuthorizationTokenGroupByShop(ctx context.Context, tenantSlug, shopID string) (*AuthorizationTokenGroup, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("TikTok gateway repository is not configured")
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`WITH target_authorization AS (
+		   SELECT sc.tenant_id, sc.open_id
+		     FROM shop_connections AS sc
+		     JOIN tenants AS target_tenant ON target_tenant.id = sc.tenant_id
+		    WHERE target_tenant.slug = $1
+		      AND target_tenant.enabled = TRUE
+		      AND sc.shop_id = $2
+		      AND sc.disabled_at IS NULL
+		)
+		 SELECT t.id::text, t.slug, sc.open_id, sc.granted_scopes,
+		        sc.access_expires_at, sc.refresh_expires_at,
+		        sc.id::text, sc.shop_id, sc.shop_cipher,
+		        sc.access_token_cipher, sc.access_token_nonce,
+		        sc.refresh_token_cipher, sc.refresh_token_nonce,
+		        sc.encryption_key_version
+		   FROM target_authorization AS target
+		   JOIN tenants AS t ON t.id = target.tenant_id
+		   JOIN shop_connections AS sc
+		     ON sc.tenant_id = target.tenant_id AND sc.open_id = target.open_id
+		  WHERE sc.disabled_at IS NULL
+		  ORDER BY sc.shop_id
+		  LIMIT 1001`,
+		strings.ToLower(strings.TrimSpace(tenantSlug)), strings.TrimSpace(shopID),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var group *AuthorizationTokenGroup
+	for rows.Next() {
+		var tenantID, storedTenantSlug, openID string
+		var scopesJSON []byte
+		var accessExpiresAt, refreshExpiresAt time.Time
+		var connection AuthorizationTokenConnection
+		if err := rows.Scan(
+			&tenantID, &storedTenantSlug, &openID, &scopesJSON,
+			&accessExpiresAt, &refreshExpiresAt,
+			&connection.ID, &connection.ShopID, &connection.ShopCipher,
+			&connection.AccessTokenCipher, &connection.AccessTokenNonce,
+			&connection.RefreshTokenCipher, &connection.RefreshTokenNonce,
+			&connection.EncryptionKeyVersion,
+		); err != nil {
+			return nil, err
+		}
+		var scopes []string
+		if err := json.Unmarshal(scopesJSON, &scopes); err != nil {
+			return nil, fmt.Errorf("decode TikTok Shop authorization scopes: %w", err)
+		}
+		if group == nil {
+			group = &AuthorizationTokenGroup{
+				TenantID: tenantID, TenantSlug: storedTenantSlug, OpenID: openID,
+				GrantedScopes: scopes, AccessExpiresAt: accessExpiresAt, RefreshExpiresAt: refreshExpiresAt,
+			}
+		} else if group.TenantID != tenantID || group.TenantSlug != storedTenantSlug || group.OpenID != openID ||
+			!group.AccessExpiresAt.Equal(accessExpiresAt) || !group.RefreshExpiresAt.Equal(refreshExpiresAt) || !sameStrings(group.GrantedScopes, scopes) {
+			return nil, ErrInvalidTokenCredential
+		}
+		group.Connections = append(group.Connections, connection)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if group == nil {
+		return nil, sql.ErrNoRows
+	}
+	if len(group.Connections) > 1000 {
+		return nil, ErrInvalidTokenCredential
+	}
+	return group, nil
+}
+
+// LockAuthorizationRefresh uses a session-scoped PostgreSQL advisory lock so
+// multiple gateway processes cannot rotate the same seller refresh token at
+// the same time. The caller must always invoke the returned unlock function.
+func (r *Repository) LockAuthorizationRefresh(ctx context.Context, tenantID, openID string) (func(), error) {
+	if r == nil || r.db == nil || strings.TrimSpace(tenantID) == "" || strings.TrimSpace(openID) == "" {
+		return nil, ErrInvalidTokenCredential
+	}
+	connection, err := r.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lockKey := strings.TrimSpace(tenantID) + "\x00" + strings.TrimSpace(openID)
+	var locked bool
+	if err := connection.QueryRowContext(ctx, `SELECT TRUE FROM pg_advisory_lock(hashtextextended($1, 0))`, lockKey).Scan(&locked); err != nil || !locked {
+		_ = connection.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("TikTok Shop authorization lock was not acquired")
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			unlockContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var unlocked bool
+			_ = connection.QueryRowContext(unlockContext, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, lockKey).Scan(&unlocked)
+			_ = connection.Close()
+		})
+	}, nil
+}
+
+// RotateAuthorizationTokens replaces the duplicated encrypted token material
+// for every active shop belonging to one TikTok seller grant in one database
+// transaction. If the sibling set changed after it was read, nothing is saved.
+func (r *Repository) RotateAuthorizationTokens(ctx context.Context, tenantID, openID string, rotations []RotatedConnectionTokens, metadata RefreshedAuthorizationMetadata) error {
+	if r == nil || r.db == nil || strings.TrimSpace(tenantID) == "" || strings.TrimSpace(openID) == "" ||
+		len(rotations) == 0 || len(rotations) > 1000 || !containsEveryScope(metadata.GrantedScopes, requiredOAuthScopes) ||
+		metadata.RefreshedAt.IsZero() || !metadata.AccessExpiresAt.After(metadata.RefreshedAt) || !metadata.RefreshExpiresAt.After(metadata.AccessExpiresAt) {
+		return ErrInvalidTokenCredential
+	}
+	expected := make(map[string]string, len(rotations))
+	for _, rotation := range rotations {
+		if strings.TrimSpace(rotation.ConnectionID) == "" || strings.TrimSpace(rotation.ShopID) == "" ||
+			len(rotation.AccessTokenCipher) == 0 || len(rotation.AccessTokenNonce) == 0 ||
+			len(rotation.RefreshTokenCipher) == 0 || len(rotation.RefreshTokenNonce) == 0 || rotation.EncryptionKeyVersion <= 0 {
+			return ErrInvalidTokenCredential
+		}
+		if _, exists := expected[rotation.ConnectionID]; exists {
+			return ErrInvalidTokenCredential
+		}
+		expected[rotation.ConnectionID] = rotation.ShopID
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id::text, shop_id
+		   FROM shop_connections
+		  WHERE tenant_id = $1::uuid AND open_id = $2 AND disabled_at IS NULL
+		  ORDER BY id
+		  FOR UPDATE`, strings.TrimSpace(tenantID), strings.TrimSpace(openID))
+	if err != nil {
+		return err
+	}
+	actual := make(map[string]string, len(rotations))
+	for rows.Next() {
+		var connectionID, shopID string
+		if err := rows.Scan(&connectionID, &shopID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		actual[connectionID] = shopID
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(actual) != len(expected) {
+		return ErrInvalidTokenCredential
+	}
+	for connectionID, shopID := range expected {
+		if actual[connectionID] != shopID {
+			return ErrInvalidTokenCredential
+		}
+	}
+	scopesJSON, err := json.Marshal(metadata.GrantedScopes)
+	if err != nil {
+		return err
+	}
+	for _, rotation := range rotations {
+		result, err := tx.ExecContext(ctx,
+			`UPDATE shop_connections
+			    SET access_token_cipher = $5,
+			        access_token_nonce = $6,
+			        refresh_token_cipher = $7,
+			        refresh_token_nonce = $8,
+			        encryption_key_version = $9,
+			        granted_scopes = $10::jsonb,
+			        seller_name = COALESCE(NULLIF($11, ''), seller_name),
+			        seller_base_region = COALESCE(NULLIF($12, ''), seller_base_region),
+			        access_expires_at = $13,
+			        refresh_expires_at = $14,
+			        last_refreshed_at = $15,
+			        last_error_code = '',
+			        updated_at = $15
+			  WHERE tenant_id = $1::uuid AND open_id = $2 AND id = $3::uuid AND shop_id = $4 AND disabled_at IS NULL`,
+			strings.TrimSpace(tenantID), strings.TrimSpace(openID), rotation.ConnectionID, rotation.ShopID,
+			rotation.AccessTokenCipher, rotation.AccessTokenNonce, rotation.RefreshTokenCipher, rotation.RefreshTokenNonce,
+			rotation.EncryptionKeyVersion, scopesJSON, strings.TrimSpace(metadata.SellerName), strings.TrimSpace(metadata.SellerBaseRegion),
+			metadata.AccessExpiresAt, metadata.RefreshExpiresAt, metadata.RefreshedAt,
+		)
+		if err != nil {
+			return err
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return ErrInvalidTokenCredential
+		}
+	}
+	return tx.Commit()
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Repository) CreateOAuthState(ctx context.Context, record OAuthStateRecord) error {

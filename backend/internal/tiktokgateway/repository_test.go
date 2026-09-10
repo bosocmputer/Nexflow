@@ -206,6 +206,116 @@ func TestRepositoryListsOnlyTenantConnectionMetadata(t *testing.T) {
 	}
 }
 
+func TestRepositoryLoadsAllSiblingTokensForOneSellerAuthorization(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	accessExpiresAt := time.Now().Add(time.Hour)
+	refreshExpiresAt := time.Now().Add(30 * 24 * time.Hour)
+	mock.ExpectQuery("WITH target_authorization").
+		WithArgs("aoy", "shop-2").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"tenant_id", "tenant_slug", "open_id", "granted_scopes", "access_expires_at", "refresh_expires_at",
+			"id", "shop_id", "shop_cipher", "access_token_cipher", "access_token_nonce", "refresh_token_cipher", "refresh_token_nonce", "encryption_key_version",
+		}).
+			AddRow("11111111-1111-1111-1111-111111111111", "aoy", "seller-open-id", []byte(`["seller.authorization.info","seller.order.info"]`), accessExpiresAt, refreshExpiresAt,
+				"connection-1", "shop-1", "cipher-1", []byte("a1"), []byte("n1"), []byte("r1"), []byte("rn1"), 1).
+			AddRow("11111111-1111-1111-1111-111111111111", "aoy", "seller-open-id", []byte(`["seller.authorization.info","seller.order.info"]`), accessExpiresAt, refreshExpiresAt,
+				"connection-2", "shop-2", "cipher-2", []byte("a2"), []byte("n2"), []byte("r2"), []byte("rn2"), 1))
+
+	group, err := NewRepository(db).AuthorizationTokenGroupByShop(t.Context(), "AOY", "shop-2")
+	if err != nil {
+		t.Fatalf("AuthorizationTokenGroupByShop() error = %v", err)
+	}
+	if group.TenantSlug != "aoy" || group.OpenID != "seller-open-id" || len(group.Connections) != 2 || group.Connections[1].ShopCipher != "cipher-2" {
+		t.Fatalf("group = %+v", group)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryAuthorizationRefreshLockUsesDatabaseAdvisoryLock(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	lockKey := "11111111-1111-1111-1111-111111111111\x00seller-open-id"
+	mock.ExpectQuery("SELECT TRUE FROM pg_advisory_lock").WithArgs(lockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
+	mock.ExpectQuery("SELECT pg_advisory_unlock").WithArgs(lockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"unlocked"}).AddRow(true))
+
+	unlock, err := NewRepository(db).LockAuthorizationRefresh(t.Context(), "11111111-1111-1111-1111-111111111111", "seller-open-id")
+	if err != nil {
+		t.Fatalf("LockAuthorizationRefresh() error = %v", err)
+	}
+	unlock()
+	unlock()
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryRotatesEverySiblingTokenInOneTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tenantID := "11111111-1111-1111-1111-111111111111"
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id::text, shop_id").WithArgs(tenantID, "seller-open-id").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "shop_id"}).AddRow("connection-1", "shop-1").AddRow("connection-2", "shop-2"))
+	mock.ExpectExec("UPDATE shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE shop_connections").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	rotations := []RotatedConnectionTokens{
+		{ConnectionID: "connection-1", ShopID: "shop-1", AccessTokenCipher: []byte("a1"), AccessTokenNonce: []byte("n1"), RefreshTokenCipher: []byte("r1"), RefreshTokenNonce: []byte("rn1"), EncryptionKeyVersion: 1},
+		{ConnectionID: "connection-2", ShopID: "shop-2", AccessTokenCipher: []byte("a2"), AccessTokenNonce: []byte("n2"), RefreshTokenCipher: []byte("r2"), RefreshTokenNonce: []byte("rn2"), EncryptionKeyVersion: 1},
+	}
+	metadata := RefreshedAuthorizationMetadata{
+		SellerName: "AOY", SellerBaseRegion: "TH", GrantedScopes: []string{"seller.authorization.info", "seller.order.info"},
+		AccessExpiresAt: time.Now().Add(time.Hour), RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour), RefreshedAt: time.Now(),
+	}
+	if err := NewRepository(db).RotateAuthorizationTokens(t.Context(), tenantID, "seller-open-id", rotations, metadata); err != nil {
+		t.Fatalf("RotateAuthorizationTokens() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryRollsBackRotationWhenSiblingSetChanged(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tenantID := "11111111-1111-1111-1111-111111111111"
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT id::text, shop_id").WithArgs(tenantID, "seller-open-id").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "shop_id"}).AddRow("connection-1", "shop-1").AddRow("connection-2", "shop-2"))
+	mock.ExpectRollback()
+
+	err = NewRepository(db).RotateAuthorizationTokens(t.Context(), tenantID, "seller-open-id", []RotatedConnectionTokens{
+		{ConnectionID: "connection-1", ShopID: "shop-1", AccessTokenCipher: []byte("a1"), AccessTokenNonce: []byte("n1"), RefreshTokenCipher: []byte("r1"), RefreshTokenNonce: []byte("rn1"), EncryptionKeyVersion: 1},
+	}, RefreshedAuthorizationMetadata{
+		GrantedScopes: []string{"seller.authorization.info", "seller.order.info"}, AccessExpiresAt: time.Now().Add(time.Hour),
+		RefreshExpiresAt: time.Now().Add(30 * 24 * time.Hour), RefreshedAt: time.Now(),
+	})
+	if !errors.Is(err, ErrInvalidTokenCredential) {
+		t.Fatalf("RotateAuthorizationTokens() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func validEncryptedConnection(shopID string) EncryptedConnection {
 	return EncryptedConnection{
 		TenantID: "11111111-1111-1111-1111-111111111111",

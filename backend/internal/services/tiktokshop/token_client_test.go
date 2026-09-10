@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -80,4 +82,31 @@ func TestTokenClientReturnsSanitizedTikTokError(t *testing.T) {
 	if apiErr.Code != 105005 || apiErr.RequestID != "request-2" || apiErr.Message != "TikTok Shop rejected the token request" {
 		t.Fatalf("APIError = %+v", apiErr)
 	}
+}
+
+func TestTokenClientDoesNotExposeSecretsFromTransportError(t *testing.T) {
+	client, err := NewTokenClient(TokenClientConfig{
+		BaseURL: "https://auth.tiktok-shops.com", AppKey: "app-key-secret", AppSecret: "app-secret-value",
+		HTTPClient: &http.Client{Transport: tokenRoundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("network failed for refresh-token-secret")
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Refresh(context.Background(), "refresh-token-secret")
+	if !errors.Is(err, ErrTokenTransport) {
+		t.Fatalf("Refresh() error = %v", err)
+	}
+	for _, secret := range []string{"app-key-secret", "app-secret-value", "refresh-token-secret"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error leaked %q: %v", secret, err)
+		}
+	}
+}
+
+type tokenRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f tokenRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }

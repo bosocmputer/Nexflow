@@ -17,7 +17,10 @@ const (
 	SellerUserType      = 0
 )
 
-var ErrInvalidTokenInput = errors.New("invalid TikTok Shop token input")
+var (
+	ErrInvalidTokenInput = errors.New("invalid TikTok Shop token input")
+	ErrTokenTransport    = errors.New("TikTok Shop token transport failed")
+)
 
 type TokenClientConfig struct {
 	BaseURL    string
@@ -116,17 +119,20 @@ func (c *TokenClient) request(ctx context.Context, path string, query url.Values
 	requestURL.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("create TikTok Shop token request: %w", err)
+		return nil, ErrTokenTransport
 	}
 	req.Header.Set("Accept", "application/json")
 	response, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("call TikTok Shop token API: %w", err)
+		// net/http transport errors can include the full request URL. Token
+		// endpoints carry app_secret and refresh_token in that URL, so never
+		// wrap or propagate the original transport error.
+		return nil, ErrTokenTransport
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("read TikTok Shop token response: %w", err)
+		return nil, ErrTokenTransport
 	}
 	var payload tokenResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
