@@ -450,7 +450,9 @@ func (r *Repository) UpsertConnections(ctx context.Context, connections []Encryp
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	lockKey := tenantID + "\x00" + openID
+	// tenantID is a UUID, so ':' cannot collide with its fixed boundary. Unlike
+	// NUL, the separator is valid PostgreSQL TEXT and can safely reach hashtextextended.
+	lockKey := tenantID + ":" + openID
 	var locked bool
 	if err := tx.QueryRowContext(ctx, `SELECT TRUE FROM pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey).Scan(&locked); err != nil || !locked {
 		if err != nil {
