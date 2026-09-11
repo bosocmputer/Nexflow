@@ -242,7 +242,18 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 	)
 	if err != nil {
 		status, code := oauthErrorMeta(err)
-		h.logger.Warn("tiktok_gateway_oauth_callback_failed", zap.String("error_code", code))
+		fields := []zap.Field{zap.String("error_code", code)}
+		stage, upstreamCode, upstreamRequestID := oauthFailureMetadata(err)
+		if stage != "" {
+			fields = append(fields, zap.String("oauth_stage", string(stage)))
+		}
+		if upstreamCode != 0 {
+			fields = append(fields, zap.Int("upstream_code", upstreamCode))
+		}
+		if upstreamRequestID != "" {
+			fields = append(fields, zap.String("upstream_request_id", upstreamRequestID))
+		}
+		h.logger.Warn("tiktok_gateway_oauth_callback_failed", fields...)
 		h.renderCallback(c, status, "เชื่อมต่อ TikTok Shop ไม่สำเร็จ", oauthErrorMessage(code))
 		return
 	}

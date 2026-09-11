@@ -22,6 +22,51 @@ var (
 
 var requiredOAuthScopes = []string{"seller.authorization.info", "seller.order.info"}
 
+type oauthFailureStage string
+
+const (
+	oauthStageTokenExchange       oauthFailureStage = "token_exchange"
+	oauthStageAuthorizedShops     oauthFailureStage = "authorized_shops"
+	oauthStageEncryptAccessToken  oauthFailureStage = "encrypt_access_token"
+	oauthStageEncryptRefreshToken oauthFailureStage = "encrypt_refresh_token"
+	oauthStagePersistConnections  oauthFailureStage = "persist_connections"
+)
+
+type oauthStageError struct {
+	Stage oauthFailureStage
+	Err   error
+}
+
+func (e *oauthStageError) Error() string {
+	if e == nil {
+		return "TikTok Shop OAuth failed"
+	}
+	return fmt.Sprintf("TikTok Shop OAuth %s failed: %v", e.Stage, e.Err)
+}
+
+func (e *oauthStageError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func oauthFailureMetadata(err error) (oauthFailureStage, int, string) {
+	var stageError *oauthStageError
+	if !errors.As(err, &stageError) || stageError == nil {
+		return "", 0, ""
+	}
+	var apiError *tiktokshop.APIError
+	if errors.As(err, &apiError) && apiError != nil {
+		return stageError.Stage, apiError.Code, strings.TrimSpace(apiError.RequestID)
+	}
+	return stageError.Stage, 0, ""
+}
+
+func newOAuthStageError(stage oauthFailureStage, err error) error {
+	return &oauthStageError{Stage: stage, Err: err}
+}
+
 type OAuthStore interface {
 	TenantBySlug(context.Context, string) (*Tenant, error)
 	ListConnectionsByTenantID(context.Context, string) ([]ConnectionMetadata, error)
@@ -183,7 +228,7 @@ func (s *OAuthService) CompleteAuthorization(ctx context.Context, authCode, stat
 	}
 	tokens, err := s.tokens.ExchangeAuthCode(ctx, authCode)
 	if err != nil {
-		return nil, fmt.Errorf("exchange TikTok Shop authorization code: %w", err)
+		return nil, newOAuthStageError(oauthStageTokenExchange, err)
 	}
 	if tokens == nil || tokens.UserType != tiktokshop.SellerUserType {
 		return nil, ErrUnexpectedSellerUser
@@ -198,7 +243,7 @@ func (s *OAuthService) CompleteAuthorization(ctx context.Context, authCode, stat
 	}
 	authorizedShops, _, err := s.shops.GetAuthorizedShops(ctx, tokens.AccessToken)
 	if err != nil {
-		return nil, fmt.Errorf("get TikTok Shop authorized shops: %w", err)
+		return nil, newOAuthStageError(oauthStageAuthorizedShops, err)
 	}
 	connections := make([]EncryptedConnection, 0, len(authorizedShops))
 	resultShops := make([]ConnectedShop, 0, len(authorizedShops))
@@ -214,11 +259,11 @@ func (s *OAuthService) CompleteAuthorization(ctx context.Context, authCode, stat
 		seen[shop.ID] = struct{}{}
 		accessCipher, accessNonce, err := s.tokenCipher.Encrypt(tokens.AccessToken, tokenAAD(tenant.Slug, shop.ID, "access"))
 		if err != nil {
-			return nil, fmt.Errorf("encrypt TikTok Shop access token: %w", err)
+			return nil, newOAuthStageError(oauthStageEncryptAccessToken, err)
 		}
 		refreshCipher, refreshNonce, err := s.tokenCipher.Encrypt(tokens.RefreshToken, tokenAAD(tenant.Slug, shop.ID, "refresh"))
 		if err != nil {
-			return nil, fmt.Errorf("encrypt TikTok Shop refresh token: %w", err)
+			return nil, newOAuthStageError(oauthStageEncryptRefreshToken, err)
 		}
 		connections = append(connections, EncryptedConnection{
 			TenantID: tenant.ID, TenantSlug: tenant.Slug, ShopID: shop.ID, ShopCipher: strings.TrimSpace(shop.Cipher),
@@ -234,7 +279,7 @@ func (s *OAuthService) CompleteAuthorization(ctx context.Context, authCode, stat
 		resultShops = append(resultShops, ConnectedShop{ID: shop.ID, Name: strings.TrimSpace(shop.Name), Region: strings.TrimSpace(shop.Region), SellerType: strings.TrimSpace(shop.SellerType), Code: strings.TrimSpace(shop.Code)})
 	}
 	if err := s.store.UpsertConnections(ctx, connections); err != nil {
-		return nil, fmt.Errorf("save TikTok Shop connections: %w", err)
+		return nil, newOAuthStageError(oauthStagePersistConnections, err)
 	}
 	return &AuthorizationResult{TenantSlug: tenant.Slug, ReturnURL: record.ReturnURL, Shops: resultShops}, nil
 }

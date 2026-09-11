@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,6 +127,33 @@ func TestOAuthServiceConsumesDeniedAuthorizationWithoutCallingTikTok(t *testing.
 	}
 	if tokenClient.calls != 0 || shopClient.calls != 0 || !store.consumed {
 		t.Fatalf("token calls = %d, shop calls = %d, consumed = %v", tokenClient.calls, shopClient.calls, store.consumed)
+	}
+}
+
+func TestOAuthServiceClassifiesTokenExchangeFailureWithoutLeakingUpstreamMessage(t *testing.T) {
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	store := &fakeOAuthStore{tenant: &Tenant{
+		ID: "11111111-1111-1111-1111-111111111111", Slug: "aoy",
+		PublicBaseURL: "https://nexflow-aoy.nextstep-soft.com", Enabled: true,
+	}}
+	tokenClient := &fakeTokenExchanger{err: &tiktokshop.APIError{
+		Code: 36004004, RequestID: "safe-request-id", Message: "seller@example.com must not reach logs",
+	}}
+	service := newTestOAuthService(t, now, store, tokenClient, &fakeAuthorizedShopLister{})
+	start, err := service.BeginAuthorization(context.Background(), "aoy", "admin-user", "https://nexflow-aoy.nextstep-soft.com/settings/tiktok-shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.CompleteAuthorization(context.Background(), "one-time-code", start.State, "")
+	if err == nil {
+		t.Fatal("expected token exchange failure")
+	}
+	stage, upstreamCode, requestID := oauthFailureMetadata(err)
+	if stage != oauthStageTokenExchange || upstreamCode != 36004004 || requestID != "safe-request-id" {
+		t.Fatalf("failure metadata = %q, %d, %q", stage, upstreamCode, requestID)
+	}
+	if strings.Contains(err.Error(), "seller@example.com") {
+		t.Fatalf("error leaked upstream message: %v", err)
 	}
 }
 

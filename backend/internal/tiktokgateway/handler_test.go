@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 
 	"nexflow/internal/services/gatewayauth"
 	"nexflow/internal/services/tiktokshop"
@@ -179,6 +182,31 @@ func TestTikTokGatewayHandlerDoesNotExposeCallbackInternals(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tiktok-shop/callback?error=access_denied&state=signed-state", nil))
 	if response.Code != http.StatusBadRequest || strings.Contains(response.Body.String(), "access-token-secret") || strings.Contains(response.Body.String(), "access_denied") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokGatewayHandlerLogsSafeOAuthFailureMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, observed := observer.New(zap.WarnLevel)
+	service := &handlerOAuthServiceFake{err: newOAuthStageError(oauthStageTokenExchange, &tiktokshop.APIError{
+		Code: 36004004, RequestID: "safe-request-id", Message: "seller@example.com must not reach logs",
+	})}
+	handler := NewHandler(service, handlerVerifierFake{}, nil, Config{}, zap.New(core))
+	router := gin.New()
+	handler.Register(router)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tiktok-shop/callback?code=auth-code&state=signed-state", nil))
+
+	entries := observed.All()
+	if len(entries) != 1 {
+		t.Fatalf("warning entries = %d", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["oauth_stage"] != "token_exchange" || fields["upstream_code"] != int64(36004004) || fields["upstream_request_id"] != "safe-request-id" {
+		t.Fatalf("log fields = %#v", fields)
+	}
+	if strings.Contains(entries[0].Message+fmt.Sprint(fields), "seller@example.com") || strings.Contains(response.Body.String(), "seller@example.com") {
+		t.Fatalf("OAuth failure leaked upstream message: log=%+v body=%s", entries[0], response.Body.String())
 	}
 }
 
