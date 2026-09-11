@@ -26,12 +26,13 @@ type Tenant struct {
 }
 
 type OAuthStateRecord struct {
-	StateHash string
-	TenantID  string
-	UserID    string
-	ReturnURL string
-	Nonce     string
-	ExpiresAt time.Time
+	StateHash  string
+	TenantID   string
+	TenantSlug string
+	UserID     string
+	ReturnURL  string
+	Nonce      string
+	ExpiresAt  time.Time
 }
 
 type EncryptedConnection struct {
@@ -398,14 +399,16 @@ func (r *Repository) CreateOAuthState(ctx context.Context, record OAuthStateReco
 func (r *Repository) ConsumeOAuthState(ctx context.Context, stateHash string) (*OAuthStateRecord, error) {
 	var record OAuthStateRecord
 	err := r.db.QueryRowContext(ctx,
-		`UPDATE oauth_states
+		`UPDATE oauth_states AS s
 		    SET consumed_at = NOW()
-		  WHERE state_hash = $1
-		    AND consumed_at IS NULL
-		    AND expires_at > NOW()
-		  RETURNING state_hash, tenant_id::text, user_id, return_url, nonce, expires_at`,
+		   FROM tenants AS t
+		  WHERE s.state_hash = $1
+		    AND s.tenant_id = t.id
+		    AND s.consumed_at IS NULL
+		    AND s.expires_at > NOW()
+		  RETURNING s.state_hash, s.tenant_id::text, t.slug, s.user_id, s.return_url, s.nonce, s.expires_at`,
 		strings.TrimSpace(stateHash),
-	).Scan(&record.StateHash, &record.TenantID, &record.UserID, &record.ReturnURL, &record.Nonce, &record.ExpiresAt)
+	).Scan(&record.StateHash, &record.TenantID, &record.TenantSlug, &record.UserID, &record.ReturnURL, &record.Nonce, &record.ExpiresAt)
 	if err != nil {
 		return nil, err
 	}

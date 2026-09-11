@@ -17,7 +17,7 @@ var serviceIDPattern = regexp.MustCompile(`^[0-9]{1,64}$`)
 func BuildSellerAuthorizationURL(serviceID, state string) (string, error) {
 	serviceID = strings.TrimSpace(serviceID)
 	state = strings.TrimSpace(state)
-	if !serviceIDPattern.MatchString(serviceID) || state == "" || len(state) > 4096 {
+	if !serviceIDPattern.MatchString(serviceID) || state == "" || len(state) > maxOAuthStateLength {
 		return "", errors.New("invalid TikTok Shop seller authorization input")
 	}
 	u, err := url.Parse(sellerAuthorizationBaseURL)

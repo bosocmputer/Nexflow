@@ -45,8 +45,8 @@ func TestRepositoryConsumesOAuthStateOnlyOnce(t *testing.T) {
 	defer db.Close()
 	expiresAt := time.Now().Add(time.Minute)
 	mock.ExpectQuery("UPDATE oauth_states").WithArgs("state-hash").
-		WillReturnRows(sqlmock.NewRows([]string{"state_hash", "tenant_id", "user_id", "return_url", "nonce", "expires_at"}).
-			AddRow("state-hash", "11111111-1111-1111-1111-111111111111", "user-1", "https://nexflow-aoy.nextstep-soft.com/settings/tiktok-shop", "nonce-1", expiresAt))
+		WillReturnRows(sqlmock.NewRows([]string{"state_hash", "tenant_id", "tenant_slug", "user_id", "return_url", "nonce", "expires_at"}).
+			AddRow("state-hash", "11111111-1111-1111-1111-111111111111", "aoy", "user-1", "https://nexflow-aoy.nextstep-soft.com/settings/tiktok-shop", "nonce-1", expiresAt))
 
 	record, err := NewRepository(db).ConsumeOAuthState(t.Context(), "state-hash")
 	if err != nil || record.Nonce != "nonce-1" {

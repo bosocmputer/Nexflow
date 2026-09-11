@@ -7,16 +7,20 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const oauthStateTTL = 15 * time.Minute
+const (
+	oauthStateTTL        = 15 * time.Minute
+	oauthStateNonceBytes = 18
+	maxOAuthStateLength  = 128
+)
 
 var (
 	tenantSlugPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -53,7 +57,7 @@ func (s *OAuthStateSigner) Create(tenant, userID, returnURL string, now time.Tim
 	if !tenantSlugPattern.MatchString(tenant) || userID == "" || returnURL == "" {
 		return "", OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	nonceBytes := make([]byte, 18)
+	nonceBytes := make([]byte, oauthStateNonceBytes)
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return "", OAuthStateClaims{}, fmt.Errorf("generate OAuth nonce: %w", err)
 	}
@@ -64,44 +68,42 @@ func (s *OAuthStateSigner) Create(tenant, userID, returnURL string, now time.Tim
 		Nonce:     base64.RawURLEncoding.EncodeToString(nonceBytes),
 		ExpiresAt: now.Add(oauthStateTTL).Unix(),
 	}
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		return "", OAuthStateClaims{}, err
-	}
-	payloadEncoded := base64.RawURLEncoding.EncodeToString(payload)
-	return payloadEncoded + "." + s.sign(payloadEncoded), claims, nil
+	payload := claims.Nonce + "." + strconv.FormatInt(claims.ExpiresAt, 10)
+	return payload + "." + s.sign(payload), claims, nil
 }
 
 func (s *OAuthStateSigner) Verify(state string, now time.Time) (OAuthStateClaims, error) {
 	if s == nil || len(s.key) == 0 {
 		return OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	parts := strings.Split(strings.TrimSpace(state), ".")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	state = strings.TrimSpace(state)
+	if state == "" || len(state) > maxOAuthStateLength {
 		return OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	want := s.sign(parts[0])
-	if subtle.ConstantTimeCompare([]byte(strings.ToLower(parts[1])), []byte(want)) != 1 {
+	parts := strings.Split(state, ".")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
+	nonce, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil || len(nonce) != oauthStateNonceBytes {
 		return OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	var claims OAuthStateClaims
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	expiresAt, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || expiresAt <= now.Unix() {
 		return OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	if !tenantSlugPattern.MatchString(claims.Tenant) || claims.UserID == "" || claims.ReturnURL == "" || claims.Nonce == "" || claims.ExpiresAt <= now.Unix() {
+	payload := parts[0] + "." + parts[1]
+	want := s.sign(payload)
+	if subtle.ConstantTimeCompare([]byte(parts[2]), []byte(want)) != 1 {
 		return OAuthStateClaims{}, ErrInvalidOAuthState
 	}
-	return claims, nil
+	return OAuthStateClaims{Nonce: parts[0], ExpiresAt: expiresAt}, nil
 }
 
 func (s *OAuthStateSigner) sign(payload string) string {
 	mac := hmac.New(sha256.New, s.key)
 	_, _ = mac.Write([]byte(payload))
-	return hex.EncodeToString(mac.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func HashOAuthState(state string) string {

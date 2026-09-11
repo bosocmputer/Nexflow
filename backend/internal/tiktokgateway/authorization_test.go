@@ -2,6 +2,7 @@ package tiktokgateway
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,7 @@ func TestBuildSellerAuthorizationURLRejectsUnsafeInput(t *testing.T) {
 		{name: "missing service", state: "state"},
 		{name: "non numeric service", serviceID: "service/123", state: "state"},
 		{name: "missing state", serviceID: "7683174272727025429"},
+		{name: "oversized state", serviceID: "7683174272727025429", state: strings.Repeat("s", maxOAuthStateLength+1)},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if _, err := BuildSellerAuthorizationURL(testCase.serviceID, testCase.state); err == nil {

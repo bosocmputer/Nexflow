@@ -116,7 +116,7 @@ func (s *OAuthService) BeginAuthorization(ctx context.Context, tenantSlug, userI
 		return nil, err
 	}
 	record := OAuthStateRecord{
-		StateHash: HashOAuthState(state), TenantID: tenant.ID, UserID: claims.UserID,
+		StateHash: HashOAuthState(state), TenantID: tenant.ID, TenantSlug: tenant.Slug, UserID: claims.UserID,
 		ReturnURL: claims.ReturnURL, Nonce: claims.Nonce, ExpiresAt: time.Unix(claims.ExpiresAt, 0),
 	}
 	if err := s.store.CreateOAuthState(ctx, record); err != nil {
@@ -163,12 +163,15 @@ func (s *OAuthService) CompleteAuthorization(ctx context.Context, authCode, stat
 	if err != nil {
 		return nil, ErrInvalidOAuthCallback
 	}
-	tenant, err := s.store.TenantBySlug(ctx, claims.Tenant)
+	record, err := s.store.ConsumeOAuthState(ctx, HashOAuthState(state))
+	if err != nil || record == nil {
+		return nil, ErrInvalidOAuthCallback
+	}
+	tenant, err := s.store.TenantBySlug(ctx, record.TenantSlug)
 	if err != nil || tenant == nil || !tenant.Enabled {
 		return nil, ErrTenantNotAvailable
 	}
-	record, err := s.store.ConsumeOAuthState(ctx, HashOAuthState(state))
-	if err != nil || !oauthStateMatches(record, tenant, claims) {
+	if !oauthStateMatches(record, tenant, claims) {
 		return nil, ErrInvalidOAuthCallback
 	}
 	if strings.TrimSpace(callbackError) != "" {
@@ -240,7 +243,11 @@ func oauthStateMatches(record *OAuthStateRecord, tenant *Tenant, claims OAuthSta
 	if record == nil || tenant == nil {
 		return false
 	}
-	return record.TenantID == tenant.ID && record.UserID == claims.UserID && record.ReturnURL == claims.ReturnURL && record.Nonce == claims.Nonce && record.ExpiresAt.Unix() == claims.ExpiresAt
+	if record.TenantID != tenant.ID || record.TenantSlug != tenant.Slug || strings.TrimSpace(record.UserID) == "" ||
+		record.Nonce != claims.Nonce || record.ExpiresAt.Unix() != claims.ExpiresAt {
+		return false
+	}
+	return ValidateTenantReturnURL(tenant.PublicBaseURL, record.ReturnURL) == nil
 }
 
 func containsEveryScope(granted, required []string) bool {
