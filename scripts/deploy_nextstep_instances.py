@@ -677,7 +677,10 @@ def ensure_edge_config(*, include_tiktok_gateway: bool = False) -> None:
 
 def start_edge() -> None:
     sudo(
-        f"cd {shlex.quote(EDGE_DIR)} && docker compose up -d",
+        f"cd {shlex.quote(EDGE_DIR)} && "
+        "docker compose up -d && "
+        "docker exec nexflow-edge nginx -t && "
+        "docker exec nexflow-edge nginx -s reload",
         label="start edge",
         timeout=120,
     )

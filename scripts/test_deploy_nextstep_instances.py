@@ -152,6 +152,15 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("location /webhook/ { return 404; }", enabled_nginx)
         self.assertIn(deploy.TIKTOK_GATEWAY_NETWORK, enabled_compose)
 
+    def test_start_edge_reloads_nginx_after_tenant_recreate(self) -> None:
+        with patch.object(deploy, "sudo") as sudo:
+            deploy.start_edge()
+
+        command = sudo.call_args.args[0]
+        self.assertIn("docker compose up -d", command)
+        self.assertIn("docker exec nexflow-edge nginx -t", command)
+        self.assertIn("docker exec nexflow-edge nginx -s reload", command)
+
     def test_tiktok_gateway_connection_probe_runs_only_for_enabled_tenant(self) -> None:
         target = self.make_target()
         with patch.object(deploy, "sudo") as sudo:
