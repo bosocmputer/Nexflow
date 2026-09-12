@@ -99,7 +99,15 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
-	tiktokgateway.NewHandler(oauthService, verifier, repository, config, logger, tiktokgateway.WithOrderGatewayService(orderService)).Register(router)
+	tiktokgateway.NewHandler(oauthService, verifier, repository, config, logger,
+		tiktokgateway.WithOrderGatewayService(orderService),
+		tiktokgateway.WithWebhookReceiver(repository),
+	).Register(router)
+	workerContext, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+	if config.WebhookEnabled {
+		go tiktokgateway.NewWebhookDeliveryWorker(config, repository, logger).Start(workerContext, 2*time.Second, 20)
+	}
 
 	server := &http.Server{
 		Addr: ":" + config.Port, Handler: router,
@@ -116,6 +124,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	stopWorker()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {

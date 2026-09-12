@@ -56,9 +56,16 @@ func WithOrderGatewayService(service OrderGatewayService) HandlerOption {
 	}
 }
 
+func WithWebhookReceiver(receiver WebhookReceiver) HandlerOption {
+	return func(handler *Handler) {
+		handler.webhooks = receiver
+	}
+}
+
 type Handler struct {
 	service  OAuthGatewayService
 	orders   OrderGatewayService
+	webhooks WebhookReceiver
 	verifier InternalRequestVerifier
 	audit    APILogRecorder
 	config   Config
@@ -101,6 +108,7 @@ func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, a
 func (h *Handler) Register(router *gin.Engine) {
 	router.GET("/health", h.Health)
 	router.GET("/api/tiktok-shop/callback", h.OAuthCallback)
+	router.POST("/webhook/tiktok-shop", h.ReceiveWebhook)
 	router.POST(GatewayOAuthPath, h.CreateAuthURL)
 	router.POST(GatewayConnectionsPath, h.ListConnections)
 	router.POST(tiktokshop.GatewayOrderSearchPath, h.SearchOrders)

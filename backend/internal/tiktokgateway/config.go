@@ -27,6 +27,8 @@ type Config struct {
 	OAuthSigningKey     string
 	TenantRegistryPath  string
 	ExternalHTTPTimeout time.Duration
+	TenantHTTPTimeout   time.Duration
+	WebhookEnabled      bool
 }
 
 func LoadConfig() (Config, error) {
@@ -42,6 +44,10 @@ func loadConfig(getenv func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TIKTOK_SHOP_GATEWAY_EXTERNAL_HTTP_TIMEOUT: %w", err)
 	}
+	tenantTimeout, err := parseDuration(getenv("TIKTOK_SHOP_GATEWAY_TENANT_HTTP_TIMEOUT"), 10*time.Second)
+	if err != nil {
+		return Config{}, fmt.Errorf("TIKTOK_SHOP_GATEWAY_TENANT_HTTP_TIMEOUT: %w", err)
+	}
 	cfg := Config{
 		Port:                defaultValue(getenv("PORT"), "8092"),
 		DatabaseURL:         strings.TrimSpace(getenv("DATABASE_URL")),
@@ -55,11 +61,18 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		OAuthSigningKey:     strings.TrimSpace(getenv("TIKTOK_SHOP_GATEWAY_OAUTH_SIGNING_KEY")),
 		TenantRegistryPath:  defaultValue(getenv("TIKTOK_SHOP_GATEWAY_TENANT_REGISTRY"), "/app/config/nextstep-instances.json"),
 		ExternalHTTPTimeout: externalTimeout,
+		TenantHTTPTimeout:   tenantTimeout,
+		WebhookEnabled:      parseBool(getenv("TIKTOK_SHOP_WEBHOOK_ENABLED")),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func parseBool(raw string) bool {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func (c Config) Validate() error {

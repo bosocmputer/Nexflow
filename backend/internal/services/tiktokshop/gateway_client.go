@@ -21,6 +21,7 @@ const (
 	GatewayOrderSearchPath      = "/internal/v1/tiktok-shop/orders/search"
 	GatewayOrderDetailsPath     = "/internal/v1/tiktok-shop/orders/detail"
 	GatewayOrderPriceDetailPath = "/internal/v1/tiktok-shop/orders/price-detail"
+	GatewayWebhookDeliveryPath  = "/internal/v1/tiktok-shop/webhooks/order-status"
 	maxGatewayResponseSize      = 8 << 20
 )
 
@@ -69,6 +70,16 @@ type GatewayConnection struct {
 	Disabled            bool     `json:"disabled"`
 	ConnectedAt         string   `json:"connected_at"`
 	UpdatedAt           string   `json:"updated_at"`
+}
+
+type GatewayWebhookDelivery struct {
+	GatewayEventID string `json:"gateway_event_id"`
+	NotificationID string `json:"tts_notification_id"`
+	ShopID         string `json:"shop_id"`
+	OrderID        string `json:"order_id"`
+	OrderStatus    string `json:"order_status"`
+	Timestamp      string `json:"timestamp"`
+	OrderUpdateAt  string `json:"order_update_at"`
 }
 
 type GatewayOrderSearchRequest struct {

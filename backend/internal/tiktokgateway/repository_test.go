@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,62 @@ func TestRepositoryRejectsCrossTenantShopOwnership(t *testing.T) {
 	})
 	if !errors.Is(err, ErrShopAlreadyOwned) {
 		t.Fatalf("UpsertConnection() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryAcceptsWebhookAndQueuesOnlyOwningTenant(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, time.September, 12, 10, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT t.id::text, t.slug").WithArgs("7494619203789490654").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "public_base_url", "backend_url", "enabled"}).
+			AddRow("11111111-1111-4111-8111-111111111111", "aoy", "https://nexflow-aoy.nextstep-soft.com", "http://nexflow-aoy-backend:8090", true))
+	mock.ExpectQuery("INSERT INTO webhook_events").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "inserted"}).AddRow("22222222-2222-4222-8222-222222222222", true))
+	mock.ExpectExec("INSERT INTO webhook_delivery_outbox").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := NewRepository(db).AcceptWebhookEvent(t.Context(), WebhookEventInput{
+		NotificationID: "7327112393057371910", NotificationType: 1,
+		ShopID: "7494619203789490654", OrderID: "576486316948490001", OrderStatus: "UNPAID",
+		Timestamp: now, OrderUpdateAt: now, BodySHA256: strings.Repeat("a", 64),
+	})
+	if err != nil || result == nil || !result.Inserted || result.Tenant == nil || result.Tenant.Slug != "aoy" {
+		t.Fatalf("AcceptWebhookEvent() result=%+v error=%v", result, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepositoryAcknowledgesUnknownWebhookShopWithoutDelivery(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, time.September, 12, 10, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT t.id::text, t.slug").WithArgs("7494619203789490654").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("INSERT INTO webhook_events").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "inserted"}).AddRow("22222222-2222-4222-8222-222222222222", true))
+	mock.ExpectCommit()
+
+	result, err := NewRepository(db).AcceptWebhookEvent(t.Context(), WebhookEventInput{
+		NotificationID: "7327112393057371910", NotificationType: 1,
+		ShopID: "7494619203789490654", OrderID: "576486316948490001", OrderStatus: "UNPAID",
+		Timestamp: now, OrderUpdateAt: now, BodySHA256: strings.Repeat("b", 64),
+	})
+	if err != nil || result == nil || !result.Inserted || result.Tenant != nil {
+		t.Fatalf("AcceptWebhookEvent() result=%+v error=%v", result, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

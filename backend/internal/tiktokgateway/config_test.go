@@ -17,6 +17,8 @@ func TestLoadConfigBuildsTikTokShopGatewayCallbacks(t *testing.T) {
 		"TIKTOK_SHOP_GATEWAY_OAUTH_SIGNING_KEY":     testEncodedKey(3),
 		"TIKTOK_SHOP_GATEWAY_TENANT_REGISTRY":       "/app/config/nextstep-instances.json",
 		"TIKTOK_SHOP_GATEWAY_EXTERNAL_HTTP_TIMEOUT": "20s",
+		"TIKTOK_SHOP_GATEWAY_TENANT_HTTP_TIMEOUT":   "10s",
+		"TIKTOK_SHOP_WEBHOOK_ENABLED":               "true",
 		"TIKTOK_SHOP_API_BASE_URL":                  "https://open-api.tiktokglobalshop.com",
 	}
 	cfg, err := loadConfig(func(key string) string { return values[key] })
@@ -34,6 +36,9 @@ func TestLoadConfigBuildsTikTokShopGatewayCallbacks(t *testing.T) {
 	}
 	if cfg.ServiceID != "7683174272727025429" {
 		t.Fatalf("ServiceID = %q", cfg.ServiceID)
+	}
+	if !cfg.WebhookEnabled || cfg.TenantHTTPTimeout.Seconds() != 10 {
+		t.Fatalf("WebhookEnabled=%v TenantHTTPTimeout=%s", cfg.WebhookEnabled, cfg.TenantHTTPTimeout)
 	}
 }
 

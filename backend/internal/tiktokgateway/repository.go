@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"nexflow/internal/services/tiktokshop"
 )
 
 var (
@@ -74,12 +76,204 @@ type ConnectionMetadata struct {
 	UpdatedAt        time.Time
 }
 
+type WebhookDeliveryJob struct {
+	ID             string
+	WebhookEventID string
+	TenantID       string
+	TenantSlug     string
+	BackendURL     string
+	Payload        json.RawMessage
+	Attempts       int
+}
+
 type Repository struct {
 	db *sql.DB
 }
 
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
+}
+
+func (r *Repository) AcceptWebhookEvent(ctx context.Context, input WebhookEventInput) (*WebhookEventResult, error) {
+	if r == nil || r.db == nil || !validWebhookEventInput(input) {
+		return nil, ErrInvalidWebhookEvent
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var tenant Tenant
+	tenantErr := tx.QueryRowContext(ctx,
+		`SELECT t.id::text, t.slug, t.public_base_url, t.backend_url, t.enabled
+		   FROM shop_connections c
+		   JOIN tenants t ON t.id = c.tenant_id
+		  WHERE c.shop_id = $1 AND c.disabled_at IS NULL AND t.enabled = TRUE`, input.ShopID,
+	).Scan(&tenant.ID, &tenant.Slug, &tenant.PublicBaseURL, &tenant.BackendURL, &tenant.Enabled)
+	if tenantErr != nil && !errors.Is(tenantErr, sql.ErrNoRows) {
+		return nil, tenantErr
+	}
+	knownTenant := tenantErr == nil
+	status := "unknown_shop"
+	tenantID := ""
+	if knownTenant {
+		status = "queued"
+		tenantID = tenant.ID
+	}
+
+	var eventID string
+	var inserted bool
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO webhook_events
+		   (tenant_id, notification_id, notification_type, shop_id, order_id, order_status,
+		    event_timestamp, order_update_at, body_sha256, processing_status)
+		 VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 ON CONFLICT (notification_id) DO UPDATE SET last_seen_at = NOW()
+		  WHERE webhook_events.body_sha256 = EXCLUDED.body_sha256
+		 RETURNING id::text, (xmax = 0)`,
+		tenantID, input.NotificationID, input.NotificationType, input.ShopID, input.OrderID,
+		input.OrderStatus, input.Timestamp, input.OrderUpdateAt, input.BodySHA256, status,
+	).Scan(&eventID, &inserted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrWebhookNotificationCollision
+		}
+		return nil, err
+	}
+	if inserted && knownTenant {
+		payload, err := json.Marshal(tiktokshop.GatewayWebhookDelivery{
+			GatewayEventID: eventID, NotificationID: input.NotificationID, ShopID: input.ShopID,
+			OrderID: input.OrderID, OrderStatus: input.OrderStatus,
+			Timestamp: input.Timestamp.Format(time.RFC3339), OrderUpdateAt: input.OrderUpdateAt.Format(time.RFC3339),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO webhook_delivery_outbox (webhook_event_id, tenant_id, payload)
+			 VALUES ($1::uuid, $2::uuid, $3::jsonb)
+			 ON CONFLICT (webhook_event_id) DO NOTHING`, eventID, tenant.ID, payload,
+		); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	result := &WebhookEventResult{EventID: eventID, Inserted: inserted}
+	if knownTenant {
+		result.Tenant = &tenant
+	}
+	return result, nil
+}
+
+func validWebhookEventInput(input WebhookEventInput) bool {
+	return input.NotificationType == 1 && webhookNumericIDPattern.MatchString(strings.TrimSpace(input.NotificationID)) &&
+		webhookNumericIDPattern.MatchString(strings.TrimSpace(input.ShopID)) && webhookNumericIDPattern.MatchString(strings.TrimSpace(input.OrderID)) &&
+		strings.TrimSpace(input.OrderStatus) != "" && !input.Timestamp.IsZero() && !input.OrderUpdateAt.IsZero() &&
+		len(input.BodySHA256) == sha256HexLength && isLowerHex(input.BodySHA256)
+}
+
+const sha256HexLength = 64
+
+func isLowerHex(value string) bool {
+	if len(value) != sha256HexLength || value != strings.ToLower(value) {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Repository) LeaseWebhookDeliveries(ctx context.Context, limit int) ([]WebhookDeliveryJob, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("TikTok gateway repository is not configured")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`WITH recovered AS (
+		   UPDATE webhook_delivery_outbox SET status = 'failed', next_run_at = NOW(), updated_at = NOW(), last_error_code = 'lease_expired'
+		    WHERE status = 'running' AND updated_at < NOW() - INTERVAL '5 minutes'
+		 ), picked AS (
+		   SELECT id FROM webhook_delivery_outbox
+		    WHERE status IN ('pending','failed') AND next_run_at <= NOW()
+		    ORDER BY next_run_at, created_at FOR UPDATE SKIP LOCKED LIMIT $1
+		 ), leased AS (
+		   UPDATE webhook_delivery_outbox d SET status = 'running', attempts = attempts + 1, updated_at = NOW()
+		     FROM picked WHERE d.id = picked.id
+		   RETURNING d.id, d.webhook_event_id, d.tenant_id, d.payload, d.attempts
+		 )
+		 SELECT l.id::text, l.webhook_event_id::text, l.tenant_id::text, t.slug, t.backend_url, l.payload, l.attempts
+		   FROM leased l JOIN tenants t ON t.id = l.tenant_id`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := make([]WebhookDeliveryJob, 0, limit)
+	for rows.Next() {
+		var job WebhookDeliveryJob
+		if err := rows.Scan(&job.ID, &job.WebhookEventID, &job.TenantID, &job.TenantSlug, &job.BackendURL, &job.Payload, &job.Attempts); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
+func (r *Repository) MarkWebhookDeliveryDone(ctx context.Context, job WebhookDeliveryJob) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE webhook_delivery_outbox SET status = 'delivered', delivered_at = NOW(), updated_at = NOW(), last_error_code = ''
+		  WHERE id = $1::uuid AND status = 'running'`, job.ID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE webhook_events SET processing_status = 'delivered', attempts = $2, delivered_at = NOW(), updated_at = NOW(), last_error_code = ''
+		  WHERE id = $1::uuid`, job.WebhookEventID, job.Attempts); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *Repository) MarkWebhookDeliveryFailed(ctx context.Context, job WebhookDeliveryJob, errorCode string, nextRunAt time.Time) error {
+	errorCode = strings.TrimSpace(errorCode)
+	if len(errorCode) > 100 {
+		errorCode = errorCode[:100]
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE webhook_delivery_outbox SET status = 'failed', next_run_at = $2, updated_at = NOW(), last_error_code = $3
+		  WHERE id = $1::uuid AND status = 'running'`, job.ID, nextRunAt, errorCode); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE webhook_events SET processing_status = 'failed', attempts = $2, updated_at = NOW(), last_error_code = $3
+		  WHERE id = $1::uuid`, job.WebhookEventID, job.Attempts, errorCode); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *Repository) RecordWebhookDeliveryResult(ctx context.Context, job WebhookDeliveryJob, nonce string, statusCode, durationMS int, errorCode, requestID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO api_request_logs (tenant_id, nonce, direction, operation, status_code, duration_ms, error_code, request_id)
+		 VALUES ($1::uuid, $2, 'gateway_to_tenant', 'order_status_webhook', $3, $4, $5, $6)
+		 ON CONFLICT (tenant_id, nonce, direction) DO NOTHING`,
+		job.TenantID, nonce, statusCode, durationMS, errorCode, requestID)
+	return err
 }
 
 func (r *Repository) Ping(ctx context.Context) error {
