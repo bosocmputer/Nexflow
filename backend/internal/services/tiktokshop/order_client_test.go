@@ -109,6 +109,39 @@ func TestOrderClientGetOrderDetailsUsesCurrentVersionAndCapsIDs(t *testing.T) {
 	}
 }
 
+func TestOrderClientGetsPriceDetailForOneOrder(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/order/202407/orders/order-1/price_detail" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		query := r.URL.Query()
+		providedSign := query.Get("sign")
+		query.Del("sign")
+		expectedSign, err := SignRequest("app-secret", r.URL.Path, query, nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if providedSign != expectedSign || query.Get("shop_cipher") != "shop-cipher" {
+			t.Fatalf("query = %v, sign = %q", query, providedSign)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-price","data":{"currency":"THB","total":"329.00","payment":"307.49","sku_list_price":"300.00","sku_sale_price":"300.00","subtotal":"300.00","shipping_list_price":"29.00","shipping_sale_price":"0.00","tax_amount":"0.00","line_items":[{"currency":"THB","total":"300.00","payment":"300.00","sku_list_price":"300.00","sku_sale_price":"300.00","subtotal":"300.00"}]}}`))
+	}))
+	defer server.Close()
+
+	client := newTestOrderClient(t, server, now)
+	detail, requestID, err := client.GetPriceDetail(context.Background(), "seller-access-token", "shop-cipher", " order-1 ")
+	if err != nil {
+		t.Fatalf("GetPriceDetail() error = %v", err)
+	}
+	if requestID != "req-price" || detail.Currency != "THB" || detail.Payment != "307.49" || detail.SKUSalePrice != "300.00" || len(detail.LineItems) != 1 {
+		t.Fatalf("GetPriceDetail() = %+v, requestID=%q", detail, requestID)
+	}
+	if _, _, err := client.GetPriceDetail(context.Background(), "seller-access-token", "shop-cipher", " "); !errors.Is(err, ErrInvalidOrderInput) {
+		t.Fatalf("empty order ID error = %v", err)
+	}
+}
+
 func TestOrderClientSearchOrdersRejectsInvalidFiltersBeforeNetwork(t *testing.T) {
 	calls := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))

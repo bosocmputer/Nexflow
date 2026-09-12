@@ -17,6 +17,7 @@ import (
 const (
 	PathSearchOrders     = "/order/202309/orders/search"
 	PathGetOrderDetails  = "/order/202507/orders"
+	PathPriceDetailBase  = "/order/202407/orders"
 	maxOrderResponseSize = 8 << 20
 )
 
@@ -173,11 +174,42 @@ type OrderPackage struct {
 	ID string `json:"id"`
 }
 
-type orderResponse struct {
-	Code      int                `json:"code"`
-	Message   string             `json:"message"`
-	RequestID string             `json:"request_id"`
-	Data      SearchOrdersResult `json:"data"`
+// PriceDetail mirrors TikTok Shop's read-only Get Price Detail response. The
+// nested line items use the same amount fields as the order-level detail.
+type PriceDetail struct {
+	Currency                            string        `json:"currency"`
+	Total                               string        `json:"total"`
+	Payment                             string        `json:"payment"`
+	SKUListPrice                        string        `json:"sku_list_price"`
+	SKUSalePrice                        string        `json:"sku_sale_price"`
+	Subtotal                            string        `json:"subtotal"`
+	SubtotalDeductionSeller             string        `json:"subtotal_deduction_seller"`
+	SubtotalDeductionPlatform           string        `json:"subtotal_deduction_platform"`
+	SubtotalTaxAmount                   string        `json:"subtotal_tax_amount"`
+	VoucherDeductionPlatform            string        `json:"voucher_deduction_platform"`
+	VoucherDeductionSeller              string        `json:"voucher_deduction_seller"`
+	ShippingListPrice                   string        `json:"shipping_list_price"`
+	ShippingSalePrice                   string        `json:"shipping_sale_price"`
+	ShippingFeeDeductionSeller          string        `json:"shipping_fee_deduction_seller"`
+	ShippingFeeDeductionPlatform        string        `json:"shipping_fee_deduction_platform"`
+	ShippingFeeDeductionPlatformVoucher string        `json:"shipping_fee_deduction_platform_voucher"`
+	TaxAmount                           string        `json:"tax_amount"`
+	TaxRate                             string        `json:"tax_rate"`
+	NetPriceAmount                      string        `json:"net_price_amount"`
+	CODFee                              string        `json:"cod_fee"`
+	CODFeeNetAmount                     string        `json:"cod_fee_net_amount"`
+	SKUGiftOriginalPrice                string        `json:"sku_gift_original_price"`
+	SKUGiftNetPrice                     string        `json:"sku_gift_net_price"`
+	DistanceShippingFee                 string        `json:"distance_shipping_fee"`
+	DistanceFee                         string        `json:"distance_fee"`
+	LineItems                           []PriceDetail `json:"line_items,omitempty"`
+}
+
+type apiResponse struct {
+	Code      int             `json:"code"`
+	Message   string          `json:"message"`
+	RequestID string          `json:"request_id"`
+	Data      json.RawMessage `json:"data"`
 }
 
 func NewOrderClient(config OrderClientConfig) (*OrderClient, error) {
@@ -227,15 +259,16 @@ func (c *OrderClient) SearchOrders(ctx context.Context, accessToken, shopCipher 
 	if input.SortOrder != "" {
 		query.Set("sort_order", string(input.SortOrder))
 	}
-	payload, requestID, err := c.do(ctx, http.MethodPost, PathSearchOrders, query, body, accessToken)
+	var result SearchOrdersResult
+	requestID, err := c.do(ctx, http.MethodPost, PathSearchOrders, query, body, accessToken, &result)
 	if err != nil {
 		return nil, requestID, err
 	}
-	if err := validateOrders(payload.Data.Orders, 100, nil); err != nil || payload.Data.TotalCount < int64(len(payload.Data.Orders)) {
+	if err := validateOrders(result.Orders, 100, nil); err != nil || result.TotalCount < int64(len(result.Orders)) {
 		return nil, requestID, ErrInvalidOrderResponse
 	}
-	payload.Data.NextPageToken = strings.TrimSpace(payload.Data.NextPageToken)
-	return &payload.Data, requestID, nil
+	result.NextPageToken = strings.TrimSpace(result.NextPageToken)
+	return &result, requestID, nil
 }
 
 func (c *OrderClient) GetOrderDetails(ctx context.Context, accessToken, shopCipher string, orderIDs []string) ([]Order, string, error) {
@@ -247,7 +280,10 @@ func (c *OrderClient) GetOrderDetails(ctx context.Context, accessToken, shopCiph
 	}
 	query := c.baseQuery(shopCipher)
 	query.Set("ids", strings.Join(ids, ","))
-	payload, requestID, err := c.do(ctx, http.MethodGet, PathGetOrderDetails, query, nil, accessToken)
+	var result struct {
+		Orders []Order `json:"orders"`
+	}
+	requestID, err := c.do(ctx, http.MethodGet, PathGetOrderDetails, query, nil, accessToken, &result)
 	if err != nil {
 		return nil, requestID, err
 	}
@@ -255,10 +291,29 @@ func (c *OrderClient) GetOrderDetails(ctx context.Context, accessToken, shopCiph
 	for _, id := range ids {
 		expected[id] = struct{}{}
 	}
-	if err := validateOrders(payload.Data.Orders, 50, expected); err != nil || len(payload.Data.Orders) != len(ids) {
+	if err := validateOrders(result.Orders, 50, expected); err != nil || len(result.Orders) != len(ids) {
 		return nil, requestID, ErrInvalidOrderResponse
 	}
-	return payload.Data.Orders, requestID, nil
+	return result.Orders, requestID, nil
+}
+
+func (c *OrderClient) GetPriceDetail(ctx context.Context, accessToken, shopCipher, orderID string) (*PriceDetail, string, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	shopCipher = strings.TrimSpace(shopCipher)
+	orderID = strings.TrimSpace(orderID)
+	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || orderID == "" || strings.ContainsAny(orderID, "/?#") {
+		return nil, "", ErrInvalidOrderInput
+	}
+	path := PathPriceDetailBase + "/" + orderID + "/price_detail"
+	var detail PriceDetail
+	requestID, err := c.do(ctx, http.MethodGet, path, c.baseQuery(shopCipher), nil, accessToken, &detail)
+	if err != nil {
+		return nil, requestID, err
+	}
+	if strings.TrimSpace(detail.Currency) == "" || strings.TrimSpace(detail.Payment) == "" {
+		return nil, requestID, ErrInvalidOrderResponse
+	}
+	return &detail, requestID, nil
 }
 
 func (c *OrderClient) baseQuery(shopCipher string) url.Values {
@@ -269,10 +324,10 @@ func (c *OrderClient) baseQuery(shopCipher string) url.Values {
 	}
 }
 
-func (c *OrderClient) do(ctx context.Context, method, path string, query url.Values, body []byte, accessToken string) (*orderResponse, string, error) {
+func (c *OrderClient) do(ctx context.Context, method, path string, query url.Values, body []byte, accessToken string, output any) (string, error) {
 	signature, err := SignRequest(c.appSecret, path, query, body, false)
 	if err != nil {
-		return nil, "", fmt.Errorf("sign TikTok Shop order request: %w", err)
+		return "", fmt.Errorf("sign TikTok Shop order request: %w", err)
 	}
 	query.Set("sign", signature)
 	requestURL := *c.baseURL
@@ -284,32 +339,38 @@ func (c *OrderClient) do(ctx context.Context, method, path string, query url.Val
 	}
 	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), reader)
 	if err != nil {
-		return nil, "", fmt.Errorf("create TikTok Shop order request: %w", err)
+		return "", fmt.Errorf("create TikTok Shop order request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-tts-access-token", accessToken)
 	response, err := c.http.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("call TikTok Shop order API: %w", err)
+		return "", fmt.Errorf("call TikTok Shop order API: %w", err)
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxOrderResponseSize+1))
 	if err != nil {
-		return nil, "", fmt.Errorf("read TikTok Shop order response: %w", err)
+		return "", fmt.Errorf("read TikTok Shop order response: %w", err)
 	}
 	if len(responseBody) > maxOrderResponseSize {
-		return nil, "", ErrInvalidOrderResponse
+		return "", ErrInvalidOrderResponse
 	}
-	var payload orderResponse
+	var payload apiResponse
 	if err := json.Unmarshal(responseBody, &payload); err != nil {
-		return nil, "", fmt.Errorf("decode TikTok Shop order response: %w", err)
+		return "", fmt.Errorf("decode TikTok Shop order response: %w", err)
 	}
 	requestID := strings.TrimSpace(payload.RequestID)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || payload.Code != 0 {
-		return nil, requestID, &APIError{Code: payload.Code, RequestID: requestID, Message: "TikTok Shop rejected the order request"}
+		return requestID, &APIError{Code: payload.Code, RequestID: requestID, Message: "TikTok Shop rejected the order request"}
 	}
-	return &payload, requestID, nil
+	if len(payload.Data) == 0 || string(payload.Data) == "null" || output == nil {
+		return requestID, ErrInvalidOrderResponse
+	}
+	if err := json.Unmarshal(payload.Data, output); err != nil {
+		return requestID, fmt.Errorf("decode TikTok Shop order data: %w", err)
+	}
+	return requestID, nil
 }
 
 func (input *SearchOrdersRequest) Validate() error {
