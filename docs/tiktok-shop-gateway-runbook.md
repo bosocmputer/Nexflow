@@ -22,16 +22,18 @@
 - มี scheduler แบบสองชั้น: global `TIKTOK_SHOP_ORDER_SYNC_ENABLED` และ per-shop setting ซึ่งค่าเริ่มต้นปิดทั้งคู่; watermark ขยับหลังจบทุกหน้าเท่านั้น และ replay overlap 15 นาทีเพื่อรับ late update
 - เก็บ durable run/progress พร้อม lease 30 นาทีและ safe error code; เก็บเฉพาะ SHA-256 ของ opaque page token ไม่เก็บ token ดิบ, upstream payload, credential หรือ buyer PII
 - มี internal endpoints ที่ลงลายเซ็นแยก tenant สำหรับ Order List/Detail; public edge ปิด `/internal/` ทั้งหมด
+- มี signed `ORDER_STATUS_CHANGE` receiver ที่ตรวจ `Authorization` จาก raw body ก่อน parse, เก็บ typed receipt + hash, deduplicate ด้วย `tts_notification_id`, ส่งต่อผ่าน durable tenant outbox และ refresh exact Order Detail + Price Detail เท่านั้น
+- public receiver, Central Gateway delivery worker และ tenant reconciliation worker ใช้ `TIKTOK_SHOP_WEBHOOK_ENABLED=false` เป็นค่าเริ่มต้นและเปิดแยกกันได้
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
 
-ยังไม่เปิด:
+ยังไม่เปิดใช้งานจริง:
 
-- webhook reconciliation และการแปลง snapshots เป็น Nexflow bills
-- webhooks และ realtime queue
+- Partner Center webhook subscription และ AOY webhook feature gates (ต้องผ่าน signed synthetic canary ก่อน)
+- การแปลง snapshots เป็น Nexflow bills
 - stock write, fulfillment, shipping label, cancellation และ Auto SML
 - finance/settlement
 
-API อ้างอิงหลัก: [Authorization overview](https://partner.tiktokshop.com/docv2/page/authorization-overview-202407), [Create your app](https://partner.tiktokshop.com/docv2/page/create-your-app), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope), [Get Authorized Shops](https://partner.tiktokshop.com/docv2/page/get-authorized-shops), [Get Order List](https://partner.tiktokshop.com/docv2/page/get-order-list-202309), [Get Order Detail](https://partner.tiktokshop.com/docv2/page/get-order-detail-202507), [Get Price Detail](https://partner.tiktokshop.com/docv2/page/get-price-detail-202407), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning)
+API อ้างอิงหลัก: [Authorization overview](https://partner.tiktokshop.com/docv2/page/authorization-overview-202407), [Create your app](https://partner.tiktokshop.com/docv2/page/create-your-app), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope), [Get Authorized Shops](https://partner.tiktokshop.com/docv2/page/get-authorized-shops), [Get Order List](https://partner.tiktokshop.com/docv2/page/get-order-list-202309), [Get Order Detail](https://partner.tiktokshop.com/docv2/page/get-order-detail-202507), [Get Price Detail](https://partner.tiktokshop.com/docv2/page/get-price-detail-202407), [Webhook configuration](https://partner.tiktokshop.com/docv2/page/configuration-guide), [Webhook overview/signature](https://partner.tiktokshop.com/docv2/page/tts-webhooks-overview), [Order status change](https://partner.tiktokshop.com/docv2/page/1-order-status-change), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning)
 
 ## Partner Center gates
 
@@ -67,6 +69,8 @@ TIKTOK_SHOP_API_BASE_URL=https://open-api.tiktokglobalshop.com
 TIKTOK_SHOP_GATEWAY_SERVICE_ID=7683750742427944722
 TIKTOK_SHOP_GATEWAY_APP_KEY=<Partner Center App Key>
 TIKTOK_SHOP_GATEWAY_APP_SECRET=<Partner Center App Secret>
+TIKTOK_SHOP_WEBHOOK_ENABLED=false
+TIKTOK_SHOP_GATEWAY_TENANT_HTTP_TIMEOUT=10s
 ```
 
 Key ทั้งสามต้องไม่ซ้ำกัน Gateway จะไม่ start หาก config ไม่ครบ, URL ไม่ใช่ HTTPS หรือ key ไม่ถูกต้อง
@@ -84,7 +88,7 @@ NX_PASS=... python3 scripts/deploy_nextstep_instances.py --target tiktok-gateway
 - `/health`
 - `/api/tiktok-shop/callback`
 
-`/internal/` และ `/webhook/` ตอบ 404 จาก edge จนกว่า webhook receiver ที่ตรวจ signature และ durable queue จะพร้อม
+`/internal/` และ `/webhook/` อื่นยังตอบ 404 จาก edge เสมอ; เปิด proxy เฉพาะ `/webhook/tiktok-shop` เท่านั้น เมื่อ Gateway flag ปิด endpoint นี้ตอบ 404 และเมื่อเปิดแต่ไม่มี/ผิด signature ตอบ 401 body ว่าง
 
 ## AOY tenant configuration
 
@@ -97,6 +101,7 @@ TIKTOK_SHOP_GATEWAY_PUBLIC_URL=https://tiktok-shop-gateway.nextstep-soft.com
 TIKTOK_SHOP_GATEWAY_TENANT=aoy
 TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET=<derived AOY secret>
 TIKTOK_SHOP_ORDER_SYNC_ENABLED=false
+TIKTOK_SHOP_WEBHOOK_ENABLED=false
 VITE_ENABLE_TIKTOK_SHOP_API=true
 ```
 
@@ -177,12 +182,19 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 14. เรียก reconciliation แบบ manual ในช่วงเวลาสั้นที่มี controlled order; ต้องสำเร็จ, snapshot ยัง idempotent และจำนวน Bill/SML/notification ไม่เปลี่ยน
 15. เปิด global worker ของ AOY แต่ยังปิดทุกร้าน ตรวจว่าไม่มี run ถูก claim จากนั้นเปิดเฉพาะ AOY Shop ID และรอ scheduled run แรก
 16. ตรวจ scheduled run ว่า watermark เท่ากับ exclusive window end เฉพาะเมื่อสำเร็จ, ไม่มี raw page token/PII และการ restart/replay ไม่สร้าง snapshot ซ้ำ
+17. Deploy migration 100 และโค้ด webhook โดยทั้ง Central Gateway/AOY flag ยังปิด; ตรวจ endpoint ผ่าน edge ตอบ 404 และ side-effect counts ไม่เปลี่ยน
+18. เปิด AOY tenant flag ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled true`, deploy AOY แล้วเปิด Central Gateway flag; request ที่ไม่มี signature ต้องตอบ 401 body ว่าง
+19. ส่ง synthetic payload ที่ลงลายเซ็นจากภายใน Gateway โดยไม่แสดง App Secret; ส่งซ้ำ byte-for-byte แล้วต้องมี receipt/outbox/AOY job เพียงหนึ่งชุด และ exact snapshot สำเร็จ
+20. ตั้ง Partner Center เฉพาะ `ORDER_STATUS_CHANGE` ไปที่ `https://tiktok-shop-gateway.nextstep-soft.com/webhook/tiktok-shop`; ตรวจ Webhook Log และ real AOY transition หนึ่งรายการก่อนคงสถานะเปิด
+21. หลัง real event ตรวจ Bill/SML attempt/notification/LINE/fulfillment/cancellation/stock-write counts ไม่เปลี่ยน และ scheduled polling ยังทำงาน
 
-UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, manual และ scheduled reconciliation ผ่านโดย watermark/overlap ถูกต้อง, ไม่มี Bill/SML/notification side effect, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน tenant database หรือ browser response
+UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, manual/scheduled/webhook reconciliation ผ่าน, webhook replay เหลือหนึ่ง receipt/job, ไม่มี Bill/SML/notification side effect, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน Gateway, tenant database, log หรือ browser response
 
 ## Rollback
 
-- ปิด AOY แบบ atomic ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --open-api-enabled false` แล้ว deploy AOY ใหม่
+- ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่
+- ลบ/คืนค่า `ORDER_STATUS_CHANGE` callback ใน Partner Center; scheduled polling ยังเป็น recovery path
+- หากต้องปิด TikTok ทั้งหมด ให้ใช้ `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --open-api-enabled false` แล้ว deploy AOY ใหม่
 - หยุด Central Gateway หากพบ credential, routing หรือ callback anomaly
 - ไม่ลบ migration 095-098 และไม่ลบ connection/snapshot/run rows ระหว่าง incident; เก็บไว้เป็น audit evidence
 - Revoke seller authorization ใน Partner Center เมื่อ token อาจรั่วหรือผูกร้านผิด tenant

@@ -93,13 +93,17 @@ func (h *Handler) ReceiveWebhook(c *gin.Context) {
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxWebhookBodySize+1))
-	if err != nil || len(body) == 0 || len(body) > maxWebhookBodySize {
+	if err != nil || len(body) > maxWebhookBodySize {
 		c.Status(http.StatusRequestEntityTooLarge)
 		return
 	}
 	if err := tiktokshop.VerifyWebhookSignature(h.config.AppKey, h.config.AppSecret, c.GetHeader("Authorization"), body); err != nil {
 		h.logger.Warn("tiktok_gateway_webhook_auth_failed", zap.String("request_id", requestID))
 		c.Status(http.StatusUnauthorized)
+		return
+	}
+	if len(body) == 0 {
+		c.Status(http.StatusBadRequest)
 		return
 	}
 	event, err := ParseOrderStatusWebhook(body)

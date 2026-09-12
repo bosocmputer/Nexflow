@@ -105,4 +105,3 @@ stores only a SHA-256 body fingerprint plus typed business identifiers.
 Disable `TIKTOK_SHOP_WEBHOOK_ENABLED` at AOY and the Central Gateway, remove the
 Partner Center `ORDER_STATUS_CHANGE` subscription or restore its prior callback,
 and redeploy. Keep additive tables and receipt/job rows as audit evidence.
-

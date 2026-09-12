@@ -150,6 +150,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("location /internal/ { return 404; }", enabled_nginx)
         self.assertIn("location = /api/tiktok-shop/callback", enabled_nginx)
         self.assertIn("location /webhook/ { return 404; }", enabled_nginx)
+        self.assertIn("location = /webhook/tiktok-shop", enabled_nginx)
         self.assertIn(deploy.TIKTOK_GATEWAY_NETWORK, enabled_compose)
 
     def test_start_edge_reloads_nginx_after_tenant_recreate(self) -> None:
@@ -160,6 +161,22 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("docker compose up -d", command)
         self.assertIn("docker exec nexflow-edge nginx -t", command)
         self.assertIn("docker exec nexflow-edge nginx -s reload", command)
+
+    def test_tiktok_webhook_smoke_uses_post_and_accepts_signature_gate(self) -> None:
+        responses = [
+            "000",
+            '{"status":"ok"}',
+            "404",
+            '{"status":"ok"}',
+            "404",
+            "401",
+        ]
+        with patch.object(deploy, "ssh", side_effect=responses) as ssh:
+            deploy.smoke_edge([], include_tiktok_gateway=True)
+
+        webhook_call = ssh.call_args_list[-1]
+        self.assertIn("-X POST", webhook_call.args[0])
+        self.assertIn("/webhook/tiktok-shop", webhook_call.args[0])
 
     def test_tiktok_gateway_connection_probe_runs_only_for_enabled_tenant(self) -> None:
         target = self.make_target()

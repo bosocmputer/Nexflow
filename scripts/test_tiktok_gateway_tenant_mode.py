@@ -51,6 +51,18 @@ class TikTokGatewayTenantModeTest(unittest.TestCase):
             "https://tiktok-shop-gateway.nextstep-soft.com",
         )
 
+    def test_webhook_enable_is_tenant_scoped(self) -> None:
+        gateway = {
+            "PUBLIC_BASE_URL": "https://tiktok-shop-gateway.nextstep-soft.com",
+            "TIKTOK_SHOP_GATEWAY_INTERNAL_MASTER_KEY": base64.b64encode(bytes(range(32))).decode(),
+        }
+
+        updates = mode.prepare_updates("aoy", {}, gateway, enabled=None, webhook_enabled=True)
+
+        self.assertEqual(updates["TIKTOK_SHOP_WEBHOOK_ENABLED"], "true")
+        self.assertNotIn("TIKTOK_SHOP_OPEN_API_ENABLED", updates)
+        self.assertNotIn("VITE_ENABLE_TIKTOK_SHOP_API", updates)
+
     def test_rejects_invalid_master_key(self) -> None:
         with self.assertRaises(SystemExit):
             mode.derive("not-base64", "aoy")

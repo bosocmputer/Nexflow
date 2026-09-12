@@ -12,9 +12,11 @@ import (
 )
 
 type webhookDeliveryStoreFake struct {
-	jobs   []WebhookDeliveryJob
-	done   []WebhookDeliveryJob
-	failed []WebhookDeliveryJob
+	jobs           []WebhookDeliveryJob
+	done           []WebhookDeliveryJob
+	failed         []WebhookDeliveryJob
+	auditNonce     string
+	auditRequestID string
 }
 
 func (s *webhookDeliveryStoreFake) LeaseWebhookDeliveries(context.Context, int) ([]WebhookDeliveryJob, error) {
@@ -28,7 +30,9 @@ func (s *webhookDeliveryStoreFake) MarkWebhookDeliveryFailed(_ context.Context, 
 	s.failed = append(s.failed, job)
 	return nil
 }
-func (s *webhookDeliveryStoreFake) RecordWebhookDeliveryResult(context.Context, WebhookDeliveryJob, string, int, int, string, string) error {
+func (s *webhookDeliveryStoreFake) RecordWebhookDeliveryResult(_ context.Context, _ WebhookDeliveryJob, nonce string, _ int, _ int, _ string, requestID string) error {
+	s.auditNonce = nonce
+	s.auditRequestID = requestID
 	return nil
 }
 
@@ -62,5 +66,22 @@ func TestWebhookDeliveryWorkerSignsTenantRequest(t *testing.T) {
 	}
 	if len(store.done) != 1 || len(store.failed) != 0 {
 		t.Fatalf("done=%d failed=%d", len(store.done), len(store.failed))
+	}
+}
+
+func TestWebhookDeliveryWorkerAuditsDerivedSecretFailureWithRequestIdentity(t *testing.T) {
+	store := &webhookDeliveryStoreFake{jobs: []WebhookDeliveryJob{{
+		ID: "job", WebhookEventID: "event", TenantID: "tenant", TenantSlug: "aoy",
+		BackendURL: "http://unused.invalid", Payload: json.RawMessage(`{}`), Attempts: 1,
+	}}}
+	worker := NewWebhookDeliveryWorker(Config{InternalMasterKey: "invalid"}, store, nil)
+	if count, err := worker.ProcessBatch(t.Context(), 1); err != nil || count != 1 {
+		t.Fatalf("ProcessBatch() count=%d error=%v", count, err)
+	}
+	if len(store.done) != 0 || len(store.failed) != 1 {
+		t.Fatalf("done=%d failed=%d", len(store.done), len(store.failed))
+	}
+	if store.auditNonce == "" || store.auditRequestID == "" {
+		t.Fatalf("audit identity missing: nonce=%q request_id=%q", store.auditNonce, store.auditRequestID)
 	}
 }

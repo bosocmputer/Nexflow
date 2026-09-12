@@ -77,6 +77,7 @@ def prepare_updates(
     gateway: dict[str, str],
     *,
     enabled: bool | None,
+    webhook_enabled: bool | None = None,
 ) -> dict[str, str]:
     del current  # Identity-only deliberately preserves all unrelated tenant values.
     public_url = validate_public_url(gateway.get("PUBLIC_BASE_URL", ""))
@@ -95,6 +96,8 @@ def prepare_updates(
                 "VITE_ENABLE_TIKTOK_SHOP_API": value,
             }
         )
+    if webhook_enabled is not None:
+        updates["TIKTOK_SHOP_WEBHOOK_ENABLED"] = "true" if webhook_enabled else "false"
     return updates
 
 
@@ -112,6 +115,7 @@ def parse_args() -> argparse.Namespace:
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--identity-only", action="store_true", help="provision identity without changing feature flags")
     action.add_argument("--open-api-enabled", choices=["true", "false"], help="explicitly enable or disable backend and frontend gates together")
+    action.add_argument("--webhook-enabled", choices=["true", "false"], help="explicitly enable or disable the tenant webhook receiver and worker")
     parser.add_argument("--registry", default=str(REGISTRY))
     parser.add_argument("--server-root", default=str(ROOT))
     return parser.parse_args()
@@ -132,8 +136,9 @@ def main() -> int:
         raise SystemExit(f"TikTok Shop gateway env is missing: {gateway_env_path}")
     lines, current = read_env(tenant_env_path)
     _, gateway = read_env(gateway_env_path)
-    enabled = None if args.identity_only else args.open_api_enabled == "true"
-    updates = prepare_updates(args.target, current, gateway, enabled=enabled)
+    enabled = args.open_api_enabled == "true" if args.open_api_enabled is not None else None
+    webhook_enabled = args.webhook_enabled == "true" if args.webhook_enabled is not None else None
+    updates = prepare_updates(args.target, current, gateway, enabled=enabled, webhook_enabled=webhook_enabled)
     output = upsert(lines, updates)
     if output == lines:
         print(f"TikTok Shop gateway settings already current for {args.target}.")
@@ -143,7 +148,9 @@ def main() -> int:
     shutil.copy2(tenant_env_path, backup)
     os.chmod(backup, 0o600)
     write_env_atomic(tenant_env_path, output)
-    if enabled is None:
+    if webhook_enabled is not None:
+        action = "webhook enabled" if webhook_enabled else "webhook disabled"
+    elif enabled is None:
         action = "identity provisioned; feature flags unchanged"
     else:
         action = "feature enabled" if enabled else "feature disabled"

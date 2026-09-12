@@ -429,9 +429,10 @@ NX_PASS='<server-password>' python3 scripts/deploy_nextstep_instances.py --targe
 
 The deploy backs up the TikTok Gateway runtime, force-recreates only that
 gateway, checks its internal database-backed health, then adds its network and
-public callback host to the edge. The edge returns 404 for `/internal/` and
-`/webhook/`; tenant backends reach the signed internal API only through
-`nexflow-tiktok-shop-gateway_default`.
+public callback host to the edge. The edge returns 404 for `/internal/` and all
+unspecified `/webhook/` routes; only exact `/webhook/tiktok-shop` can reach the
+signature-verifying receiver. Tenant backends reach the signed internal API
+only through `nexflow-tiktok-shop-gateway_default`.
 
 A tenant joins that network only when its own
 `TIKTOK_SHOP_OPEN_API_ENABLED=true`. Use

@@ -93,6 +93,22 @@ func TestWebhookHandlerRejectsInvalidSignatureWithEmpty401(t *testing.T) {
 	}
 }
 
+func TestWebhookHandlerRejectsMissingSignatureBeforeParsingEmptyBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	receiver := &webhookReceiverFake{}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil,
+		Config{AppKey: "app-key", AppSecret: "app-secret", WebhookEnabled: true}, nil,
+		WithWebhookReceiver(receiver))
+	router := gin.New()
+	handler.Register(router)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/webhook/tiktok-shop", nil))
+	if response.Code != http.StatusUnauthorized || response.Body.Len() != 0 || receiver.calls != 0 {
+		t.Fatalf("status=%d body=%q calls=%d", response.Code, response.Body.String(), receiver.calls)
+	}
+}
+
 func TestWebhookHandlerAcknowledgesDuplicateWithoutRequeue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	receiver := &webhookReceiverFake{result: &WebhookEventResult{Inserted: false, Tenant: &Tenant{Slug: "aoy"}}}

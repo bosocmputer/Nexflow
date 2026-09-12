@@ -106,12 +106,12 @@ func (w *WebhookDeliveryWorker) process(ctx context.Context, job WebhookDelivery
 }
 
 func (w *WebhookDeliveryWorker) deliver(ctx context.Context, job WebhookDeliveryJob) (statusCode int, errorCode, requestID, nonce string, err error) {
-	secret, err := DeriveTenantSecret(w.masterKey, job.TenantSlug)
-	if err != nil {
-		return 0, "tenant_secret_error", "", "", err
-	}
 	nonce = webhookRandomHex(18)
 	requestID = webhookRandomHex(12)
+	secret, err := DeriveTenantSecret(w.masterKey, job.TenantSlug)
+	if err != nil {
+		return 0, "tenant_secret_error", requestID, nonce, err
+	}
 	endpoint := strings.TrimRight(job.BackendURL, "/") + tiktokshop.GatewayWebhookDeliveryPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(job.Payload))
 	if err != nil {

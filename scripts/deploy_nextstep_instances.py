@@ -608,6 +608,14 @@ def render_edge_nginx(
                 "    location /internal/ { return 404; }",
                 "    location /webhook/ { return 404; }",
                 "",
+                "    location = /webhook/tiktok-shop {",
+                f"        proxy_pass http://{TIKTOK_GATEWAY_CONTAINER}:8092;",
+                "        proxy_set_header Host $host;",
+                "        proxy_set_header X-Real-IP $remote_addr;",
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+                "        proxy_set_header X-Forwarded-Proto $scheme;",
+                "    }",
+                "",
                 "    location = /health {",
                 f"        proxy_pass http://{TIKTOK_GATEWAY_CONTAINER}:8092;",
                 "        proxy_set_header Host $host;",
@@ -737,12 +745,12 @@ def smoke_edge(targets: list[Target], *, include_tiktok_gateway: bool = False) -
         if tiktok_internal_status.strip() != "404":
             fail(f"TikTok Shop gateway internal API is publicly reachable: {tiktok_internal_status!r}")
         tiktok_webhook_status = ssh(
-            f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Host: {TIKTOK_GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/webhook/tiktok-shop",
-            label="edge keeps TikTok Shop webhook closed",
+            f"curl -s -o /dev/null -w '%{{http_code}}' -X POST -H 'Host: {TIKTOK_GATEWAY_HOSTNAME}' http://localhost:{EDGE_PORT}/webhook/tiktok-shop",
+            label="edge routes only the signed TikTok Shop webhook receiver",
             timeout=30,
         )
-        if tiktok_webhook_status.strip() != "404":
-            fail(f"TikTok Shop webhook became publicly reachable before its receiver exists: {tiktok_webhook_status!r}")
+        if tiktok_webhook_status.strip() not in {"401", "404"}:
+            fail(f"TikTok Shop webhook signature gate is not fail-closed: {tiktok_webhook_status!r}")
 
 
 def backup_target(target: Target) -> None:
