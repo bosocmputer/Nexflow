@@ -39,6 +39,8 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
           ? 'NextStep Marketplace'
         : location.pathname.startsWith('/shopee-operations')
           ? shopeeOperationsChip
+          : location.pathname.startsWith('/tiktok-shop-operations')
+            ? 'คำสั่งซื้อ TikTok Shop'
           : location.pathname.startsWith('/dashboard')
             ? 'Operations Console'
             : location.pathname.startsWith('/setup')
