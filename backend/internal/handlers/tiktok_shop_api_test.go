@@ -22,8 +22,10 @@ type tenantTikTokGatewayFake struct {
 	listCalls   int
 	search      *tiktokshop.GatewayOrderSearchResponse
 	details     *tiktokshop.GatewayOrderDetailsResponse
+	price       *tiktokshop.GatewayOrderPriceDetailResponse
 	searchInput tiktokshop.GatewayOrderSearchRequest
 	detailInput tiktokshop.GatewayOrderDetailsRequest
+	priceInput  tiktokshop.GatewayOrderPriceDetailRequest
 }
 
 func (f *tenantTikTokGatewayFake) Configured() bool { return f.configured }
@@ -42,6 +44,10 @@ func (f *tenantTikTokGatewayFake) SearchOrders(_ context.Context, input tiktoksh
 func (f *tenantTikTokGatewayFake) GetOrderDetails(_ context.Context, input tiktokshop.GatewayOrderDetailsRequest) (*tiktokshop.GatewayOrderDetailsResponse, error) {
 	f.detailInput = input
 	return f.details, f.err
+}
+func (f *tenantTikTokGatewayFake) GetPriceDetail(_ context.Context, input tiktokshop.GatewayOrderPriceDetailRequest) (*tiktokshop.GatewayOrderPriceDetailResponse, error) {
+	f.priceInput = input
+	return f.price, f.err
 }
 
 type tenantTikTokStoreFake struct {
@@ -132,6 +138,22 @@ func TestTikTokShopAPIHandlerGetsOrderDetailsReadOnly(t *testing.T) {
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"COMPLETED"`) || len(gateway.detailInput.OrderIDs) != 1 {
 		t.Fatalf("status=%d body=%s input=%+v", response.Code, response.Body.String(), gateway.detailInput)
+	}
+}
+
+func TestTikTokShopAPIHandlerGetsOrderPriceDetailReadOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &tenantTikTokGatewayFake{configured: true, price: &tiktokshop.GatewayOrderPriceDetailResponse{
+		UpstreamRequestID: "tts-price", PriceDetail: &tiktokshop.PriceDetail{Currency: "THB", Payment: "307.49"},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, gateway, &tenantTikTokStoreFake{}, nil)
+	router := gin.New()
+	router.POST("/orders/price-detail", handler.GetOrderPriceDetail)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/orders/price-detail", strings.NewReader(`{"shop_id":"shop-1","order_id":"order-1"}`)))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"payment":"307.49"`) || gateway.priceInput.OrderID != "order-1" {
+		t.Fatalf("status=%d body=%s input=%+v", response.Code, response.Body.String(), gateway.priceInput)
 	}
 }
 

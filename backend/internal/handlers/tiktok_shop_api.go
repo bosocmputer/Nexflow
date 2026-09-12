@@ -19,6 +19,7 @@ type TikTokShopGateway interface {
 	ListConnections(context.Context) ([]tiktokshop.GatewayConnection, error)
 	SearchOrders(context.Context, tiktokshop.GatewayOrderSearchRequest) (*tiktokshop.GatewayOrderSearchResponse, error)
 	GetOrderDetails(context.Context, tiktokshop.GatewayOrderDetailsRequest) (*tiktokshop.GatewayOrderDetailsResponse, error)
+	GetPriceDetail(context.Context, tiktokshop.GatewayOrderPriceDetailRequest) (*tiktokshop.GatewayOrderPriceDetailResponse, error)
 }
 
 type TikTokShopConnectionSyncer interface {
@@ -155,6 +156,34 @@ func (h *TikTokShopAPIHandler) GetOrderDetails(c *gin.Context) {
 	}
 	if result == nil {
 		h.error(c, http.StatusBadGateway, "gateway_response_invalid", "Gateway ส่งรายละเอียดออเดอร์ไม่สมบูรณ์")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *TikTokShopAPIHandler) GetOrderPriceDetail(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured {
+		h.error(c, http.StatusServiceUnavailable, "gateway_not_configured", "TikTok Shop Gateway ของ tenant ยังไม่พร้อม")
+		return
+	}
+	var input tiktokshop.GatewayOrderPriceDetailRequest
+	if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.ShopID) == "" || strings.TrimSpace(input.OrderID) == "" || strings.ContainsAny(input.OrderID, "/?#") {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลราคาของออเดอร์ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	result, err := h.gateway.GetPriceDetail(c.Request.Context(), input)
+	if err != nil {
+		h.logger.Warn("tiktok_shop_order_price_detail_failed", zap.Error(err))
+		h.error(c, http.StatusBadGateway, "gateway_request_failed", "โหลดรายละเอียดราคาออเดอร์ TikTok Shop ไม่สำเร็จ")
+		return
+	}
+	if result == nil || result.PriceDetail == nil {
+		h.error(c, http.StatusBadGateway, "gateway_response_invalid", "Gateway ส่งรายละเอียดราคาออเดอร์ไม่สมบูรณ์")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})

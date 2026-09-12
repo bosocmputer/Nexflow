@@ -81,6 +81,11 @@ type GatewayOrderDetailsRequest struct {
 	OrderIDs []string `json:"order_ids"`
 }
 
+type GatewayOrderPriceDetailRequest struct {
+	ShopID  string `json:"shop_id"`
+	OrderID string `json:"order_id"`
+}
+
 type GatewayOrderSearchResponse struct {
 	UpstreamRequestID string  `json:"upstream_request_id"`
 	NextPageToken     string  `json:"next_page_token"`
@@ -91,6 +96,11 @@ type GatewayOrderSearchResponse struct {
 type GatewayOrderDetailsResponse struct {
 	UpstreamRequestID string  `json:"upstream_request_id"`
 	Orders            []Order `json:"orders"`
+}
+
+type GatewayOrderPriceDetailResponse struct {
+	UpstreamRequestID string       `json:"upstream_request_id"`
+	PriceDetail       *PriceDetail `json:"price_detail"`
 }
 
 type GatewayError struct {
@@ -198,6 +208,22 @@ func (c *GatewayClient) GetOrderDetails(ctx context.Context, input GatewayOrderD
 	}
 	if err := validateOrders(output.Orders, 50, expected); err != nil || len(output.Orders) != len(orderIDs) {
 		return nil, errors.New("TikTok Shop gateway returned invalid order detail data")
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) GetPriceDetail(ctx context.Context, input GatewayOrderPriceDetailRequest) (*GatewayOrderPriceDetailResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	input.OrderID = strings.TrimSpace(input.OrderID)
+	if input.ShopID == "" || input.OrderID == "" || strings.ContainsAny(input.OrderID, "/?#") {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayOrderPriceDetailResponse
+	if err := c.call(ctx, GatewayOrderPriceDetailPath, input, &output); err != nil {
+		return nil, err
+	}
+	if output.PriceDetail == nil || strings.TrimSpace(output.PriceDetail.Currency) == "" || strings.TrimSpace(output.PriceDetail.Payment) == "" {
+		return nil, errors.New("TikTok Shop gateway returned invalid order price detail data")
 	}
 	return &output, nil
 }
