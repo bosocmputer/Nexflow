@@ -22,6 +22,7 @@ const (
 	GatewayOrderDetailsPath     = "/internal/v1/tiktok-shop/orders/detail"
 	GatewayOrderPriceDetailPath = "/internal/v1/tiktok-shop/orders/price-detail"
 	GatewayWebhookDeliveryPath  = "/internal/v1/tiktok-shop/webhooks/order-status"
+	GatewayWebhookConfigurePath = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
 	maxGatewayResponseSize      = 8 << 20
 )
 

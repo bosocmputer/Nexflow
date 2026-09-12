@@ -24,16 +24,19 @@
 - มี internal endpoints ที่ลงลายเซ็นแยก tenant สำหรับ Order List/Detail; public edge ปิด `/internal/` ทั้งหมด
 - มี signed `ORDER_STATUS_CHANGE` receiver ที่ตรวจ `Authorization` จาก raw body ก่อน parse, เก็บ typed receipt + hash, deduplicate ด้วย `tts_notification_id`, ส่งต่อผ่าน durable tenant outbox และ refresh exact Order Detail + Price Detail เท่านั้น
 - public receiver, Central Gateway delivery worker และ tenant reconciliation worker ใช้ `TIKTOK_SHOP_WEBHOOK_ENABLED=false` เป็นค่าเริ่มต้นและเปิดแยกกันได้
+- Custom App ตั้ง `ORDER_STATUS_CHANGE` ต่อร้านผ่าน signed internal operation ซึ่งเรียก official `PUT /event/202309/webhooks`; Gateway บังคับ callback เป็น URL ของตัวเองและไม่รับ URL จาก tenant
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
 
 ยังไม่เปิดใช้งานจริง:
 
-- Partner Center webhook subscription และ AOY webhook feature gates (ต้องผ่าน signed synthetic canary ก่อน)
+- AOY real webhook transition (feature gates และ synthetic signed canary ผ่านแล้ว แต่ต้องตั้ง shop-specific subscription ผ่าน Event API และรอ event จริง)
 - การแปลง snapshots เป็น Nexflow bills
 - stock write, fulfillment, shipping label, cancellation และ Auto SML
 - finance/settlement
 
 API อ้างอิงหลัก: [Authorization overview](https://partner.tiktokshop.com/docv2/page/authorization-overview-202407), [Create your app](https://partner.tiktokshop.com/docv2/page/create-your-app), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope), [Get Authorized Shops](https://partner.tiktokshop.com/docv2/page/get-authorized-shops), [Get Order List](https://partner.tiktokshop.com/docv2/page/get-order-list-202309), [Get Order Detail](https://partner.tiktokshop.com/docv2/page/get-order-detail-202507), [Get Price Detail](https://partner.tiktokshop.com/docv2/page/get-price-detail-202407), [Webhook configuration](https://partner.tiktokshop.com/docv2/page/configuration-guide), [Webhook overview/signature](https://partner.tiktokshop.com/docv2/page/tts-webhooks-overview), [Order status change](https://partner.tiktokshop.com/docv2/page/1-order-status-change), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning)
+
+สำหรับ Custom App ให้ใช้ [Update Shop Webhook](https://partner.tiktokshop.com/docv2/page/update-shop-webhook) ต่อ `shop_cipher`: `PUT /event/202309/webhooks` ด้วย `event_type=ORDER_STATUS_CHANGE` และ callback `https://tiktok-shop-gateway.nextstep-soft.com/webhook/tiktok-shop`. หน้า Manage Webhook ใน Partner Center ระบุว่าเป็น public webhook; หากบันทึก URL แล้วค่าไม่คงอยู่และ switch ยัง disabled ห้ามถือว่า subscribe สำเร็จ ให้ใช้ Event API และเก็บ upstream `request_id` เป็นหลักฐานแทน
 
 ## Partner Center gates
 

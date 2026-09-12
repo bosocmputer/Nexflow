@@ -65,7 +65,9 @@ stores only a SHA-256 body fingerprint plus typed business identifiers.
 - First enable only the AOY Central Gateway and AOY tenant. Demo, Lanboon, and
   Ploy remain disabled.
 - Configure only `ORDER_STATUS_CHANGE` after code, migrations, edge routing,
-  and synthetic signed canaries pass.
+  and synthetic signed canaries pass. For a Custom App, use the shop-specific
+  `PUT /event/202309/webhooks` operation with the owning seller token and
+  `shop_cipher`; the Central Gateway supplies its trusted callback URL.
 
 ## Required tests
 

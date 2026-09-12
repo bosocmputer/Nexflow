@@ -61,6 +61,12 @@ func main() {
 	if err != nil {
 		logger.Fatal("tiktok_gateway_order_client_invalid", zap.Error(err))
 	}
+	eventClient, err := tiktokshop.NewEventClient(tiktokshop.EventClientConfig{
+		BaseURL: config.TikTokShopBaseURL, AppKey: config.AppKey, AppSecret: config.AppSecret, HTTPClient: externalClient,
+	})
+	if err != nil {
+		logger.Fatal("tiktok_gateway_event_client_invalid", zap.Error(err))
+	}
 	stateSigner, err := tiktokgateway.NewOAuthStateSigner(config.OAuthSigningKey)
 	if err != nil {
 		logger.Fatal("tiktok_gateway_oauth_signer_invalid", zap.Error(err))
@@ -85,6 +91,10 @@ func main() {
 	if err != nil {
 		logger.Fatal("tiktok_gateway_order_service_invalid", zap.Error(err))
 	}
+	webhookConfigService, err := tiktokgateway.NewWebhookConfigService(tokenService, eventClient)
+	if err != nil {
+		logger.Fatal("tiktok_gateway_webhook_config_service_invalid", zap.Error(err))
+	}
 
 	verifier := gatewayauth.Verifier{
 		ResolveSecret: func(ctx context.Context, tenant string) (string, error) {
@@ -102,6 +112,7 @@ func main() {
 	tiktokgateway.NewHandler(oauthService, verifier, repository, config, logger,
 		tiktokgateway.WithOrderGatewayService(orderService),
 		tiktokgateway.WithWebhookReceiver(repository),
+		tiktokgateway.WithWebhookConfigService(webhookConfigService),
 	).Register(router)
 	workerContext, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()

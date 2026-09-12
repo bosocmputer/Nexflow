@@ -73,6 +73,17 @@ type handlerOrderServiceFake struct {
 	priceOrderID string
 }
 
+type handlerWebhookConfigServiceFake struct {
+	result                  *WebhookConfigResult
+	err                     error
+	tenant, shopID, address string
+}
+
+func (f *handlerWebhookConfigServiceFake) ConfigureOrderStatus(_ context.Context, tenant, shopID, address string) (*WebhookConfigResult, error) {
+	f.tenant, f.shopID, f.address = tenant, shopID, address
+	return f.result, f.err
+}
+
 func (f *handlerOrderServiceFake) SearchOrders(_ context.Context, tenant, shopID string, input tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error) {
 	f.tenant, f.shopID, f.searchInput = tenant, shopID, input
 	return f.searchResult, f.err
@@ -239,6 +250,48 @@ func TestTikTokGatewayHandlerSearchesOrdersWithoutExposingCredentials(t *testing
 	}
 	if audit.operation != "order_search" || audit.status != http.StatusOK {
 		t.Fatalf("audit = %+v", audit)
+	}
+}
+
+func TestTikTokGatewayHandlerConfiguresFixedOrderStatusWebhookForTenantShop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	configurator := &handlerWebhookConfigServiceFake{result: &WebhookConfigResult{
+		ShopID: "shop-1", EventType: tiktokshop.EventTypeOrderStatusChange,
+		Address: "https://tiktok-shop-gateway.nextstep-soft.com/webhook/tiktok-shop", UpstreamRequestID: "tts-event-request-1",
+	}}
+	audit := &handlerAuditFake{}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, audit,
+		Config{PublicBaseURL: "https://tiktok-shop-gateway.nextstep-soft.com", WebhookEnabled: true}, nil,
+		WithWebhookConfigService(configurator))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPut, tiktokshop.GatewayWebhookConfigurePath, strings.NewReader(`{"shop_id":"shop-1"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), tiktokshop.EventTypeOrderStatusChange) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if configurator.tenant != "aoy" || configurator.shopID != "shop-1" || configurator.address != "https://tiktok-shop-gateway.nextstep-soft.com/webhook/tiktok-shop" {
+		t.Fatalf("configurator=%+v", configurator)
+	}
+	if audit.operation != "order_status_webhook_configure" || audit.status != http.StatusOK {
+		t.Fatalf("audit=%+v", audit)
+	}
+}
+
+func TestTikTokGatewayHandlerRefusesWebhookConfigurationWhileReceiverDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	configurator := &handlerWebhookConfigServiceFake{}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil,
+		Config{PublicBaseURL: "https://tiktok-shop-gateway.nextstep-soft.com"}, nil,
+		WithWebhookConfigService(configurator))
+	router := gin.New()
+	handler.Register(router)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, tiktokshop.GatewayWebhookConfigurePath, strings.NewReader(`{"shop_id":"shop-1"}`)))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "webhook_disabled") || configurator.shopID != "" {
+		t.Fatalf("status=%d body=%s configurator=%+v", response.Code, response.Body.String(), configurator)
 	}
 }
 

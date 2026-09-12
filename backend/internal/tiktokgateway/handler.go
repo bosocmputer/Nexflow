@@ -48,6 +48,10 @@ type OrderGatewayService interface {
 	GetPriceDetail(context.Context, string, string, string) (*OrderPriceDetailResult, error)
 }
 
+type WebhookGatewayConfigService interface {
+	ConfigureOrderStatus(context.Context, string, string, string) (*WebhookConfigResult, error)
+}
+
 type HandlerOption func(*Handler)
 
 func WithOrderGatewayService(service OrderGatewayService) HandlerOption {
@@ -62,14 +66,21 @@ func WithWebhookReceiver(receiver WebhookReceiver) HandlerOption {
 	}
 }
 
+func WithWebhookConfigService(service WebhookGatewayConfigService) HandlerOption {
+	return func(handler *Handler) {
+		handler.webhookConfig = service
+	}
+}
+
 type Handler struct {
-	service  OAuthGatewayService
-	orders   OrderGatewayService
-	webhooks WebhookReceiver
-	verifier InternalRequestVerifier
-	audit    APILogRecorder
-	config   Config
-	logger   *zap.Logger
+	service       OAuthGatewayService
+	orders        OrderGatewayService
+	webhooks      WebhookReceiver
+	webhookConfig WebhookGatewayConfigService
+	verifier      InternalRequestVerifier
+	audit         APILogRecorder
+	config        Config
+	logger        *zap.Logger
 }
 
 type authURLRequest struct {
@@ -90,6 +101,10 @@ type orderDetailsRequest struct {
 type orderPriceDetailRequest struct {
 	ShopID  string `json:"shop_id"`
 	OrderID string `json:"order_id"`
+}
+
+type webhookConfigRequest struct {
+	ShopID string `json:"shop_id"`
 }
 
 func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, audit APILogRecorder, config Config, logger *zap.Logger, options ...HandlerOption) *Handler {
@@ -114,6 +129,53 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(tiktokshop.GatewayOrderSearchPath, h.SearchOrders)
 	router.POST(tiktokshop.GatewayOrderDetailsPath, h.GetOrderDetails)
 	router.POST(tiktokshop.GatewayOrderPriceDetailPath, h.GetOrderPriceDetail)
+	router.PUT(tiktokshop.GatewayWebhookConfigurePath, h.ConfigureOrderStatusWebhook)
+}
+
+func (h *Handler) ConfigureOrderStatusWebhook(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() {
+		h.record(c, identity, "order_status_webhook_configure", statusCode, startedAt, errorCode, requestID)
+	}()
+	if !h.config.WebhookEnabled {
+		statusCode, errorCode = http.StatusConflict, "webhook_disabled"
+		h.respondError(c, statusCode, errorCode, "TikTok Shop webhook receiver ยังไม่เปิดใช้งาน", false, requestID)
+		return
+	}
+	if h.webhookConfig == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, "ระบบตั้งค่า TikTok Shop webhook ยังไม่พร้อม", true, requestID)
+		return
+	}
+	var input webhookConfigRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_webhook_config"
+		h.respondError(c, statusCode, errorCode, "ข้อมูลตั้งค่า TikTok Shop webhook ไม่ถูกต้อง", false, requestID)
+		return
+	}
+	result, err := h.webhookConfig.ConfigureOrderStatus(
+		c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), h.config.WebhookCallbackURL(),
+	)
+	if err != nil {
+		statusCode, errorCode = webhookConfigErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, webhookConfigErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, "ตั้งค่า TikTok Shop webhook ไม่สำเร็จ", false, requestID)
+		return
+	}
+	h.logger.Info("tiktok_gateway_order_webhook_configured",
+		zap.String("tenant", identity.Tenant), zap.String("shop_id", result.ShopID),
+		zap.String("event_type", result.EventType), zap.String("upstream_request_id", result.UpstreamRequestID))
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 func (h *Handler) SearchOrders(c *gin.Context) {
@@ -403,18 +465,45 @@ func oauthErrorMessage(code string) string {
 func orderErrorMeta(err error) (int, string) {
 	var apiError *tiktokshop.APIError
 	switch {
-	case errors.Is(err, tiktokshop.ErrInvalidOrderInput):
+	case errors.Is(err, tiktokshop.ErrInvalidOrderInput), errors.Is(err, tiktokshop.ErrInvalidEventInput):
 		return http.StatusBadRequest, "invalid_order_request"
 	case errors.Is(err, sql.ErrNoRows):
 		return http.StatusNotFound, "connection_not_found"
 	case errors.Is(err, ErrRefreshTokenExpired), errors.Is(err, ErrInvalidTokenCredential), errors.Is(err, ErrInvalidTokenRefresh):
 		return http.StatusConflict, "reconnect_required"
-	case errors.Is(err, ErrTokenServiceNotConfigured), errors.Is(err, ErrOrderServiceNotConfigured):
+	case errors.Is(err, ErrTokenServiceNotConfigured), errors.Is(err, ErrOrderServiceNotConfigured), errors.Is(err, ErrWebhookConfigServiceNotConfigured):
 		return http.StatusServiceUnavailable, "gateway_not_ready"
 	case errors.As(err, &apiError):
 		return http.StatusBadGateway, "tiktok_api_error"
+	case errors.Is(err, tiktokshop.ErrInvalidEventResponse):
+		return http.StatusBadGateway, "tiktok_api_error"
 	default:
 		return http.StatusInternalServerError, "internal_error"
+	}
+}
+
+func webhookConfigErrorMeta(err error) (int, string) {
+	status, code := orderErrorMeta(err)
+	if code == "invalid_order_request" {
+		return status, "invalid_webhook_config"
+	}
+	return status, code
+}
+
+func webhookConfigErrorMessage(code string) string {
+	switch code {
+	case "invalid_webhook_config":
+		return "ข้อมูลตั้งค่า TikTok Shop webhook ไม่ถูกต้อง"
+	case "connection_not_found":
+		return "ไม่พบร้าน TikTok Shop ที่เชื่อมต่อกับ Nexflow นี้"
+	case "reconnect_required":
+		return "สิทธิ์เชื่อมต่อ TikTok Shop หมดอายุหรือไม่สมบูรณ์ กรุณาเชื่อมต่อร้านใหม่"
+	case "gateway_not_ready":
+		return "ระบบตั้งค่า TikTok Shop webhook ยังไม่พร้อม"
+	case "tiktok_api_error":
+		return "TikTok Shop ไม่สามารถบันทึก webhook ของร้านได้ในขณะนี้"
+	default:
+		return "ตั้งค่า TikTok Shop webhook ไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
 	}
 }
 
