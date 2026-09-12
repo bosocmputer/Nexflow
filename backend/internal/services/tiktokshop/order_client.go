@@ -131,17 +131,31 @@ type Order struct {
 }
 
 type OrderPayment struct {
-	Currency                  string `json:"currency"`
-	SubTotal                  string `json:"sub_total"`
-	ShippingFee               string `json:"shipping_fee"`
-	SellerDiscount            string `json:"seller_discount"`
-	PlatformDiscount          string `json:"platform_discount"`
-	TotalAmount               string `json:"total_amount"`
-	OriginalTotalProductPrice string `json:"original_total_product_price"`
-	OriginalShippingFee       string `json:"original_shipping_fee,omitempty"`
-	Tax                       string `json:"tax,omitempty"`
-	ShippingFeeTax            string `json:"shipping_fee_tax,omitempty"`
-	ProductTax                string `json:"product_tax,omitempty"`
+	Currency                    string `json:"currency"`
+	SubTotal                    string `json:"sub_total"`
+	ShippingFee                 string `json:"shipping_fee"`
+	SellerDiscount              string `json:"seller_discount"`
+	PlatformDiscount            string `json:"platform_discount"`
+	PaymentPlatformDiscount     string `json:"payment_platform_discount,omitempty"`
+	PaymentDiscountServiceFee   string `json:"payment_discount_service_fee,omitempty"`
+	TotalAmount                 string `json:"total_amount"`
+	OriginalTotalProductPrice   string `json:"original_total_product_price"`
+	OriginalShippingFee         string `json:"original_shipping_fee,omitempty"`
+	ShippingFeeSellerDiscount   string `json:"shipping_fee_seller_discount,omitempty"`
+	ShippingFeePlatformDiscount string `json:"shipping_fee_platform_discount,omitempty"`
+	ShippingFeeCofundedDiscount string `json:"shipping_fee_cofunded_discount,omitempty"`
+	Tax                         string `json:"tax,omitempty"`
+	SmallOrderFee               string `json:"small_order_fee,omitempty"`
+	ShippingFeeTax              string `json:"shipping_fee_tax,omitempty"`
+	ProductTax                  string `json:"product_tax,omitempty"`
+	RetailDeliveryFee           string `json:"retail_delivery_fee,omitempty"`
+	BuyerServiceFee             string `json:"buyer_service_fee,omitempty"`
+	HandlingFee                 string `json:"handling_fee,omitempty"`
+	ShippingInsuranceFee        string `json:"shipping_insurance_fee,omitempty"`
+	ItemInsuranceFee            string `json:"item_insurance_fee,omitempty"`
+	ItemInsuranceTax            string `json:"item_insurance_tax,omitempty"`
+	DistanceShippingFee         string `json:"distance_shipping_fee,omitempty"`
+	DistanceFee                 string `json:"distance_fee,omitempty"`
 }
 
 type OrderLineItem struct {

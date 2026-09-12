@@ -38,7 +38,7 @@ func TestOrderClientSearchOrdersSignsAndSendsExactBody(t *testing.T) {
 			t.Fatalf("query = %v", queryWithoutSign)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-list","data":{"next_page_token":"next-token","total_count":1,"orders":[{"id":"576461413038785752","status":"AWAITING_SHIPMENT","create_time":1724990000,"update_time":1724999000,"recipient_address":{"name":"must not be exposed","phone_number":"secret"},"buyer_email":"secret@example.com","payment":{"currency":"THB","sub_total":"100.00","shipping_fee":"20.00","seller_discount":"5.00","platform_discount":"10.00","total_amount":"105.00","original_total_product_price":"100.00"},"line_items":[{"id":"line-1","product_id":"product-1","sku_id":"sku-1","seller_sku":"AOY-001","product_name":"Product","sku_name":"Red","currency":"THB","original_price":"100.00","sale_price":"95.00","seller_discount":"5.00","platform_discount":"0.00"}]}]}}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-list","data":{"next_page_token":"next-token","total_count":1,"orders":[{"id":"576461413038785752","status":"AWAITING_SHIPMENT","create_time":1724990000,"update_time":1724999000,"recipient_address":{"name":"must not be exposed","phone_number":"secret"},"buyer_email":"secret@example.com","payment":{"currency":"THB","sub_total":"100.00","shipping_fee":"20.00","seller_discount":"5.00","platform_discount":"10.00","payment_platform_discount":"2.00","payment_discount_service_fee":"1.00","total_amount":"105.00","original_total_product_price":"100.00","small_order_fee":"7.49","buyer_service_fee":"3.00","handling_fee":"4.00","shipping_insurance_fee":"5.00","item_insurance_fee":"6.00"},"line_items":[{"id":"line-1","product_id":"product-1","sku_id":"sku-1","seller_sku":"AOY-001","product_name":"Product","sku_name":"Red","currency":"THB","original_price":"100.00","sale_price":"95.00","seller_discount":"5.00","platform_discount":"0.00"}]}]}}`))
 	}))
 	defer server.Close()
 
@@ -58,6 +58,9 @@ func TestOrderClientSearchOrdersSignsAndSendsExactBody(t *testing.T) {
 	order := result.Orders[0]
 	if order.ID != "576461413038785752" || order.Payment.TotalAmount != "105.00" || len(order.LineItems) != 1 || order.LineItems[0].SellerSKU != "AOY-001" {
 		t.Fatalf("order = %+v", order)
+	}
+	if order.Payment.SmallOrderFee != "7.49" || order.Payment.BuyerServiceFee != "3.00" || order.Payment.PaymentPlatformDiscount != "2.00" || order.Payment.ShippingInsuranceFee != "5.00" {
+		t.Fatalf("payment fee breakdown = %+v", order.Payment)
 	}
 	encoded, err := json.Marshal(order)
 	if err != nil {
