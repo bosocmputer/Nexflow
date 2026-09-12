@@ -64,11 +64,13 @@ type handlerAuditFake struct {
 type handlerOrderServiceFake struct {
 	searchResult *OrderSearchResult
 	detailResult *OrderDetailsResult
+	priceResult  *OrderPriceDetailResult
 	err          error
 	tenant       string
 	shopID       string
 	searchInput  tiktokshop.SearchOrdersRequest
 	orderIDs     []string
+	priceOrderID string
 }
 
 func (f *handlerOrderServiceFake) SearchOrders(_ context.Context, tenant, shopID string, input tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error) {
@@ -79,6 +81,11 @@ func (f *handlerOrderServiceFake) SearchOrders(_ context.Context, tenant, shopID
 func (f *handlerOrderServiceFake) GetOrderDetails(_ context.Context, tenant, shopID string, orderIDs []string) (*OrderDetailsResult, error) {
 	f.tenant, f.shopID, f.orderIDs = tenant, shopID, append([]string(nil), orderIDs...)
 	return f.detailResult, f.err
+}
+
+func (f *handlerOrderServiceFake) GetPriceDetail(_ context.Context, tenant, shopID, orderID string) (*OrderPriceDetailResult, error) {
+	f.tenant, f.shopID, f.priceOrderID = tenant, shopID, orderID
+	return f.priceResult, f.err
 }
 
 func (f *handlerAuditFake) RecordAPIResult(_ context.Context, tenant, nonce, operation string, statusCode, _ int, errorCode, requestID string) error {
@@ -248,6 +255,23 @@ func TestTikTokGatewayHandlerGetsOrderDetails(t *testing.T) {
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK || len(orders.orderIDs) != 1 || orders.orderIDs[0] != "order-1" {
+		t.Fatalf("status=%d body=%s orders=%+v", response.Code, response.Body.String(), orders)
+	}
+}
+
+func TestTikTokGatewayHandlerGetsOrderPriceDetail(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	orders := &handlerOrderServiceFake{priceResult: &OrderPriceDetailResult{
+		UpstreamRequestID: "tts-request-price", PriceDetail: &tiktokshop.PriceDetail{Currency: "THB", Payment: "307.49"},
+	}}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil, Config{}, nil, WithOrderGatewayService(orders))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayOrderPriceDetailPath, strings.NewReader(`{"shop_id":"shop-1","order_id":"order-1"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || orders.tenant != "aoy" || orders.shopID != "shop-1" || orders.priceOrderID != "order-1" || !strings.Contains(response.Body.String(), `"payment":"307.49"`) {
 		t.Fatalf("status=%d body=%s orders=%+v", response.Code, response.Body.String(), orders)
 	}
 }

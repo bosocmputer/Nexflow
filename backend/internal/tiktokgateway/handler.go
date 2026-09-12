@@ -45,6 +45,7 @@ type APILogRecorder interface {
 type OrderGatewayService interface {
 	SearchOrders(context.Context, string, string, tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error)
 	GetOrderDetails(context.Context, string, string, []string) (*OrderDetailsResult, error)
+	GetPriceDetail(context.Context, string, string, string) (*OrderPriceDetailResult, error)
 }
 
 type HandlerOption func(*Handler)
@@ -79,6 +80,11 @@ type orderDetailsRequest struct {
 	OrderIDs []string `json:"order_ids"`
 }
 
+type orderPriceDetailRequest struct {
+	ShopID  string `json:"shop_id"`
+	OrderID string `json:"order_id"`
+}
+
 func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, audit APILogRecorder, config Config, logger *zap.Logger, options ...HandlerOption) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -99,6 +105,7 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(GatewayConnectionsPath, h.ListConnections)
 	router.POST(tiktokshop.GatewayOrderSearchPath, h.SearchOrders)
 	router.POST(tiktokshop.GatewayOrderDetailsPath, h.GetOrderDetails)
+	router.POST(tiktokshop.GatewayOrderPriceDetailPath, h.GetOrderPriceDetail)
 }
 
 func (h *Handler) SearchOrders(c *gin.Context) {
@@ -167,6 +174,44 @@ func (h *Handler) GetOrderDetails(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *Handler) GetOrderPriceDetail(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "order_price_detail", statusCode, startedAt, errorCode, requestID) }()
+	if h.orders == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, oauthErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input orderPriceDetailRequest
+	if err := decodeStrictJSON(body, &input); err != nil || !validOrderPathInput(input.ShopID, input.OrderID) {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_order_request"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.orders.GetPriceDetail(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID))
+	if err != nil {
+		statusCode, errorCode = orderErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil || result.PriceDetail == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func validOrderPathInput(shopID, orderID string) bool {
+	return strings.TrimSpace(shopID) != "" && strings.TrimSpace(orderID) != "" && !strings.ContainsAny(orderID, "/?#")
 }
 
 func (h *Handler) ListConnections(c *gin.Context) {

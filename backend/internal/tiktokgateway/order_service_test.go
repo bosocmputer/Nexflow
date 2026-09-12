@@ -43,6 +43,22 @@ func TestOrderServiceGetsCurrentOrderDetails(t *testing.T) {
 	}
 }
 
+func TestOrderServiceGetsPriceDetailWithTenantScopedCredential(t *testing.T) {
+	credentials := &fakeOrderCredentialProvider{credential: &AccessCredential{AccessToken: "access-secret", ShopID: "shop-1", ShopCipher: "cipher-1"}}
+	reader := &fakeTikTokOrderReader{priceDetail: &tiktokshop.PriceDetail{Currency: "THB", Payment: "307.49"}, requestID: "tts-request-price"}
+	service, err := NewOrderService(credentials, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.GetPriceDetail(context.Background(), "AOY", "shop-1", "order-1")
+	if err != nil || result.UpstreamRequestID != "tts-request-price" || result.PriceDetail == nil || result.PriceDetail.Payment != "307.49" {
+		t.Fatalf("GetPriceDetail() = %+v, %v", result, err)
+	}
+	if credentials.tenant != "aoy" || reader.accessToken != "access-secret" || reader.shopCipher != "cipher-1" || reader.priceOrderID != "order-1" {
+		t.Fatalf("credentials=%+v reader=%+v", credentials, reader)
+	}
+}
+
 func TestOrderServiceStopsBeforeTikTokWhenCredentialFails(t *testing.T) {
 	credentials := &fakeOrderCredentialProvider{err: ErrRefreshTokenExpired}
 	reader := &fakeTikTokOrderReader{}
@@ -70,10 +86,12 @@ func (f *fakeOrderCredentialProvider) AccessCredential(_ context.Context, tenant
 type fakeTikTokOrderReader struct {
 	searchResult *tiktokshop.SearchOrdersResult
 	details      []tiktokshop.Order
+	priceDetail  *tiktokshop.PriceDetail
 	requestID    string
 	err          error
 	accessToken  string
 	shopCipher   string
+	priceOrderID string
 	searchInput  tiktokshop.SearchOrdersRequest
 	searchCalls  int
 }
@@ -87,4 +105,9 @@ func (f *fakeTikTokOrderReader) SearchOrders(_ context.Context, accessToken, sho
 func (f *fakeTikTokOrderReader) GetOrderDetails(_ context.Context, accessToken, shopCipher string, orderIDs []string) ([]tiktokshop.Order, string, error) {
 	f.accessToken, f.shopCipher = accessToken, shopCipher
 	return append([]tiktokshop.Order(nil), f.details...), f.requestID, f.err
+}
+
+func (f *fakeTikTokOrderReader) GetPriceDetail(_ context.Context, accessToken, shopCipher, orderID string) (*tiktokshop.PriceDetail, string, error) {
+	f.accessToken, f.shopCipher, f.priceOrderID = accessToken, shopCipher, orderID
+	return f.priceDetail, f.requestID, f.err
 }

@@ -16,11 +16,12 @@ import (
 )
 
 const (
-	GatewayOAuthPath        = "/internal/v1/tiktok-shop/oauth/auth-url"
-	GatewayConnectionsPath  = "/internal/v1/tiktok-shop/connections"
-	GatewayOrderSearchPath  = "/internal/v1/tiktok-shop/orders/search"
-	GatewayOrderDetailsPath = "/internal/v1/tiktok-shop/orders/detail"
-	maxGatewayResponseSize  = 8 << 20
+	GatewayOAuthPath            = "/internal/v1/tiktok-shop/oauth/auth-url"
+	GatewayConnectionsPath      = "/internal/v1/tiktok-shop/connections"
+	GatewayOrderSearchPath      = "/internal/v1/tiktok-shop/orders/search"
+	GatewayOrderDetailsPath     = "/internal/v1/tiktok-shop/orders/detail"
+	GatewayOrderPriceDetailPath = "/internal/v1/tiktok-shop/orders/price-detail"
+	maxGatewayResponseSize      = 8 << 20
 )
 
 var (
