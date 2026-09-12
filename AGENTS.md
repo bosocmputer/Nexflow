@@ -640,6 +640,28 @@ Current AOY UAT scope:
     changed. The next TikTok phase is bounded scheduled Order List/detail
     reconciliation and webhook receipt/dedupe; Bill/SML conversion remains
     disabled until its own shadow-mode design and UAT.
+42. AOY-only bounded TikTok Shop order reconciliation is deployed and enabled
+    at `e8d3efd` with additive migration 098. The global worker and per-shop
+    setting default off; AOY alone now has
+    `TIKTOK_SHOP_ORDER_SYNC_ENABLED=true` and exact shop
+    `7494619203789490654` (`henna_milkford`) enabled at a five-minute interval
+    with a 15-minute overlap. Manual run
+    `f6442b20-ebd4-4bde-915c-27699c017118` refreshed the controlled order in one
+    page. After the global-only fail-closed check created no run, scheduled run
+    `8cee9c57-0293-476b-a10d-e87ecd79cf61` refreshed four orders in one page and
+    advanced the watermark exactly to its exclusive window end. The worker
+    keeps one running lease per shop, limits each run to 24 hours / 10 pages,
+    hashes opaque page tokens, and does not create Bills, SML documents,
+    notifications, webhook jobs, stock, or fulfillment actions. Before and
+    after canary counts stayed at 323 bills, 27 SML attempts, 537 in-app
+    notifications, and 252 LINE deliveries; four snapshot rows had zero
+    buyer/recipient PII key hits. Recent scheduled severe logs were zero.
+    Demo, Lanboon, and Ploy remain globally disabled. AOY database backups are
+    `pre-deploy-20260912-105604.sql.gz` and
+    `pre-deploy-20260912-110050.sql.gz`; the pre-flag runtime copy is
+    `.env.pre-tiktok-order-sync-20260912-110041`. The next TikTok phase is a
+    signed webhook receipt/dedupe trigger that reuses this reconciliation path;
+    Bill/SML conversion remains disabled.
 
 Known deferred or incomplete validation:
 
@@ -721,7 +743,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–090** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–098** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -789,6 +811,12 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 14. **Central Shopee gateway** — production target is `nexflow-shopee-gateway` at `shopee-gateway.nextstep-soft.com`. Gateway mode stores Partner Key and encrypted access/refresh tokens only in the gateway DB. Every tenant receives a derived HMAC identity even while in direct mode so the gateway can discover active shop routes and deliver the one app-wide push callback during staged rollout; legacy tokens are never copied. Tenant `.env` uses `SHOPEE_OPEN_API_MODE=gateway` only after explicit cutover, while direct mode remains rollback. Push is authenticated/deduped centrally and tenant reconciliation still fetches order detail as source of truth. See `docs/shopee-gateway-runbook.md`.
 
 15. **Shopee direct mode is rollback only** — do not create a new Shopee Open Platform App for each customer. The old per-customer cutover helper and direct Partner credentials are retained only for an explicit rollback while gateway rollout is incomplete.
+
+16. **TikTok order reconciliation remains snapshot-only** — AOY is the only
+    enabled tenant. Its global and exact per-shop gates control bounded Order
+    List polling; watermark advances only after full Detail + Price Detail
+    success. Do not treat these snapshots as authority to create Bill/SML,
+    notification, fulfillment, cancellation, return, or stock writes.
 
 ---
 
@@ -879,6 +907,10 @@ POST /api/import/shopee/preview | /confirm
 POST /api/import/lazada/preview | /confirm
 POST /api/import/tiktok/preview | /confirm
 
+POST /api/tiktok-shop-api/orders/reconcile
+GET  /api/tiktok-shop-api/order-sync-settings
+PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
+
 GET  /api/sml/customers | /suppliers | POST /api/sml/refresh-parties
 GET  /api/dashboard/stats | /api/logs | /api/bills/:id/timeline
 GET  /api/shopee-operations/:shop_id/:order_sn/timeline
@@ -895,4 +927,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-09-02 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
+Last updated: 2026-09-12 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443

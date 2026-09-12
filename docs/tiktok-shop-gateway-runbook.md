@@ -148,6 +148,17 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 - structured success log 2 รายการ, severe log 0, AOY health HTTP 200 และการเรียก endpoint โดยไม่ authenticate ตอบ HTTP 401
 - UAT นี้ไม่ได้เปิด polling, webhook, Bill/SML conversion, LINE notification, fulfillment หรือ stock write
 
+### Bounded reconciliation UAT (2026-09-12)
+
+- AOY deploy commit `e8d3efd` พร้อม additive migration 098; backups คือ `pre-deploy-20260912-105604.sql.gz` และ `pre-deploy-20260912-110050.sql.gz`
+- manual run `f6442b20-ebd4-4bde-915c-27699c017118` ใช้ explicit 2-second window รอบ controlled order: HTTP 200, 1 หน้า, พบและ snapshot 1 ออเดอร์
+- เปิด global worker ก่อนโดยร้านยัง disabled แล้วผ่าน fail-closed check: ไม่มี scheduled run เกิดขึ้น
+- เปิดเฉพาะ AOY shop `7494619203789490654` (`henna_milkford`) ที่ interval 300 วินาที / overlap 900 วินาที; config version เปลี่ยนจาก 1 เป็น 2
+- scheduled run แรก `8cee9c57-0293-476b-a10d-e87ecd79cf61` สำเร็จ 1 หน้า, พบและ snapshot 4 ออเดอร์ และ watermark ตรงกับ exclusive window end
+- หลัง canary มี snapshot 4 แถวและ PII-key hit 0; Bill 323, SML attempts 27, notifications 537 และ LINE deliveries 252 ไม่เปลี่ยน
+- scheduled severe log 0, success log 1; Demo, Lanboon และ Ploy มี global worker เป็น `false`
+- public `/internal/` และ `/webhook/` ยังตอบ 404; polling นี้ยังไม่สร้าง Bill/SML/notification/fulfillment/stock ใด ๆ
+
 ## AOY OAuth UAT
 
 1. Backup AOY database ก่อนใช้ migration 095-098
