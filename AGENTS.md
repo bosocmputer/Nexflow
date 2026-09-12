@@ -709,6 +709,34 @@ Current AOY UAT scope:
     `pre-deploy-20260912-114945.sql.gz` and
     `pre-deploy-20260912-120306.sql.gz`; Demo, Lanboon, and Ploy were not
     deployed.
+45. AOY-only signed TikTok `ORDER_STATUS_CHANGE` webhook shadow mode is enabled
+    as of 2026-09-12. Central Gateway `fd7d858` verifies the official raw-body
+    HMAC before parsing, deduplicates by notification ID, and delivers through
+    a durable tenant outbox. AOY has additive migration 100 and a durable
+    tenant job that refreshes only exact Order Detail + Price Detail snapshots;
+    Bill, SML, LINE, stock, fulfillment, and cancellation actions remain
+    disabled. Only Central Gateway and AOY webhook flags are enabled; Demo,
+    Lanboon, and Ploy remain disabled. Two signed synthetic notifications were
+    each replayed twice and produced exactly 2 Gateway receipts, 2 delivered
+    outbox rows, and 2 succeeded AOY jobs. Snapshot/Bill/SML attempt/in-app
+    notification/LINE delivery counts remained `4/323/27/537/252`, both health
+    endpoints returned 200, unsigned public webhook returned 401 with an empty
+    body, and severe-log scans were empty. The AOY shop
+    `7494619203789490654` (`henna_milkford`) was subscribed to
+    `ORDER_STATUS_CHANGE` at the trusted callback through TikTok's official
+    shop-specific Event API; the success evidence is upstream request ID
+    `20260912210121D15E3BAD860DAB28023E`. The Partner Center public-webhook modal
+    did not persist the URL, so it must not be treated as subscription evidence
+    for this Custom App. Central backups include
+    `pre-deploy-20260912-124259.sql.gz` and
+    `pre-deploy-20260912-130002.sql.gz`; AOY backups are
+    `pre-deploy-20260912-123656.sql.gz` and
+    `pre-deploy-20260912-123949.sql.gz`. AOY's running tenant image was built
+    from pre-amend `057a1b4`, whose tenant webhook content matches `80fab88`;
+    the Event API/configuration code is required only in Central Gateway. A
+    real AOY status transition is still required to close end-to-end webhook
+    UAT; do not mutate an existing order without a user-designated controlled
+    case.
 
 Known deferred or incomplete validation:
 

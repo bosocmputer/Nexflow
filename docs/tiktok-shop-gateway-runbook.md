@@ -29,7 +29,7 @@
 
 ยังไม่เปิดใช้งานจริง:
 
-- AOY real webhook transition (feature gates และ synthetic signed canary ผ่านแล้ว แต่ต้องตั้ง shop-specific subscription ผ่าน Event API และรอ event จริง)
+- AOY real webhook transition (feature gates, synthetic signed canary และ shop-specific Event API subscription ผ่านแล้ว แต่ยังต้องรอ event จริงหนึ่งรายการ)
 - การแปลง snapshots เป็น Nexflow bills
 - stock write, fulfillment, shipping label, cancellation และ Auto SML
 - finance/settlement
@@ -169,7 +169,7 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 
 ## AOY OAuth UAT
 
-1. Backup AOY database ก่อนใช้ migration 095-098
+1. Backup AOY database ก่อนใช้ migration 095-100
 2. Deploy Central Gateway ด้วย target `tiktok-gateway` และตรวจ `/health` ได้ HTTP 200 พร้อม database `ok`
 3. Deploy AOY โดยยังปิด feature flag แล้วตรวจ backend/frontend health
 4. เปิด AOY backend และ frontend flags เท่านั้น
@@ -193,11 +193,22 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 
 UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, manual/scheduled/webhook reconciliation ผ่าน, webhook replay เหลือหนึ่ง receipt/job, ไม่มี Bill/SML/notification side effect, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน Gateway, tenant database, log หรือ browser response
 
+### Webhook shadow UAT evidence — 2026-09-12
+
+- เปิด `TIKTOK_SHOP_WEBHOOK_ENABLED` เฉพาะ Central Gateway และ AOY; Demo, Lanboon และ Ploy ยังปิด
+- public health ของ Central Gateway/AOY ตอบ HTTP 200 และ unsigned webhook ตอบ HTTP 401 body ว่าง
+- signed canary สอง notification ถูก replay notification ละสองครั้ง แต่คงเหลือเพียง 2 Gateway receipts, 2 delivered outbox rows และ 2 AOY jobs ที่ `succeeded`
+- snapshot/Bill/SML attempt/in-app notification/LINE delivery หลัง canary เท่ากับ `4/323/27/537/252`; ไม่มี side effect เพิ่มและ severe-log scan เป็นศูนย์
+- สมัครร้าน AOY `7494619203789490654` (`henna_milkford`) สำหรับ `ORDER_STATUS_CHANGE` ผ่าน official Event API สำเร็จ โดย upstream request ID `20260912210121D15E3BAD860DAB28023E`
+- callback ที่ Gateway บังคับใช้คือ `https://tiktok-shop-gateway.nextstep-soft.com/webhook/tiktok-shop`; internal configure operation สำเร็จ HTTP 200 หนึ่งครั้ง
+- Central Gateway อยู่ที่ `fd7d858`; backups ล่าสุดคือ `pre-deploy-20260912-124259.sql.gz` และ `pre-deploy-20260912-130002.sql.gz`. AOY backups ก่อน rollout คือ `pre-deploy-20260912-123656.sql.gz` และ `pre-deploy-20260912-123949.sql.gz`
+- ยังไม่ถือว่า real-webhook UAT จบจนกว่าจะเกิด AOY order status transition จริงหนึ่งครั้งและตรวจครบตามข้อ 20–21; ห้ามเปลี่ยนสถานะออเดอร์จริงโดยไม่มี controlled order จากผู้ใช้
+
 ## Rollback
 
 - ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่
 - ลบ/คืนค่า `ORDER_STATUS_CHANGE` callback ใน Partner Center; scheduled polling ยังเป็น recovery path
 - หากต้องปิด TikTok ทั้งหมด ให้ใช้ `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --open-api-enabled false` แล้ว deploy AOY ใหม่
 - หยุด Central Gateway หากพบ credential, routing หรือ callback anomaly
-- ไม่ลบ migration 095-098 และไม่ลบ connection/snapshot/run rows ระหว่าง incident; เก็บไว้เป็น audit evidence
+- ไม่ลบ migration 095-100 และไม่ลบ connection/snapshot/run/webhook rows ระหว่าง incident; เก็บไว้เป็น audit evidence
 - Revoke seller authorization ใน Partner Center เมื่อ token อาจรั่วหรือผูกร้านผิด tenant
