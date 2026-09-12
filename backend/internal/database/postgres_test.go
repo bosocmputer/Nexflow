@@ -329,6 +329,38 @@ func TestMigration096AddsTikTokShopMenuForExistingAdminsOnly(t *testing.T) {
 	}
 }
 
+func TestMigration097AddsPIIMinimizedTikTokOrderSnapshots(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/097_tiktok_shop_order_snapshots.sql")
+	if err != nil {
+		t.Fatalf("read migration 097: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists tiktok_shop_order_snapshots",
+		"gateway_connection_id uuid not null",
+		"unique (shop_id, order_id)",
+		"safe_order jsonb not null",
+		"safe_price_detail jsonb not null",
+		"normalized_items jsonb not null",
+		"source_hash char(64) not null",
+		"detail_request_id text not null",
+		"price_detail_request_id text not null",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 097 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"buyer_name", "buyer_username", "recipient", "phone", "email", "address",
+		"access_token", "refresh_token", "app_secret", "shop_cipher",
+		"delete from", "truncate", "drop table", "drop column",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 097 contains forbidden PII, credential, or destructive term %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

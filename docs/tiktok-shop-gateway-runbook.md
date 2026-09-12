@@ -17,12 +17,13 @@
 - อ่านรายการออเดอร์ผ่าน `POST /order/202309/orders/search` และยืนยันข้อมูลจริงด้วย `GET /order/202507/orders` สูงสุดครั้งละ 50 Order IDs
 - อ่านโครงสร้างราคาผ่าน `GET /order/202407/orders/{order_id}/price_detail` เพื่อแยกราคาสินค้า ส่วนลด ค่าส่ง ภาษี และยอดที่ผู้ซื้อชำระ
 - ส่งกลับ tenant เฉพาะข้อมูลสถานะ รายการสินค้า และยอดเงินที่ต้องใช้ โดยไม่ส่งชื่อ ที่อยู่ โทรศัพท์ อีเมล ข้อความผู้ซื้อ หรือ buyer profile
+- บันทึก snapshot แบบ manual/read-only ได้สูงสุด 20 Order IDs ต่อครั้ง โดย upsert ที่ `(shop_id, order_id)`, รวม quantity จาก line instances ด้วย `(product_id, sku_id)` และบันทึก Order Detail + Price Detail ที่ผ่าน typed allowlist เท่านั้น
 - มี internal endpoints ที่ลงลายเซ็นแยก tenant สำหรับ Order List/Detail; public edge ปิด `/internal/` ทั้งหมด
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
 
 ยังไม่เปิด:
 
-- polling/queue ที่ดึง order snapshots เข้า tenant database และแปลงเป็น Nexflow bills
+- polling/queue อัตโนมัติ, webhook reconciliation และการแปลง snapshots เป็น Nexflow bills
 - webhooks และ realtime queue
 - stock write, fulfillment, shipping label, cancellation และ Auto SML
 - finance/settlement
@@ -119,6 +120,7 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 - `POST /api/tiktok-shop-api/orders/search`
 - `POST /api/tiktok-shop-api/orders/detail`
 - `POST /api/tiktok-shop-api/orders/price-detail`
+- `POST /api/tiktok-shop-api/orders/snapshot` — บันทึก 1–20 Order IDs แบบ atomic; ถ้าออเดอร์ใดโหลด/ตรวจยอดไม่ผ่าน จะไม่บันทึกทั้งชุด
 
 ### Order/amount evidence ที่ยืนยันแล้วใน AOY
 
@@ -126,10 +128,11 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 - `seller_sku` ของร้าน AOY อาจว่าง ให้ใช้ `product_id + sku_id` เป็น external variant identity
 - ตัวอย่าง production UAT วันที่ 2026-09-12 ตรงกับ Seller Center: ราคาสินค้า 300 บาท, ค่าส่งเดิม 29 บาท, ส่วนลดค่าส่งแพลตฟอร์ม 29 บาท, `item_insurance_fee` 7.49 บาท และผู้ซื้อชำระรวม 307.49 บาท
 - `item_insurance_fee` เป็นค่าประกัน/คุ้มครองที่ผู้ซื้อจ่ายให้แพลตฟอร์ม เก็บไว้เพื่อ reconcile ยอดรวม แต่ห้ามสร้างเป็นบรรทัดขายหรือค่าส่งใน SML
+- migration 097 เก็บเฉพาะสถานะ เวลา external identity, ยอด reconcile, typed safe JSON, grouped SKU evidence, TikTok request IDs และ content hash ไม่มี buyer/recipient fields และไม่มี queue ที่สร้าง Bill/SML
 
 ## AOY OAuth UAT
 
-1. Backup AOY database ก่อนใช้ migration 095-096
+1. Backup AOY database ก่อนใช้ migration 095-097
 2. Deploy Central Gateway ด้วย target `tiktok-gateway` และตรวจ `/health` ได้ HTTP 200 พร้อม database `ok`
 3. Deploy AOY โดยยังปิด feature flag แล้วตรวจ backend/frontend health
 4. เปิด AOY backend และ frontend flags เท่านั้น
@@ -141,12 +144,13 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 10. ทำซ้ำเมื่อ access token เข้า refresh window; ตรวจว่าร้านทุกแห่งใต้ `open_id` เดียวมี `last_refreshed_at` และ expiry ชุดเดียวกัน ไม่มี partial update
 11. ตรวจ Central Gateway ว่ามี connection ของ tenant `aoy` เท่านั้น และ token ไม่ปรากฏใน response/log
 12. ทดสอบ OAuth state เดิมซ้ำ ต้องถูกปฏิเสธ
+13. เรียก snapshot ของ controlled order เดิมสองครั้ง ต้องเหลือหนึ่งแถว, hash/quantity/yอดตรงกัน, JSON ไม่มี buyer PII และจำนวน Bill/SML attempt ไม่เปลี่ยน
 
-UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail แบบ read-only ตรงกับ Seller Center, refresh เป็น atomic, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน tenant database หรือ browser response
+UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, refresh เป็น atomic, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน tenant database หรือ browser response
 
 ## Rollback
 
 - ปิด AOY แบบ atomic ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --open-api-enabled false` แล้ว deploy AOY ใหม่
 - หยุด Central Gateway หากพบ credential, routing หรือ callback anomaly
-- ไม่ลบ migration 095-096 และไม่ลบ connection rows ระหว่าง incident; เก็บไว้เป็น audit evidence
+- ไม่ลบ migration 095-097 และไม่ลบ connection/snapshot rows ระหว่าง incident; เก็บไว้เป็น audit evidence
 - Revoke seller authorization ใน Partner Center เมื่อ token อาจรั่วหรือผูกร้านผิด tenant

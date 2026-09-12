@@ -473,7 +473,7 @@ func validateOrders(orders []Order, max int, expected map[string]struct{}) error
 	seen := make(map[string]struct{}, len(orders))
 	for i := range orders {
 		orders[i].ID = strings.TrimSpace(orders[i].ID)
-		if orders[i].ID == "" || !validOrderStatus(orders[i].Status) {
+		if orders[i].ID == "" || orders[i].Status == "" || !validOrderStatus(orders[i].Status) {
 			return ErrInvalidOrderResponse
 		}
 		if _, exists := seen[orders[i].ID]; exists {

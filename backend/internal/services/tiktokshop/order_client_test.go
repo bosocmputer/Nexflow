@@ -185,6 +185,13 @@ func TestOrderClientReturnsSanitizedAPIError(t *testing.T) {
 	}
 }
 
+func TestValidateOrdersRejectsMissingStatus(t *testing.T) {
+	err := validateOrders([]Order{{ID: "order-1"}}, 50, map[string]struct{}{"order-1": {}})
+	if !errors.Is(err, ErrInvalidOrderResponse) {
+		t.Fatalf("validateOrders() error = %v, want ErrInvalidOrderResponse", err)
+	}
+}
+
 func newTestOrderClient(t *testing.T, server *httptest.Server, now time.Time) *OrderClient {
 	t.Helper()
 	client, err := NewOrderClient(OrderClientConfig{

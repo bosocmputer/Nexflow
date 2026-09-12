@@ -359,7 +359,8 @@ func main() {
 		BaseURL: cfg.TikTokShopGatewayBaseURL, Tenant: cfg.TikTokShopGatewayTenant,
 		SharedSecret: cfg.TikTokShopGatewayInternalSecret, HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	})
-	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokshop.NewTenantConnectionStore(db), logger)
+	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokshop.NewTikTokOrderSnapshotStore(db))
+	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokshop.NewTenantConnectionStore(db), tiktokSnapshotService, logger)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
@@ -578,6 +579,7 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/search", middleware.RequireRole("admin", "staff"), tiktokAPIH.SearchOrders)
 		api.POST("/tiktok-shop-api/orders/detail", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetOrderDetails)
 		api.POST("/tiktok-shop-api/orders/price-detail", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetOrderPriceDetail)
+		api.POST("/tiktok-shop-api/orders/snapshot", middleware.RequireRole("admin", "staff"), tiktokAPIH.SnapshotOrders)
 		api.GET("/shopee-settlements", middleware.RequireRole("admin", "staff"), shopeeH.ListSettlementRuns)
 		api.GET("/shopee-settlements/counts", middleware.RequireRole("admin", "staff"), shopeeH.SettlementRunCounts)
 		api.POST("/shopee-settlements/preview", middleware.RequireRole("admin", "staff"), shopeeH.CreateSettlementPreview)

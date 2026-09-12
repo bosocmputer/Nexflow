@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,18 +27,23 @@ type TikTokShopConnectionSyncer interface {
 	Sync(context.Context, []tiktokshop.GatewayConnection) error
 }
 
-type TikTokShopAPIHandler struct {
-	config  *config.Config
-	gateway TikTokShopGateway
-	store   TikTokShopConnectionSyncer
-	logger  *zap.Logger
+type TikTokShopOrderSnapshotter interface {
+	Sync(context.Context, tiktokshop.TikTokOrderSnapshotRequest) (*tiktokshop.TikTokOrderSnapshotResult, error)
 }
 
-func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, store TikTokShopConnectionSyncer, logger *zap.Logger) *TikTokShopAPIHandler {
+type TikTokShopAPIHandler struct {
+	config    *config.Config
+	gateway   TikTokShopGateway
+	store     TikTokShopConnectionSyncer
+	snapshots TikTokShopOrderSnapshotter
+	logger    *zap.Logger
+}
+
+func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, store TikTokShopConnectionSyncer, snapshots TikTokShopOrderSnapshotter, logger *zap.Logger) *TikTokShopAPIHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &TikTokShopAPIHandler{config: config, gateway: gateway, store: store, logger: logger}
+	return &TikTokShopAPIHandler{config: config, gateway: gateway, store: store, snapshots: snapshots, logger: logger}
 }
 
 func (h *TikTokShopAPIHandler) Status(c *gin.Context) {
@@ -189,6 +195,47 @@ func (h *TikTokShopAPIHandler) GetOrderPriceDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
+func (h *TikTokShopAPIHandler) SnapshotOrders(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured || h.snapshots == nil {
+		h.error(c, http.StatusServiceUnavailable, "snapshot_not_configured", "ระบบบันทึกออเดอร์ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	var input tiktokshop.TikTokOrderSnapshotRequest
+	if err := c.ShouldBindJSON(&input); err != nil || !validTikTokSnapshotInput(input) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ระบุร้านและ Order ID ของ TikTok Shop จำนวน 1–20 รายการ")
+		return
+	}
+	result, err := h.snapshots.Sync(c.Request.Context(), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, tiktokshop.ErrInvalidSnapshotInput):
+			h.error(c, http.StatusBadRequest, "invalid_snapshot", "ข้อมูลออเดอร์ TikTok Shop ไม่สมบูรณ์")
+		case errors.Is(err, tiktokshop.ErrSnapshotAmountMismatch):
+			h.error(c, http.StatusConflict, "amount_mismatch", "ยอด Order Detail และ Price Detail ไม่ตรงกัน จึงยังไม่บันทึก")
+		case errors.Is(err, tiktokshop.ErrSnapshotPersistenceFailed):
+			h.logger.Error("tiktok_shop_order_snapshot_persist_failed",
+				zap.String("shop_id", strings.TrimSpace(input.ShopID)), zap.Int("order_count", len(input.OrderIDs)),
+				zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+			h.error(c, http.StatusInternalServerError, "snapshot_persist_failed", "บันทึกออเดอร์ TikTok Shop ไม่สำเร็จ")
+		default:
+			h.logger.Warn("tiktok_shop_order_snapshot_source_failed",
+				zap.String("shop_id", strings.TrimSpace(input.ShopID)), zap.Int("order_count", len(input.OrderIDs)),
+				zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+			h.error(c, http.StatusBadGateway, "gateway_request_failed", "โหลดข้อมูลออเดอร์ TikTok Shop ไม่สำเร็จ")
+		}
+		return
+	}
+	h.logger.Info("tiktok_shop_order_snapshot_synced",
+		zap.String("shop_id", result.ShopID), zap.Int("order_count", result.SyncedCount),
+		zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "manual_api"))
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
 func (h *TikTokShopAPIHandler) readiness() (enabled, configured bool) {
 	if h == nil || h.config == nil {
 		return false, false
@@ -226,6 +273,24 @@ func validTikTokOrderIDs(orderIDs []string) bool {
 			return false
 		}
 		seen[orderIDs[i]] = struct{}{}
+	}
+	return true
+}
+
+func validTikTokSnapshotInput(input tiktokshop.TikTokOrderSnapshotRequest) bool {
+	if strings.TrimSpace(input.ShopID) == "" || len(input.OrderIDs) == 0 || len(input.OrderIDs) > 20 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(input.OrderIDs))
+	for _, orderID := range input.OrderIDs {
+		orderID = strings.TrimSpace(orderID)
+		if orderID == "" {
+			return false
+		}
+		if _, duplicate := seen[orderID]; duplicate {
+			return false
+		}
+		seen[orderID] = struct{}{}
 	}
 	return true
 }
