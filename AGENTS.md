@@ -684,6 +684,26 @@ Current AOY UAT scope:
     deployed. The next phase remains signed webhook receipt/dedupe followed by
     reconciliation; TikTok stock navigation waits for its separate catalog and
     safe-write UAT.
+44. AOY-only TikTok order operations UX alignment is deployed at `cb28aa2`
+    without a migration. `/tiktok-shop-operations` now follows the established
+    Shopee Operations information architecture: compact operations header,
+    shop selector and refresh control, lifecycle tabs with counts, a separate
+    filter bar, dense operations table, explicit Nexflow/SML document column,
+    and integrated pagination. TikTok-specific capabilities remain accurate:
+    the document column says `ยังไม่เปิดใช้งาน` / `Snapshot เท่านั้น` and no
+    Shopee action was copied into the page. The bounded list API accepts only
+    the allowlisted `unpaid`, `to_ship`, `shipping`, `completed`, and
+    `cancelled` groups and calculates their counts from the full matching local
+    snapshot set before paging. Production showed counts 4/0/1/2/1/0; choosing
+    `กำลังจัดส่ง` updated the URL state and returned exactly two rows. Desktop
+    QA had no body overflow and the fresh DevTools console contained zero
+    messages. Bill, immutable SML attempt, in-app notification, LINE delivery,
+    and TikTok snapshot counts remained 323/27/537/252/4. AOY health/login and
+    both Central Gateway health checks returned 200, recent backend severe logs
+    were empty, and public TikTok Gateway `/internal/` and `/webhook/` remained
+    404. The pre-deploy backup is
+    `pre-deploy-20260912-114945.sql.gz`; Demo, Lanboon, and Ploy were not
+    deployed.
 
 Known deferred or incomplete validation:
 
