@@ -69,6 +69,26 @@ type tenantTikTokReconcilerFake struct {
 	calls  int
 }
 
+type tenantTikTokOrderSyncSettingsFake struct {
+	settings    []tiktokshop.TikTokOrderSyncSetting
+	updateInput tiktokshop.TikTokOrderSyncSettingUpdate
+	updateShop  string
+	err         error
+}
+
+func (f *tenantTikTokOrderSyncSettingsFake) ListSettings(context.Context) ([]tiktokshop.TikTokOrderSyncSetting, error) {
+	return append([]tiktokshop.TikTokOrderSyncSetting(nil), f.settings...), f.err
+}
+
+func (f *tenantTikTokOrderSyncSettingsFake) UpdateSetting(_ context.Context, shopID string, input tiktokshop.TikTokOrderSyncSettingUpdate) (*tiktokshop.TikTokOrderSyncSetting, error) {
+	f.updateShop = shopID
+	f.updateInput = input
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &tiktokshop.TikTokOrderSyncSetting{ShopID: shopID, Enabled: input.Enabled, IntervalSeconds: input.IntervalSeconds, OverlapSeconds: input.OverlapSeconds, ConfigVersion: input.ConfigVersion + 1}, nil
+}
+
 func (f *tenantTikTokReconcilerFake) Reconcile(_ context.Context, input tiktokshop.TikTokOrderReconcileRequest) (*tiktokshop.TikTokOrderReconcileResult, error) {
 	f.calls++
 	f.input = input
@@ -267,5 +287,51 @@ func TestTikTokShopAPIHandlerRejectsUnboundedOrderReconciliation(t *testing.T) {
 
 	if response.Code != http.StatusBadRequest || reconciler.calls != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", response.Code, reconciler.calls, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerListsPerShopOrderSyncSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	settings := &tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: "7494619203789490654", ShopName: "AOY", ConfigVersion: 1}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: false}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(settings)
+	router := gin.New()
+	router.GET("/order-sync-settings", handler.ListOrderSyncSettings)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/order-sync-settings", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"worker_enabled":false`) || !strings.Contains(response.Body.String(), `"shop_name":"AOY"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerUpdatesOneShopOnlyWhenGlobalWorkerEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	settings := &tenantTikTokOrderSyncSettingsFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(settings)
+	router := gin.New()
+	router.PUT("/order-sync-settings/:shop_id", handler.UpdateOrderSyncSetting)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/order-sync-settings/7494619203789490654", strings.NewReader(
+		`{"enabled":true,"interval_seconds":300,"overlap_seconds":900,"config_version":1}`,
+	)))
+
+	if response.Code != http.StatusOK || settings.updateShop != "7494619203789490654" || !settings.updateInput.Enabled ||
+		!strings.Contains(response.Body.String(), `"config_version":2`) {
+		t.Fatalf("status=%d shop=%q input=%+v body=%s", response.Code, settings.updateShop, settings.updateInput, response.Body.String())
+	}
+
+	disabledStore := &tenantTikTokOrderSyncSettingsFake{}
+	disabledHandler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: false}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(disabledStore)
+	disabledRouter := gin.New()
+	disabledRouter.PUT("/order-sync-settings/:shop_id", disabledHandler.UpdateOrderSyncSetting)
+	disabledResponse := httptest.NewRecorder()
+	disabledRouter.ServeHTTP(disabledResponse, httptest.NewRequest(http.MethodPut, "/order-sync-settings/7494619203789490654", strings.NewReader(
+		`{"enabled":true,"interval_seconds":300,"overlap_seconds":900,"config_version":1}`,
+	)))
+	if disabledResponse.Code != http.StatusConflict || disabledStore.updateShop != "" {
+		t.Fatalf("disabled status=%d shop=%q body=%s", disabledResponse.Code, disabledStore.updateShop, disabledResponse.Body.String())
 	}
 }

@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tiktok_shop_order_sync_runs (
   search_request_ids     JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (JSONB_TYPEOF(search_request_ids) = 'array'),
   error_code             TEXT NOT NULL DEFAULT '',
   error_message          TEXT NOT NULL DEFAULT '' CHECK (OCTET_LENGTH(error_message) <= 512),
+  lease_until            TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 minutes'),
   started_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at            TIMESTAMPTZ,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -40,6 +41,9 @@ CREATE TABLE IF NOT EXISTS tiktok_shop_order_sync_runs (
   CHECK (window_start < window_end),
   CHECK (window_end - window_start <= INTERVAL '24 hours')
 );
+
+ALTER TABLE tiktok_shop_order_sync_runs
+  ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 minutes');
 
 CREATE UNIQUE INDEX IF NOT EXISTS tiktok_shop_order_sync_runs_one_running_idx
   ON tiktok_shop_order_sync_runs(shop_id)
@@ -51,3 +55,7 @@ CREATE INDEX IF NOT EXISTS tiktok_shop_order_sync_settings_due_idx
 
 CREATE INDEX IF NOT EXISTS tiktok_shop_order_sync_runs_shop_created_idx
   ON tiktok_shop_order_sync_runs(shop_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS tiktok_shop_order_sync_runs_lease_idx
+  ON tiktok_shop_order_sync_runs(lease_until)
+  WHERE status = 'running';

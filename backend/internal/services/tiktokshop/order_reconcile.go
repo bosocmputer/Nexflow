@@ -12,11 +12,13 @@ const (
 	tikTokOrderReconcilePageSize = 20
 	tikTokOrderReconcileMaxPages = 10
 	tikTokOrderReconcileMaxSpan  = 24 * time.Hour
+	tikTokOrderReconcileTimeout  = 10 * time.Minute
 )
 
 var (
 	ErrInvalidOrderReconcileInput = errors.New("invalid TikTok Shop order reconciliation input")
 	ErrOrderReconcileFailed       = errors.New("TikTok Shop order reconciliation failed")
+	ErrOrderSyncVersionConflict   = errors.New("TikTok Shop order sync setting version conflict")
 )
 
 type TikTokOrderReconcileRequest struct {
@@ -50,6 +52,27 @@ type TikTokOrderReconcileResult struct {
 	SnapshottedCount int       `json:"snapshotted_count"`
 }
 
+type TikTokOrderSyncSetting struct {
+	ShopID            string     `json:"shop_id"`
+	ShopName          string     `json:"shop_name"`
+	Enabled           bool       `json:"enabled"`
+	IntervalSeconds   int        `json:"interval_seconds"`
+	OverlapSeconds    int        `json:"overlap_seconds"`
+	WatermarkUpdateAt *time.Time `json:"watermark_update_at,omitempty"`
+	NextRunAt         time.Time  `json:"next_run_at"`
+	LastSuccessAt     *time.Time `json:"last_success_at,omitempty"`
+	LastErrorCode     string     `json:"last_error_code,omitempty"`
+	LastErrorMessage  string     `json:"last_error_message,omitempty"`
+	ConfigVersion     int64      `json:"config_version"`
+}
+
+type TikTokOrderSyncSettingUpdate struct {
+	Enabled         bool  `json:"enabled"`
+	IntervalSeconds int   `json:"interval_seconds"`
+	OverlapSeconds  int   `json:"overlap_seconds"`
+	ConfigVersion   int64 `json:"config_version"`
+}
+
 type orderReconcileGateway interface {
 	SearchOrders(context.Context, GatewayOrderSearchRequest) (*GatewayOrderSearchResponse, error)
 }
@@ -69,15 +92,24 @@ type TikTokOrderReconciler struct {
 	gateway   orderReconcileGateway
 	snapshots orderReconcileSnapshotter
 	store     orderReconcileStore
+	now       func() time.Time
 }
 
 func NewTikTokOrderReconciler(gateway orderReconcileGateway, snapshots orderReconcileSnapshotter, store orderReconcileStore) *TikTokOrderReconciler {
-	return &TikTokOrderReconciler{gateway: gateway, snapshots: snapshots, store: store}
+	return &TikTokOrderReconciler{gateway: gateway, snapshots: snapshots, store: store, now: time.Now}
+}
+
+func (s *TikTokOrderReconciler) WithNow(now func() time.Time) *TikTokOrderReconciler {
+	if s != nil && now != nil {
+		s.now = now
+	}
+	return s
 }
 
 func (s *TikTokOrderReconciler) Reconcile(ctx context.Context, input TikTokOrderReconcileRequest) (*TikTokOrderReconcileResult, error) {
 	input.ShopID = strings.TrimSpace(input.ShopID)
-	if s == nil || s.gateway == nil || s.snapshots == nil || s.store == nil || input.Validate() != nil {
+	if s == nil || s.gateway == nil || s.snapshots == nil || s.store == nil || s.now == nil || input.Validate() != nil ||
+		time.Unix(input.UpdateTimeLT, 0).After(s.now().UTC().Add(5*time.Second)) {
 		return nil, ErrInvalidOrderReconcileInput
 	}
 	run, err := s.store.StartManualRun(ctx, input)
@@ -87,17 +119,26 @@ func (s *TikTokOrderReconciler) Reconcile(ctx context.Context, input TikTokOrder
 	return s.execute(ctx, run)
 }
 
+func (s *TikTokOrderReconciler) ExecuteScheduled(ctx context.Context, run TikTokOrderReconcileRun) (*TikTokOrderReconcileResult, error) {
+	if s == nil || s.gateway == nil || s.snapshots == nil || s.store == nil {
+		return nil, ErrInvalidOrderReconcileInput
+	}
+	return s.execute(ctx, run)
+}
+
 func (s *TikTokOrderReconciler) execute(ctx context.Context, run TikTokOrderReconcileRun) (*TikTokOrderReconcileResult, error) {
 	if strings.TrimSpace(run.ID) == "" || !tikTokNumericIDPattern.MatchString(strings.TrimSpace(run.ShopID)) ||
 		run.WindowStart.IsZero() || !run.WindowStart.Before(run.WindowEnd) || run.WindowEnd.Sub(run.WindowStart) > tikTokOrderReconcileMaxSpan {
 		return nil, ErrInvalidOrderReconcileInput
 	}
+	runCtx, cancel := context.WithTimeout(ctx, tikTokOrderReconcileTimeout)
+	defer cancel()
 	progress := TikTokOrderReconcileProgress{SearchRequestIDs: make([]string, 0, tikTokOrderReconcileMaxPages)}
 	seenOrders := make(map[string]struct{})
 	seenTokens := make(map[string]struct{})
 	pageToken := ""
 	for page := 0; page < tikTokOrderReconcileMaxPages; page++ {
-		response, err := s.gateway.SearchOrders(ctx, GatewayOrderSearchRequest{
+		response, err := s.gateway.SearchOrders(runCtx, GatewayOrderSearchRequest{
 			ShopID: run.ShopID,
 			Search: SearchOrdersRequest{
 				PageSize: tikTokOrderReconcilePageSize, PageToken: pageToken,
@@ -134,7 +175,7 @@ func (s *TikTokOrderReconciler) execute(ctx context.Context, run TikTokOrderReco
 			orderIDs = append(orderIDs, orderID)
 		}
 		if len(orderIDs) > 0 {
-			snapshotResult, err := s.snapshots.Sync(ctx, TikTokOrderSnapshotRequest{ShopID: run.ShopID, OrderIDs: orderIDs})
+			snapshotResult, err := s.snapshots.Sync(runCtx, TikTokOrderSnapshotRequest{ShopID: run.ShopID, OrderIDs: orderIDs})
 			if err != nil || snapshotResult == nil || snapshotResult.SyncedCount != len(orderIDs) {
 				return nil, s.fail(ctx, run.ID, "snapshot_failed", "TikTok Shop order detail snapshot failed")
 			}
@@ -163,7 +204,9 @@ func (s *TikTokOrderReconciler) execute(ctx context.Context, run TikTokOrderReco
 }
 
 func (s *TikTokOrderReconciler) fail(ctx context.Context, runID, code, message string) error {
-	_ = s.store.FailRun(ctx, runID, code, message)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = s.store.FailRun(persistCtx, runID, code, message)
 	return fmt.Errorf("%w: %s", ErrOrderReconcileFailed, code)
 }
 
@@ -179,4 +222,16 @@ func (input TikTokOrderReconcileRequest) Validate() error {
 		return ErrInvalidOrderReconcileInput
 	}
 	return nil
+}
+
+func (input TikTokOrderSyncSettingUpdate) Validate() error {
+	if input.IntervalSeconds < 60 || input.IntervalSeconds > 86400 ||
+		input.OverlapSeconds < 60 || input.OverlapSeconds > 86400 || input.ConfigVersion < 1 {
+		return ErrInvalidOrderReconcileInput
+	}
+	return nil
+}
+
+func ValidTikTokShopID(value string) bool {
+	return tikTokNumericIDPattern.MatchString(strings.TrimSpace(value))
 }

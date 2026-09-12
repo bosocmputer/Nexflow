@@ -35,13 +35,19 @@ type TikTokShopOrderReconciler interface {
 	Reconcile(context.Context, tiktokshop.TikTokOrderReconcileRequest) (*tiktokshop.TikTokOrderReconcileResult, error)
 }
 
+type TikTokShopOrderSyncSettings interface {
+	ListSettings(context.Context) ([]tiktokshop.TikTokOrderSyncSetting, error)
+	UpdateSetting(context.Context, string, tiktokshop.TikTokOrderSyncSettingUpdate) (*tiktokshop.TikTokOrderSyncSetting, error)
+}
+
 type TikTokShopAPIHandler struct {
-	config     *config.Config
-	gateway    TikTokShopGateway
-	store      TikTokShopConnectionSyncer
-	snapshots  TikTokShopOrderSnapshotter
-	reconciler TikTokShopOrderReconciler
-	logger     *zap.Logger
+	config       *config.Config
+	gateway      TikTokShopGateway
+	store        TikTokShopConnectionSyncer
+	snapshots    TikTokShopOrderSnapshotter
+	reconciler   TikTokShopOrderReconciler
+	syncSettings TikTokShopOrderSyncSettings
+	logger       *zap.Logger
 }
 
 func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, store TikTokShopConnectionSyncer, snapshots TikTokShopOrderSnapshotter, logger *zap.Logger) *TikTokShopAPIHandler {
@@ -54,6 +60,13 @@ func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, s
 func (h *TikTokShopAPIHandler) WithOrderReconciler(reconciler TikTokShopOrderReconciler) *TikTokShopAPIHandler {
 	if h != nil {
 		h.reconciler = reconciler
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithOrderSyncSettings(settings TikTokShopOrderSyncSettings) *TikTokShopAPIHandler {
+	if h != nil {
+		h.syncSettings = settings
 	}
 	return h
 }
@@ -281,6 +294,66 @@ func (h *TikTokShopAPIHandler) ReconcileOrders(c *gin.Context) {
 		zap.Int("page_count", result.PageCount), zap.Int("order_count", result.SnapshottedCount),
 		zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "manual_api"))
 	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *TikTokShopAPIHandler) ListOrderSyncSettings(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured || h.syncSettings == nil {
+		h.error(c, http.StatusServiceUnavailable, "order_sync_not_configured", "ระบบตั้งค่า sync ออเดอร์ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	settings, err := h.syncSettings.ListSettings(c.Request.Context())
+	if err != nil {
+		h.logger.Error("tiktok_shop_order_sync_settings_list_failed", zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "order_sync_settings_failed", "โหลดการตั้งค่า sync ออเดอร์ TikTok Shop ไม่สำเร็จ")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"worker_enabled": h.config.TikTokShopOrderSyncEnabled, "data": settings})
+}
+
+func (h *TikTokShopAPIHandler) UpdateOrderSyncSetting(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured || h.syncSettings == nil {
+		h.error(c, http.StatusServiceUnavailable, "order_sync_not_configured", "ระบบตั้งค่า sync ออเดอร์ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	shopID := strings.TrimSpace(c.Param("shop_id"))
+	var input tiktokshop.TikTokOrderSyncSettingUpdate
+	if !tiktokshop.ValidTikTokShopID(shopID) || c.ShouldBindJSON(&input) != nil || input.Validate() != nil {
+		h.error(c, http.StatusBadRequest, "invalid_request", "การตั้งค่า sync ออเดอร์ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	if input.Enabled && !h.config.TikTokShopOrderSyncEnabled {
+		h.error(c, http.StatusConflict, "worker_disabled", "Server ยังไม่ได้เปิด TikTok Shop order sync worker")
+		return
+	}
+	setting, err := h.syncSettings.UpdateSetting(c.Request.Context(), shopID, input)
+	if err != nil {
+		switch {
+		case errors.Is(err, tiktokshop.ErrInvalidOrderReconcileInput):
+			h.error(c, http.StatusBadRequest, "invalid_setting", "ไม่พบร้าน TikTok Shop ที่เปิดใช้งาน หรือค่าที่ระบุไม่ถูกต้อง")
+		case errors.Is(err, tiktokshop.ErrOrderSyncVersionConflict):
+			h.error(c, http.StatusConflict, "version_conflict", "การตั้งค่าถูกแก้ไขแล้ว กรุณาโหลดใหม่")
+		default:
+			h.logger.Error("tiktok_shop_order_sync_setting_update_failed", zap.String("shop_id", shopID), zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+			h.error(c, http.StatusInternalServerError, "order_sync_setting_failed", "บันทึกการตั้งค่า sync ออเดอร์ TikTok Shop ไม่สำเร็จ")
+		}
+		return
+	}
+	h.logger.Info("tiktok_shop_order_sync_setting_updated",
+		zap.String("shop_id", setting.ShopID), zap.Bool("enabled", setting.Enabled),
+		zap.Int("interval_seconds", setting.IntervalSeconds), zap.Int("overlap_seconds", setting.OverlapSeconds),
+		zap.Int64("config_version", setting.ConfigVersion), zap.String("actor_id", c.GetString("user_id")),
+		zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "settings_api"))
+	c.JSON(http.StatusOK, gin.H{"data": setting})
 }
 
 func (h *TikTokShopAPIHandler) readiness() (enabled, configured bool) {

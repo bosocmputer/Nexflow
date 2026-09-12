@@ -18,12 +18,15 @@
 - อ่านโครงสร้างราคาผ่าน `GET /order/202407/orders/{order_id}/price_detail` เพื่อแยกราคาสินค้า ส่วนลด ค่าส่ง ภาษี และยอดที่ผู้ซื้อชำระ
 - ส่งกลับ tenant เฉพาะข้อมูลสถานะ รายการสินค้า และยอดเงินที่ต้องใช้ โดยไม่ส่งชื่อ ที่อยู่ โทรศัพท์ อีเมล ข้อความผู้ซื้อ หรือ buyer profile
 - บันทึก snapshot แบบ manual/read-only ได้สูงสุด 20 Order IDs ต่อครั้ง โดย upsert ที่ `(shop_id, order_id)`, รวม quantity จาก line instances ด้วย `(product_id, sku_id)` และบันทึก Order Detail + Price Detail ที่ผ่าน typed allowlist เท่านั้น
+- reconcile snapshot จาก Order List ด้วยช่วงเวลา `[update_time_ge, update_time_lt)` สูงสุด 24 ชั่วโมง, page size 20 และไม่เกิน 10 หน้า โดยอ่าน Detail + Price Detail ซ้ำทุกออเดอร์ก่อน upsert
+- มี scheduler แบบสองชั้น: global `TIKTOK_SHOP_ORDER_SYNC_ENABLED` และ per-shop setting ซึ่งค่าเริ่มต้นปิดทั้งคู่; watermark ขยับหลังจบทุกหน้าเท่านั้น และ replay overlap 15 นาทีเพื่อรับ late update
+- เก็บ durable run/progress พร้อม lease 30 นาทีและ safe error code; เก็บเฉพาะ SHA-256 ของ opaque page token ไม่เก็บ token ดิบ, upstream payload, credential หรือ buyer PII
 - มี internal endpoints ที่ลงลายเซ็นแยก tenant สำหรับ Order List/Detail; public edge ปิด `/internal/` ทั้งหมด
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
 
 ยังไม่เปิด:
 
-- polling/queue อัตโนมัติ, webhook reconciliation และการแปลง snapshots เป็น Nexflow bills
+- webhook reconciliation และการแปลง snapshots เป็น Nexflow bills
 - webhooks และ realtime queue
 - stock write, fulfillment, shipping label, cancellation และ Auto SML
 - finance/settlement
@@ -93,6 +96,7 @@ TIKTOK_SHOP_GATEWAY_BASE_URL=<internal or HTTPS gateway URL>
 TIKTOK_SHOP_GATEWAY_PUBLIC_URL=https://tiktok-shop-gateway.nextstep-soft.com
 TIKTOK_SHOP_GATEWAY_TENANT=aoy
 TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET=<derived AOY secret>
+TIKTOK_SHOP_ORDER_SYNC_ENABLED=false
 VITE_ENABLE_TIKTOK_SHOP_API=true
 ```
 
@@ -121,6 +125,11 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 - `POST /api/tiktok-shop-api/orders/detail`
 - `POST /api/tiktok-shop-api/orders/price-detail`
 - `POST /api/tiktok-shop-api/orders/snapshot` — บันทึก 1–20 Order IDs แบบ atomic; ถ้าออเดอร์ใดโหลด/ตรวจยอดไม่ผ่าน จะไม่บันทึกทั้งชุด
+- `POST /api/tiktok-shop-api/orders/reconcile` — explicit window สูงสุด 24 ชั่วโมง; อ่าน Order List แบบเรียง `update_time ASC` แล้ว refresh typed snapshots
+- `GET /api/tiktok-shop-api/order-sync-settings` — แสดง global worker state และ setting ของแต่ละร้าน
+- `PUT /api/tiktok-shop-api/order-sync-settings/:shop_id` — Admin เท่านั้น; ใช้ `config_version` เพื่อป้องกันการแก้ไขทับกัน
+
+การเปิด scheduled reconciliation ต้องทำตามลำดับ: deploy โดย global flag ยังเป็น `false`, ผ่าน manual canary และตรวจ side-effect counts ก่อน, เปลี่ยน global flag ของ AOY เป็น `true`, แล้วจึงเปิดเฉพาะ Shop ID ของ AOY ผ่าน settings API ค่าแนะนำเริ่มต้นคือ interval 300 วินาทีและ overlap 900 วินาที ห้ามเปิดร้านอื่นหรือ tenant อื่นจากค่าของ AOY
 
 ### Order/amount evidence ที่ยืนยันแล้วใน AOY
 
@@ -141,7 +150,7 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 
 ## AOY OAuth UAT
 
-1. Backup AOY database ก่อนใช้ migration 095-097
+1. Backup AOY database ก่อนใช้ migration 095-098
 2. Deploy Central Gateway ด้วย target `tiktok-gateway` และตรวจ `/health` ได้ HTTP 200 พร้อม database `ok`
 3. Deploy AOY โดยยังปิด feature flag แล้วตรวจ backend/frontend health
 4. เปิด AOY backend และ frontend flags เท่านั้น
@@ -154,12 +163,15 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 11. ตรวจ Central Gateway ว่ามี connection ของ tenant `aoy` เท่านั้น และ token ไม่ปรากฏใน response/log
 12. ทดสอบ OAuth state เดิมซ้ำ ต้องถูกปฏิเสธ
 13. เรียก snapshot ของ controlled order เดิมสองครั้ง ต้องเหลือหนึ่งแถว, hash/quantity/yอดตรงกัน, JSON ไม่มี buyer PII และจำนวน Bill/SML attempt ไม่เปลี่ยน
+14. เรียก reconciliation แบบ manual ในช่วงเวลาสั้นที่มี controlled order; ต้องสำเร็จ, snapshot ยัง idempotent และจำนวน Bill/SML/notification ไม่เปลี่ยน
+15. เปิด global worker ของ AOY แต่ยังปิดทุกร้าน ตรวจว่าไม่มี run ถูก claim จากนั้นเปิดเฉพาะ AOY Shop ID และรอ scheduled run แรก
+16. ตรวจ scheduled run ว่า watermark เท่ากับ exclusive window end เฉพาะเมื่อสำเร็จ, ไม่มี raw page token/PII และการ restart/replay ไม่สร้าง snapshot ซ้ำ
 
-UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, refresh เป็น atomic, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน tenant database หรือ browser response
+UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, manual และ scheduled reconciliation ผ่านโดย watermark/overlap ถูกต้อง, ไม่มี Bill/SML/notification side effect, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน tenant database หรือ browser response
 
 ## Rollback
 
 - ปิด AOY แบบ atomic ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --open-api-enabled false` แล้ว deploy AOY ใหม่
 - หยุด Central Gateway หากพบ credential, routing หรือ callback anomaly
-- ไม่ลบ migration 095-097 และไม่ลบ connection/snapshot rows ระหว่าง incident; เก็บไว้เป็น audit evidence
+- ไม่ลบ migration 095-098 และไม่ลบ connection/snapshot/run rows ระหว่าง incident; เก็บไว้เป็น audit evidence
 - Revoke seller authorization ใน Partner Center เมื่อ token อาจรั่วหรือผูกร้านผิด tenant

@@ -157,3 +157,16 @@ func TestTikTokOrderReconcilerRejectsInvalidWindowBeforeCreatingRun(t *testing.T
 		t.Fatalf("error=%v started=%d", err, store.started)
 	}
 }
+
+func TestTikTokOrderReconcilerRejectsFutureWindowBeforeCreatingRun(t *testing.T) {
+	store := &reconcileStoreFake{run: TikTokOrderReconcileRun{ID: "run-5"}}
+	service := NewTikTokOrderReconciler(&reconcileGatewayFake{}, &reconcileSnapshotterFake{}, store).
+		WithNow(func() time.Time { return time.Unix(1_789_000_000, 0).UTC() })
+
+	_, err := service.Reconcile(t.Context(), TikTokOrderReconcileRequest{
+		ShopID: "7494619203789490654", UpdateTimeGE: 1_789_000_000, UpdateTimeLT: 1_789_000_100,
+	})
+	if !errors.Is(err, ErrInvalidOrderReconcileInput) || store.started != 0 {
+		t.Fatalf("error=%v started=%d", err, store.started)
+	}
+}

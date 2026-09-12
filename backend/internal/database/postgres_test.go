@@ -372,6 +372,7 @@ func TestMigration098AddsBoundedTikTokOrderReconciliationWithoutBackfill(t *test
 		"create table if not exists tiktok_shop_order_sync_runs",
 		"watermark_update_at", "next_run_at", "overlap_seconds", "config_version",
 		"last_page_token_hash", "search_request_ids", "window_start", "window_end",
+		"lease_until",
 		"where status = 'running'", "trigger_source in ('manual','schedule')",
 	} {
 		if !strings.Contains(body, required) {

@@ -42,6 +42,11 @@ action, or stock write.
 7. One shop may have at most one running reconciliation. Run history and safe
    error codes are durable; raw payloads, tokens, credentials, buyer data, and
    recipient data are never stored in the run tables or logs.
+8. Every run has a 30-minute renewable lease and a 10-minute execution timeout.
+   A later claim marks an expired run failed before selecting new work, so a
+   process crash cannot block that shop permanently.
+9. A shop that is more than 24 hours behind advances through consecutive
+   bounded windows; it must not skip directly to the present.
 
 ## Safe defaults
 
@@ -51,6 +56,8 @@ action, or stock write.
 - Overlap 900 seconds.
 - 30-second end-of-window safety lag.
 - Failed scheduled runs retry after 60 seconds without advancing watermark.
+- Scheduler claims at most one due shop every 30 seconds with row locking and
+  `SKIP LOCKED`; enabling one shop never changes another shop's setting.
 
 ## Testing and rollout
 
