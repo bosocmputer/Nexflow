@@ -130,6 +130,15 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 - `item_insurance_fee` เป็นค่าประกัน/คุ้มครองที่ผู้ซื้อจ่ายให้แพลตฟอร์ม เก็บไว้เพื่อ reconcile ยอดรวม แต่ห้ามสร้างเป็นบรรทัดขายหรือค่าส่งใน SML
 - migration 097 เก็บเฉพาะสถานะ เวลา external identity, ยอด reconcile, typed safe JSON, grouped SKU evidence, TikTok request IDs และ content hash ไม่มี buyer/recipient fields และไม่มี queue ที่สร้าง Bill/SML
 
+### Durable snapshot UAT (2026-09-12)
+
+- AOY deploy commit `0b2ae2b`; database backup `pre-deploy-20260912-102557.sql.gz`
+- controlled order `585684843131602849` ถูกเรียกผ่าน endpoint snapshot สองครั้งและตอบ HTTP 200 ทั้งคู่ แต่ `(shop_id, order_id)` เหลือหนึ่งแถวพร้อม content hash เดิม
+- snapshot ตรงกับหลักฐานจริง: `COMPLETED`, 1 line / 1 SKU / quantity 1, product subtotal 250.00 THB, shipping 0, `item_insurance_fee` 6.42 THB และ buyer payment 256.42 THB
+- typed `safe_order` + `safe_price_detail` มี PII key hits 0; จำนวน Bill คงที่ 323 และ `bill_sml_attempts` คงที่ 27
+- structured success log 2 รายการ, severe log 0, AOY health HTTP 200 และการเรียก endpoint โดยไม่ authenticate ตอบ HTTP 401
+- UAT นี้ไม่ได้เปิด polling, webhook, Bill/SML conversion, LINE notification, fulfillment หรือ stock write
+
 ## AOY OAuth UAT
 
 1. Backup AOY database ก่อนใช้ migration 095-097

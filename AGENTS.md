@@ -620,6 +620,26 @@ Current AOY UAT scope:
     verified database dumps are
     `backups/pre-db-password-20260902-075834.sql.gz`. No SML, Shopee, LINE,
     admin-login, JWT, media-signing, or Central Gateway credential changed.
+41. AOY-only durable TikTok Shop order snapshots are deployed at `0b2ae2b` with
+    additive migration 097. The authenticated manual endpoint reads fresh
+    Order Detail `202507` plus Price Detail `202407`, validates currency/payment,
+    groups repeated line instances by `(product_id, sku_id)`, and atomically
+    upserts one tenant row per `(shop_id, order_id)`. Controlled order
+    `585684843131602849` was snapshotted twice: both calls returned HTTP 200 and
+    the same content hash, while the database retained exactly one row. Its
+    verified evidence is one product/SKU/line, product subtotal 250.00 THB,
+    buyer payment 256.42 THB, shipping 0, and buyer/platform-only
+    `item_insurance_fee` 6.42 THB. The typed saved JSON had zero buyer/recipient
+    PII key hits. Total bills stayed 323 and immutable SML attempts stayed 27,
+    proving this slice created no Bill or SML side effect. The unauthenticated
+    route returned HTTP 401, AOY health returned 200, two structured success
+    events were present, and the post-deploy severe-log scan was empty. Public
+    TikTok Gateway `/internal/` and `/webhook/` remain 404. The AOY pre-deploy
+    backup is `pre-deploy-20260912-102557.sql.gz`. Demo, Lanboon, Ploy, Shopee,
+    webhooks, notifications, fulfillment, stock, and automation were not
+    changed. The next TikTok phase is bounded scheduled Order List/detail
+    reconciliation and webhook receipt/dedupe; Bill/SML conversion remains
+    disabled until its own shadow-mode design and UAT.
 
 Known deferred or incomplete validation:
 
