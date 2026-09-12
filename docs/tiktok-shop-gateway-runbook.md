@@ -15,6 +15,7 @@
 - tenant อ่านเฉพาะ connection metadata ผ่าน signed internal request ไม่มี App Secret, token หรือ shop cipher
 - refresh seller token ก่อนหมดอายุ 10 นาทีด้วย PostgreSQL advisory lock และอัปเดต token ของทุกร้านภายใต้ authorization เดียวใน transaction เดียว
 - อ่านรายการออเดอร์ผ่าน `POST /order/202309/orders/search` และยืนยันข้อมูลจริงด้วย `GET /order/202507/orders` สูงสุดครั้งละ 50 Order IDs
+- อ่านโครงสร้างราคาผ่าน `GET /order/202407/orders/{order_id}/price_detail` เพื่อแยกราคาสินค้า ส่วนลด ค่าส่ง ภาษี และยอดที่ผู้ซื้อชำระ
 - ส่งกลับ tenant เฉพาะข้อมูลสถานะ รายการสินค้า และยอดเงินที่ต้องใช้ โดยไม่ส่งชื่อ ที่อยู่ โทรศัพท์ อีเมล ข้อความผู้ซื้อ หรือ buyer profile
 - มี internal endpoints ที่ลงลายเซ็นแยก tenant สำหรับ Order List/Detail; public edge ปิด `/internal/` ทั้งหมด
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
@@ -26,7 +27,7 @@
 - stock write, fulfillment, shipping label, cancellation และ Auto SML
 - finance/settlement
 
-API อ้างอิงหลัก: [Authorization overview](https://partner.tiktokshop.com/docv2/page/authorization-overview-202407), [Create your app](https://partner.tiktokshop.com/docv2/page/create-your-app), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope), [Get Authorized Shops](https://partner.tiktokshop.com/docv2/page/get-authorized-shops), [Get Order List](https://partner.tiktokshop.com/docv2/page/get-order-list-202309), [Get Order Detail](https://partner.tiktokshop.com/docv2/page/get-order-detail-202507), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning)
+API อ้างอิงหลัก: [Authorization overview](https://partner.tiktokshop.com/docv2/page/authorization-overview-202407), [Create your app](https://partner.tiktokshop.com/docv2/page/create-your-app), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope), [Get Authorized Shops](https://partner.tiktokshop.com/docv2/page/get-authorized-shops), [Get Order List](https://partner.tiktokshop.com/docv2/page/get-order-list-202309), [Get Order Detail](https://partner.tiktokshop.com/docv2/page/get-order-detail-202507), [Get Price Detail](https://partner.tiktokshop.com/docv2/page/get-price-detail-202407), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning)
 
 ## Partner Center gates
 
@@ -113,10 +114,18 @@ NX_PASS=... python3 scripts/deploy_nextstep_instances.py --target aoy --ref <rev
 
 deployment จะเพิ่ม network `nexflow-tiktok-shop-gateway_default` ให้ backend เฉพาะ tenant ที่มี `TIKTOK_SHOP_OPEN_API_ENABLED=true` และตรวจ health จากภายใน backend หลัง recreate
 
-AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `admin` หรือ `staff`) โดยทั้งสอง route เป็น read-only และยังไม่สร้าง bill:
+AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `admin` หรือ `staff`) โดยทุก route เป็น read-only และยังไม่สร้าง bill:
 
 - `POST /api/tiktok-shop-api/orders/search`
 - `POST /api/tiktok-shop-api/orders/detail`
+- `POST /api/tiktok-shop-api/orders/price-detail`
+
+### Order/amount evidence ที่ยืนยันแล้วใน AOY
+
+- Order Detail รุ่น `202507` ส่งหนึ่ง `line_items` entry ต่อสินค้าหนึ่งชิ้น ไม่ได้ส่ง quantity ที่เชื่อถือได้ ต้องรวมจำนวนด้วย `(product_id, sku_id)` และเก็บ line ID รายชิ้นเป็นหลักฐาน
+- `seller_sku` ของร้าน AOY อาจว่าง ให้ใช้ `product_id + sku_id` เป็น external variant identity
+- ตัวอย่าง production UAT วันที่ 2026-09-12 ตรงกับ Seller Center: ราคาสินค้า 300 บาท, ค่าส่งเดิม 29 บาท, ส่วนลดค่าส่งแพลตฟอร์ม 29 บาท, `item_insurance_fee` 7.49 บาท และผู้ซื้อชำระรวม 307.49 บาท
+- `item_insurance_fee` เป็นค่าประกัน/คุ้มครองที่ผู้ซื้อจ่ายให้แพลตฟอร์ม เก็บไว้เพื่อ reconcile ยอดรวม แต่ห้ามสร้างเป็นบรรทัดขายหรือค่าส่งใน SML
 
 ## AOY OAuth UAT
 
