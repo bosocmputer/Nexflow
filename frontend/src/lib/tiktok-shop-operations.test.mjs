@@ -11,6 +11,8 @@ const vite = await createServer({
 
 const {
   formatTikTokMoney,
+  normalizeTikTokStatusGroup,
+  tiktokStatusGroupCount,
   tiktokOrderStatusLabel,
   tiktokSyncState,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
@@ -37,4 +39,12 @@ test('sync state remains fail-closed when either worker or shop is disabled', ()
   assert.equal(tiktokSyncState(true, false, ''), 'shop_disabled')
   assert.equal(tiktokSyncState(true, true, 'gateway_timeout'), 'error')
   assert.equal(tiktokSyncState(true, true, undefined), 'active')
+})
+
+test('normalizes operations status tabs and reads their server counts', () => {
+  const counts = { total: 9, unpaid: 1, to_ship: 2, shipping: 3, completed: 2, cancelled: 1 }
+  assert.equal(normalizeTikTokStatusGroup('shipping'), 'shipping')
+  assert.equal(normalizeTikTokStatusGroup('future'), 'all')
+  assert.equal(tiktokStatusGroupCount(counts, 'all'), 9)
+  assert.equal(tiktokStatusGroupCount(counts, 'to_ship'), 2)
 })

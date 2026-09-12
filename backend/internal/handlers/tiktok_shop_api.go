@@ -341,11 +341,12 @@ func (h *TikTokShopAPIHandler) ListOrders(c *gin.Context) {
 	page, pageSize, err := parseTikTokOrderListPagination(c.Query("page"), c.Query("page_size"))
 	filter := tiktokshop.TikTokOrderSnapshotListFilter{
 		ShopID: strings.TrimSpace(c.Query("shop_id")), Status: tiktokshop.OrderStatus(strings.TrimSpace(c.Query("status"))),
+		StatusGroup:   tiktokshop.TikTokOrderStatusGroup(strings.TrimSpace(c.Query("status_group"))),
 		OrderIDPrefix: strings.TrimSpace(c.Query("order_id")), Page: page, PageSize: pageSize,
 	}
 	if err != nil || (filter.ShopID != "" && !tiktokshop.ValidTikTokShopID(filter.ShopID)) ||
 		(filter.OrderIDPrefix != "" && !tiktokshop.ValidTikTokShopID(filter.OrderIDPrefix)) ||
-		(filter.Status != "" && !validTikTokListStatus(filter.Status)) {
+		(filter.Status != "" && !validTikTokListStatus(filter.Status)) || !tiktokshop.ValidTikTokOrderStatusGroup(filter.StatusGroup) {
 		h.error(c, http.StatusBadRequest, "invalid_request", "ตัวกรองรายการออเดอร์ TikTok Shop ไม่ถูกต้อง")
 		return
 	}

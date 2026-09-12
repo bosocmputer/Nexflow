@@ -1,4 +1,16 @@
 export type TikTokSyncState = 'active' | 'error' | 'server_disabled' | 'shop_disabled'
+export type TikTokStatusGroup = 'all' | 'unpaid' | 'to_ship' | 'shipping' | 'completed' | 'cancelled'
+
+export interface TikTokStatusCounts {
+  total: number
+  unpaid: number
+  to_ship: number
+  shipping: number
+  completed: number
+  cancelled: number
+}
+
+const TIKTOK_STATUS_GROUPS: TikTokStatusGroup[] = ['all', 'unpaid', 'to_ship', 'shipping', 'completed', 'cancelled']
 
 const STATUS_LABELS: Record<string, string> = {
   UNPAID: 'ยังไม่ชำระ',
@@ -36,4 +48,12 @@ export function tiktokSyncState(workerEnabled: boolean, shopEnabled: boolean, er
   if (!shopEnabled) return 'shop_disabled'
   if (errorCode?.trim()) return 'error'
   return 'active'
+}
+
+export function normalizeTikTokStatusGroup(value: string | null | undefined): TikTokStatusGroup {
+  return TIKTOK_STATUS_GROUPS.includes(value as TikTokStatusGroup) ? value as TikTokStatusGroup : 'all'
+}
+
+export function tiktokStatusGroupCount(counts: TikTokStatusCounts, group: TikTokStatusGroup): number {
+  return group === 'all' ? counts.total : counts[group]
 }

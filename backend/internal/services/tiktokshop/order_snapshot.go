@@ -83,9 +83,30 @@ type TikTokOrderSnapshotRecord struct {
 type TikTokOrderSnapshotListFilter struct {
 	ShopID        string
 	Status        OrderStatus
+	StatusGroup   TikTokOrderStatusGroup
 	OrderIDPrefix string
 	Page          int
 	PageSize      int
+}
+
+type TikTokOrderStatusGroup string
+
+const (
+	TikTokOrderStatusGroupAll       TikTokOrderStatusGroup = ""
+	TikTokOrderStatusGroupUnpaid    TikTokOrderStatusGroup = "unpaid"
+	TikTokOrderStatusGroupToShip    TikTokOrderStatusGroup = "to_ship"
+	TikTokOrderStatusGroupShipping  TikTokOrderStatusGroup = "shipping"
+	TikTokOrderStatusGroupCompleted TikTokOrderStatusGroup = "completed"
+	TikTokOrderStatusGroupCancelled TikTokOrderStatusGroup = "cancelled"
+)
+
+type TikTokOrderSnapshotStatusCounts struct {
+	Total     int64 `json:"total"`
+	Unpaid    int64 `json:"unpaid"`
+	ToShip    int64 `json:"to_ship"`
+	Shipping  int64 `json:"shipping"`
+	Completed int64 `json:"completed"`
+	Cancelled int64 `json:"cancelled"`
 }
 
 type TikTokOrderSnapshotListItem struct {
@@ -105,11 +126,22 @@ type TikTokOrderSnapshotListItem struct {
 }
 
 type TikTokOrderSnapshotListResult struct {
-	Data       []TikTokOrderSnapshotListItem `json:"data"`
-	Page       int                           `json:"page"`
-	PageSize   int                           `json:"page_size"`
-	TotalItems int64                         `json:"total_items"`
-	TotalPages int                           `json:"total_pages"`
+	Data         []TikTokOrderSnapshotListItem   `json:"data"`
+	Page         int                             `json:"page"`
+	PageSize     int                             `json:"page_size"`
+	TotalItems   int64                           `json:"total_items"`
+	TotalPages   int                             `json:"total_pages"`
+	StatusCounts TikTokOrderSnapshotStatusCounts `json:"status_counts"`
+}
+
+func ValidTikTokOrderStatusGroup(value TikTokOrderStatusGroup) bool {
+	switch value {
+	case TikTokOrderStatusGroupAll, TikTokOrderStatusGroupUnpaid, TikTokOrderStatusGroupToShip,
+		TikTokOrderStatusGroupShipping, TikTokOrderStatusGroupCompleted, TikTokOrderStatusGroupCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 type orderSnapshotGateway interface {
@@ -443,10 +475,11 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 	filter.ShopID = strings.TrimSpace(filter.ShopID)
 	filter.OrderIDPrefix = strings.TrimSpace(filter.OrderIDPrefix)
 	filter.Status = OrderStatus(strings.TrimSpace(string(filter.Status)))
+	filter.StatusGroup = TikTokOrderStatusGroup(strings.TrimSpace(string(filter.StatusGroup)))
 	if s == nil || s.database == nil || filter.Page < 1 || filter.Page > 1000000 || filter.PageSize < 1 || filter.PageSize > 50 ||
 		(filter.ShopID != "" && !tikTokNumericIDPattern.MatchString(filter.ShopID)) ||
 		(filter.OrderIDPrefix != "" && !tikTokNumericIDPattern.MatchString(filter.OrderIDPrefix)) ||
-		(filter.Status != "" && !validOrderStatus(filter.Status)) {
+		(filter.Status != "" && !validOrderStatus(filter.Status)) || !ValidTikTokOrderStatusGroup(filter.StatusGroup) {
 		return nil, ErrInvalidSnapshotListFilter
 	}
 	offset := (filter.Page - 1) * filter.PageSize
@@ -457,9 +490,33 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
 		  WHERE ($1 = '' OR s.shop_id = $1)
 		    AND ($2 = '' OR s.order_status = $2)
-		    AND ($3 = '' OR s.order_id LIKE $3)`,
-		filter.ShopID, string(filter.Status), listOrderIDPrefix(filter.OrderIDPrefix),
+		    AND ($3 = ''
+		      OR ($3 = 'unpaid' AND s.order_status = 'UNPAID')
+		      OR ($3 = 'to_ship' AND s.order_status IN ('ON_HOLD', 'AWAITING_SHIPMENT'))
+		      OR ($3 = 'shipping' AND s.order_status IN ('PARTIALLY_SHIPPING', 'AWAITING_COLLECTION', 'IN_TRANSIT', 'DELIVERED'))
+		      OR ($3 = 'completed' AND s.order_status = 'COMPLETED')
+		      OR ($3 = 'cancelled' AND s.order_status = 'CANCELLED'))
+		    AND ($4 = '' OR s.order_id LIKE $4)`,
+		filter.ShopID, string(filter.Status), string(filter.StatusGroup), listOrderIDPrefix(filter.OrderIDPrefix),
 	).Scan(&result.TotalItems); err != nil {
+		return nil, err
+	}
+	if err := s.database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FILTER (WHERE TRUE),
+		        COUNT(*) FILTER (WHERE s.order_status = 'UNPAID'),
+		        COUNT(*) FILTER (WHERE s.order_status IN ('ON_HOLD', 'AWAITING_SHIPMENT')),
+		        COUNT(*) FILTER (WHERE s.order_status IN ('PARTIALLY_SHIPPING', 'AWAITING_COLLECTION', 'IN_TRANSIT', 'DELIVERED')),
+		        COUNT(*) FILTER (WHERE s.order_status = 'COMPLETED'),
+		        COUNT(*) FILTER (WHERE s.order_status = 'CANCELLED')
+		   FROM tiktok_shop_order_snapshots s
+		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
+		  WHERE ($1 = '' OR s.shop_id = $1)
+		    AND ($2 = '' OR s.order_id LIKE $2)`,
+		filter.ShopID, listOrderIDPrefix(filter.OrderIDPrefix),
+	).Scan(
+		&result.StatusCounts.Total, &result.StatusCounts.Unpaid, &result.StatusCounts.ToShip,
+		&result.StatusCounts.Shipping, &result.StatusCounts.Completed, &result.StatusCounts.Cancelled,
+	); err != nil {
 		return nil, err
 	}
 	if result.TotalItems > 0 {
@@ -477,10 +534,16 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
 		  WHERE ($1 = '' OR s.shop_id = $1)
 		    AND ($2 = '' OR s.order_status = $2)
-		    AND ($3 = '' OR s.order_id LIKE $3)
+		    AND ($3 = ''
+		      OR ($3 = 'unpaid' AND s.order_status = 'UNPAID')
+		      OR ($3 = 'to_ship' AND s.order_status IN ('ON_HOLD', 'AWAITING_SHIPMENT'))
+		      OR ($3 = 'shipping' AND s.order_status IN ('PARTIALLY_SHIPPING', 'AWAITING_COLLECTION', 'IN_TRANSIT', 'DELIVERED'))
+		      OR ($3 = 'completed' AND s.order_status = 'COMPLETED')
+		      OR ($3 = 'cancelled' AND s.order_status = 'CANCELLED'))
+		    AND ($4 = '' OR s.order_id LIKE $4)
 		  ORDER BY s.last_synced_at DESC, s.order_id DESC
-		  LIMIT $4 OFFSET $5`,
-		filter.ShopID, string(filter.Status), listOrderIDPrefix(filter.OrderIDPrefix), filter.PageSize, offset,
+		  LIMIT $5 OFFSET $6`,
+		filter.ShopID, string(filter.Status), string(filter.StatusGroup), listOrderIDPrefix(filter.OrderIDPrefix), filter.PageSize, offset,
 	)
 	if err != nil {
 		return nil, err
