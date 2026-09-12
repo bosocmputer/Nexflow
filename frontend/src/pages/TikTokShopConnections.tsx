@@ -37,8 +37,8 @@ interface TikTokOrderSyncSetting {
   enabled: boolean
   interval_seconds: number
   last_success_at?: string
-  last_error_code: string
-  last_error_message: string
+  last_error_code?: string
+  last_error_message?: string
 }
 
 interface TikTokOrderSyncResponse {

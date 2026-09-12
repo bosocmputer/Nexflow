@@ -45,8 +45,8 @@ interface TikTokOrderSyncSetting {
   watermark_update_at?: string
   next_run_at: string
   last_success_at?: string
-  last_error_code: string
-  last_error_message: string
+  last_error_code?: string
+  last_error_message?: string
 }
 
 interface TikTokOrderSyncResponse {

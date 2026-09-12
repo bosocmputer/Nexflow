@@ -31,9 +31,9 @@ export function formatTikTokMoney(value: string, currency: string): string {
   }
 }
 
-export function tiktokSyncState(workerEnabled: boolean, shopEnabled: boolean, errorCode: string): TikTokSyncState {
+export function tiktokSyncState(workerEnabled: boolean, shopEnabled: boolean, errorCode?: string): TikTokSyncState {
   if (!workerEnabled) return 'server_disabled'
   if (!shopEnabled) return 'shop_disabled'
-  if (errorCode.trim()) return 'error'
+  if (errorCode?.trim()) return 'error'
   return 'active'
 }
