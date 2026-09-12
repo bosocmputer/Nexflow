@@ -7,6 +7,7 @@ import {
   Bell,
   ReceiptText,
   RadioTower,
+  ListOrdered,
   RotateCcw,
   ScrollText,
   Send,
@@ -65,6 +66,7 @@ const STAFF_DEFAULT_MENU_KEYS = new Set([
   'dashboard',
   'nextstep_marketplace',
   'shopee_operations',
+  'tiktok_shop_operations',
   'sale_invoices',
   'sales_orders',
   'marketplace_aliases',
@@ -100,6 +102,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'ออเดอร์และเอกสาร',
     items: [
       { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'ดู Snapshot ออเดอร์จาก TikTok Shop แบบ read-only', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },

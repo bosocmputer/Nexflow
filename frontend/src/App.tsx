@@ -17,6 +17,7 @@ const ShopeeSettlement = lazy(() => import('./pages/ShopeeSettlement'))
 const LazadaImport = lazy(() => import('./pages/LazadaImport'))
 const TikTokImport = lazy(() => import('./pages/TikTokImport'))
 const TikTokShopConnections = lazy(() => import('./pages/TikTokShopConnections'))
+const TikTokShopOperations = lazy(() => import('./pages/TikTokShopOperations'))
 const OldDataSettings = lazy(() => import('./pages/OldDataSettings'))
 const Logs = lazy(() => import('./pages/Logs'))
 const BulkSendJobs = lazy(() => import('./pages/BulkSendJobs'))
@@ -82,6 +83,7 @@ export default function App() {
           <>
             <Route path="/dev/showcase" element={<Showcase />} />
             <Route path="/dev/tiktok-shop-connections" element={<TikTokShopConnections />} />
+            <Route path="/dev/tiktok-shop-operations" element={<TikTokShopOperations />} />
           </>
         )}
         <Route path="/login" element={<Login />} />
@@ -107,6 +109,7 @@ export default function App() {
           <Route path="import" element={<Navigate to="/import/shopee" replace />} />
           <Route path="import/shopee" element={ENABLE_SHOPEE_EXCEL ? <RequireMenu menuKey="import_shopee"><ShopeeImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="shopee-operations" element={ENABLE_SHOPEE_REALTIME_OPS ? <RequireMenu menuKey="shopee_operations"><ShopeeOperations /></RequireMenu> : <Navigate to="/dashboard" replace />} />
+          <Route path="tiktok-shop-operations" element={ENABLE_TIKTOK_SHOP_API ? <RequireMenu menuKey="tiktok_shop_operations"><TikTokShopOperations /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="shopee-settlements" element={ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="shopee_settlements"><ShopeeSettlement /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="import/lazada" element={ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="import_lazada"><LazadaImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="import/tiktok" element={ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="import_tiktok"><TikTokImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />

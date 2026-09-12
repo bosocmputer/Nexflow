@@ -34,3 +34,13 @@ test('activates only one Shopee sidebar entry for the cancelled filter', () => {
   assert.equal(isNavItemActive(orders, '/shopee-operations', '?status_group=cancelled'), false)
   assert.equal(isNavItemActive(cancellations, '/shopee-operations', '?status_group=cancelled'), true)
 })
+
+test('places TikTok Shop read-only orders in orders and documents with its own permission', () => {
+  const group = NAV_GROUPS.find((item) => item.label === 'ออเดอร์และเอกสาร')
+  const orders = group?.items.find((item) => item.label === 'คำสั่งซื้อ TikTok Shop')
+
+  assert.ok(orders)
+  assert.equal(orders.menuKey, 'tiktok_shop_operations')
+  assert.equal(orders.to, '/tiktok-shop-operations')
+  assert.match(orders.hint, /Snapshot/)
+})

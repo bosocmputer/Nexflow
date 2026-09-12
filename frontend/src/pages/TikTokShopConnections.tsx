@@ -32,10 +32,25 @@ interface TikTokShopConnection {
   updated_at: string
 }
 
+interface TikTokOrderSyncSetting {
+  shop_id: string
+  enabled: boolean
+  interval_seconds: number
+  last_success_at?: string
+  last_error_code: string
+  last_error_message: string
+}
+
+interface TikTokOrderSyncResponse {
+  worker_enabled: boolean
+  data: TikTokOrderSyncSetting[]
+}
+
 export default function TikTokShopConnections() {
   const pollRef = useRef<number | null>(null)
   const [status, setStatus] = useState<TikTokShopStatus | null>(null)
   const [connections, setConnections] = useState<TikTokShopConnection[]>([])
+  const [orderSync, setOrderSync] = useState<TikTokOrderSyncResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -49,10 +64,13 @@ export default function TikTokShopConnections() {
       setStatus(nextStatus)
       if (!nextStatus.enabled || !nextStatus.configured) {
         setConnections([])
+        setOrderSync(null)
         return
       }
       const connectionResponse = await client.get<{ data: TikTokShopConnection[] }>('/api/tiktok-shop-api/connections')
+      const syncResponse = await client.get<TikTokOrderSyncResponse>('/api/tiktok-shop-api/order-sync-settings')
       setConnections(connectionResponse.data.data ?? [])
+      setOrderSync(syncResponse.data)
     } catch (cause: unknown) {
       setError(apiErrorMessage(cause, 'โหลดข้อมูลร้าน TikTok Shop ไม่สำเร็จ'))
     } finally {
@@ -138,7 +156,7 @@ export default function TikTokShopConnections() {
             <div>
               <h2 className="text-sm font-semibold text-foreground">{ready ? 'Gateway พร้อมเชื่อมร้าน' : 'Gateway ยังไม่พร้อม'}</h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                {ready ? 'รอบ UAT แรกตรวจ OAuth และข้อมูลร้านก่อน ระบบขอเฉพาะสิทธิ์อ่านข้อมูลร้านและคำสั่งซื้อ แต่ยังไม่เปิดการดึงออเดอร์ ส่งสต๊อก ยืนยันจัดส่ง หรือสร้างเอกสาร SML อัตโนมัติ' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
+                {ready ? 'ระบบขอเฉพาะสิทธิ์อ่านข้อมูลร้านและคำสั่งซื้อ การซิงก์ออเดอร์ทำงานเป็น Snapshot แบบ read-only และยังไม่ส่งสต๊อก ยืนยันจัดส่ง หรือสร้าง Bill/SML อัตโนมัติ' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
               </p>
               {status?.redirect_url && <p className="mt-2 break-all font-mono text-xs text-muted-foreground">Callback: {status.redirect_url}</p>}
             </div>
@@ -176,6 +194,7 @@ export default function TikTokShopConnections() {
                       {connection.shop_code && <span>รหัสร้าน {connection.shop_code}</span>}
                       <span>อนุญาต {scopeLabel(connection.granted_scopes)}</span>
                     </div>
+                    <OrderSyncLine workerEnabled={Boolean(orderSync?.worker_enabled)} setting={orderSync?.data.find((item) => item.shop_id === connection.shop_id)} />
                   </div>
                   <div className="shrink-0 text-xs text-muted-foreground lg:text-right">
                     <div>Access token ถึง {formatDateTime(connection.access_expires_at)}</div>
@@ -200,6 +219,20 @@ export default function TikTokShopConnections() {
   )
 }
 
+function OrderSyncLine({ workerEnabled, setting }: { workerEnabled: boolean; setting?: TikTokOrderSyncSetting }) {
+  const active = Boolean(workerEnabled && setting?.enabled && !setting.last_error_code)
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <span className={cn('inline-flex items-center gap-1 font-medium', active ? 'text-success' : 'text-warning')}>
+        <span className={cn('h-1.5 w-1.5 rounded-full', active ? 'bg-success' : 'bg-warning')} />
+        {active ? `ซิงก์ออเดอร์ทุก ${formatInterval(setting?.interval_seconds ?? 300)}` : workerEnabled ? 'ร้านนี้ยังปิดซิงก์ออเดอร์' : 'Worker ซิงก์ออเดอร์ยังปิด'}
+      </span>
+      {setting?.last_success_at && <span className="text-muted-foreground">สำเร็จล่าสุด {formatDateTime(setting.last_success_at)}</span>}
+      {setting?.last_error_message && <span className="text-destructive">{setting.last_error_message}</span>}
+    </div>
+  )
+}
+
 function scopeLabel(scopes: string[]) {
   const labels: string[] = []
   if (scopes.includes('seller.authorization.info')) labels.push('ข้อมูลร้าน')
@@ -210,7 +243,11 @@ function scopeLabel(scopes: string[]) {
 function formatDateTime(value: string) {
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return '—'
-  return parsed.toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })
+  return parsed.toLocaleString('th-TH-u-ca-gregory', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatInterval(seconds: number) {
+  return seconds % 60 === 0 ? `${seconds / 60} นาที` : `${seconds} วินาที`
 }
 
 function apiErrorMessage(cause: unknown, fallback: string) {
