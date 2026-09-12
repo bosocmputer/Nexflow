@@ -125,7 +125,7 @@ func TestOrderClientGetsPriceDetailForOneOrder(t *testing.T) {
 		if providedSign != expectedSign || query.Get("shop_cipher") != "shop-cipher" {
 			t.Fatalf("query = %v, sign = %q", query, providedSign)
 		}
-		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-price","data":{"currency":"THB","total":"329.00","payment":"307.49","sku_list_price":"300.00","sku_sale_price":"300.00","subtotal":"300.00","shipping_list_price":"29.00","shipping_sale_price":"0.00","tax_amount":"0.00","line_items":[{"currency":"THB","total":"300.00","payment":"300.00","sku_list_price":"300.00","sku_sale_price":"300.00","subtotal":"300.00"}]}}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-price","data":{"currency":"THB","total":"329.00","payment":"307.49","sku_list_price":"300.00","sku_sale_price":"300.00","subtotal":"300.00","shipping_list_price":"29.00","shipping_sale_price":"0.00","tax_amount":"0.00","small_order_fee":"7.49","line_items":[{"currency":"THB","total":"300.00","payment":"300.00","sku_list_price":"300.00","sku_sale_price":"300.00","subtotal":"300.00"}]}}`))
 	}))
 	defer server.Close()
 
@@ -134,7 +134,7 @@ func TestOrderClientGetsPriceDetailForOneOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPriceDetail() error = %v", err)
 	}
-	if requestID != "req-price" || detail.Currency != "THB" || detail.Payment != "307.49" || detail.SKUSalePrice != "300.00" || len(detail.LineItems) != 1 {
+	if requestID != "req-price" || detail.Currency != "THB" || detail.Payment != "307.49" || detail.SKUSalePrice != "300.00" || detail.SmallOrderFee != "7.49" || len(detail.LineItems) != 1 {
 		t.Fatalf("GetPriceDetail() = %+v, requestID=%q", detail, requestID)
 	}
 	if _, _, err := client.GetPriceDetail(context.Background(), "seller-access-token", "shop-cipher", " "); !errors.Is(err, ErrInvalidOrderInput) {

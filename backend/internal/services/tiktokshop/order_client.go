@@ -196,6 +196,7 @@ type PriceDetail struct {
 	TaxAmount                           string        `json:"tax_amount"`
 	TaxRate                             string        `json:"tax_rate"`
 	NetPriceAmount                      string        `json:"net_price_amount"`
+	SmallOrderFee                       string        `json:"small_order_fee"`
 	CODFee                              string        `json:"cod_fee"`
 	CODFeeNetAmount                     string        `json:"cod_fee_net_amount"`
 	SKUGiftOriginalPrice                string        `json:"sku_gift_original_price"`
