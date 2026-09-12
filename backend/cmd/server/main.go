@@ -363,11 +363,14 @@ func main() {
 	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokSnapshotStore)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
 	tiktokReconcileService := tiktokshop.NewTikTokOrderReconciler(tiktokGatewayClient, tiktokSnapshotService, tiktokReconcileStore)
+	tiktokWebhookStore := tiktokshop.NewTikTokWebhookStore(db)
+	tiktokGatewayInternalH := handlers.NewTikTokGatewayInternalHandler(db, cfg, tiktokWebhookStore, logger)
 	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokshop.NewTenantConnectionStore(db), tiktokSnapshotService, logger).
 		WithOrderReconciler(tiktokReconcileService).
 		WithOrderSyncSettings(tiktokReconcileStore).
 		WithOrderReader(tiktokSnapshotStore)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
+	tiktokshop.NewTikTokWebhookWorker(cfg.TikTokShopWebhookEnabled, tiktokWebhookStore, tiktokSnapshotService, logger).Start(appCtx)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
@@ -424,6 +427,7 @@ func main() {
 	r.POST("/webhook/line", lineH.Webhook)
 	r.POST("/webhook/shopee", shopeeRealtimeH.Webhook)
 	shopeeGatewayInternalH.Register(r)
+	tiktokGatewayInternalH.Register(r)
 	if cfg.LineMyShopEnabled {
 		r.POST("/webhook/line-myshop/:connection_id", lineMyShopH.Webhook)
 	}

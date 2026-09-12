@@ -92,6 +92,7 @@ type Config struct {
 	TikTokShopGatewayTenant            string
 	TikTokShopGatewayInternalSecret    string
 	TikTokShopOrderSyncEnabled         bool
+	TikTokShopWebhookEnabled           bool
 	ShopeeRealtimeOpsEnabled           bool
 	ShopeeAdvancedDropoffEnabled       bool
 	ShopeeShippingActionsEnabled       bool
@@ -198,6 +199,7 @@ func Load() *Config {
 		TikTokShopGatewayTenant:             getEnv("TIKTOK_SHOP_GATEWAY_TENANT", ""),
 		TikTokShopGatewayInternalSecret:     getEnv("TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET", ""),
 		TikTokShopOrderSyncEnabled:          getEnvBool("TIKTOK_SHOP_ORDER_SYNC_ENABLED", false),
+		TikTokShopWebhookEnabled:            getEnvBool("TIKTOK_SHOP_WEBHOOK_ENABLED", false),
 		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
