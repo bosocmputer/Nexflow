@@ -62,6 +62,19 @@ type tenantTikTokSnapshotterFake struct {
 	calls  int
 }
 
+type tenantTikTokReconcilerFake struct {
+	input  tiktokshop.TikTokOrderReconcileRequest
+	result *tiktokshop.TikTokOrderReconcileResult
+	err    error
+	calls  int
+}
+
+func (f *tenantTikTokReconcilerFake) Reconcile(_ context.Context, input tiktokshop.TikTokOrderReconcileRequest) (*tiktokshop.TikTokOrderReconcileResult, error) {
+	f.calls++
+	f.input = input
+	return f.result, f.err
+}
+
 func (f *tenantTikTokSnapshotterFake) Sync(_ context.Context, input tiktokshop.TikTokOrderSnapshotRequest) (*tiktokshop.TikTokOrderSnapshotResult, error) {
 	f.calls++
 	f.input = input
@@ -215,5 +228,44 @@ func TestTikTokShopAPIHandlerRejectsSnapshotBatchOverTwentyBeforeService(t *test
 
 	if response.Code != http.StatusBadRequest || snapshotter.calls != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", response.Code, snapshotter.calls, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerRunsBoundedOrderReconciliation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &tenantTikTokGatewayFake{configured: true}
+	reconciler := &tenantTikTokReconcilerFake{result: &tiktokshop.TikTokOrderReconcileResult{
+		RunID: "run-1", ShopID: "7494619203789490654", PageCount: 2, DiscoveredCount: 3, SnapshottedCount: 3,
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, gateway, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderReconciler(reconciler)
+	router := gin.New()
+	router.POST("/orders/reconcile", handler.ReconcileOrders)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/orders/reconcile", strings.NewReader(
+		`{"shop_id":"7494619203789490654","update_time_ge":1789000000,"update_time_lt":1789000100}`,
+	)))
+
+	if response.Code != http.StatusOK || reconciler.calls != 1 || reconciler.input.UpdateTimeGE != 1_789_000_000 ||
+		!strings.Contains(response.Body.String(), `"snapshotted_count":3`) {
+		t.Fatalf("status=%d calls=%d input=%+v body=%s", response.Code, reconciler.calls, reconciler.input, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerRejectsUnboundedOrderReconciliation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &tenantTikTokGatewayFake{configured: true}
+	reconciler := &tenantTikTokReconcilerFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, gateway, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderReconciler(reconciler)
+	router := gin.New()
+	router.POST("/orders/reconcile", handler.ReconcileOrders)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/orders/reconcile", strings.NewReader(
+		`{"shop_id":"7494619203789490654","update_time_ge":1789000000,"update_time_lt":1790000000}`,
+	)))
+
+	if response.Code != http.StatusBadRequest || reconciler.calls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, reconciler.calls, response.Body.String())
 	}
 }

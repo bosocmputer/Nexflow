@@ -31,12 +31,17 @@ type TikTokShopOrderSnapshotter interface {
 	Sync(context.Context, tiktokshop.TikTokOrderSnapshotRequest) (*tiktokshop.TikTokOrderSnapshotResult, error)
 }
 
+type TikTokShopOrderReconciler interface {
+	Reconcile(context.Context, tiktokshop.TikTokOrderReconcileRequest) (*tiktokshop.TikTokOrderReconcileResult, error)
+}
+
 type TikTokShopAPIHandler struct {
-	config    *config.Config
-	gateway   TikTokShopGateway
-	store     TikTokShopConnectionSyncer
-	snapshots TikTokShopOrderSnapshotter
-	logger    *zap.Logger
+	config     *config.Config
+	gateway    TikTokShopGateway
+	store      TikTokShopConnectionSyncer
+	snapshots  TikTokShopOrderSnapshotter
+	reconciler TikTokShopOrderReconciler
+	logger     *zap.Logger
 }
 
 func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, store TikTokShopConnectionSyncer, snapshots TikTokShopOrderSnapshotter, logger *zap.Logger) *TikTokShopAPIHandler {
@@ -44,6 +49,13 @@ func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, s
 		logger = zap.NewNop()
 	}
 	return &TikTokShopAPIHandler{config: config, gateway: gateway, store: store, snapshots: snapshots, logger: logger}
+}
+
+func (h *TikTokShopAPIHandler) WithOrderReconciler(reconciler TikTokShopOrderReconciler) *TikTokShopAPIHandler {
+	if h != nil {
+		h.reconciler = reconciler
+	}
+	return h
 }
 
 func (h *TikTokShopAPIHandler) Status(c *gin.Context) {
@@ -232,6 +244,41 @@ func (h *TikTokShopAPIHandler) SnapshotOrders(c *gin.Context) {
 	}
 	h.logger.Info("tiktok_shop_order_snapshot_synced",
 		zap.String("shop_id", result.ShopID), zap.Int("order_count", result.SyncedCount),
+		zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "manual_api"))
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *TikTokShopAPIHandler) ReconcileOrders(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured || h.reconciler == nil {
+		h.error(c, http.StatusServiceUnavailable, "reconciliation_not_configured", "ระบบ reconciliation ออเดอร์ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	var input tiktokshop.TikTokOrderReconcileRequest
+	if err := c.ShouldBindJSON(&input); err != nil || input.Validate() != nil {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ระบุร้านและช่วง update time ไม่เกิน 24 ชั่วโมง")
+		return
+	}
+	result, err := h.reconciler.Reconcile(c.Request.Context(), input)
+	if err != nil {
+		if errors.Is(err, tiktokshop.ErrInvalidOrderReconcileInput) {
+			h.error(c, http.StatusBadRequest, "invalid_reconciliation", "ข้อมูล reconciliation ออเดอร์ TikTok Shop ไม่ถูกต้อง")
+			return
+		}
+		h.logger.Warn("tiktok_shop_order_reconciliation_failed",
+			zap.String("shop_id", strings.TrimSpace(input.ShopID)),
+			zap.Int64("update_time_ge", input.UpdateTimeGE), zap.Int64("update_time_lt", input.UpdateTimeLT),
+			zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+		h.error(c, http.StatusBadGateway, "reconciliation_failed", "Reconcile ออเดอร์ TikTok Shop ไม่สำเร็จ")
+		return
+	}
+	h.logger.Info("tiktok_shop_order_reconciliation_succeeded",
+		zap.String("shop_id", result.ShopID), zap.String("run_id", result.RunID),
+		zap.Int("page_count", result.PageCount), zap.Int("order_count", result.SnapshottedCount),
 		zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "manual_api"))
 	c.JSON(http.StatusOK, gin.H{"data": result})
 }

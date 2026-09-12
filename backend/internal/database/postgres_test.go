@@ -361,6 +361,34 @@ func TestMigration097AddsPIIMinimizedTikTokOrderSnapshots(t *testing.T) {
 	}
 }
 
+func TestMigration098AddsBoundedTikTokOrderReconciliationWithoutBackfill(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/098_tiktok_shop_order_reconciliation.sql")
+	if err != nil {
+		t.Fatalf("read migration 098: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists tiktok_shop_order_sync_settings",
+		"create table if not exists tiktok_shop_order_sync_runs",
+		"watermark_update_at", "next_run_at", "overlap_seconds", "config_version",
+		"last_page_token_hash", "search_request_ids", "window_start", "window_end",
+		"where status = 'running'", "trigger_source in ('manual','schedule')",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 098 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"page_token text", "access_token", "refresh_token", "app_secret", "shop_cipher",
+		"buyer_name", "buyer_username", "recipient", "phone", "email", "address",
+		"delete from", "truncate", "drop table", "drop column", "update tiktok_shop",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 098 contains forbidden cursor, credential, PII, destructive, or backfill term %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
