@@ -17,6 +17,9 @@ func TestDefaultMenuPermissionsForRole(t *testing.T) {
 	if !permissionForKey(admin, "tiktok_shop_connections").CanView {
 		t.Fatal("admin should see TikTok Shop connections")
 	}
+	if !permissionForKey(admin, "tiktok_shop_operations").CanView {
+		t.Fatal("admin should see TikTok Shop operations")
+	}
 	if !permissionForKey(admin, "old_data").CanDelete {
 		t.Fatal("admin delete default should be true for old_data")
 	}
@@ -30,6 +33,9 @@ func TestDefaultMenuPermissionsForRole(t *testing.T) {
 	}
 	if permissionForKey(staff, "tiktok_shop_connections").CanView {
 		t.Fatal("staff should not manage TikTok Shop connections by default")
+	}
+	if !permissionForKey(staff, "tiktok_shop_operations").CanView {
+		t.Fatal("staff should see read-only TikTok Shop operations by default")
 	}
 
 	viewer := defaultMenuPermissionsForRole("viewer")

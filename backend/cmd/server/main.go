@@ -359,12 +359,14 @@ func main() {
 		BaseURL: cfg.TikTokShopGatewayBaseURL, Tenant: cfg.TikTokShopGatewayTenant,
 		SharedSecret: cfg.TikTokShopGatewayInternalSecret, HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	})
-	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokshop.NewTikTokOrderSnapshotStore(db))
+	tiktokSnapshotStore := tiktokshop.NewTikTokOrderSnapshotStore(db)
+	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokSnapshotStore)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
 	tiktokReconcileService := tiktokshop.NewTikTokOrderReconciler(tiktokGatewayClient, tiktokSnapshotService, tiktokReconcileStore)
 	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokshop.NewTenantConnectionStore(db), tiktokSnapshotService, logger).
 		WithOrderReconciler(tiktokReconcileService).
-		WithOrderSyncSettings(tiktokReconcileStore)
+		WithOrderSyncSettings(tiktokReconcileStore).
+		WithOrderReader(tiktokSnapshotStore)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
@@ -586,6 +588,7 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/price-detail", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetOrderPriceDetail)
 		api.POST("/tiktok-shop-api/orders/snapshot", middleware.RequireRole("admin", "staff"), tiktokAPIH.SnapshotOrders)
 		api.POST("/tiktok-shop-api/orders/reconcile", middleware.RequireRole("admin", "staff"), tiktokAPIH.ReconcileOrders)
+		api.GET("/tiktok-shop-api/orders", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrders)
 		api.GET("/tiktok-shop-api/order-sync-settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrderSyncSettings)
 		api.PUT("/tiktok-shop-api/order-sync-settings/:shop_id", middleware.RequireRole("admin"), tiktokAPIH.UpdateOrderSyncSetting)
 		api.GET("/shopee-settlements", middleware.RequireRole("admin", "staff"), shopeeH.ListSettlementRuns)

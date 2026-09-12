@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
@@ -232,6 +233,95 @@ func TestTikTokOrderSnapshotStoreRollsBackWholeBatchOnOneFailure(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	updatedAt := time.Date(2026, 9, 12, 3, 30, 0, 0, time.UTC)
+	syncedAt := updatedAt.Add(time.Minute)
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)").
+		WithArgs("7494619203789490654", "COMPLETED", "5856%").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(1)))
+	mock.ExpectQuery("SELECT s.shop_id, c.shop_name").
+		WithArgs("7494619203789490654", "COMPLETED", "5856%", 20, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"shop_id", "shop_name", "order_id", "order_status", "currency",
+			"payment_total_amount", "product_subtotal_amount", "shipping_fee_amount", "item_insurance_fee_amount",
+			"item_count", "sku_count", "last_order_update_at", "last_synced_at",
+		}).AddRow(
+			"7494619203789490654", "henna_milkford", "585684843131602849", "COMPLETED", "THB",
+			"307.49", "300", "0", "7.49", 1, 1, updatedAt, syncedAt,
+		))
+
+	result, err := NewTikTokOrderSnapshotStore(database).List(t.Context(), TikTokOrderSnapshotListFilter{
+		ShopID: "7494619203789490654", Status: OrderStatusCompleted, OrderIDPrefix: "5856", Page: 1, PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if result.TotalItems != 1 || len(result.Data) != 1 {
+		t.Fatalf("List() result = %+v", result)
+	}
+	row := result.Data[0]
+	if row.ShopName != "henna_milkford" || row.PaymentTotalAmount != "307.49" || row.ItemInsuranceFeeAmount != "7.49" {
+		t.Fatalf("List() row = %+v", row)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"safe_order", "safe_price_detail", "normalized_items", "request_id", "source_hash", "buyer", "recipient", "phone", "email", "address"} {
+		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
+			t.Fatalf("List() leaked %q in %s", forbidden, encoded)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTikTokOrderSnapshotStoreKeepsExactTotalOnEmptyPage(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)").WithArgs("", "", "").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(4)))
+	result, err := NewTikTokOrderSnapshotStore(database).List(t.Context(), TikTokOrderSnapshotListFilter{Page: 2, PageSize: 20})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if result.TotalItems != 4 || result.TotalPages != 1 || len(result.Data) != 0 {
+		t.Fatalf("List() result = %+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTikTokOrderSnapshotStoreRejectsUnboundedOrMalformedListFilters(t *testing.T) {
+	database, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	store := NewTikTokOrderSnapshotStore(database)
+	for _, filter := range []TikTokOrderSnapshotListFilter{
+		{Page: 0, PageSize: 20},
+		{Page: 1, PageSize: 51},
+		{ShopID: "not-a-shop", Page: 1, PageSize: 20},
+		{OrderIDPrefix: "5856%' OR true --", Page: 1, PageSize: 20},
+		{Status: "UNKNOWN", Page: 1, PageSize: 20},
+	} {
+		if _, err := store.List(t.Context(), filter); !errors.Is(err, ErrInvalidSnapshotListFilter) {
+			t.Fatalf("List(%+v) error = %v", filter, err)
+		}
 	}
 }
 

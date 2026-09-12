@@ -27,6 +27,7 @@ var menuPermissionDefaults = []menuPermissionDefault{
 	{"dashboard", true, false, false, false, true, false, false, false, true, false, false, false},
 	{"nextstep_marketplace", true, false, false, false, true, false, false, false, false, false, false, false},
 	{"shopee_operations", true, true, true, false, true, true, true, false, false, false, false, false},
+	{"tiktok_shop_operations", true, false, false, false, true, false, false, false, false, false, false, false},
 	{"sale_invoices", true, true, true, true, true, true, true, false, true, false, false, false},
 	{"sales_orders", true, true, true, true, true, true, true, false, true, false, false, false},
 	{"marketplace_aliases", true, false, true, false, true, false, true, false, false, false, false, false},

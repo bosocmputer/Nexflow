@@ -24,6 +24,7 @@ var (
 	ErrSnapshotSourceUnavailable  = errors.New("TikTok Shop order snapshot source is unavailable")
 	ErrSnapshotPersistenceFailed  = errors.New("TikTok Shop order snapshot persistence failed")
 	ErrSnapshotStoreNotConfigured = errors.New("TikTok Shop order snapshot store is not configured")
+	ErrInvalidSnapshotListFilter  = errors.New("invalid TikTok Shop order snapshot list filter")
 	tikTokNumericIDPattern        = regexp.MustCompile(`^[0-9]{1,32}$`)
 	tikTokMoneyPattern            = regexp.MustCompile(`^(0|[1-9][0-9]{0,17})(\.[0-9]{1,6})?$`)
 )
@@ -77,6 +78,38 @@ type TikTokOrderSnapshotRecord struct {
 	PriceDetailRequestID string
 	SourceHash           string
 	LastOrderUpdateAt    *time.Time
+}
+
+type TikTokOrderSnapshotListFilter struct {
+	ShopID        string
+	Status        OrderStatus
+	OrderIDPrefix string
+	Page          int
+	PageSize      int
+}
+
+type TikTokOrderSnapshotListItem struct {
+	ShopID                 string      `json:"shop_id"`
+	ShopName               string      `json:"shop_name"`
+	OrderID                string      `json:"order_id"`
+	OrderStatus            OrderStatus `json:"order_status"`
+	Currency               string      `json:"currency"`
+	PaymentTotalAmount     string      `json:"payment_total_amount"`
+	ProductSubtotalAmount  string      `json:"product_subtotal_amount"`
+	ShippingFeeAmount      string      `json:"shipping_fee_amount"`
+	ItemInsuranceFeeAmount string      `json:"item_insurance_fee_amount"`
+	ItemCount              int         `json:"item_count"`
+	SKUCount               int         `json:"sku_count"`
+	LastOrderUpdateAt      *time.Time  `json:"last_order_update_at,omitempty"`
+	LastSyncedAt           time.Time   `json:"last_synced_at"`
+}
+
+type TikTokOrderSnapshotListResult struct {
+	Data       []TikTokOrderSnapshotListItem `json:"data"`
+	Page       int                           `json:"page"`
+	PageSize   int                           `json:"page_size"`
+	TotalItems int64                         `json:"total_items"`
+	TotalPages int                           `json:"total_pages"`
 }
 
 type orderSnapshotGateway interface {
@@ -404,4 +437,81 @@ func (s *TikTokOrderSnapshotStore) UpsertBatch(ctx context.Context, shopID strin
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderSnapshotListFilter) (*TikTokOrderSnapshotListResult, error) {
+	filter.ShopID = strings.TrimSpace(filter.ShopID)
+	filter.OrderIDPrefix = strings.TrimSpace(filter.OrderIDPrefix)
+	filter.Status = OrderStatus(strings.TrimSpace(string(filter.Status)))
+	if s == nil || s.database == nil || filter.Page < 1 || filter.Page > 1000000 || filter.PageSize < 1 || filter.PageSize > 50 ||
+		(filter.ShopID != "" && !tikTokNumericIDPattern.MatchString(filter.ShopID)) ||
+		(filter.OrderIDPrefix != "" && !tikTokNumericIDPattern.MatchString(filter.OrderIDPrefix)) ||
+		(filter.Status != "" && !validOrderStatus(filter.Status)) {
+		return nil, ErrInvalidSnapshotListFilter
+	}
+	offset := (filter.Page - 1) * filter.PageSize
+	result := &TikTokOrderSnapshotListResult{Data: []TikTokOrderSnapshotListItem{}, Page: filter.Page, PageSize: filter.PageSize}
+	if err := s.database.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		   FROM tiktok_shop_order_snapshots s
+		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
+		  WHERE ($1 = '' OR s.shop_id = $1)
+		    AND ($2 = '' OR s.order_status = $2)
+		    AND ($3 = '' OR s.order_id LIKE $3)`,
+		filter.ShopID, string(filter.Status), listOrderIDPrefix(filter.OrderIDPrefix),
+	).Scan(&result.TotalItems); err != nil {
+		return nil, err
+	}
+	if result.TotalItems > 0 {
+		result.TotalPages = int((result.TotalItems + int64(filter.PageSize) - 1) / int64(filter.PageSize))
+	}
+	if int64(offset) >= result.TotalItems {
+		return result, nil
+	}
+	rows, err := s.database.QueryContext(ctx,
+		`SELECT s.shop_id, c.shop_name, s.order_id, s.order_status, s.currency,
+		        s.payment_total_amount::text, s.product_subtotal_amount::text,
+		        s.shipping_fee_amount::text, s.item_insurance_fee_amount::text,
+		        s.item_count, s.sku_count, s.last_order_update_at, s.last_synced_at
+		   FROM tiktok_shop_order_snapshots s
+		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
+		  WHERE ($1 = '' OR s.shop_id = $1)
+		    AND ($2 = '' OR s.order_status = $2)
+		    AND ($3 = '' OR s.order_id LIKE $3)
+		  ORDER BY s.last_synced_at DESC, s.order_id DESC
+		  LIMIT $4 OFFSET $5`,
+		filter.ShopID, string(filter.Status), listOrderIDPrefix(filter.OrderIDPrefix), filter.PageSize, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item TikTokOrderSnapshotListItem
+		var lastUpdate sql.NullTime
+		if err := rows.Scan(
+			&item.ShopID, &item.ShopName, &item.OrderID, &item.OrderStatus, &item.Currency,
+			&item.PaymentTotalAmount, &item.ProductSubtotalAmount, &item.ShippingFeeAmount, &item.ItemInsuranceFeeAmount,
+			&item.ItemCount, &item.SKUCount, &lastUpdate, &item.LastSyncedAt,
+		); err != nil {
+			return nil, err
+		}
+		if lastUpdate.Valid {
+			value := lastUpdate.Time.UTC()
+			item.LastOrderUpdateAt = &value
+		}
+		item.LastSyncedAt = item.LastSyncedAt.UTC()
+		result.Data = append(result.Data, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func listOrderIDPrefix(value string) string {
+	if value == "" {
+		return ""
+	}
+	return value + "%"
 }

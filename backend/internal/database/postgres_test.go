@@ -390,6 +390,27 @@ func TestMigration098AddsBoundedTikTokOrderReconciliationWithoutBackfill(t *test
 	}
 }
 
+func TestMigration099AddsTikTokOrderOperationsPermissionAndListIndex(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/099_tiktok_shop_order_operations.sql")
+	if err != nil {
+		t.Fatalf("read migration 099: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"insert into user_menu_permissions", "tiktok_shop_operations", "role in ('admin', 'staff')", "on conflict",
+		"create index if not exists", "tiktok_shop_order_snapshots", "last_synced_at desc",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 099 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 099 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

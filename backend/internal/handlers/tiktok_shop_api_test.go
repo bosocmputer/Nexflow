@@ -76,6 +76,19 @@ type tenantTikTokOrderSyncSettingsFake struct {
 	err         error
 }
 
+type tenantTikTokOrderReaderFake struct {
+	filter tiktokshop.TikTokOrderSnapshotListFilter
+	result *tiktokshop.TikTokOrderSnapshotListResult
+	err    error
+	calls  int
+}
+
+func (f *tenantTikTokOrderReaderFake) List(_ context.Context, filter tiktokshop.TikTokOrderSnapshotListFilter) (*tiktokshop.TikTokOrderSnapshotListResult, error) {
+	f.calls++
+	f.filter = filter
+	return f.result, f.err
+}
+
 func (f *tenantTikTokOrderSyncSettingsFake) ListSettings(context.Context) ([]tiktokshop.TikTokOrderSyncSetting, error) {
 	return append([]tiktokshop.TikTokOrderSyncSetting(nil), f.settings...), f.err
 }
@@ -302,6 +315,44 @@ func TestTikTokShopAPIHandlerListsPerShopOrderSyncSettings(t *testing.T) {
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"worker_enabled":false`) || !strings.Contains(response.Body.String(), `"shop_name":"AOY"`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerListsLocalOrderSnapshotsWithBoundedFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reader := &tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{
+		Data: []tiktokshop.TikTokOrderSnapshotListItem{{OrderID: "585684843131602849", ShopID: "7494619203789490654", ShopName: "henna_milkford"}},
+		Page: 1, PageSize: 20, TotalItems: 1, TotalPages: 1,
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderReader(reader)
+	router := gin.New()
+	router.GET("/orders", handler.ListOrders)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/orders?shop_id=7494619203789490654&status=COMPLETED&order_id=5856&page=1&page_size=20", nil))
+
+	if response.Code != http.StatusOK || reader.calls != 1 || reader.filter.OrderIDPrefix != "5856" || reader.filter.Status != tiktokshop.OrderStatusCompleted {
+		t.Fatalf("status=%d calls=%d filter=%+v body=%s", response.Code, reader.calls, reader.filter, response.Body.String())
+	}
+	for _, forbidden := range []string{"safe_order", "request_id", "source_hash", "buyer"} {
+		if strings.Contains(strings.ToLower(response.Body.String()), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
+func TestTikTokShopAPIHandlerRejectsInvalidOrderListFilterBeforeStore(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reader := &tenantTikTokOrderReaderFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderReader(reader)
+	router := gin.New()
+	router.GET("/orders", handler.ListOrders)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/orders?page_size=500&order_id=5856%25%27", nil))
+
+	if response.Code != http.StatusBadRequest || reader.calls != 0 || !strings.Contains(response.Body.String(), "invalid_request") {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, reader.calls, response.Body.String())
 	}
 }
 

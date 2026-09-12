@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,10 @@ type TikTokShopOrderSyncSettings interface {
 	UpdateSetting(context.Context, string, tiktokshop.TikTokOrderSyncSettingUpdate) (*tiktokshop.TikTokOrderSyncSetting, error)
 }
 
+type TikTokShopOrderReader interface {
+	List(context.Context, tiktokshop.TikTokOrderSnapshotListFilter) (*tiktokshop.TikTokOrderSnapshotListResult, error)
+}
+
 type TikTokShopAPIHandler struct {
 	config       *config.Config
 	gateway      TikTokShopGateway
@@ -47,7 +52,15 @@ type TikTokShopAPIHandler struct {
 	snapshots    TikTokShopOrderSnapshotter
 	reconciler   TikTokShopOrderReconciler
 	syncSettings TikTokShopOrderSyncSettings
+	orderReader  TikTokShopOrderReader
 	logger       *zap.Logger
+}
+
+func (h *TikTokShopAPIHandler) WithOrderReader(reader TikTokShopOrderReader) *TikTokShopAPIHandler {
+	if h != nil {
+		h.orderReader = reader
+	}
+	return h
 }
 
 func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, store TikTokShopConnectionSyncer, snapshots TikTokShopOrderSnapshotter, logger *zap.Logger) *TikTokShopAPIHandler {
@@ -315,6 +328,40 @@ func (h *TikTokShopAPIHandler) ListOrderSyncSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"worker_enabled": h.config.TikTokShopOrderSyncEnabled, "data": settings})
 }
 
+func (h *TikTokShopAPIHandler) ListOrders(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured || h.orderReader == nil {
+		h.error(c, http.StatusServiceUnavailable, "order_list_not_configured", "ระบบรายการออเดอร์ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	page, pageSize, err := parseTikTokOrderListPagination(c.Query("page"), c.Query("page_size"))
+	filter := tiktokshop.TikTokOrderSnapshotListFilter{
+		ShopID: strings.TrimSpace(c.Query("shop_id")), Status: tiktokshop.OrderStatus(strings.TrimSpace(c.Query("status"))),
+		OrderIDPrefix: strings.TrimSpace(c.Query("order_id")), Page: page, PageSize: pageSize,
+	}
+	if err != nil || (filter.ShopID != "" && !tiktokshop.ValidTikTokShopID(filter.ShopID)) ||
+		(filter.OrderIDPrefix != "" && !tiktokshop.ValidTikTokShopID(filter.OrderIDPrefix)) ||
+		(filter.Status != "" && !validTikTokListStatus(filter.Status)) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ตัวกรองรายการออเดอร์ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	result, err := h.orderReader.List(c.Request.Context(), filter)
+	if err != nil {
+		if errors.Is(err, tiktokshop.ErrInvalidSnapshotListFilter) {
+			h.error(c, http.StatusBadRequest, "invalid_request", "ตัวกรองรายการออเดอร์ TikTok Shop ไม่ถูกต้อง")
+			return
+		}
+		h.logger.Error("tiktok_shop_order_list_failed", zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "order_list_failed", "โหลดรายการออเดอร์ TikTok Shop ไม่สำเร็จ")
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *TikTokShopAPIHandler) UpdateOrderSyncSetting(c *gin.Context) {
 	enabled, configured := h.readiness()
 	if !enabled {
@@ -413,4 +460,34 @@ func validTikTokSnapshotInput(input tiktokshop.TikTokOrderSnapshotRequest) bool 
 		seen[orderID] = struct{}{}
 	}
 	return true
+}
+
+func parseTikTokOrderListPagination(rawPage, rawPageSize string) (int, int, error) {
+	page, pageSize := 1, 20
+	var err error
+	if strings.TrimSpace(rawPage) != "" {
+		page, err = strconv.Atoi(strings.TrimSpace(rawPage))
+		if err != nil || page < 1 || page > 1000000 {
+			return 0, 0, tiktokshop.ErrInvalidSnapshotListFilter
+		}
+	}
+	if strings.TrimSpace(rawPageSize) != "" {
+		pageSize, err = strconv.Atoi(strings.TrimSpace(rawPageSize))
+		if err != nil || pageSize < 1 || pageSize > 50 {
+			return 0, 0, tiktokshop.ErrInvalidSnapshotListFilter
+		}
+	}
+	return page, pageSize, nil
+}
+
+func validTikTokListStatus(status tiktokshop.OrderStatus) bool {
+	switch status {
+	case tiktokshop.OrderStatusUnpaid, tiktokshop.OrderStatusOnHold, tiktokshop.OrderStatusAwaitingShipment,
+		tiktokshop.OrderStatusPartiallyShipping, tiktokshop.OrderStatusAwaitingCollection,
+		tiktokshop.OrderStatusInTransit, tiktokshop.OrderStatusDelivered, tiktokshop.OrderStatusCompleted,
+		tiktokshop.OrderStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
