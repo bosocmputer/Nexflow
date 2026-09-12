@@ -662,6 +662,28 @@ Current AOY UAT scope:
     `.env.pre-tiktok-order-sync-20260912-110041`. The next TikTok phase is a
     signed webhook receipt/dedupe trigger that reuses this reconciliation path;
     Bill/SML conversion remains disabled.
+43. AOY-only read-only TikTok Shop order operations are deployed at `2cdeb61`
+    with additive migration 099. `/tiktok-shop-operations` is available under
+    `ออเดอร์และเอกสาร` for existing Admin/Staff through the new view-only
+    `tiktok_shop_operations` permission. Its bounded
+    `GET /api/tiktok-shop-api/orders` endpoint reads only allowlisted local
+    snapshot fields, validates shop/order/status/page filters, and returns no
+    buyer/recipient PII, tokens, raw upstream JSON, request IDs, or source
+    hashes. The page identifies `henna_milkford`, its five-minute schedule, and
+    latest successful sync; it labels the data as snapshot-only and explicitly
+    creates no Bill/SML work. Production QA displayed all four AOY snapshots,
+    returned exactly one row for the `COMPLETED` filter, passed desktop and
+    390px mobile with no horizontal overflow, and had a clean fresh-browser
+    console. A pre-release blank-page error from an omitted empty sync-error
+    field was fixed before completion by treating it as optional. Counts stayed
+    at 323 bills, 27 SML attempts, 537 in-app notifications, and 252 LINE
+    deliveries. The TikTok webhook remains 404 and no stock, fulfillment,
+    cancellation, return, Bill, SML, or notification action was enabled. AOY
+    backups are `pre-deploy-20260912-112421.sql.gz` and
+    `pre-deploy-20260912-112857.sql.gz`; Demo, Lanboon, and Ploy were not
+    deployed. The next phase remains signed webhook receipt/dedupe followed by
+    reconciliation; TikTok stock navigation waits for its separate catalog and
+    safe-write UAT.
 
 Known deferred or incomplete validation:
 
@@ -743,7 +765,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–098** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–099** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -908,6 +930,7 @@ POST /api/import/lazada/preview | /confirm
 POST /api/import/tiktok/preview | /confirm
 
 POST /api/tiktok-shop-api/orders/reconcile
+GET  /api/tiktok-shop-api/orders
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
 
