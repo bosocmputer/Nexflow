@@ -37,8 +37,9 @@ export function BillTotal({
       bill.status === 'pending' ||
       bill.status === 'needs_review')
   const smlReady = isSMLReady(smlReadiness)
+  const smlSendAllowed = bill.preview?.send_allowed !== false
 
-  if (!canShowSendButton || (smlReady && validation.canSend)) return null
+  if (!canShowSendButton || (smlReady && validation.canSend && smlSendAllowed)) return null
 
   return (
     <div className="space-y-2.5">
@@ -54,6 +55,20 @@ export function BillTotal({
               <div className="text-sm font-semibold text-foreground">ยังส่ง SML ไม่ได้: ฐานข้อมูลร้านยังไม่พร้อม</div>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {smlBlockedMessage(smlReadiness)} เปิดเครื่อง SML/Postgres ของร้านนี้ แล้วกดตรวจอีกครั้งบนแถบแจ้งเตือนด้านบน
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {canShowSendButton && !smlSendAllowed && (
+        <div className="rounded-md border border-warning/40 bg-warning/[0.07] px-3 py-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" strokeWidth={2.25} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-foreground">รอตรวจ UAT ก่อนส่ง TikTok เข้า SML</div>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                {bill.preview?.send_block_message || 'ระบบเก็บ Bill นี้ไว้ตรวจข้อมูลใน Nexflow และปิดการส่ง SML ไว้สำหรับร้านนี้'}
               </p>
             </div>
           </div>

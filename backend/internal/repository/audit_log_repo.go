@@ -79,9 +79,7 @@ func (r *AuditLogRepo) List(f models.AuditLogFilter) (*AuditLogListResult, error
 		n++
 	}
 	if f.Source != "" {
-		where += fmt.Sprintf(" AND a.source = $%d", n)
-		args = append(args, f.Source)
-		n++
+		where, args, n = appendAuditSourceFilter(where, args, n, f.Source)
 	}
 	if f.Level != "" {
 		where += fmt.Sprintf(" AND a.level = $%d", n)
@@ -178,6 +176,23 @@ func (r *AuditLogRepo) List(f models.AuditLogFilter) (*AuditLogListResult, error
 		Page:       f.Page,
 		PageSize:   limit,
 	}, nil
+}
+
+func appendAuditSourceFilter(where string, args []interface{}, n int, source string) (string, []interface{}, int) {
+	switch source {
+	case "tiktok_shop":
+		where += fmt.Sprintf(" AND (a.source = $%d OR a.action LIKE $%d OR COALESCE(a.detail->>'flow', '') = $%d)", n, n+1, n+2)
+		args = append(args, "tiktok_shop", "tiktok_shop_%", "tiktok_shop_api_reviewed")
+		return where, args, n + 3
+	case "tiktok":
+		where += fmt.Sprintf(" AND a.source = $%d AND NOT (a.action LIKE $%d OR COALESCE(a.detail->>'flow', '') = $%d)", n, n+1, n+2)
+		args = append(args, "tiktok", "tiktok_shop_%", "tiktok_shop_api_reviewed")
+		return where, args, n + 3
+	default:
+		where += fmt.Sprintf(" AND a.source = $%d", n)
+		args = append(args, source)
+		return where, args, n + 1
+	}
 }
 
 // ListByTarget returns audit_log rows whose target_id matches, oldest-first.

@@ -163,6 +163,12 @@ export default function BillDetail() {
 
   const handleSendClick = () => {
     if (retrying || (sendProgress.status === 'sending' && sendProgress.open)) return
+    if (bill?.preview?.send_allowed === false) {
+      toast.warning('ยังไม่เปิดการส่ง TikTok เข้า SML', {
+        description: bill.preview.send_block_message || 'Bill นี้อยู่ระหว่างตรวจ UAT และยังไม่อนุญาตให้ส่งเข้า SML',
+      })
+      return
+    }
     if (!isSMLReady(smlReadiness)) {
       toast.error('ยังส่ง SML ไม่ได้', {
         description: smlBlockedMessage(smlReadiness),

@@ -27,6 +27,8 @@ import {
   shopeePayableTotal,
 } from '@/lib/shopeeBill'
 import { SOURCE_LABELS } from '../utils/formatters'
+import { billInputChannelLabel, classifyBillInputChannel } from '@/lib/billInputChannel'
+import { tiktokOrderStatusLabel } from '@/lib/tiktok-shop-operations'
 import { hasInvalidPrice, type ValidationResult } from '../utils/validation'
 import { billSMLStatusLabel, formatBangkokDateTime } from '../utils/presentation'
 
@@ -78,6 +80,9 @@ export function BillHeader({
   const isPurchase = bill.bill_type === 'purchase'
   const isShopeePurchase = isShopeePurchaseBill(bill)
   const isShopeeSale = isShopeeSalesBill(bill)
+  const inputChannel = classifyBillInputChannel(bill)
+  const isTikTokShopSale = inputChannel === 'tiktok_shop' && bill.bill_type === 'sale'
+  const smlSendAllowed = bill.preview?.send_allowed !== false
   const isFailed = bill.status === 'failed'
   const canShowSendButton =
     bill.sml_attempt_state !== 'stale_requires_reconciliation' &&
@@ -89,7 +94,9 @@ export function BillHeader({
     saleRoute === 'saleinvoice' ? 'ขาย -> ขายสินค้าและบริการ' : 'ขาย -> ใบสั่งขาย'
   const saleDestinationTitle =
     saleRoute === 'saleinvoice' ? 'Sale Invoice' : 'Sales Order'
-  const orderID = shopeeOrderID(rawData)
+  const orderID = isTikTokShopSale
+    ? rawString(rawData, 'tiktok_order_id') || rawString(rawData, 'order_id')
+    : shopeeOrderID(rawData)
   const orderDateTime = rawString(rawData, 'order_datetime') || rawString(rawData, 'doc_date')
   const orderDateTimeDisplay = formatBangkokDateTime(orderDateTime)
   const sellerName = rawString(rawData, 'seller_name')
@@ -98,6 +105,9 @@ export function BillHeader({
   const trackingNo = rawString(rawData, 'tracking_no')
   const shopeeShopID = rawString(rawData, 'shopee_shop_id')
   const shopeeShopLabel = rawString(rawData, 'shopee_shop_label')
+  const tiktokShopID = rawString(rawData, 'tiktok_shop_id')
+  const tiktokShopName = rawString(rawData, 'tiktok_shop_name')
+  const tiktokOrderStatus = rawString(rawData, 'order_status')
   const docDate = (rawData?.doc_date as string) || ''
   const rawItemCount = rawNumber(rawData, 'item_count')
   const itemCount = bill.items?.length ?? 0
@@ -109,8 +119,10 @@ export function BillHeader({
   const coinAmount = shopeeCoinAmount(bill)
   const displayTotal = isShopeePurchase || isShopeeSale ? payableTotal ?? total : total
   const smlReady = isSMLReady(smlReadiness)
-  const enabled = validation.canSend && smlReady && !retrying
-  const readyText = !smlReady
+  const enabled = validation.canSend && smlReady && smlSendAllowed && !retrying
+  const readyText = !smlSendAllowed
+    ? bill.preview?.send_block_message || 'Bill TikTok Shop ใบนี้อยู่ระหว่างตรวจ UAT และยังไม่อนุญาตให้ส่งเข้า SML'
+    : !smlReady
     ? (smlReadinessLoading ? 'กำลังตรวจสถานะ SML ของร้านนี้' : 'SML ของร้านนี้ยังไม่พร้อม กรุณาตรวจการเชื่อมต่อก่อนส่ง')
     : validation.canSend
       ? 'รายการครบแล้ว พร้อมเลือกผู้ขาย/คลัง/ภาษีและส่งเข้า SML'
@@ -152,7 +164,7 @@ export function BillHeader({
                     {'ซื้อ -> ใบสั่งซื้อ'}
                   </Badge>
                 )}
-                {isShopeeSale && (
+                {(isShopeeSale || isTikTokShopSale) && (
                   <Badge
                     variant="secondary"
                     className="bg-primary/10 text-accent-strong hover:bg-primary/15"
@@ -161,14 +173,16 @@ export function BillHeader({
                     {saleDestinationLabel}
                   </Badge>
                 )}
-                {sentStatusLabel
+                {isTikTokShopSale && !smlSendAllowed && !sentStatusLabel
+                  ? <StatusDot variant="warning" label="รอตรวจ UAT ก่อนส่ง SML" />
+                  : sentStatusLabel
                   ? <StatusDot variant="success" label={sentStatusLabel} />
                   : <BillStatusBadge status={bill.status} />}
               </div>
               {canShowSendButton && (
                 <p className={cn(
                   'max-w-2xl text-xs leading-5',
-                  validation.canSend && smlReady ? 'text-success' : 'text-warning',
+                  validation.canSend && smlReady && smlSendAllowed ? 'text-success' : 'text-warning',
                 )}>
                   {readyText}
                 </p>
@@ -220,9 +234,11 @@ export function BillHeader({
                           </Button>
                         </span>
                       </TooltipTrigger>
-                      {(!validation.canSend || !smlReady) && (
+                      {(!validation.canSend || !smlReady || !smlSendAllowed) && (
                         <TooltipContent side="left" className="max-w-xs">
-                          {!smlReady
+                          {!smlSendAllowed
+                            ? bill.preview?.send_block_message
+                            : !smlReady
                             ? smlBlockedMessage(smlReadiness)
                             : `ยังส่งไม่ได้: พบ ${validation.issues.length} ปัญหา · ตรวจรหัสสินค้า การยืนยัน หน่วย จำนวน และราคา`}
                         </TooltipContent>
@@ -268,12 +284,18 @@ export function BillHeader({
             )}
             <InfoRow
               label="ช่องทาง"
-              value={SOURCE_LABELS[bill.source] ?? bill.source}
+              value={inputChannel ? billInputChannelLabel(inputChannel) : SOURCE_LABELS[bill.source] ?? bill.source}
             />
             {isShopeeSale && shopeeShopID && (
               <InfoRow
                 label="ร้าน Shopee"
                 value={`${shopeeShopLabel || 'Shopee shop'} · ${shopeeShopID}`}
+              />
+            )}
+            {isTikTokShopSale && tiktokShopID && (
+              <InfoRow
+                label="ร้าน TikTok Shop"
+                value={`${tiktokShopName || 'TikTok Shop'} · ${tiktokShopID}`}
               />
             )}
             {isPurchase && orderID && (
@@ -287,6 +309,15 @@ export function BillHeader({
                 label="เลขคำสั่งซื้อ"
                 value={<span className="font-mono text-xs">{orderID}</span>}
               />
+            )}
+            {isTikTokShopSale && orderID && (
+              <InfoRow
+                label="เลขคำสั่งซื้อ"
+                value={<span className="font-mono text-xs">{orderID}</span>}
+              />
+            )}
+            {isTikTokShopSale && tiktokOrderStatus && (
+              <InfoRow label="สถานะ TikTok Shop" value={tiktokOrderStatusLabel(tiktokOrderStatus)} />
             )}
             {(isPurchase || isShopeeSale) && orderDateTime && (
               <InfoRow

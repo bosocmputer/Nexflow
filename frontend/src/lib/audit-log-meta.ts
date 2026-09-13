@@ -50,6 +50,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   bill_doc_no_regenerated: { label: 'ออกเลขเอกสารใหม่', emoji: '🔢', tone: 'primary' },
   bill_doc_no_regenerate_failed: { label: 'ออกเลขเอกสารใหม่ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   bill_doc_no_preview_failed: { label: 'ดึงเลขล่าสุดไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
+  tiktok_shop_sml_send_blocked: { label: 'ยังไม่เปิดการส่ง TikTok เข้า SML', emoji: '⏸️', tone: 'warning' },
   // SML push
   sml_sent: { label: 'ส่ง SML สำเร็จ', emoji: '✅', tone: 'success' },
   sml_failed: { label: 'ส่ง SML ล้มเหลว', emoji: '❌', tone: 'danger' },
@@ -170,6 +171,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   email: 'Email',
   lazada: 'Lazada',
   tiktok: 'TikTok Excel',
+  tiktok_shop: 'TikTok Shop API',
   marketplace: 'Marketplace',
   shopee: 'Shopee',
   shopee_email: 'Shopee Email',
@@ -199,6 +201,7 @@ export const SOURCE_TONE: Record<string, string> = {
   shopee_shipped: 'bg-warning/10 text-warning',
   lazada: 'bg-info/10 text-info',
   tiktok: 'bg-muted text-foreground',
+  tiktok_shop: 'bg-primary/10 text-accent-strong',
   marketplace: 'bg-info/10 text-info',
   sml: 'bg-primary/10 text-accent-strong',
   system: 'bg-muted text-muted-foreground',
@@ -247,10 +250,20 @@ export function auditViaLabel(value: unknown): string {
   return map[text] ?? text
 }
 
+export function auditDisplaySourceKey(log: AuditLog): string {
+  if (log.action.startsWith('shopee_settlement_')) return 'shopee_settlement'
+  if (
+    log.action.startsWith('tiktok_shop_') ||
+    log.detail?.flow === 'tiktok_shop_api_reviewed'
+  ) return 'tiktok_shop'
+  return log.source ?? ''
+}
+
 export function isSMLAuditLog(log: AuditLog): boolean {
   return log.action.startsWith('sml_') ||
     log.action.startsWith('shopee_sml_') ||
     log.action.startsWith('shopee_auto_sml_') ||
+    log.action.startsWith('tiktok_shop_sml_') ||
     log.source === 'sml'
 }
 
@@ -321,17 +334,27 @@ export function summarize(log: AuditLog): string {
         d.flow === 'shopee_email' ||
         d.flow === 'shopee_excel' ||
         d.flow === 'tiktok_excel' ||
+        d.flow === 'tiktok_shop_api_reviewed' ||
         d.via === 'shopee_realtime' ||
         d.shopee_order_id ||
         d.tiktok_order_id
       ) {
         const items = d.items_count ?? d.items ?? ''
         const id = d.order_id ?? d.shopee_order_id ?? d.tiktok_order_id ?? ''
-        return `ออเดอร์ ${id}${items ? ` · ${items} รายการ` : ''}`
+        const total = d.total_amount != null && d.total_amount !== ''
+          ? ` · ยอดบิล ฿${Number(d.total_amount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : ''
+        return `ออเดอร์ ${id}${items ? ` · ${items} รายการ` : ''}${total}`
       }
       if (d.from_text || d.flow === 'line_text') return 'จากข้อความ LINE'
       if (d.flow) return String(d.flow)
       return ''
+    case 'tiktok_shop_sml_send_blocked':
+      return [
+        d.order_id ? `ออเดอร์ ${d.order_id}` : '',
+        d.via ? auditViaLabel(d.via) : '',
+        'รออนุมัติ UAT',
+      ].filter(Boolean).join(' · ')
     case 'sml_sent':
       return [d.doc_no, d.route ? smlRouteLabel(d.route) : '', d.via ? auditViaLabel(d.via) : ''].filter(Boolean).join(' · ')
     case 'sml_erp_log_warning':

@@ -193,6 +193,9 @@ export interface BillRoutePreview {
   doc_no?: string            // existing doc_no or SML-latest next preview (not reserved)
   doc_format?: string        // e.g. "NX-SO" + "YYMM####"
   doc_format_code?: string   // e.g. "SR", "INV", "PO"
+  send_allowed?: boolean
+  send_block_code?: string
+  send_block_message?: string
   party_code?: string        // legacy channel value; purchase flow now selects seller in the send dialog
   party_name?: string
   sml_defaults?: {

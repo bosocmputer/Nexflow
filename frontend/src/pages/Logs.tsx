@@ -54,6 +54,7 @@ import {
   SOURCE_TONE,
   TONE_DOT,
   auditViaLabel,
+  auditDisplaySourceKey,
   humanizeAuditError,
   isActionableAuditLog,
   isSMLAuditLog,
@@ -98,11 +99,6 @@ const ROLE_LABELS: Record<string, string> = {
 
 function isShopeeSettlementLog(log: AuditLog): boolean {
   return log.action.startsWith('shopee_settlement_')
-}
-
-function displaySourceKey(log: AuditLog): string {
-  if (isShopeeSettlementLog(log)) return 'shopee_settlement'
-  return log.source ?? ''
 }
 
 // Action keys that belong to Phase 2+ (LINE chat, chat tags, etc.)
@@ -731,7 +727,7 @@ function LogRow({ log, onRetried, devMode }: { log: AuditLog; onRetried: () => v
   }
   const summary = summarize(log)
   const isError = log.level === 'error' && !resolvedFailure
-  const source = displaySourceKey(log)
+  const source = auditDisplaySourceKey(log)
   const docNo = primaryDocNo(log)
   const docNoIssue = hasDocNoQualityIssue(log)
   // Retry authority comes from the backend's current immutable attempt state.
@@ -1424,6 +1420,7 @@ export default function Logs() {
 	                  <SelectItem value="line_myshop">LINE MyShop</SelectItem>
 		                  {PHASE >= 2 && <SelectItem value="lazada">Lazada</SelectItem>}
 	                  {PHASE >= 2 && <SelectItem value="tiktok">TikTok Excel</SelectItem>}
+	                  <SelectItem value="tiktok_shop">TikTok Shop API</SelectItem>
 	                  <SelectItem value="sml">SML</SelectItem>
                   <SelectItem value="catalog">สินค้า SML</SelectItem>
                   <SelectItem value="sml_catalog">รายการสินค้า SML</SelectItem>

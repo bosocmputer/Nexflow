@@ -12,6 +12,7 @@ const vite = await createServer({
 const {
   ACTION_META,
   SOURCE_LABELS,
+  auditDisplaySourceKey,
   auditViaLabel,
   isActionableAuditLog,
   isSMLAuditLog,
@@ -93,6 +94,34 @@ test('recognizes Shopee realtime bill creation details', () => {
     order_id: '260827ECCFMCSC',
     items_count: 2,
   })), 'ออเดอร์ 260827ECCFMCSC · 2 รายการ')
+})
+
+test('presents reviewed TikTok Shop Bill creation as API work in both logs views', () => {
+  const log = audit('bill_created', {
+    flow: 'tiktok_shop_api_reviewed',
+    order_id: '586030483469993439',
+    items_count: 1,
+    total_amount: '300.00',
+  }, 'tiktok')
+
+  assert.equal(SOURCE_LABELS.tiktok_shop, 'TikTok Shop API')
+  assert.equal(auditDisplaySourceKey(log), 'tiktok_shop')
+  assert.equal(
+    summarize(log),
+    'ออเดอร์ 586030483469993439 · 1 รายการ · ยอดบิล ฿300.00',
+  )
+})
+
+test('labels a blocked TikTok SML action without leaking the feature key', () => {
+  const log = audit('tiktok_shop_sml_send_blocked', {
+    order_id: '586030483469993439',
+    via: 'retry',
+    reason: 'tiktok_shop_sml_send_disabled',
+  }, 'tiktok_shop')
+
+  assert.equal(ACTION_META.tiktok_shop_sml_send_blocked.label, 'ยังไม่เปิดการส่ง TikTok เข้า SML')
+  assert.equal(isSMLAuditLog(log), true)
+  assert.equal(summarize(log), 'ออเดอร์ 586030483469993439 · ส่งจากหน้าบิล · รออนุมัติ UAT')
 })
 
 test('summarizes Auto SML setting changes without raw Shopee status keys', () => {

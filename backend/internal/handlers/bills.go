@@ -811,6 +811,12 @@ func (h *BillHandler) Get(c *gin.Context) {
 		"channel":   channel,
 		"bill_type": bill.BillType,
 	}
+	sendPolicy := billSMLSendPolicy(h.cfg, bill)
+	preview["send_allowed"] = sendPolicy.Allowed
+	if sendPolicy.Code != "" {
+		preview["send_block_code"] = sendPolicy.Code
+		preview["send_block_message"] = sendPolicy.Message
+	}
 	if h.channelDefaults != nil {
 		def, _ := h.channelDefaults.Get(channel, bill.BillType)
 		if def != nil {
@@ -1715,6 +1721,7 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 		return retrySendResult{HTTPStatus: http.StatusNotFound, Error: "bill not found"}
 	}
 	if tikTokShopSMLSendBlocked(h.cfg, bill) {
+		h.logTikTokShopSMLSendBlocked(bill, opts)
 		return retrySendResult{
 			HTTPStatus: http.StatusForbidden,
 			Error:      "การส่ง SML สำหรับคำสั่งซื้อ TikTok Shop ยังไม่เปิดใช้งาน",

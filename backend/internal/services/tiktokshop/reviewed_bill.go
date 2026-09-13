@@ -173,7 +173,7 @@ func buildReviewedTikTokBill(preview *TikTokBillShadowPreview, input TikTokRevie
 	}
 	rawData, err := json.Marshal(map[string]interface{}{
 		"flow": TikTokReviewedBillFlow, "order_id": preview.OrderID, "tiktok_order_id": preview.OrderID,
-		"tiktok_shop_id": preview.ShopID, "source_hash": preview.SourceHash,
+		"tiktok_shop_id": preview.ShopID, "tiktok_shop_name": preview.ShopName, "source_hash": preview.SourceHash,
 		"order_status": preview.OrderStatus, "currency": preview.Currency,
 		"last_synced_at": preview.LastSyncedAt.UTC(), "review_digest": input.ReviewDigest,
 		"product_subtotal": preview.Amounts.ProductSubtotal, "shipping_amount": preview.Amounts.Shipping,
@@ -192,10 +192,12 @@ func buildReviewedTikTokBill(preview *TikTokBillShadowPreview, input TikTokRevie
 		SMLOrderID: preview.OrderID, CreatedBy: &actorID,
 	}
 	audit := models.AuditEntry{
-		Action: "bill_created", UserID: &actorID, Source: "tiktok", Level: "info", TraceID: input.TraceID,
+		Action: "bill_created", UserID: &actorID, Source: "tiktok_shop", Level: "info", TraceID: input.TraceID,
 		Detail: map[string]interface{}{
 			"flow": TikTokReviewedBillFlow, "shop_id": preview.ShopID, "order_id": preview.OrderID,
-			"items_count": len(items), "status": bill.Status, "review_digest": input.ReviewDigest,
+			"shop_name": preview.ShopName, "items_count": len(items), "total_amount": preview.Amounts.ProposedDocumentTotal,
+			"document_route": documentRoute, "doc_format_code": preview.Route.DocFormatCode,
+			"status": bill.Status, "review_digest": input.ReviewDigest,
 			"sml_write": false, "notification_write": false,
 		},
 	}

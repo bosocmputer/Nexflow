@@ -260,6 +260,30 @@ func TestTikTokShopReviewedBillSMLSendIsFailClosed(t *testing.T) {
 	}
 }
 
+func TestTikTokShopSMLSendPolicyExplainsTheTenantGate(t *testing.T) {
+	bill := &models.Bill{
+		Source:  "tiktok",
+		RawData: json.RawMessage(`{"flow":"tiktok_shop_api_reviewed"}`),
+	}
+
+	blocked := billSMLSendPolicy(nil, bill)
+	if blocked.Allowed || blocked.Code != "tiktok_shop_sml_send_disabled" || blocked.Message == "" {
+		t.Fatalf("blocked policy = %#v", blocked)
+	}
+
+	allowed := billSMLSendPolicy(&config.Config{TikTokShopSMLSendEnabled: true}, bill)
+	if !allowed.Allowed || allowed.Code != "" || allowed.Message != "" {
+		t.Fatalf("enabled policy = %#v", allowed)
+	}
+
+	excel := billSMLSendPolicy(&config.Config{}, &models.Bill{
+		Source: "tiktok", RawData: json.RawMessage(`{"flow":"tiktok_excel"}`),
+	})
+	if !excel.Allowed {
+		t.Fatalf("TikTok Excel policy = %#v, want allowed", excel)
+	}
+}
+
 func TestTikTokShopSMLQueueFilterFollowsSendGate(t *testing.T) {
 	if !tikTokShopSMLQueueMustExclude(nil) {
 		t.Fatal("nil config must exclude reviewed TikTok Bills from the SML queue")

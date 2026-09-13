@@ -65,11 +65,13 @@ func TestTikTokReviewedBillCreatesOnePendingBillFromReviewedSnapshot(t *testing.
 	if err := json.Unmarshal(writer.bill.RawData, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw["flow"] != TikTokReviewedBillFlow || raw["review_digest"] != preview.ReviewDigest || raw["item_insurance_fee"] != "7.49" {
+	if raw["flow"] != TikTokReviewedBillFlow || raw["review_digest"] != preview.ReviewDigest || raw["item_insurance_fee"] != "7.49" || raw["tiktok_shop_name"] != source.ShopName {
 		t.Fatalf("raw=%+v", raw)
 	}
 	auditDetail, ok := writer.audit.Detail.(map[string]interface{})
-	if writer.audit.Action != "bill_created" || !ok || auditDetail["flow"] != TikTokReviewedBillFlow {
+	if writer.audit.Action != "bill_created" || writer.audit.Source != "tiktok_shop" || !ok ||
+		auditDetail["flow"] != TikTokReviewedBillFlow || auditDetail["shop_name"] != source.ShopName ||
+		auditDetail["total_amount"] != preview.Amounts.ProposedDocumentTotal {
 		t.Fatalf("audit=%+v", writer.audit)
 	}
 }
