@@ -260,6 +260,7 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - before/after evidence remained at reviewed Bills `1`, controlled-order Bills `1`, SML attempts `27`, and LINE deliveries `254`; no SML, LINE, fulfillment, or stock action was triggered
 - enabling the create flag exposed a migration replay defect: historical channel-default constraint migrations reintroduced allowlists that predated `line_myshop` and `tiktok_shop`. Commit `dd5c402` makes migrations 030/051/059/064/067 replay-safe before migration 101; AOY restart and all deploy checks passed
 - commit `440eb9f` adds separate default-off `TIKTOK_SHOP_SML_SEND_ENABLED` enforcement at the central send boundary and displays/filters the Bill as `TikTok Shop API`; AOY deploy backup is `pre-deploy-20260913-044459.sql.gz`
+- commit `d8aaace` also removes gated Reviewed Bills from the SML bulk-send count/candidate query while keeping them visible in the normal Bill list; production shows `ส่ง SML 0 ใบ` disabled and the new Bill remains visible as `TikTok Shop API`. The final backup is `pre-deploy-20260913-045309.sql.gz`
 - `TIKTOK_SHOP_REVIEWED_BILL_ENABLED` was returned to false after the one-Bill canary; `TIKTOK_SHOP_SML_SEND_ENABLED` is false. The post-canary runtime backup is `.env.post-tiktok-reviewed-bill-20260913-044632`
 - do not send this Bill to SML until the user separately authorizes the first SML canary and its payload/document-number preview has been reviewed
 

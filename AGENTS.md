@@ -871,8 +871,11 @@ Current AOY UAT scope:
     `TIKTOK_SHOP_SML_SEND_ENABLED` enforcement at the central SML boundary for
     direct, bulk, and automation sends, and distinguishes `TikTok Shop API`
     from `TikTok Excel` in the Bill UI/filter. Production health, all three
-    backend networks, browser UI/console, and severe-log checks passed. The
-    deploy backup is `pre-deploy-20260913-044459.sql.gz`; the post-canary env
+    backend networks, browser UI/console, and severe-log checks passed. Commit
+    `d8aaace` additionally excludes gated Reviewed Bills from SML queue counts
+    and bulk candidates while keeping the Bill visible; production shows the
+    disabled `ส่ง SML 0 ใบ` action. The final deploy backup is
+    `pre-deploy-20260913-045309.sql.gz`; the post-canary env
     backup is `.env.post-tiktok-reviewed-bill-20260913-044632`. Both Reviewed
     Bill creation and TikTok SML send flags are now false. Do not send this Bill
     to SML without a separate explicit first-SML-canary authorization.
