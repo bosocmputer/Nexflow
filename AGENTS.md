@@ -733,10 +733,20 @@ Current AOY UAT scope:
     `pre-deploy-20260912-123656.sql.gz` and
     `pre-deploy-20260912-123949.sql.gz`. AOY's running tenant image was built
     from pre-amend `057a1b4`, whose tenant webhook content matches `80fab88`;
-    the Event API/configuration code is required only in Central Gateway. A
-    real AOY status transition is still required to close end-to-end webhook
-    UAT; do not mutate an existing order without a user-designated controlled
-    case.
+    the Event API/configuration code is required only in Central Gateway. The
+    real-event requirement was completed on 2026-09-13 with the user's
+    designated controlled order `586030483469993439`. The user prepared the
+    J&T drop-off shipment and printed its A6 PDF label in Seller Center;
+    TikTok changed `AWAITING_SHIPMENT` to `AWAITING_COLLECTION` at 08:55:48
+    Asia/Bangkok. Gateway notification `7684832722092099336` was received at
+    08:55:49, delivered once, and AOY reconciled it successfully on the first
+    attempt at 08:55:52. The exact snapshot now matches
+    `AWAITING_COLLECTION`. There is one Gateway receipt/outbox and one AOY job
+    for this order; the final snapshot/webhook-job/Bill/SML-attempt/in-app-
+    notification/LINE-delivery counts are `9/5/323/27/537/252`, and recent
+    severe logs are empty. Seller Center's `รอจัดส่ง` result is now zero.
+    This closes signed `ORDER_STATUS_CHANGE` shadow UAT; it does not enable
+    Nexflow Bill/SML, LINE, stock, fulfillment, label, or cancellation actions.
 
 Known deferred or incomplete validation:
 

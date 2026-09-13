@@ -25,13 +25,13 @@
 - มี signed `ORDER_STATUS_CHANGE` receiver ที่ตรวจ `Authorization` จาก raw body ก่อน parse, เก็บ typed receipt + hash, deduplicate ด้วย `tts_notification_id`, ส่งต่อผ่าน durable tenant outbox และ refresh exact Order Detail + Price Detail เท่านั้น
 - public receiver, Central Gateway delivery worker และ tenant reconciliation worker ใช้ `TIKTOK_SHOP_WEBHOOK_ENABLED=false` เป็นค่าเริ่มต้นและเปิดแยกกันได้
 - Custom App ตั้ง `ORDER_STATUS_CHANGE` ต่อร้านผ่าน signed internal operation ซึ่งเรียก official `PUT /event/202309/webhooks`; Gateway บังคับ callback เป็น URL ของตัวเองและไม่รับ URL จาก tenant
+- AOY real-webhook UAT ผ่านด้วย controlled order `586030483469993439`: Seller Center เปลี่ยน `AWAITING_SHIPMENT` เป็น `AWAITING_COLLECTION`, Gateway/AOY รับและ reconcile event จริงหนึ่งครั้งโดยไม่มี Marketplace side effect
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
 
 ยังไม่เปิดใช้งานจริง:
 
-- AOY real webhook transition (feature gates, synthetic signed canary และ shop-specific Event API subscription ผ่านแล้ว แต่ยังต้องรอ event จริงหนึ่งรายการ)
 - การแปลง snapshots เป็น Nexflow bills
-- stock write, fulfillment, shipping label, cancellation และ Auto SML
+- Nexflow stock write, fulfillment/shipping label API, cancellation และ Auto SML
 - finance/settlement
 
 API อ้างอิงหลัก: [Authorization overview](https://partner.tiktokshop.com/docv2/page/authorization-overview-202407), [Create your app](https://partner.tiktokshop.com/docv2/page/create-your-app), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope), [Get Authorized Shops](https://partner.tiktokshop.com/docv2/page/get-authorized-shops), [Get Order List](https://partner.tiktokshop.com/docv2/page/get-order-list-202309), [Get Order Detail](https://partner.tiktokshop.com/docv2/page/get-order-detail-202507), [Get Price Detail](https://partner.tiktokshop.com/docv2/page/get-price-detail-202407), [Webhook configuration](https://partner.tiktokshop.com/docv2/page/configuration-guide), [Webhook overview/signature](https://partner.tiktokshop.com/docv2/page/tts-webhooks-overview), [Order status change](https://partner.tiktokshop.com/docv2/page/1-order-status-change), [API versioning](https://partner.tiktokshop.com/docv2/page/api-versioning)
@@ -193,7 +193,7 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 
 UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำเร็จหนึ่งครั้ง, connection metadata ตรงร้าน AOY, Order List/Detail/Price Detail แบบ read-only ตรงกับ Seller Center, snapshot replay เป็นหนึ่งแถว, manual/scheduled/webhook reconciliation ผ่าน, webhook replay เหลือหนึ่ง receipt/job, ไม่มี Bill/SML/notification side effect, ไม่มี duplicate/cross-tenant row และไม่มี secret/PII ที่ไม่จำเป็นใน Gateway, tenant database, log หรือ browser response
 
-### Webhook shadow UAT evidence — 2026-09-12
+### Webhook shadow UAT evidence — 2026-09-12–13
 
 - เปิด `TIKTOK_SHOP_WEBHOOK_ENABLED` เฉพาะ Central Gateway และ AOY; Demo, Lanboon และ Ploy ยังปิด
 - public health ของ Central Gateway/AOY ตอบ HTTP 200 และ unsigned webhook ตอบ HTTP 401 body ว่าง
@@ -202,7 +202,10 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - สมัครร้าน AOY `7494619203789490654` (`henna_milkford`) สำหรับ `ORDER_STATUS_CHANGE` ผ่าน official Event API สำเร็จ โดย upstream request ID `20260912210121D15E3BAD860DAB28023E`
 - callback ที่ Gateway บังคับใช้คือ `https://tiktok-shop-gateway.nextstep-soft.com/webhook/tiktok-shop`; internal configure operation สำเร็จ HTTP 200 หนึ่งครั้ง
 - Central Gateway อยู่ที่ `fd7d858`; backups ล่าสุดคือ `pre-deploy-20260912-124259.sql.gz` และ `pre-deploy-20260912-130002.sql.gz`. AOY backups ก่อน rollout คือ `pre-deploy-20260912-123656.sql.gz` และ `pre-deploy-20260912-123949.sql.gz`
-- ยังไม่ถือว่า real-webhook UAT จบจนกว่าจะเกิด AOY order status transition จริงหนึ่งครั้งและตรวจครบตามข้อ 20–21; ห้ามเปลี่ยนสถานะออเดอร์จริงโดยไม่มี controlled order จากผู้ใช้
+- วันที่ 2026-09-13 ผู้ใช้กำหนด controlled order `586030483469993439` แล้วกดเตรียมจัดส่ง/พิมพ์ฉลากใน Seller Center; TikTok เปลี่ยนสถานะ `AWAITING_SHIPMENT` เป็น `AWAITING_COLLECTION` เวลา 08:55:48 Asia/Bangkok
+- Gateway รับ notification `7684832722092099336` เวลา 08:55:49, สร้าง/ส่ง outbox สำเร็จหนึ่งครั้ง; AOY job สำเร็จครั้งแรกเวลา 08:55:52 และ snapshot สดตรงกับ Seller Center
+- หลัง real event มี 9 snapshots และ 5 AOY webhook jobs; Bill/SML attempt/in-app notification/LINE delivery ยังคง `323/27/537/252`, severe-log scan เป็นศูนย์ และ Seller Center แสดงรายการ `รอจัดส่ง` เหลือ 0
+- real `ORDER_STATUS_CHANGE` shadow UAT ผ่านแล้ว; การพิมพ์ฉลากครั้งนี้ทำโดยผู้ใช้ใน Seller Center และไม่ได้เปิด Nexflow fulfillment/shipping API
 
 ## Rollback
 
