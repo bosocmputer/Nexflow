@@ -842,13 +842,20 @@ Current AOY UAT scope:
     review evidence. TikTok Excel continues to use its unchanged SI route.
     Production browser QA verified the separate rows, missing-configuration
     state, disabled save, required fields, and the two allowed destinations.
-    Production DB verification found zero `tiktok_shop` route rows and the
-    Reviewed Bill feature flag remains false, so this rollout created no Bill
-    or SML write. The AOY backup is
-    `pre-deploy-20260913-040230.sql.gz`; Demo, Lanboon, Ploy, and both Central
-    Gateways were not deployed. The user will first create the TikTok customer
-    and shipping service master in SML, then explicitly configure this route
-    before a fresh shadow review and separately authorized one-Bill canary.
+    Initial production DB verification found zero `tiktok_shop` route rows.
+    The user subsequently created the TikTok customer and shipping master in
+    SML and saved AOY route version 2: sale invoice `BF-INV`, customer
+    `AB-2605-0002`, warehouse/location `AB-1 / 001`, VAT included 7%, credit
+    sale, salesperson `005`, and shipping service `AH-0063 / ชิ้น`. Repeated
+    production Shadow Preview for order `586030483469993439` passed with no
+    blocker: `AH-0002 / กล่อง / SML quantity 1`, product/Bill total 300.00,
+    shipping 0.00, and buyer-platform item insurance 7.49 excluded. The
+    preview remained side-effect free: reviewed TikTok Bills 0, Bills for the
+    controlled order 0, SML attempts 27, and LINE deliveries 254; recent
+    backend severe logs were empty. The Reviewed Bill feature flag remains
+    false pending separate explicit one-Bill canary authorization. The AOY
+    backup is `pre-deploy-20260913-040230.sql.gz`; Demo, Lanboon, Ploy, and
+    both Central Gateways were not deployed.
 
 Known deferred or incomplete validation:
 
