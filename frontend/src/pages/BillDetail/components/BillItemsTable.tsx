@@ -97,6 +97,7 @@ export function BillItemsTable({
       hasInvalidPrice(item)
     )
   }).length
+  const smlSendAllowed = bill.preview?.send_allowed !== false
 
   return (
     <Card className="rounded-lg border-border/70 shadow-sm">
@@ -159,7 +160,7 @@ export function BillItemsTable({
           </span>
         ) : items.length > 0 ? (
           <span className="rounded-md bg-success/10 px-2 py-1 text-xs font-medium text-success">
-            พร้อมส่ง
+            {smlSendAllowed ? 'พร้อมส่ง' : 'ข้อมูลสินค้าครบ'}
           </span>
         ) : null}
       </CardHeader>

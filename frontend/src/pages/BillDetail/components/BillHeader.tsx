@@ -304,7 +304,7 @@ export function BillHeader({
                 value={<span className="font-mono text-xs">{orderID}</span>}
               />
             )}
-            {isShopeeSale && orderID && (
+            {isShopeeSale && !isTikTokShopSale && orderID && (
               <InfoRow
                 label="เลขคำสั่งซื้อ"
                 value={<span className="font-mono text-xs">{orderID}</span>}
