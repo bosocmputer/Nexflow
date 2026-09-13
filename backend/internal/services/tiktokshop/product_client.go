@@ -350,7 +350,9 @@ func validateProducts(products []Product, max int) error {
 	}
 	seenProducts := make(map[string]struct{}, len(products))
 	for _, product := range products {
-		if !validTikTokResourceID(product.ID) || strings.TrimSpace(product.Title) == "" {
+		product.Title = strings.TrimSpace(product.Title)
+		if !validTikTokResourceID(product.ID) || product.Title == "" || len([]rune(product.Title)) > 500 ||
+			product.CreateTime < 0 || product.UpdateTime < 0 || len(product.SKUs) > 1000 {
 			return ErrInvalidProductResponse
 		}
 		if _, exists := seenProducts[product.ID]; exists {
@@ -359,7 +361,7 @@ func validateProducts(products []Product, max int) error {
 		seenProducts[product.ID] = struct{}{}
 		seenSKUs := make(map[string]struct{}, len(product.SKUs))
 		for _, sku := range product.SKUs {
-			if !validTikTokResourceID(sku.ID) {
+			if !validTikTokResourceID(sku.ID) || len([]rune(sku.SellerSKU)) > 255 || !validProductPrice(sku.Price) || len(sku.Inventory) > 100 {
 				return ErrInvalidProductResponse
 			}
 			if _, exists := seenSKUs[sku.ID]; exists {
@@ -376,28 +378,52 @@ func validateProducts(products []Product, max int) error {
 	return nil
 }
 
+func validProductPrice(price ProductPrice) bool {
+	for _, value := range []string{price.Currency, price.TaxExclusivePrice, price.SalePrice, price.StartingBidPrice} {
+		if len(strings.TrimSpace(value)) > 64 {
+			return false
+		}
+	}
+	return true
+}
+
 func validateInventorySearchResult(result InventorySearchResult, input InventorySearchRequest) error {
 	requestedSKUs := make(map[string]struct{}, len(input.SKUIDs))
 	for _, id := range input.SKUIDs {
 		requestedSKUs[id] = struct{}{}
 	}
+	seenProducts := make(map[string]struct{}, len(result.Inventory))
+	seenSKUs := make(map[string]struct{})
 	for _, product := range result.Inventory {
 		if !validTikTokResourceID(product.ProductID) {
 			return ErrInvalidProductResponse
 		}
+		if _, duplicate := seenProducts[product.ProductID]; duplicate {
+			return ErrInvalidProductResponse
+		}
+		seenProducts[product.ProductID] = struct{}{}
 		for _, sku := range product.SKUs {
-			if !validTikTokResourceID(sku.ID) || sku.TotalAvailableQuantity < 0 || sku.TotalCommittedQuantity < 0 {
+			if !validTikTokResourceID(sku.ID) || len([]rune(sku.SellerSKU)) > 255 || sku.TotalAvailableQuantity < 0 || sku.TotalCommittedQuantity < 0 || len(sku.WarehouseInventory) > 100 {
 				return ErrInvalidProductResponse
 			}
+			if _, duplicate := seenSKUs[sku.ID]; duplicate {
+				return ErrInvalidProductResponse
+			}
+			seenSKUs[sku.ID] = struct{}{}
 			if len(requestedSKUs) > 0 {
 				if _, ok := requestedSKUs[sku.ID]; !ok {
 					return ErrInvalidProductResponse
 				}
 			}
+			seenWarehouses := make(map[string]struct{}, len(sku.WarehouseInventory))
 			for _, warehouse := range sku.WarehouseInventory {
 				if !validTikTokResourceID(warehouse.WarehouseID) || warehouse.AvailableQuantity < 0 || warehouse.CommittedQuantity < 0 {
 					return ErrInvalidProductResponse
 				}
+				if _, duplicate := seenWarehouses[warehouse.WarehouseID]; duplicate {
+					return ErrInvalidProductResponse
+				}
+				seenWarehouses[warehouse.WarehouseID] = struct{}{}
 			}
 		}
 	}

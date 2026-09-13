@@ -62,6 +62,18 @@ type TikTokShopReviewedBillCreator interface {
 	Create(context.Context, tiktokshop.TikTokReviewedBillInput) (*tiktokshop.TikTokReviewedBillResult, error)
 }
 
+type TikTokShopProductCatalogSyncer interface {
+	Sync(context.Context, string, string) (*tiktokshop.TikTokCatalogRunResult, error)
+}
+
+type TikTokShopProductCatalogReader interface {
+	List(context.Context, tiktokshop.TikTokCatalogListFilter) (*tiktokshop.TikTokCatalogListResult, error)
+}
+
+type TikTokShopAuditLogger interface {
+	Log(models.AuditEntry) error
+}
+
 type tikTokBillShadowMappingRequest struct {
 	ProductID               string `json:"product_id"`
 	SKUID                   string `json:"sku_id"`
@@ -78,17 +90,20 @@ type tikTokReviewedBillRequest struct {
 }
 
 type TikTokShopAPIHandler struct {
-	config       *config.Config
-	gateway      TikTokShopGateway
-	store        TikTokShopConnectionSyncer
-	snapshots    TikTokShopOrderSnapshotter
-	reconciler   TikTokShopOrderReconciler
-	syncSettings TikTokShopOrderSyncSettings
-	orderReader  TikTokShopOrderReader
-	billShadow   TikTokShopBillShadowPreviewer
-	billMapper   TikTokShopBillShadowMapper
-	reviewedBill TikTokShopReviewedBillCreator
-	logger       *zap.Logger
+	config         *config.Config
+	gateway        TikTokShopGateway
+	store          TikTokShopConnectionSyncer
+	snapshots      TikTokShopOrderSnapshotter
+	reconciler     TikTokShopOrderReconciler
+	syncSettings   TikTokShopOrderSyncSettings
+	orderReader    TikTokShopOrderReader
+	billShadow     TikTokShopBillShadowPreviewer
+	billMapper     TikTokShopBillShadowMapper
+	reviewedBill   TikTokShopReviewedBillCreator
+	productCatalog TikTokShopProductCatalogSyncer
+	productReader  TikTokShopProductCatalogReader
+	audit          TikTokShopAuditLogger
+	logger         *zap.Logger
 }
 
 func (h *TikTokShopAPIHandler) WithOrderReader(reader TikTokShopOrderReader) *TikTokShopAPIHandler {
@@ -115,6 +130,20 @@ func (h *TikTokShopAPIHandler) WithBillShadowMapper(mapper TikTokShopBillShadowM
 func (h *TikTokShopAPIHandler) WithReviewedBillCreator(creator TikTokShopReviewedBillCreator) *TikTokShopAPIHandler {
 	if h != nil {
 		h.reviewedBill = creator
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithProductCatalog(syncer TikTokShopProductCatalogSyncer, reader TikTokShopProductCatalogReader) *TikTokShopAPIHandler {
+	if h != nil {
+		h.productCatalog, h.productReader = syncer, reader
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithAuditLogger(audit TikTokShopAuditLogger) *TikTokShopAPIHandler {
+	if h != nil {
+		h.audit = audit
 	}
 	return h
 }

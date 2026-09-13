@@ -434,6 +434,37 @@ func TestMigration101AddsDedicatedTikTokShopDocumentRouteWithoutBackfill(t *test
 	}
 }
 
+func TestMigration102AddsPIIMinimizedTikTokProductCatalogWithoutBackfill(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/102_tiktok_shop_product_catalog.sql")
+	if err != nil {
+		t.Fatalf("read migration 102: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists tiktok_shop_product_catalog_runs",
+		"create table if not exists tiktok_shop_products",
+		"create table if not exists tiktok_shop_product_skus",
+		"create table if not exists tiktok_shop_product_inventory",
+		"where status = 'running'",
+		"upstream_request_ids",
+		"lease_until",
+		"foreign key (shop_id, product_id, sku_id)",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 102 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"page_token", "access_token", "refresh_token", "app_secret", "shop_cipher",
+		"buyer_name", "buyer_username", "recipient", "phone", "email", "address",
+		"delete from", "truncate", "drop table", "drop column", "update tiktok_shop",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 102 contains forbidden cursor, credential, PII, destructive, or backfill term %q", forbidden)
+		}
+	}
+}
+
 func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {
