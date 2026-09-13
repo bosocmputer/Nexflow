@@ -64,6 +64,7 @@ type TikTokBillShadowRoute struct {
 	SemanticRoute        string `json:"semantic_route,omitempty"`
 	DocFormatCode        string `json:"doc_format_code,omitempty"`
 	ShippingReady        bool   `json:"shipping_ready"`
+	ConfigVersion        int64  `json:"-"`
 	ShippingItemCode     string `json:"-"`
 	ShippingItemUnitCode string `json:"-"`
 }
@@ -150,6 +151,14 @@ type TikTokBillShadowRouteSource struct {
 	Configured           bool
 	Endpoint             string
 	DocFormatCode        string
+	DocPrefix            string
+	DocRunningFormat     string
+	PartyCode            string
+	WHCode               string
+	ShelfCode            string
+	VATType              int
+	VATRate              float64
+	ConfigVersion        int64
 	ShippingItemEnabled  bool
 	ShippingItemCode     string
 	ShippingItemUnitCode string
@@ -378,8 +387,13 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 
 	semanticRoute := tikTokBillShadowSemanticRoute(source.Route.Endpoint)
 	preview.Route = TikTokBillShadowRoute{
-		Ready:         source.Route.Configured && strings.TrimSpace(source.Route.DocFormatCode) != "" && semanticRoute != "",
+		Ready: source.Route.Configured && strings.TrimSpace(source.Route.DocFormatCode) != "" && semanticRoute != "" &&
+			strings.TrimSpace(source.Route.DocPrefix) != "" && strings.TrimSpace(source.Route.DocRunningFormat) != "" &&
+			strings.TrimSpace(source.Route.PartyCode) != "" && strings.TrimSpace(source.Route.WHCode) != "" &&
+			strings.TrimSpace(source.Route.ShelfCode) != "" && source.Route.VATType >= 0 && source.Route.VATRate >= 0 &&
+			source.Route.ConfigVersion > 0,
 		SemanticRoute: semanticRoute, DocFormatCode: strings.TrimSpace(source.Route.DocFormatCode),
+		ConfigVersion:        source.Route.ConfigVersion,
 		ShippingReady:        storedShipping.Sign() == 0 || (source.Route.ShippingItemEnabled && strings.TrimSpace(source.Route.ShippingItemCode) != "" && strings.TrimSpace(source.Route.ShippingItemUnitCode) != ""),
 		ShippingItemCode:     strings.TrimSpace(source.Route.ShippingItemCode),
 		ShippingItemUnitCode: strings.TrimSpace(source.Route.ShippingItemUnitCode),
@@ -477,6 +491,7 @@ func tikTokBillShadowReviewDigest(preview *TikTokBillShadowPreview) string {
 			ShippingReady        bool   `json:"shipping_ready"`
 			ShippingItemCode     string `json:"shipping_item_code"`
 			ShippingItemUnitCode string `json:"shipping_item_unit_code"`
+			ConfigVersion        int64  `json:"config_version"`
 		} `json:"route"`
 		Items []digestItem `json:"items"`
 	}{
@@ -491,6 +506,7 @@ func tikTokBillShadowReviewDigest(preview *TikTokBillShadowPreview) string {
 	payload.Route.ShippingReady = preview.Route.ShippingReady
 	payload.Route.ShippingItemCode = preview.Route.ShippingItemCode
 	payload.Route.ShippingItemUnitCode = preview.Route.ShippingItemUnitCode
+	payload.Route.ConfigVersion = preview.Route.ConfigVersion
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return ""
@@ -509,11 +525,11 @@ func tikTokBillLifecycleReady(status OrderStatus) bool {
 }
 
 func tikTokBillShadowSemanticRoute(endpoint string) string {
-	value := strings.ToLower(strings.TrimSpace(endpoint))
-	switch {
-	case value == "saleinvoice", value == "sale-invoices", strings.Contains(value, "sale-invoices"), strings.Contains(value, "saleinvoice"):
+	value := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(endpoint)), "/")
+	switch value {
+	case "saleinvoice", "sale-invoices", "/api/v1/ic/sale-invoices":
 		return "sale_invoice"
-	case value == "saleorder", value == "sale-orders", strings.Contains(value, "sale-orders"), strings.Contains(value, "saleorder"):
+	case "saleorder", "sale-orders", "/api/v1/ic/sale-orders":
 		return "sale_order"
 	default:
 		return ""
@@ -639,12 +655,15 @@ func (s *TikTokBillShadowStore) Load(ctx context.Context, shopID, orderID string
 	}
 
 	err = s.database.QueryRowContext(ctx,
-		`SELECT endpoint, doc_format_code, shipping_item_enabled,
-		        shipping_item_code, shipping_item_unit_code
+		`SELECT endpoint, doc_format_code, doc_prefix, doc_running_format,
+		        party_code, wh_code, shelf_code, vat_type, vat_rate, config_version,
+		        shipping_item_enabled, shipping_item_code, shipping_item_unit_code
 		   FROM channel_defaults
-		  WHERE channel='tiktok' AND bill_type='sale'`,
+		  WHERE channel=$1 AND bill_type='sale'`, "tiktok_shop",
 	).Scan(
-		&source.Route.Endpoint, &source.Route.DocFormatCode, &source.Route.ShippingItemEnabled,
+		&source.Route.Endpoint, &source.Route.DocFormatCode, &source.Route.DocPrefix, &source.Route.DocRunningFormat,
+		&source.Route.PartyCode, &source.Route.WHCode, &source.Route.ShelfCode,
+		&source.Route.VATType, &source.Route.VATRate, &source.Route.ConfigVersion, &source.Route.ShippingItemEnabled,
 		&source.Route.ShippingItemCode, &source.Route.ShippingItemUnitCode,
 	)
 	if err == nil {

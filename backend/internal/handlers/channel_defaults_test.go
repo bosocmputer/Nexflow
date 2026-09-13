@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"nexflow/internal/models"
 	"nexflow/internal/repository"
 )
 
@@ -154,6 +155,36 @@ func TestChannelDefaultUpsertRejectsControlCharacterInRemarkBeforeDatabaseWrite(
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unsafe value must be rejected before SQL: %v", err)
+	}
+}
+
+func TestTikTokShopChannelDefaultRequiresCompleteManagedSaleRoute(t *testing.T) {
+	in := models.ChannelDefaultUpsert{
+		Channel: "tiktok_shop", BillType: "sale",
+		Endpoint: "/api/v1/ic/sale-invoices", DocFormatCode: "SI",
+		DocPrefix: "TT-INV", DocRunningFormat: "YYMM####",
+		VATType: 1, VATRate: 7, InquiryType: -1,
+	}
+	if !validChannelBillTypeCombo(in.Channel, in.BillType) {
+		t.Fatal("TikTok Shop API sale route must be an allowed channel/bill type pair")
+	}
+	if err := normalizeAndValidateChannelDefault(&in); err == nil {
+		t.Fatal("TikTok Shop API route without customer and warehouse must fail closed")
+	}
+
+	in.PartyCode = "AR-TIKTOK"
+	in.WHCode = "AB-1"
+	in.ShelfCode = "001"
+	if err := normalizeAndValidateChannelDefault(&in); err != nil {
+		t.Fatalf("complete TikTok Shop API route rejected: %v", err)
+	}
+	if !supportsConfiguredShippingItem(in.Channel, in.BillType) {
+		t.Fatal("TikTok Shop API route must support a dedicated shipping item")
+	}
+
+	in.Endpoint = "/api/v1/ic/sale-invoices/:doc_no/cancel"
+	if err := normalizeAndValidateChannelDefault(&in); err == nil {
+		t.Fatal("TikTok Shop API main route must reject cancellation destinations")
 	}
 }
 

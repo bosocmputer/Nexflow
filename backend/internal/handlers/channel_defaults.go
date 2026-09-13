@@ -300,7 +300,7 @@ func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
 	if in.ShippingItemEnabled && in.ShippingItemUnitCode == "" {
 		return fmt.Errorf("กรุณาเลือกหน่วย SML สำหรับค่าจัดส่งก่อนเปิดใช้งาน")
 	}
-	if err := validateShopeeRealtimeAutoDefaults(*in); err != nil {
+	if err := validateManagedMarketplaceSaleDefaults(*in); err != nil {
 		return err
 	}
 	if err := validateShopeeRealtimeCancelDefaults(*in); err != nil {
@@ -347,7 +347,7 @@ func channelDefaultFromUpsert(in models.ChannelDefaultUpsert) *models.ChannelDef
 }
 
 func channelDefaultMissingPrerequisites(d *models.ChannelDefault) []string {
-	if d.Channel != "shopee_realtime" || d.BillType != "sale" {
+	if !isManagedMarketplaceSaleRoute(d.Channel, d.BillType) {
 		return []string{}
 	}
 	missing := make([]string, 0)
@@ -378,10 +378,16 @@ func channelDefaultMissingPrerequisites(d *models.ChannelDefault) []string {
 func previewWarnings(d *models.ChannelDefault, missing []string) []string {
 	warnings := []string{"การเปลี่ยนแปลงมีผลเฉพาะเอกสารใหม่"}
 	if len(missing) > 0 {
-		warnings = append(warnings, "ยังเปิด Auto SML ไม่ได้จนกว่าข้อมูลที่จำเป็นจะครบ")
+		if d.Channel == "shopee_realtime" {
+			warnings = append(warnings, "ยังเปิด Auto SML ไม่ได้จนกว่าข้อมูลที่จำเป็นจะครบ")
+		} else {
+			warnings = append(warnings, "ยังสร้าง Bill จาก TikTok Shop ไม่ได้จนกว่าข้อมูลที่จำเป็นจะครบ")
+		}
 	}
 	if d.Channel == "shopee_realtime" {
 		warnings = append(warnings, "หากเปลี่ยนเส้นทาง ระบบจะหยุด Auto SML และให้ตรวจสอบค่าก่อนเปิดใช้งานอีกครั้ง")
+	} else if d.Channel == "tiktok_shop" {
+		warnings = append(warnings, "หลังเปลี่ยนเส้นทาง ต้องตรวจ Bill Preview ใหม่ก่อนสร้าง Bill จาก TikTok Shop")
 	}
 	return warnings
 }
@@ -400,9 +406,20 @@ func safeChannelDefaultAudit(d *models.ChannelDefault, mode string) map[string]i
 	}
 }
 
-func validateShopeeRealtimeAutoDefaults(in models.ChannelDefaultUpsert) error {
-	if in.Channel != "shopee_realtime" || in.BillType != "sale" {
+func validateManagedMarketplaceSaleDefaults(in models.ChannelDefaultUpsert) error {
+	if !isManagedMarketplaceSaleRoute(in.Channel, in.BillType) {
 		return nil
+	}
+	if in.Channel == "tiktok_shop" {
+		switch strings.TrimSpace(in.Endpoint) {
+		case "/api/v1/ic/sale-orders", "/api/v1/ic/sale-invoices":
+		default:
+			return fmt.Errorf("กรุณาเลือกปลายทางขาย SML ที่รองรับสำหรับคำสั่งซื้อ TikTok Shop")
+		}
+	}
+	purpose := "Auto SML"
+	if in.Channel == "tiktok_shop" {
+		purpose = "คำสั่งซื้อ TikTok Shop"
 	}
 	required := []struct {
 		value string
@@ -418,16 +435,20 @@ func validateShopeeRealtimeAutoDefaults(in models.ChannelDefaultUpsert) error {
 	}
 	for _, field := range required {
 		if strings.TrimSpace(field.value) == "" {
-			return fmt.Errorf("กรุณาตั้งค่า%sสำหรับ Auto SML", field.label)
+			return fmt.Errorf("กรุณาตั้งค่า%sสำหรับ%s", field.label, purpose)
 		}
 	}
 	if in.VATType < 0 {
-		return fmt.Errorf("กรุณาตั้งค่าประเภทภาษีสำหรับ Auto SML")
+		return fmt.Errorf("กรุณาตั้งค่าประเภทภาษีสำหรับ%s", purpose)
 	}
 	if in.VATRate < 0 {
-		return fmt.Errorf("กรุณาตั้งค่าอัตราภาษีสำหรับ Auto SML")
+		return fmt.Errorf("กรุณาตั้งค่าอัตราภาษีสำหรับ%s", purpose)
 	}
 	return nil
+}
+
+func isManagedMarketplaceSaleRoute(channel, billType string) bool {
+	return billType == "sale" && (channel == "shopee_realtime" || channel == "tiktok_shop")
 }
 
 func validateShopeeRealtimeCancelDefaults(in models.ChannelDefaultUpsert) error {
@@ -466,7 +487,7 @@ func validateShopeeRealtimeCancelDefaults(in models.ChannelDefaultUpsert) error 
 // Shopee uses buyer_paid_shipping_fee from escrow, not actual/estimated carrier
 // cost. shopee_shipped remains the legacy purchase-email flow.
 func supportsConfiguredShippingItem(channel, billType string) bool {
-	if billType == "sale" && (channel == "shopee" || channel == "shopee_realtime" || channel == "lazada" || channel == "tiktok") {
+	if billType == "sale" && (channel == "shopee" || channel == "shopee_realtime" || channel == "lazada" || channel == "tiktok" || channel == "tiktok_shop") {
 		return true
 	}
 	return channel == "shopee_shipped" && billType == "purchase"
@@ -482,7 +503,7 @@ func validChannelBillTypeCombo(channel, billType string) bool {
 		return billType == "purchase"
 	case "email":
 		return billType == "sale" || billType == "purchase"
-	case "shopee", "shopee_realtime", "shopee_realtime_cancel", "shopee_email", "line", "manual", "line_myshop":
+	case "shopee", "shopee_realtime", "shopee_realtime_cancel", "shopee_email", "tiktok_shop", "line", "manual", "line_myshop":
 		return billType == "sale"
 	case "lazada":
 		return billType == "sale" || billType == "purchase"

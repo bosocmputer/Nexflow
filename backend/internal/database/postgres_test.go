@@ -411,6 +411,28 @@ func TestMigration099AddsTikTokOrderOperationsPermissionAndListIndex(t *testing.
 	}
 }
 
+func TestMigration101AddsDedicatedTikTokShopDocumentRouteWithoutBackfill(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/101_tiktok_shop_channel_default.sql")
+	if err != nil {
+		t.Fatalf("read migration 101: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"channel_defaults_channel_check", "tiktok_shop",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 101 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"insert into channel_defaults", "update channel_defaults", "delete from", "truncate", "drop table", "drop column",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 101 must not copy or mutate a tenant route: found %q", forbidden)
+		}
+	}
+}
+
 func TestCheckMarketplaceActivationFailsClosedWhenReadinessIsIncomplete(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

@@ -12,6 +12,7 @@ export type ChannelKey =
   | 'shopee_shipped'
   | 'lazada'
   | 'tiktok'
+  | 'tiktok_shop'
   | 'manual'
   | 'shopee_settlement'
   | 'line_myshop'
@@ -227,7 +228,8 @@ export function destinationOptionsFor(
   return SML_DESTINATION_OPTIONS.filter((option) => (
     option.phase1Enabled &&
     (!billType || option.billType === billType) &&
-    (channel !== 'shopee_realtime_cancel' || option.value === 'saleordercancel' || option.value === 'saleinvoicecancel' || option.value === 'creditnote')
+    (channel !== 'shopee_realtime_cancel' || option.value === 'saleordercancel' || option.value === 'saleinvoicecancel' || option.value === 'creditnote') &&
+    (channel !== 'tiktok_shop' || option.value === 'saleorder' || option.value === 'saleinvoice')
   ))
 }
 
@@ -251,6 +253,7 @@ export function destinationKindFor(
   if (lower.includes('saleorder') || lower.includes('sale-orders')) return 'saleorder'
   // No keyword match → default by channel+bill_type
   if (channel === 'shopee_shipped' || billType === 'purchase') return 'purchaseorder'
+  if (channel === 'tiktok_shop') return 'saleinvoice'
   if (channel === 'shopee' || channel === 'shopee_realtime' || channel === 'shopee_email' || channel === 'lazada' || channel === 'tiktok' || channel === 'line_myshop') return 'saleorder'
   return 'saleorder'
 }
@@ -265,6 +268,7 @@ export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   shopee_shipped: 'Email บิลซื้อ Shopee',
   lazada: 'Lazada Excel',
   tiktok: 'TikTok Excel',
+  tiktok_shop: 'คำสั่งซื้อ TikTok Shop',
   manual: 'Manual',
   shopee_settlement: 'Shopee รับชำระหนี้',
   line_myshop: 'LINE MyShop',

@@ -1083,10 +1083,26 @@ func channelDefaultKeyForBill(bill *models.Bill) string {
 	if isShopeeRealtimeBill(bill) {
 		return "shopee_realtime"
 	}
+	if isTikTokShopReviewedBill(bill) {
+		return "tiktok_shop"
+	}
 	if bill == nil {
 		return ""
 	}
 	return mapSourceToChannel(bill.Source)
+}
+
+func isTikTokShopReviewedBill(bill *models.Bill) bool {
+	if bill == nil || bill.Source != "tiktok" || len(bill.RawData) == 0 {
+		return false
+	}
+	var raw struct {
+		Flow string `json:"flow"`
+	}
+	if err := json.Unmarshal(bill.RawData, &raw); err != nil {
+		return false
+	}
+	return strings.TrimSpace(raw.Flow) == "tiktok_shop_api_reviewed"
 }
 
 func isShopeeRealtimeBill(bill *models.Bill) bool {

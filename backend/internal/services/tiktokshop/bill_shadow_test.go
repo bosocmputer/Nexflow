@@ -124,6 +124,12 @@ func TestTikTokBillShadowPreviewRejectsInvalidInputAndPropagatesNotFound(t *test
 	}
 }
 
+func TestTikTokBillShadowSemanticRouteRejectsCancellationEndpoint(t *testing.T) {
+	if got := tikTokBillShadowSemanticRoute("/api/v1/ic/sale-invoices/:doc_no/cancel"); got != "" {
+		t.Fatalf("cancellation endpoint resolved as TikTok Shop main route %q", got)
+	}
+}
+
 func TestTikTokBillShadowStoreLoadsOnlyShopScopedAndLegacyIdentityCandidates(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	if err != nil {
@@ -156,9 +162,11 @@ func TestTikTokBillShadowStoreLoadsOnlyShopScopedAndLegacyIdentityCandidates(t *
 			true, true, "ready", int64(1), "1", "1", int64(1),
 			"33333333-3333-4333-8333-333333333333", "", true,
 		))
-	mock.ExpectQuery("FROM channel_defaults").WillReturnRows(sqlmock.NewRows([]string{
-		"endpoint", "doc_format_code", "shipping_item_enabled", "shipping_item_code", "shipping_item_unit_code",
-	}).AddRow("/api/v1/ic/sale-invoices", "SI", false, "", ""))
+	mock.ExpectQuery("FROM channel_defaults").WithArgs("tiktok_shop").WillReturnRows(sqlmock.NewRows([]string{
+		"endpoint", "doc_format_code", "doc_prefix", "doc_running_format", "party_code", "wh_code", "shelf_code",
+		"vat_type", "vat_rate", "config_version", "shipping_item_enabled", "shipping_item_code", "shipping_item_unit_code",
+	}).AddRow("/api/v1/ic/sale-invoices", "SI", "TT-INV", "YYMM####", "AR-TIKTOK", "AB-1", "001",
+		1, float64(7), int64(1), false, "", ""))
 	mock.ExpectQuery("FROM bills").WithArgs(source.Order.ID).WillReturnError(sql.ErrNoRows)
 
 	loaded, err := NewTikTokBillShadowStore(database).Load(t.Context(), source.ShopID, source.Order.ID)
@@ -197,6 +205,8 @@ func controlledTikTokBillShadowSource() *TikTokBillShadowSource {
 		}},
 		Route: TikTokBillShadowRouteSource{
 			Configured: true, Endpoint: "/api/v1/ic/sale-invoices", DocFormatCode: "SI",
+			DocPrefix: "TT-INV", DocRunningFormat: "YYMM####", PartyCode: "AR-TIKTOK",
+			WHCode: "AB-1", ShelfCode: "001", VATType: 1, VATRate: 7, ConfigVersion: 1,
 		},
 	}
 }

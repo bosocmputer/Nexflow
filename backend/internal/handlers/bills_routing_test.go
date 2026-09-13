@@ -217,6 +217,24 @@ func TestMapSourceToChannelMatchesRetryLookupKey(t *testing.T) {
 	}
 }
 
+func TestChannelDefaultKeyForBillSeparatesTikTokShopReviewedFlow(t *testing.T) {
+	apiBill := &models.Bill{
+		Source:  "tiktok",
+		RawData: json.RawMessage(`{"flow":"tiktok_shop_api_reviewed"}`),
+	}
+	if got := channelDefaultKeyForBill(apiBill); got != "tiktok_shop" {
+		t.Fatalf("TikTok Shop reviewed Bill route key = %q, want tiktok_shop", got)
+	}
+
+	excelBill := &models.Bill{
+		Source:  "tiktok",
+		RawData: json.RawMessage(`{"flow":"tiktok_excel"}`),
+	}
+	if got := channelDefaultKeyForBill(excelBill); got != "tiktok" {
+		t.Fatalf("TikTok Excel Bill route key = %q, want tiktok", got)
+	}
+}
+
 func TestValidateBulkBillIDsGuardsProductionBatch(t *testing.T) {
 	validA := "11111111-1111-1111-1111-111111111111"
 	validB := "22222222-2222-2222-2222-222222222222"

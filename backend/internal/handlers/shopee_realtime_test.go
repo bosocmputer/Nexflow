@@ -307,17 +307,17 @@ func TestAutoSMLNotificationShippingUsesFinalBillItemOnly(t *testing.T) {
 	}
 }
 
-func TestValidateShopeeRealtimeAutoDefaults(t *testing.T) {
+func TestValidateManagedMarketplaceSaleDefaultsForShopeeRealtime(t *testing.T) {
 	base := models.ChannelDefaultUpsert{
 		Channel: "shopee_realtime", BillType: "sale", Endpoint: "/api/v1/ic/sale-invoices",
 		DocFormatCode: "BF-INV", DocPrefix: "BF-INV", DocRunningFormat: "YYMM####",
 		PartyCode: "AR-001", WHCode: "AB-2", ShelfCode: "002", VATType: 0, VATRate: 7,
 	}
-	if err := validateShopeeRealtimeAutoDefaults(base); err != nil {
+	if err := validateManagedMarketplaceSaleDefaults(base); err != nil {
 		t.Fatalf("complete defaults rejected: %v", err)
 	}
 	base.PartyCode = ""
-	if err := validateShopeeRealtimeAutoDefaults(base); err == nil || !strings.Contains(err.Error(), "ลูกค้า SML") {
+	if err := validateManagedMarketplaceSaleDefaults(base); err == nil || !strings.Contains(err.Error(), "ลูกค้า SML") {
 		t.Fatalf("missing party error = %v", err)
 	}
 }
