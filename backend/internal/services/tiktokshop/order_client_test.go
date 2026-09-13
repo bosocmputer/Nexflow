@@ -149,6 +149,26 @@ func TestOrderClientRejectsMaskedOrMismatchedShipmentRecipient(t *testing.T) {
 	}
 }
 
+func TestOrderClientDescribesUnavailableShipmentRecipientWithoutPII(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"request_id":"req-recipient-masked","data":{"orders":[{"id":"order-1","recipient_address":{"name":"Rec***","phone_number":"","full_address":"Bangkok 10***"}}]}}`))
+	}))
+	defer server.Close()
+	client := newTestOrderClient(t, server, time.Unix(1_725_000_000, 0))
+
+	_, requestID, err := client.GetShipmentRecipient(context.Background(), "seller-access-token", "shop-cipher", "order-1")
+	var unavailable *ShipmentRecipientUnavailableError
+	if requestID != "req-recipient-masked" || !errors.As(err, &unavailable) || !errors.Is(err, ErrInvalidOrderResponse) {
+		t.Fatalf("requestID=%q error=%v unavailable=%+v", requestID, err, unavailable)
+	}
+	if unavailable.UpstreamRequestID != "req-recipient-masked" || unavailable.Name != RecipientFieldMasked || unavailable.Address != RecipientFieldMasked || unavailable.Telephone != RecipientFieldMissing {
+		t.Fatalf("unavailable = %+v", unavailable)
+	}
+	if strings.Contains(err.Error(), "Rec") || strings.Contains(err.Error(), "Bangkok") {
+		t.Fatalf("error leaked recipient PII: %v", err)
+	}
+}
+
 func TestOrderClientGetsPriceDetailForOneOrder(t *testing.T) {
 	now := time.Unix(1_725_000_000, 0)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

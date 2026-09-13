@@ -161,6 +161,26 @@ func (h *Handler) GetShipmentRecipient(c *gin.Context) {
 	}
 	result, err := h.orders.GetShipmentRecipient(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID))
 	if err != nil {
+		var unavailable *tiktokshop.ShipmentRecipientUnavailableError
+		if errors.As(err, &unavailable) {
+			statusCode, errorCode = http.StatusUnprocessableEntity, "shipment_recipient_unavailable"
+			h.logger.Info("tiktok_gateway_shipment_recipient_unavailable",
+				zap.String("tenant", identity.Tenant),
+				zap.String("shop_id", strings.TrimSpace(input.ShopID)),
+				zap.String("upstream_request_id", strings.TrimSpace(unavailable.UpstreamRequestID)),
+				zap.Int("order_count", unavailable.OrderCount),
+				zap.Bool("order_id_matched", unavailable.OrderIDMatched),
+				zap.String("name_state", string(unavailable.Name)),
+				zap.String("address_state", string(unavailable.Address)),
+				zap.String("telephone_state", string(unavailable.Telephone)))
+			c.Header("Cache-Control", "no-store")
+			c.JSON(statusCode, gin.H{"error": gin.H{
+				"code": errorCode, "message": orderErrorMessage(errorCode), "retryable": false, "request_id": requestID,
+				"upstream_request_id": strings.TrimSpace(unavailable.UpstreamRequestID),
+				"recipient_fields":    gin.H{"name": unavailable.Name, "address": unavailable.Address, "telephone": unavailable.Telephone},
+			}})
+			return
+		}
 		statusCode, errorCode = orderErrorMeta(err)
 		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
 		return
@@ -508,6 +528,7 @@ func oauthErrorMessage(code string) string {
 
 func orderErrorMeta(err error) (int, string) {
 	var apiError *tiktokshop.APIError
+	var recipientUnavailable *tiktokshop.ShipmentRecipientUnavailableError
 	switch {
 	case errors.Is(err, tiktokshop.ErrInvalidOrderInput), errors.Is(err, tiktokshop.ErrInvalidEventInput):
 		return http.StatusBadRequest, "invalid_order_request"
@@ -517,6 +538,8 @@ func orderErrorMeta(err error) (int, string) {
 		return http.StatusConflict, "reconnect_required"
 	case errors.Is(err, ErrTokenServiceNotConfigured), errors.Is(err, ErrOrderServiceNotConfigured), errors.Is(err, ErrWebhookConfigServiceNotConfigured):
 		return http.StatusServiceUnavailable, "gateway_not_ready"
+	case errors.As(err, &recipientUnavailable):
+		return http.StatusUnprocessableEntity, "shipment_recipient_unavailable"
 	case errors.As(err, &apiError):
 		return http.StatusBadGateway, "tiktok_api_error"
 	case errors.Is(err, tiktokshop.ErrInvalidEventResponse):
@@ -563,6 +586,8 @@ func orderErrorMessage(code string) string {
 		return "TikTok Shop Gateway ยังไม่พร้อมใช้งาน"
 	case "tiktok_api_error":
 		return "TikTok Shop ไม่สามารถส่งข้อมูลออเดอร์ได้ในขณะนี้"
+	case "shipment_recipient_unavailable":
+		return "TikTok Shop ยังไม่ส่งข้อมูลผู้รับที่ครบถ้วนสำหรับสร้างเอกสาร SML"
 	default:
 		return "Gateway ประมวลผลข้อมูลออเดอร์ไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
 	}

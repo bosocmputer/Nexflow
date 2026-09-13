@@ -62,6 +62,29 @@ func TestOrderServiceGetsSingleShipmentRecipientWithTenantScopedCredential(t *te
 	}
 }
 
+func TestOrderServicePreservesShipmentRecipientDiagnostics(t *testing.T) {
+	credentials := &fakeOrderCredentialProvider{credential: &AccessCredential{AccessToken: "access-secret", ShopID: "shop-1", ShopCipher: "cipher-1"}}
+	reader := &fakeTikTokOrderReader{
+		requestID: "tts-request-masked",
+		err: &tiktokshop.ShipmentRecipientUnavailableError{
+			UpstreamRequestID: "tts-request-masked",
+			Name:              tiktokshop.RecipientFieldPresent,
+			Address:           tiktokshop.RecipientFieldMasked,
+			Telephone:         tiktokshop.RecipientFieldMissing,
+		},
+	}
+	service, err := NewOrderService(credentials, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.GetShipmentRecipient(context.Background(), "aoy", "shop-1", "order-1")
+	var unavailable *tiktokshop.ShipmentRecipientUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.UpstreamRequestID != "tts-request-masked" || unavailable.Address != tiktokshop.RecipientFieldMasked {
+		t.Fatalf("error = %v unavailable = %+v", err, unavailable)
+	}
+}
+
 func TestOrderServiceGetsPriceDetailWithTenantScopedCredential(t *testing.T) {
 	credentials := &fakeOrderCredentialProvider{credential: &AccessCredential{AccessToken: "access-secret", ShopID: "shop-1", ShopCipher: "cipher-1"}}
 	reader := &fakeTikTokOrderReader{priceDetail: &tiktokshop.PriceDetail{Currency: "THB", Payment: "307.49"}, requestID: "tts-request-price"}

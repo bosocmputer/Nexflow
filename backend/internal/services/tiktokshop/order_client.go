@@ -26,6 +26,33 @@ var (
 	ErrInvalidOrderResponse = errors.New("invalid TikTok Shop order response")
 )
 
+type RecipientFieldState string
+
+const (
+	RecipientFieldPresent RecipientFieldState = "present"
+	RecipientFieldMissing RecipientFieldState = "missing"
+	RecipientFieldMasked  RecipientFieldState = "masked"
+)
+
+// ShipmentRecipientUnavailableError carries only bounded structural
+// diagnostics. It must never contain the recipient values themselves.
+type ShipmentRecipientUnavailableError struct {
+	UpstreamRequestID string
+	OrderCount        int
+	OrderIDMatched    bool
+	Name              RecipientFieldState
+	Address           RecipientFieldState
+	Telephone         RecipientFieldState
+}
+
+func (e *ShipmentRecipientUnavailableError) Error() string {
+	return "TikTok Shop shipment recipient is unavailable"
+}
+
+func (e *ShipmentRecipientUnavailableError) Unwrap() error {
+	return ErrInvalidOrderResponse
+}
+
 type OrderStatus string
 
 const (
@@ -347,7 +374,14 @@ func (c *OrderClient) GetShipmentRecipient(ctx context.Context, accessToken, sho
 		return nil, requestID, err
 	}
 	if len(result.Orders) != 1 || strings.TrimSpace(result.Orders[0].ID) != orderID {
-		return nil, requestID, ErrInvalidOrderResponse
+		return nil, requestID, &ShipmentRecipientUnavailableError{
+			UpstreamRequestID: strings.TrimSpace(requestID),
+			OrderCount:        len(result.Orders),
+			OrderIDMatched:    len(result.Orders) == 1 && strings.TrimSpace(result.Orders[0].ID) == orderID,
+			Name:              RecipientFieldMissing,
+			Address:           RecipientFieldMissing,
+			Telephone:         RecipientFieldMissing,
+		}
 	}
 	recipient := &ShipmentRecipient{
 		OrderID: orderID,
@@ -359,9 +393,27 @@ func (c *OrderClient) GetShipmentRecipient(ctx context.Context, accessToken, sho
 		)),
 	}
 	if !validShipmentRecipient(recipient) {
-		return nil, requestID, ErrInvalidOrderResponse
+		return nil, requestID, &ShipmentRecipientUnavailableError{
+			UpstreamRequestID: strings.TrimSpace(requestID),
+			OrderCount:        1,
+			OrderIDMatched:    true,
+			Name:              recipientFieldState(recipient.Name),
+			Address:           recipientFieldState(recipient.Address),
+			Telephone:         recipientFieldState(recipient.Telephone),
+		}
 	}
 	return recipient, requestID, nil
+}
+
+func recipientFieldState(value string) RecipientFieldState {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return RecipientFieldMissing
+	}
+	if strings.ContainsAny(value, "*•") {
+		return RecipientFieldMasked
+	}
+	return RecipientFieldPresent
 }
 
 func firstNonEmptyOrderValue(values ...string) string {
@@ -374,12 +426,11 @@ func firstNonEmptyOrderValue(values ...string) string {
 }
 
 func validShipmentRecipient(recipient *ShipmentRecipient) bool {
-	if recipient == nil || strings.TrimSpace(recipient.OrderID) == "" || strings.TrimSpace(recipient.Name) == "" ||
-		strings.TrimSpace(recipient.Address) == "" || strings.TrimSpace(recipient.Telephone) == "" {
+	if recipient == nil || strings.TrimSpace(recipient.OrderID) == "" {
 		return false
 	}
 	for _, value := range []string{recipient.Name, recipient.Address, recipient.Telephone} {
-		if strings.ContainsAny(value, "*•") {
+		if recipientFieldState(value) != RecipientFieldPresent {
 			return false
 		}
 	}

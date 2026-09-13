@@ -343,6 +343,45 @@ func TestTikTokGatewayHandlerGetsShipmentRecipientWithoutLoggingPII(t *testing.T
 	}
 }
 
+func TestTikTokGatewayHandlerReturnsSafeShipmentRecipientDiagnostics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, observed := observer.New(zap.InfoLevel)
+	orders := &handlerOrderServiceFake{err: fmt.Errorf("get recipient: %w", &tiktokshop.ShipmentRecipientUnavailableError{
+		UpstreamRequestID: "tts-request-masked",
+		Name:              tiktokshop.RecipientFieldPresent,
+		Address:           tiktokshop.RecipientFieldMasked,
+		Telephone:         tiktokshop.RecipientFieldMissing,
+	})}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil, Config{}, zap.New(core), WithOrderGatewayService(orders))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayShipmentRecipientPath, strings.NewReader(`{"shop_id":"shop-1","order_id":"order-1"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	body := response.Body.String()
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(body, `"code":"shipment_recipient_unavailable"`) ||
+		!strings.Contains(body, `"name":"present"`) || !strings.Contains(body, `"address":"masked"`) || !strings.Contains(body, `"telephone":"missing"`) ||
+		!strings.Contains(body, `"upstream_request_id":"tts-request-masked"`) {
+		t.Fatalf("status=%d body=%s", response.Code, body)
+	}
+	joined := body
+	for _, entry := range observed.All() {
+		joined += entry.Message + fmt.Sprint(entry.ContextMap())
+	}
+	if strings.Contains(joined, "Recipient") || strings.Contains(joined, "Bangkok") || strings.Contains(joined, "0900000000") {
+		t.Fatalf("diagnostics leaked recipient PII: %s", joined)
+	}
+	entries := observed.FilterMessage("tiktok_gateway_shipment_recipient_unavailable").All()
+	if len(entries) != 1 {
+		t.Fatalf("diagnostic entries = %d", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["upstream_request_id"] != "tts-request-masked" || fields["name_state"] != "present" || fields["address_state"] != "masked" || fields["telephone_state"] != "missing" {
+		t.Fatalf("diagnostic fields = %#v", fields)
+	}
+}
+
 func TestTikTokGatewayHandlerGetsOrderPriceDetail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	orders := &handlerOrderServiceFake{priceResult: &OrderPriceDetailResult{
