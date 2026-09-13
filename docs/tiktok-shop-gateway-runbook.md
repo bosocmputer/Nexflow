@@ -311,6 +311,45 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
   `output/pdf/nexflow-tiktok-shop-app-review-prd.pdf`; credentials and App
   Secret must never be copied into documentation or git.
 
+### Product Catalog and stock workspace prepared — 2026-09-13
+
+- Product Master และหน้า SML Catalog แยก TikTok Shop API ออกจาก TikTok Excel
+  ด้วย exact scope `shop:<shop_id>` และแสดงชื่อร้านจาก connection metadata;
+  ห้ามนับ alias `default` หรือ Excel เป็น API-ready
+- Central Gateway รองรับ typed contract ตาม reference ปัจจุบัน:
+  `POST /product/202502/products/search`,
+  `GET /product/202309/products/{product_id}`,
+  `POST /product/202309/inventory/search` และ
+  `POST /product/202309/products/{product_id}/inventory/update`
+- Product Basic ใช้ scope `seller.product.basic`; Product Modify ใช้
+  `seller.product.write`. Existing seller token ต้องเชื่อมร้านใหม่และตรวจ
+  `granted_scopes` หลังเปลี่ยน API package—สถานะอนุมัติใน Partner Center อย่างเดียว
+  ยังไม่ถือว่า token พร้อม
+- tenant Product Catalog refresh อ่านทุก product page แล้วพิสูจน์ inventory ของ
+  ทุก SKU ก่อนสลับ active snapshot แบบ atomic. จำกัด 100 หน้า/10,000 สินค้า,
+  inventory query ไม่เกิน 600 SKU ต่อครั้ง และเก็บเฉพาะ bounded request ID;
+  failure หรือ partial read ต้องรักษา snapshot เดิม
+- migration 102 เพิ่ม durable catalog runs/products/SKUs/warehouse inventory;
+  migration 103 เพิ่มเมนู `tiktok_shop_stock` ให้ admin เดิม โดยไม่เปิดให้ staff
+  อัตโนมัติ
+- หน้า `/settings/tiktok-shop-stock` ใช้ IA เดียวกับ Shopee Stock แต่รอบแรกเป็น
+  `Catalog UAT · อ่านอย่างเดียว`: เลือกร้าน, refresh, ค้นหา/กรอง, ดู SKU,
+  available/committed quantity, warehouse และ audit log. ไม่มี tenant endpoint
+  สำหรับเรียก inventory update ในระยะนี้
+- gate แยกกันและค่าเริ่มต้นปิด:
+  `TIKTOK_SHOP_PRODUCT_CATALOG_ENABLED=false` และ
+  `VITE_ENABLE_TIKTOK_SHOP_STOCK=false`. ห้ามเปิด Product Modify/write controls
+  เพียงเพราะเปิดสอง gate นี้
+- ลำดับ AOY: ตรวจ Product Basic/Modify ใน Partner Center -> reauthorize AOY ->
+  ตรวจ `granted_scopes` -> deploy โดยเปิดเฉพาะ Product Catalog/backend + หน้า
+  read-only -> refresh snapshot และเทียบ Seller Center -> ตรวจ Product Master
+  ทุก SKU -> จึงพัฒนา dry-run และขออนุมัติ canary 1 SKU แยกต่างหาก
+- ก่อน canary write ต้องมี absolute target, single-warehouse evidence, fresh
+  snapshot/mapping, durable result, partial-error handling และ exact Inventory
+  Search read-back. ห้ามเปิด schedule หรือร้านอื่นจากผล UAT ของ AOY
+
+เอกสารอ้างอิง: [Products API overview](https://partner.tiktokshop.com/docv2/page/products-api-overview), [Methods and endpoints](https://partner.tiktokshop.com/docv2/page/methods-and-endpoints), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope)
+
 ## Rollback
 
 - ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่

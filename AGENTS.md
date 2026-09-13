@@ -953,6 +953,30 @@ Current AOY UAT scope:
     The AOY backup is `pre-deploy-20260913-080643.sql.gz`; Demo, Lanboon, and
     Ploy were not deployed.
 
+54. TikTok Shop Product Catalog/stock foundation is implemented locally on
+    `codex/tiktok-bill-shadow` at `ac6ed3b`, `a6d62bb`, `74aefac`, and
+    `29ea7c9`; it is not deployed or enabled on any tenant yet. Product Master
+    and SML Catalog now distinguish exact shop-scoped TikTok Shop API mappings
+    from TikTok Excel and show the connected shop name. The Central Gateway has
+    typed, signed Product Search/Detail, Inventory Search, and Inventory Update
+    contracts with separate `seller.product.basic` and `seller.product.write`
+    readiness; no tenant write route exists. Additive migrations 102–103 add an
+    atomic, PII-minimized product/SKU/warehouse inventory snapshot and the
+    admin-only `tiktok_shop_stock` menu permission. The new Shopee-aligned page
+    `/settings/tiktok-shop-stock` is Catalog UAT/read-only only and includes
+    shop/scope readiness, refresh, search/filter, warehouse quantities, mobile
+    layout, breadcrumbs, and operator audit descriptions. Both
+    `TIKTOK_SHOP_PRODUCT_CATALOG_ENABLED` and
+    `VITE_ENABLE_TIKTOK_SHOP_STOCK` default false. Full Go tests/vet, frontend
+    production build, all 78 frontend regression tests, lint with zero errors,
+    skill validation, and local desktop browser visual QA passed. Next inspect
+    Product Basic/Product Modify in Partner Center without changing scopes,
+    obtain explicit confirmation immediately before a scope change, reauthorize
+    AOY, and verify `granted_scopes`. Only then deploy AOY with Catalog read-only
+    gates, refresh/compare against Seller Center, and design dry-run. Do not
+    expose a stock-write control, run an inventory update, or enable another
+    tenant/shop before a separately confirmed one-SKU canary and exact read-back.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
@@ -1207,6 +1231,8 @@ POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm
 POST /api/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
+GET  /api/tiktok-shop-api/products
+POST /api/tiktok-shop-api/products/catalog-sync
 
 GET  /api/sml/customers | /suppliers | POST /api/sml/refresh-parties
 GET  /api/dashboard/stats | /api/logs | /api/bills/:id/timeline
