@@ -771,6 +771,29 @@ Current AOY UAT scope:
     deployed. The next safe slice is explicit TikTok API Product Master mapping
     review for this shop, followed by the same preview until all blockers clear;
     do not enable Bill/SML creation as part of that mapping change.
+47. AOY-only reviewed TikTok Product Master mapping is deployed at `946a8fd`
+    as of 2026-09-13. Admins can start from the controlled order's Bill Shadow
+    Preview, select an SML item/unit and Marketplace quantity rule, inspect the
+    existing Product Master impact, and only then confirm with the reviewed
+    mapping revision plus SHA-256 digest. The backend derives
+    `source=tiktok` and `account_key=shop:<shop_id>` from the authenticated
+    route and exact local snapshot; the request contract does not accept a
+    client-provided account scope. Product/SKU must exist in that
+    snapshot and the selected unit must be ready in the active Catalog. If the
+    selected SML item affects Shopee stock, the UI discloses that confirmation
+    will pause the affected shops until a new dry-run succeeds. Desktop and
+    390px production QA for order `586030483469993439` opened the mapping dialog
+    and nested Catalog drawer, then cancelled without selecting any SML item;
+    focus, close/reopen behavior, overflow, and console checks passed. Exact
+    scoped mapping for product `1729429119195974110` / SKU
+    `1729429118580984286` remains zero. Snapshot/webhook-job/Bill/SML-attempt/
+    in-app-notification/LINE-delivery counts remained
+    `9/5/323/27/537/252`, Product Master aliases remained 74, and recent severe
+    logs were zero. The AOY backup is
+    `pre-deploy-20260913-025422.sql.gz`; Demo, Lanboon, Ploy, and the Central
+    Gateways were not deployed. The next action requires the user to choose the
+    correct SML item/unit and review the impact; Bill/SML creation remains
+    disabled and is a separate future canary.
 
 Known deferred or incomplete validation:
 
@@ -1019,6 +1042,8 @@ POST /api/import/tiktok/preview | /confirm
 POST /api/tiktok-shop-api/orders/reconcile
 GET  /api/tiktok-shop-api/orders
 GET  /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview
+POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview
+POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
 

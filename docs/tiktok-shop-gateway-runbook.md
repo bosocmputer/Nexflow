@@ -26,6 +26,7 @@
 - public receiver, Central Gateway delivery worker และ tenant reconciliation worker ใช้ `TIKTOK_SHOP_WEBHOOK_ENABLED=false` เป็นค่าเริ่มต้นและเปิดแยกกันได้
 - Custom App ตั้ง `ORDER_STATUS_CHANGE` ต่อร้านผ่าน signed internal operation ซึ่งเรียก official `PUT /event/202309/webhooks`; Gateway บังคับ callback เป็น URL ของตัวเองและไม่รับ URL จาก tenant
 - AOY real-webhook UAT ผ่านด้วย controlled order `586030483469993439`: Seller Center เปลี่ยน `AWAITING_SHIPMENT` เป็น `AWAITING_COLLECTION`, Gateway/AOY รับและ reconcile event จริงหนึ่งครั้งโดยไม่มี Marketplace side effect
+- Bill Shadow Preview มี admin-only Product Master mapping review ที่ผูก exact `shop_id + product_id + sku_id`, ตรวจ Catalog conversion และ impact digest ก่อนยืนยัน โดยยังไม่สร้าง Bill/SML
 - หน้า `/settings/tiktok-shop` และ feature flags แยกแต่ละ tenant
 
 ยังไม่เปิดใช้งานจริง:
@@ -127,7 +128,7 @@ NX_PASS=... python3 scripts/deploy_nextstep_instances.py --target aoy --ref <rev
 
 deployment จะเพิ่ม network `nexflow-tiktok-shop-gateway_default` ให้ backend เฉพาะ tenant ที่มี `TIKTOK_SHOP_OPEN_API_ENABLED=true` และตรวจ health จากภายใน backend หลัง recreate
 
-AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `admin` หรือ `staff`) โดยทุก route เป็น read-only และยังไม่สร้าง bill:
+AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `admin` หรือ `staff`) สำหรับ read/snapshot reconciliation และยังไม่สร้าง bill:
 
 - `POST /api/tiktok-shop-api/orders/search`
 - `POST /api/tiktok-shop-api/orders/detail`
@@ -136,6 +137,13 @@ AOY UAT ใช้ authenticated tenant routes ต่อไปนี้ (role `ad
 - `POST /api/tiktok-shop-api/orders/reconcile` — explicit window สูงสุด 24 ชั่วโมง; อ่าน Order List แบบเรียง `update_time ASC` แล้ว refresh typed snapshots
 - `GET /api/tiktok-shop-api/order-sync-settings` — แสดง global worker state และ setting ของแต่ละร้าน
 - `PUT /api/tiktok-shop-api/order-sync-settings/:shop_id` — Admin เท่านั้น; ใช้ `config_version` เพื่อป้องกันการแก้ไขทับกัน
+
+Bill Shadow Product Master mapping ใช้สอง route แบบ Admin เท่านั้น:
+
+- `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview` — อ่านผลกระทบและสร้าง SHA-256 review digest โดยยังไม่เปลี่ยน mapping
+- `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm` — ยืนยัน item/unit/multiplier เดิมด้วย revision + digest; backend สร้าง scope จาก path/snapshot และไม่รับ `account_key` จาก client
+
+หาก impact ระบุว่า SML item เดียวกันเกี่ยวข้องกับ Shopee stock การยืนยันจะพัก automatic stock sync ของร้าน Shopee ที่ได้รับผลกระทบและบังคับ dry-run ใหม่ตามกลไก Product Master เดิม UI ต้องแสดงคำเตือนนี้ก่อนยืนยัน ห้ามเดา SML item/unit แทนผู้ใช้ และการยืนยัน mapping ยังไม่อนุญาตให้สร้าง Bill/SML หรือเขียน TikTok
 
 การเปิด scheduled reconciliation ต้องทำตามลำดับ: deploy โดย global flag ยังเป็น `false`, ผ่าน manual canary และตรวจ side-effect counts ก่อน, เปลี่ยน global flag ของ AOY เป็น `true`, แล้วจึงเปิดเฉพาะ Shop ID ของ AOY ผ่าน settings API ค่าแนะนำเริ่มต้นคือ interval 300 วินาทีและ overlap 900 วินาที ห้ามเปิดร้านอื่นหรือ tenant อื่นจากค่าของ AOY
 
@@ -218,6 +226,16 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - browser QA ผ่านทั้ง desktop และ 390px โดยไม่ overflow และไม่มี console warning/error; structured log บันทึก `tiktok_shop_bill_shadow_preview_blocked` โดยไม่มี buyer PII หรือ raw payload
 - side-effect counts ก่อนและหลัง preview คงเดิมที่ snapshot/webhook job/Bill/SML attempt/in-app notification/LINE delivery = `9/5/323/27/537/252`; severe-log scan เป็นศูนย์
 - ขั้นถัดไปคือทำ UI สำหรับให้ผู้ใช้ยืนยัน Product Master item/unit แบบ scoped ต่อ TikTok shop แล้วเรียก shadow preview ซ้ำจนไม่มี blocker; ขั้นนี้ยังห้ามเปิด Bill/SML creation
+
+### Product Master mapping review UAT evidence — 2026-09-13
+
+- AOY deploy commit `946a8fd`; database backup `pre-deploy-20260913-025422.sql.gz`
+- backend ตรวจ numeric route IDs, exact product/SKU ใน local snapshot, active Catalog item/unit, integer multiplier 1–1,000,000, admin role, reviewed revision และ lowercase SHA-256 impact digest แบบ fail-closed
+- client ไม่ส่ง `account_key`; backend บังคับ `source=tiktok` และ `account_key=shop:<shop_id>` จาก route ที่ authenticate แล้ว
+- browser QA เปิด `จับคู่สินค้า SML` ของ order `586030483469993439`, ตรวจ dialog และ Catalog drawer บน desktop/390px แล้วกดยกเลิกโดยไม่เลือก SML item; การปิด drawer และกลับ Bill Shadow Preview ทำงานถูกต้อง ไม่มี overflow หรือ console warning/error
+- ไม่ได้เรียก impact-preview/confirm เพราะ SML item/unit เป็น business mapping ที่ต้องให้ผู้ใช้เลือก; exact scoped mapping ของ product `1729429119195974110` / SKU `1729429118580984286` ยังคง 0
+- ก่อน/หลัง QA ค่า snapshot/webhook/Bill/SML attempt/in-app notification/LINE delivery คงที่ `9/5/323/27/537/252`, Product Master alias คงที่ 74 และ severe log เป็น 0
+- ขั้นถัดไปคือให้ผู้ใช้เลือก SML item + unit + quantity rule ที่ถูกต้อง ดู impact โดยเฉพาะ Shopee dry-run warning แล้วจึงยืนยัน จากนั้นเปิด Bill Shadow Preview ซ้ำเพื่อพิสูจน์ว่า blocker หายโดยยังไม่สร้าง Bill/SML
 
 ## Rollback
 

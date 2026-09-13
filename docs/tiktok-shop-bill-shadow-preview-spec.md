@@ -28,6 +28,30 @@ Shop resource.
 - `can_create_bill` is always `false` in this phase. A future reviewed create
   endpoint requires a separate specification and activation decision.
 
+### Reviewed Product Master mapping
+
+Admins can resolve a blocker through two explicit endpoints without enabling
+Bill creation:
+
+- `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview`
+- `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm`
+
+Both endpoints accept only the selected `product_id`, `sku_id`, SML item/unit,
+and integer Marketplace quantity multiplier. The server derives
+`source=tiktok` and `account_key=shop:<shop_id>` from the authenticated route
+and verifies that the exact product/SKU exists in the current local snapshot;
+the client cannot provide or override account scope. Staff may see the blocker
+but cannot call these admin-only mutation routes.
+
+Confirmation requires the current mapping revision and the SHA-256 impact
+digest returned by the preview call. A revision/digest mismatch returns a
+conflict and requires a fresh review. The impact response must expose affected
+open Bills/reservations and whether the selected SML item affects Shopee stock.
+If Shopee is affected, the UI warns that confirmation will pause automatic
+stock sync for those shops until a new dry-run succeeds. Mapping confirmation
+still must not create a Bill, reservation, SML attempt, notification,
+fulfillment, TikTok stock write, or order-status change.
+
 The response includes:
 
 - shop and order identity, current TikTok status, currency, and snapshot time;
@@ -104,3 +128,21 @@ Acceptance requires backend unit/handler tests, race tests for changed Go
 packages, `go vet`, frontend regression tests, lint/build, desktop and 390 px
 browser QA, production health/Gateway checks, and proof that Bill, SML attempt,
 notification, and LINE-delivery counts are unchanged after preview use.
+
+## Product Master mapping UAT — 2026-09-13
+
+- AOY deployed commit `946a8fd`; database backup
+  `pre-deploy-20260913-025422.sql.gz`.
+- Controlled order `586030483469993439` exposes the admin action
+  `จับคู่สินค้า SML`, exact product/SKU identity, and the label
+  `ผูกเฉพาะร้านนี้`.
+- Desktop and 390 px QA opened the mapping dialog and SML Catalog drawer, then
+  cancelled without selecting an SML item. Nested dialog/drawer focus, return
+  to the refreshed Bill Shadow Preview, and horizontal overflow passed; the
+  browser console had no warning or error.
+- No impact-preview or confirm request was sent because choosing the correct
+  SML item/unit is a business decision. The exact shop/product/SKU therefore
+  still has zero active scoped mappings.
+- Before and after QA, snapshot/webhook/Bill/SML-attempt/notification/LINE-
+  delivery counts remained `9/5/323/27/537/252`; total Product Master aliases
+  remained 74 and recent severe logs remained zero.
