@@ -17,8 +17,10 @@ ALTER TABLE channel_defaults
     'shopee_shipped',
     'lazada',
     'tiktok',
+    'tiktok_shop',
     'manual',
-    'shopee_settlement'
+    'shopee_settlement',
+    'line_myshop'
   ));
 
 INSERT INTO channel_defaults (

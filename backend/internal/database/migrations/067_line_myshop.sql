@@ -30,6 +30,7 @@ ALTER TABLE channel_defaults
     'shopee_shipped',
     'lazada',
     'tiktok',
+    'tiktok_shop',
     'manual',
     'shopee_settlement',
     'line_myshop'

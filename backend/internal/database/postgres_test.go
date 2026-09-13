@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -429,6 +430,51 @@ func TestMigration101AddsDedicatedTikTokShopDocumentRouteWithoutBackfill(t *test
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("migration 101 must not copy or mutate a tenant route: found %q", forbidden)
+		}
+	}
+}
+
+func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+
+	constraintPattern := regexp.MustCompile(`(?s)add constraint channel_defaults_channel_check\s+check\s*\(channel in\s*\((.*?)\)\)`)
+	channelPattern := regexp.MustCompile(`'([^']+)'`)
+	type migrationChannels struct {
+		name     string
+		channels map[string]struct{}
+	}
+	var constraints []migrationChannels
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, readErr := migrationFS.ReadFile("migrations/" + entry.Name())
+		if readErr != nil {
+			t.Fatalf("read %s: %v", entry.Name(), readErr)
+		}
+		match := constraintPattern.FindStringSubmatch(strings.ToLower(string(data)))
+		if len(match) != 2 {
+			continue
+		}
+		channels := make(map[string]struct{})
+		for _, channelMatch := range channelPattern.FindAllStringSubmatch(match[1], -1) {
+			channels[channelMatch[1]] = struct{}{}
+		}
+		constraints = append(constraints, migrationChannels{name: entry.Name(), channels: channels})
+	}
+	if len(constraints) == 0 {
+		t.Fatal("no channel_defaults_channel_check migrations found")
+	}
+
+	current := constraints[len(constraints)-1]
+	for _, migration := range constraints {
+		for channel := range current.channels {
+			if _, ok := migration.channels[channel]; !ok {
+				t.Errorf("%s cannot replay after %s because it omits current channel %q", migration.name, current.name, channel)
+			}
 		}
 	}
 }
