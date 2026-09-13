@@ -156,3 +156,53 @@ func TestGatewayClientRejectsInvalidOrderReadBeforeNetwork(t *testing.T) {
 		t.Fatalf("GetPriceDetail() error = %v", err)
 	}
 }
+
+func TestGatewayClientReadsTikTokProductsAndInventoryThroughTenantGateway(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		switch r.URL.Path {
+		case GatewayProductSearchPath:
+			_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"req-products","total_count":1,"products":[{"id":"1729429119195974110","title":"AOY Product","status":"ACTIVATE","skus":[{"id":"1729429119195974111","seller_sku":"AOY-001","inventory":[]}] }]}}`))
+		case GatewayInventorySearchPath:
+			_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"req-inventory","inventory":[{"product_id":"1729429119195974110","skus":[{"id":"1729429119195974111","seller_sku":"AOY-001","total_available_quantity":7,"total_committed_quantity":1,"warehouse_inventory":[]}] }]}}`))
+		default:
+			t.Fatalf("path=%s body=%s", r.URL.Path, body)
+		}
+	}))
+	defer server.Close()
+	client := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, Tenant: "aoy", SharedSecret: "tenant-secret", HTTPClient: server.Client()})
+	products, err := client.SearchProducts(context.Background(), GatewayProductSearchRequest{
+		ShopID: "7494619203789490654", Search: SearchProductsRequest{PageSize: 100},
+	})
+	if err != nil || products.TotalCount != 1 || products.Products[0].SKUs[0].SellerSKU != "AOY-001" {
+		t.Fatalf("SearchProducts=%+v err=%v", products, err)
+	}
+	inventory, err := client.SearchInventory(context.Background(), GatewayInventorySearchRequest{
+		ShopID: "7494619203789490654", Search: InventorySearchRequest{SKUIDs: []string{"1729429119195974111"}},
+	})
+	if err != nil || inventory.Inventory[0].SKUs[0].TotalAvailableQuantity != 7 {
+		t.Fatalf("SearchInventory=%+v err=%v", inventory, err)
+	}
+}
+
+func TestGatewayClientPreservesPerSKURejectionFromInventoryUpdate(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"req-write","errors":[{"code":12052990,"message":"Check failed","detail":{"sku_id":"1729429119195974111","extra_errors":[]}}]},"error":{"code":"inventory_item_rejected","message":"rejected","request_id":"gateway-request"}}`))
+	}))
+	defer server.Close()
+	client := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, Tenant: "aoy", SharedSecret: "tenant-secret", HTTPClient: server.Client()})
+	result, err := client.UpdateInventory(context.Background(), GatewayInventoryUpdateRequest{
+		ShopID: "7494619203789490654", ProductID: "1729429119195974110",
+		Update: UpdateInventoryRequest{SKUs: []InventorySKUUpdate{{
+			ID: "1729429119195974111",
+			Inventory: []WarehouseInventoryUpdate{{
+				WarehouseID: "7068517275539719942", Quantity: 7,
+			}},
+		}}},
+	})
+	var gatewayError *GatewayError
+	if !errors.As(err, &gatewayError) || gatewayError.Code != "inventory_item_rejected" || result == nil || len(result.Errors) != 1 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}

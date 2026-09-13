@@ -24,6 +24,10 @@ const (
 	GatewayOrderPriceDetailPath  = "/internal/v1/tiktok-shop/orders/price-detail"
 	GatewayWebhookDeliveryPath   = "/internal/v1/tiktok-shop/webhooks/order-status"
 	GatewayWebhookConfigurePath  = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
+	GatewayProductSearchPath     = "/internal/v1/tiktok-shop/products/search"
+	GatewayProductDetailPath     = "/internal/v1/tiktok-shop/products/detail"
+	GatewayInventorySearchPath   = "/internal/v1/tiktok-shop/inventory/search"
+	GatewayInventoryUpdatePath   = "/internal/v1/tiktok-shop/inventory/update"
 	maxGatewayResponseSize       = 8 << 20
 )
 
@@ -104,6 +108,27 @@ type GatewayShipmentRecipientRequest struct {
 	OrderID string `json:"order_id"`
 }
 
+type GatewayProductSearchRequest struct {
+	ShopID string                `json:"shop_id"`
+	Search SearchProductsRequest `json:"search"`
+}
+
+type GatewayProductDetailRequest struct {
+	ShopID    string `json:"shop_id"`
+	ProductID string `json:"product_id"`
+}
+
+type GatewayInventorySearchRequest struct {
+	ShopID string                 `json:"shop_id"`
+	Search InventorySearchRequest `json:"search"`
+}
+
+type GatewayInventoryUpdateRequest struct {
+	ShopID    string                 `json:"shop_id"`
+	ProductID string                 `json:"product_id"`
+	Update    UpdateInventoryRequest `json:"update"`
+}
+
 type GatewayOrderSearchResponse struct {
 	UpstreamRequestID string  `json:"upstream_request_id"`
 	NextPageToken     string  `json:"next_page_token"`
@@ -126,11 +151,34 @@ type GatewayShipmentRecipientResponse struct {
 	Recipient         *ShipmentRecipient `json:"recipient"`
 }
 
+type GatewayProductSearchResponse struct {
+	UpstreamRequestID string    `json:"upstream_request_id"`
+	NextPageToken     string    `json:"next_page_token"`
+	TotalCount        int64     `json:"total_count"`
+	Products          []Product `json:"products"`
+}
+
+type GatewayProductDetailResponse struct {
+	UpstreamRequestID string   `json:"upstream_request_id"`
+	Product           *Product `json:"product"`
+}
+
+type GatewayInventorySearchResponse struct {
+	UpstreamRequestID string                   `json:"upstream_request_id"`
+	Inventory         []ProductInventoryRecord `json:"inventory"`
+}
+
+type GatewayInventoryUpdateResponse struct {
+	UpstreamRequestID string                 `json:"upstream_request_id"`
+	Errors            []InventoryUpdateError `json:"errors"`
+}
+
 type GatewayError struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable,omitempty"`
 	RequestID string `json:"request_id,omitempty"`
+	data      json.RawMessage
 }
 
 func (e *GatewayError) Error() string {
@@ -267,6 +315,83 @@ func (c *GatewayClient) GetPriceDetail(ctx context.Context, input GatewayOrderPr
 	return &output, nil
 }
 
+func (c *GatewayClient) SearchProducts(ctx context.Context, input GatewayProductSearchRequest) (*GatewayProductSearchResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	if input.ShopID == "" || input.Search.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayProductSearchResponse
+	if err := c.call(ctx, GatewayProductSearchPath, input, &output); err != nil {
+		return nil, err
+	}
+	if validateProducts(output.Products, 100) != nil || output.TotalCount < int64(len(output.Products)) {
+		return nil, ErrInvalidProductResponse
+	}
+	if output.Products == nil {
+		output.Products = []Product{}
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) GetProduct(ctx context.Context, input GatewayProductDetailRequest) (*GatewayProductDetailResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	input.ProductID = strings.TrimSpace(input.ProductID)
+	if input.ShopID == "" || !validTikTokResourceID(input.ProductID) {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayProductDetailResponse
+	if err := c.call(ctx, GatewayProductDetailPath, input, &output); err != nil {
+		return nil, err
+	}
+	if output.Product == nil || output.Product.ID != input.ProductID || validateProducts([]Product{*output.Product}, 1) != nil {
+		return nil, ErrInvalidProductResponse
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) SearchInventory(ctx context.Context, input GatewayInventorySearchRequest) (*GatewayInventorySearchResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	if input.ShopID == "" || input.Search.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayInventorySearchResponse
+	if err := c.call(ctx, GatewayInventorySearchPath, input, &output); err != nil {
+		return nil, err
+	}
+	if validateInventorySearchResult(InventorySearchResult{Inventory: output.Inventory}, input.Search) != nil {
+		return nil, ErrInvalidProductResponse
+	}
+	if output.Inventory == nil {
+		output.Inventory = []ProductInventoryRecord{}
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) UpdateInventory(ctx context.Context, input GatewayInventoryUpdateRequest) (*GatewayInventoryUpdateResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	input.ProductID = strings.TrimSpace(input.ProductID)
+	if input.ShopID == "" || !validTikTokResourceID(input.ProductID) || input.Update.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayInventoryUpdateResponse
+	if err := c.call(ctx, GatewayInventoryUpdatePath, input, &output); err != nil {
+		var gatewayError *GatewayError
+		if errors.As(err, &gatewayError) && gatewayError.Code == "inventory_item_rejected" && len(gatewayError.data) > 0 {
+			if decodeErr := json.Unmarshal(gatewayError.data, &output); decodeErr == nil && validInventoryUpdateErrors(output.Errors) {
+				return &output, err
+			}
+		}
+		return nil, err
+	}
+	if !validInventoryUpdateErrors(output.Errors) {
+		return nil, ErrInvalidProductResponse
+	}
+	if output.Errors == nil {
+		output.Errors = []InventoryUpdateError{}
+	}
+	return &output, nil
+}
+
 func (c *GatewayClient) call(ctx context.Context, path string, input, output any) error {
 	if !c.Configured() {
 		return ErrGatewayNotConfigured
@@ -307,6 +432,7 @@ func (c *GatewayClient) call(ctx context.Context, path string, input, output any
 		return fmt.Errorf("decode TikTok Shop gateway response: %w", err)
 	}
 	if envelope.Error != nil {
+		envelope.Error.data = append(json.RawMessage(nil), envelope.Data...)
 		return envelope.Error
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {

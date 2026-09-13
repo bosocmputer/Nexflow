@@ -81,9 +81,10 @@ type RefreshedAuthorizationMetadata struct {
 }
 
 type AccessCredential struct {
-	AccessToken string
-	ShopID      string
-	ShopCipher  string
+	AccessToken   string
+	ShopID        string
+	ShopCipher    string
+	GrantedScopes []string
 }
 
 func NewTokenService(config TokenServiceConfig, store TokenStore, cipher *TokenCipher, refresher TokenRefresher) (*TokenService, error) {
@@ -181,7 +182,10 @@ func (s *TokenService) AccessCredential(ctx context.Context, tenantSlug, shopID 
 	if err := s.store.RotateAuthorizationTokens(ctx, lockedGroup.TenantID, lockedGroup.OpenID, rotations, metadata); err != nil {
 		return nil, fmt.Errorf("store refreshed TikTok Shop seller token: %w", err)
 	}
-	return &AccessCredential{AccessToken: tokens.AccessToken, ShopID: lockedConnection.ShopID, ShopCipher: lockedConnection.ShopCipher}, nil
+	return &AccessCredential{
+		AccessToken: tokens.AccessToken, ShopID: lockedConnection.ShopID, ShopCipher: lockedConnection.ShopCipher,
+		GrantedScopes: append([]string(nil), tokens.GrantedScopes...),
+	}, nil
 }
 
 func (s *TokenService) loadGroup(ctx context.Context, tenantSlug, shopID string) (*AuthorizationTokenGroup, AuthorizationTokenConnection, error) {
@@ -205,7 +209,10 @@ func (s *TokenService) decryptAccess(group *AuthorizationTokenGroup, connection 
 	if err != nil {
 		return nil, ErrInvalidTokenCredential
 	}
-	return &AccessCredential{AccessToken: accessToken, ShopID: connection.ShopID, ShopCipher: connection.ShopCipher}, nil
+	return &AccessCredential{
+		AccessToken: accessToken, ShopID: connection.ShopID, ShopCipher: connection.ShopCipher,
+		GrantedScopes: append([]string(nil), group.GrantedScopes...),
+	}, nil
 }
 
 func validateAuthorizationTokenGroup(group *AuthorizationTokenGroup, keyVersion int) error {

@@ -49,6 +49,13 @@ type OrderGatewayService interface {
 	GetPriceDetail(context.Context, string, string, string) (*OrderPriceDetailResult, error)
 }
 
+type ProductGatewayService interface {
+	SearchProducts(context.Context, string, string, tiktokshop.SearchProductsRequest) (*ProductSearchResult, error)
+	GetProduct(context.Context, string, string, string) (*ProductDetailResult, error)
+	SearchInventory(context.Context, string, string, tiktokshop.InventorySearchRequest) (*InventorySearchResult, error)
+	UpdateInventory(context.Context, string, string, string, tiktokshop.UpdateInventoryRequest) (*InventoryUpdateResult, error)
+}
+
 type WebhookGatewayConfigService interface {
 	ConfigureOrderStatus(context.Context, string, string, string) (*WebhookConfigResult, error)
 }
@@ -58,6 +65,12 @@ type HandlerOption func(*Handler)
 func WithOrderGatewayService(service OrderGatewayService) HandlerOption {
 	return func(handler *Handler) {
 		handler.orders = service
+	}
+}
+
+func WithProductGatewayService(service ProductGatewayService) HandlerOption {
+	return func(handler *Handler) {
+		handler.products = service
 	}
 }
 
@@ -76,6 +89,7 @@ func WithWebhookConfigService(service WebhookGatewayConfigService) HandlerOption
 type Handler struct {
 	service       OAuthGatewayService
 	orders        OrderGatewayService
+	products      ProductGatewayService
 	webhooks      WebhookReceiver
 	webhookConfig WebhookGatewayConfigService
 	verifier      InternalRequestVerifier
@@ -113,6 +127,27 @@ type webhookConfigRequest struct {
 	ShopID string `json:"shop_id"`
 }
 
+type productSearchRequest struct {
+	ShopID string                           `json:"shop_id"`
+	Search tiktokshop.SearchProductsRequest `json:"search"`
+}
+
+type productDetailRequest struct {
+	ShopID    string `json:"shop_id"`
+	ProductID string `json:"product_id"`
+}
+
+type inventorySearchRequest struct {
+	ShopID string                            `json:"shop_id"`
+	Search tiktokshop.InventorySearchRequest `json:"search"`
+}
+
+type inventoryUpdateRequest struct {
+	ShopID    string                            `json:"shop_id"`
+	ProductID string                            `json:"product_id"`
+	Update    tiktokshop.UpdateInventoryRequest `json:"update"`
+}
+
 func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, audit APILogRecorder, config Config, logger *zap.Logger, options ...HandlerOption) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -137,6 +172,150 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(tiktokshop.GatewayShipmentRecipientPath, h.GetShipmentRecipient)
 	router.POST(tiktokshop.GatewayOrderPriceDetailPath, h.GetOrderPriceDetail)
 	router.PUT(tiktokshop.GatewayWebhookConfigurePath, h.ConfigureOrderStatusWebhook)
+	router.POST(tiktokshop.GatewayProductSearchPath, h.SearchProducts)
+	router.POST(tiktokshop.GatewayProductDetailPath, h.GetProduct)
+	router.POST(tiktokshop.GatewayInventorySearchPath, h.SearchInventory)
+	router.POST(tiktokshop.GatewayInventoryUpdatePath, h.UpdateInventory)
+}
+
+func (h *Handler) SearchProducts(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "product_search", statusCode, startedAt, errorCode, requestID) }()
+	if h.products == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input productSearchRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || input.Search.Validate() != nil {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_product_request"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.products.SearchProducts(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
+	if err != nil {
+		statusCode, errorCode = productErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), productErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *Handler) GetProduct(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "product_detail", statusCode, startedAt, errorCode, requestID) }()
+	if h.products == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input productDetailRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || !validGatewayProductID(input.ProductID) {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_product_request"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.products.GetProduct(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.ProductID))
+	if err != nil {
+		statusCode, errorCode = productErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), productErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil || result.Product == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *Handler) SearchInventory(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "inventory_search", statusCode, startedAt, errorCode, requestID) }()
+	if h.products == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input inventorySearchRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || input.Search.Validate() != nil {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_product_request"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.products.SearchInventory(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
+	if err != nil {
+		statusCode, errorCode = productErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), productErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *Handler) UpdateInventory(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "inventory_update", statusCode, startedAt, errorCode, requestID) }()
+	if h.products == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input inventoryUpdateRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || !validGatewayProductID(input.ProductID) || input.Update.Validate() != nil {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_product_request"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.products.UpdateInventory(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.ProductID), input.Update)
+	if err != nil {
+		statusCode, errorCode = productErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), productErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, productErrorMessage(errorCode), true, requestID)
+		return
+	}
+	if len(result.Errors) > 0 {
+		statusCode, errorCode = http.StatusUnprocessableEntity, "inventory_item_rejected"
+		c.JSON(statusCode, gin.H{
+			"data":  result,
+			"error": gin.H{"code": errorCode, "message": productErrorMessage(errorCode), "retryable": false, "request_id": requestID},
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 func (h *Handler) GetShipmentRecipient(c *gin.Context) {
@@ -595,6 +774,68 @@ func orderErrorMessage(code string) string {
 
 func orderErrorRetryable(code string) bool {
 	return code == "gateway_not_ready" || code == "tiktok_api_error" || code == "internal_error"
+}
+
+func productErrorMeta(err error) (int, string) {
+	var apiError *tiktokshop.APIError
+	switch {
+	case errors.Is(err, tiktokshop.ErrInvalidProductInput):
+		return http.StatusBadRequest, "invalid_product_request"
+	case errors.Is(err, ErrProductBasicScopeUnavailable):
+		return http.StatusForbidden, "product_scope_required"
+	case errors.Is(err, ErrProductWriteScopeUnavailable):
+		return http.StatusForbidden, "product_write_scope_required"
+	case errors.Is(err, sql.ErrNoRows):
+		return http.StatusNotFound, "connection_not_found"
+	case errors.Is(err, ErrRefreshTokenExpired), errors.Is(err, ErrInvalidTokenCredential), errors.Is(err, ErrInvalidTokenRefresh):
+		return http.StatusConflict, "reconnect_required"
+	case errors.Is(err, ErrTokenServiceNotConfigured), errors.Is(err, ErrProductServiceNotConfigured):
+		return http.StatusServiceUnavailable, "gateway_not_ready"
+	case errors.As(err, &apiError), errors.Is(err, tiktokshop.ErrInvalidProductResponse):
+		return http.StatusBadGateway, "tiktok_api_error"
+	default:
+		return http.StatusInternalServerError, "internal_error"
+	}
+}
+
+func productErrorMessage(code string) string {
+	switch code {
+	case "invalid_product_request":
+		return "ข้อมูลคำขอสินค้า TikTok Shop ไม่ถูกต้อง"
+	case "product_scope_required":
+		return "แอปหรือร้านยังไม่ได้อนุญาตสิทธิ์ Product Basic"
+	case "product_write_scope_required":
+		return "แอปหรือร้านยังไม่ได้อนุญาตสิทธิ์ Product Modify"
+	case "connection_not_found":
+		return "ไม่พบร้าน TikTok Shop ที่เชื่อมต่อกับ Nexflow นี้"
+	case "reconnect_required":
+		return "สิทธิ์เชื่อมต่อ TikTok Shop หมดอายุหรือยังไม่มี Product scope กรุณาเชื่อมต่อร้านใหม่"
+	case "inventory_item_rejected":
+		return "TikTok Shop ปฏิเสธการอัปเดตสต๊อกอย่างน้อยหนึ่ง SKU"
+	case "gateway_not_ready":
+		return "TikTok Shop Product Gateway ยังไม่พร้อมใช้งาน"
+	case "tiktok_api_error":
+		return "TikTok Shop ไม่สามารถส่งข้อมูลสินค้าหรือสต๊อกได้ในขณะนี้"
+	default:
+		return "Gateway ประมวลผลข้อมูลสินค้าไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
+	}
+}
+
+func productErrorRetryable(code string) bool {
+	return code == "gateway_not_ready" || code == "tiktok_api_error" || code == "internal_error"
+}
+
+func validGatewayProductID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func validOrderIDCount(orderIDs []string) bool {
