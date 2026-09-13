@@ -933,6 +933,26 @@ Current AOY UAT scope:
     `pre-deploy-20260913-070039.sql.gz`; Gateway/AOY health and edge/network
     checks passed.
 
+53. AOY-only TikTok Operations reviewed-Bill continuity is deployed at
+    `086c974`. The bounded local order-list API now adds only the exact active
+    reviewed Bill for the same TikTok shop/order/flow and returns its Bill
+    status, SML document number, and allowlisted Nexflow document path; it does
+    not expose snapshot internals or buyer PII. Order `586030483469993439` now
+    shows `สร้างเอกสารแล้ว` / `ยังไม่ส่ง SML` in the
+    `เอกสาร Nexflow / SML` column, opens Bill
+    `03ee1216-acb4-4a88-842c-7edc6eb44292` directly, and retains the separate
+    source-preview action. Production browser QA passed on desktop and 390px
+    mobile with no page overflow or console warning/error. The linked Bill
+    still shows the TikTok Shop API channel, shop/order/status, exact reviewed
+    product mapping, disabled SML action, pre-send SML summary, and three
+    existing PII-redacted audit events. `/logs` still filters TikTok Shop API
+    separately and displayed both recipient-preflight warnings without buyer
+    data. `TIKTOK_SHOP_REVIEWED_BILL_ENABLED=false` and
+    `TIKTOK_SHOP_SML_SEND_ENABLED=false` remain unchanged; no SML, LINE, stock,
+    fulfillment, cancellation, return, migration, or TikTok Gateway write ran.
+    The AOY backup is `pre-deploy-20260913-080643.sql.gz`; Demo, Lanboon, and
+    Ploy were not deployed.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
