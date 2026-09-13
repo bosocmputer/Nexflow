@@ -138,20 +138,23 @@ func TestTikTokBillShadowStoreLoadsOnlyShopScopedAndLegacyIdentityCandidates(t *
 		WithArgs(source.ShopID, source.Order.ID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"shop_id", "shop_name", "order_status", "currency", "payment_total", "product_subtotal",
-			"shipping_fee", "insurance_fee", "safe_order", "safe_price", "normalized_items", "last_synced_at",
+			"shipping_fee", "insurance_fee", "safe_order", "safe_price", "normalized_items", "last_synced_at", "source_hash",
 		}).AddRow(
 			source.ShopID, source.ShopName, string(source.StoredOrderStatus), source.StoredCurrency,
 			source.StoredPaymentTotal, source.StoredProductSubtotal, source.StoredShippingFee, source.StoredItemInsuranceFee,
-			safeOrder, safePrice, normalized, source.LastSyncedAt,
+			safeOrder, safePrice, normalized, source.LastSyncedAt, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		))
 	mock.ExpectQuery("FROM jsonb_to_recordset").
 		WithArgs(normalized, "shop:"+source.ShopID).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"external_item_id", "external_variant_id", "account_key", "item_code", "unit_code", "is_active",
-			"scope_confirmed", "sales_enabled", "conversion_status", "quantity_multiplier", "stand", "divide", "catalog_ready",
+			"id", "external_item_id", "external_variant_id", "account_key", "item_code", "unit_code", "is_active",
+			"scope_confirmed", "sales_enabled", "conversion_status", "quantity_multiplier", "stand", "divide",
+			"mapping_revision", "generation", "set_hash", "catalog_ready",
 		}).AddRow(
-			source.Items[0].ProductID, source.Items[0].SKUID, "shop:"+source.ShopID, "AH-0006", "แท่ง", true,
-			true, true, "ready", int64(1), "1", "1", true,
+			"22222222-2222-4222-8222-222222222222", source.Items[0].ProductID, source.Items[0].SKUID,
+			"shop:"+source.ShopID, "AH-0006", "แท่ง", true,
+			true, true, "ready", int64(1), "1", "1", int64(1),
+			"33333333-3333-4333-8333-333333333333", "", true,
 		))
 	mock.ExpectQuery("FROM channel_defaults").WillReturnRows(sqlmock.NewRows([]string{
 		"endpoint", "doc_format_code", "shipping_item_enabled", "shipping_item_code", "shipping_item_unit_code",
@@ -174,6 +177,7 @@ func controlledTikTokBillShadowSource() *TikTokBillShadowSource {
 	syncedAt := time.Date(2026, 9, 13, 1, 55, 52, 0, time.UTC)
 	return &TikTokBillShadowSource{
 		ShopID: "7494619203789490654", ShopName: "henna_milkford",
+		SourceHash:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		StoredOrderStatus: OrderStatusAwaitingCollection, StoredCurrency: "THB",
 		StoredPaymentTotal: "307.49", StoredProductSubtotal: "300",
 		StoredShippingFee: "0", StoredItemInsuranceFee: "7.49", LastSyncedAt: syncedAt,

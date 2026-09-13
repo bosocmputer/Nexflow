@@ -2,7 +2,9 @@ package tiktokshop
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +39,7 @@ const (
 	TikTokBillShadowBlockerRouteNotReady     = "sale_route_not_ready"
 	TikTokBillShadowBlockerShippingNotReady  = "shipping_item_not_ready"
 	TikTokBillShadowBlockerExistingBill      = "existing_bill"
+	TikTokBillShadowBlockerSourceInvalid     = "snapshot_evidence_invalid"
 )
 
 type TikTokBillShadowBlocker struct {
@@ -57,19 +60,28 @@ type TikTokBillShadowAmounts struct {
 }
 
 type TikTokBillShadowRoute struct {
-	Ready         bool   `json:"ready"`
-	SemanticRoute string `json:"semantic_route,omitempty"`
-	DocFormatCode string `json:"doc_format_code,omitempty"`
-	ShippingReady bool   `json:"shipping_ready"`
+	Ready                bool   `json:"ready"`
+	SemanticRoute        string `json:"semantic_route,omitempty"`
+	DocFormatCode        string `json:"doc_format_code,omitempty"`
+	ShippingReady        bool   `json:"shipping_ready"`
+	ShippingItemCode     string `json:"-"`
+	ShippingItemUnitCode string `json:"-"`
 }
 
 type TikTokBillShadowItemMapping struct {
-	Status              string `json:"status"`
-	ItemCode            string `json:"item_code,omitempty"`
-	UnitCode            string `json:"unit_code,omitempty"`
-	MarketplaceQuantity string `json:"marketplace_quantity"`
-	SMLQuantity         string `json:"sml_quantity,omitempty"`
-	BaseQuantity        string `json:"base_quantity,omitempty"`
+	Status                string `json:"status"`
+	ItemCode              string `json:"item_code,omitempty"`
+	UnitCode              string `json:"unit_code,omitempty"`
+	MarketplaceQuantity   string `json:"marketplace_quantity"`
+	SMLQuantity           string `json:"sml_quantity,omitempty"`
+	BaseQuantity          string `json:"base_quantity,omitempty"`
+	AliasID               string `json:"-"`
+	MappingRevision       int64  `json:"-"`
+	QuantityMultiplier    int64  `json:"-"`
+	UnitStandValue        string `json:"-"`
+	UnitDivideValue       string `json:"-"`
+	UnitCatalogGeneration string `json:"-"`
+	SetDefinitionHash     string `json:"-"`
 }
 
 type TikTokBillShadowItem struct {
@@ -89,6 +101,8 @@ type TikTokBillShadowExistingBill struct {
 	Status           string `json:"status"`
 	SMLDocNo         string `json:"sml_doc_no,omitempty"`
 	SourceAccountKey string `json:"source_account_key"`
+	SourceFlow       string `json:"-"`
+	DocumentRoute    string `json:"-"`
 }
 
 type TikTokBillShadowPreview struct {
@@ -106,24 +120,30 @@ type TikTokBillShadowPreview struct {
 	Items                []TikTokBillShadowItem        `json:"items"`
 	Blockers             []TikTokBillShadowBlocker     `json:"blockers"`
 	ExistingBill         *TikTokBillShadowExistingBill `json:"existing_bill,omitempty"`
+	ReviewDigest         string                        `json:"review_digest"`
+	SourceHash           string                        `json:"-"`
 }
 
 // TikTokBillShadowMappingSource is internal read-only evidence. The public
 // preview deliberately omits alias IDs and catalog internals.
 type TikTokBillShadowMappingSource struct {
-	ProductID          string
-	SKUID              string
-	AccountKey         string
-	ItemCode           string
-	UnitCode           string
-	IsActive           bool
-	ScopeConfirmed     bool
-	SalesEnabled       bool
-	ConversionStatus   string
-	QuantityMultiplier int64
-	UnitStandValue     string
-	UnitDivideValue    string
-	CatalogReady       bool
+	AliasID               string
+	ProductID             string
+	SKUID                 string
+	AccountKey            string
+	ItemCode              string
+	UnitCode              string
+	IsActive              bool
+	ScopeConfirmed        bool
+	SalesEnabled          bool
+	ConversionStatus      string
+	QuantityMultiplier    int64
+	UnitStandValue        string
+	UnitDivideValue       string
+	CatalogReady          bool
+	MappingRevision       int64
+	UnitCatalogGeneration string
+	SetDefinitionHash     string
 }
 
 type TikTokBillShadowRouteSource struct {
@@ -145,6 +165,7 @@ type TikTokBillShadowSource struct {
 	StoredShippingFee      string
 	StoredItemInsuranceFee string
 	LastSyncedAt           time.Time
+	SourceHash             string
 	Order                  Order
 	Price                  PriceDetail
 	Items                  []NormalizedTikTokOrderItem
@@ -190,6 +211,12 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 		OrderID: source.Order.ID, OrderStatus: source.StoredOrderStatus,
 		Currency: strings.ToUpper(strings.TrimSpace(source.StoredCurrency)), LastSyncedAt: source.LastSyncedAt.UTC(),
 		Items: []TikTokBillShadowItem{}, Blockers: []TikTokBillShadowBlocker{}, ExistingBill: source.ExistingBill,
+	}
+	if !validTikTokBillShadowImpactDigest(source.SourceHash) {
+		appendTikTokBillShadowBlocker(&preview.Blockers, TikTokBillShadowBlocker{
+			Code:    TikTokBillShadowBlockerSourceInvalid,
+			Message: "หลักฐาน Snapshot ไม่สมบูรณ์ กรุณาซิงก์ออเดอร์ใหม่ก่อนสร้าง Bill",
+		})
 	}
 	if !tikTokBillLifecycleReady(source.StoredOrderStatus) {
 		appendTikTokBillShadowBlocker(&preview.Blockers, TikTokBillShadowBlocker{
@@ -311,6 +338,13 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 		default:
 			itemPreview.Mapping.ItemCode = scoped.ItemCode
 			itemPreview.Mapping.UnitCode = scoped.UnitCode
+			itemPreview.Mapping.AliasID = scoped.AliasID
+			itemPreview.Mapping.MappingRevision = scoped.MappingRevision
+			itemPreview.Mapping.QuantityMultiplier = scoped.QuantityMultiplier
+			itemPreview.Mapping.UnitStandValue = scoped.UnitStandValue
+			itemPreview.Mapping.UnitDivideValue = scoped.UnitDivideValue
+			itemPreview.Mapping.UnitCatalogGeneration = scoped.UnitCatalogGeneration
+			itemPreview.Mapping.SetDefinitionHash = scoped.SetDefinitionHash
 			if !scoped.IsActive || !scoped.ScopeConfirmed || !scoped.SalesEnabled || scoped.ConversionStatus != "ready" || !scoped.CatalogReady {
 				itemPreview.Mapping.Status = TikTokBillShadowMappingNotReady
 				appendTikTokBillShadowBlocker(&preview.Blockers, TikTokBillShadowBlocker{
@@ -346,7 +380,9 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 	preview.Route = TikTokBillShadowRoute{
 		Ready:         source.Route.Configured && strings.TrimSpace(source.Route.DocFormatCode) != "" && semanticRoute != "",
 		SemanticRoute: semanticRoute, DocFormatCode: strings.TrimSpace(source.Route.DocFormatCode),
-		ShippingReady: storedShipping.Sign() == 0 || (source.Route.ShippingItemEnabled && strings.TrimSpace(source.Route.ShippingItemCode) != "" && strings.TrimSpace(source.Route.ShippingItemUnitCode) != ""),
+		ShippingReady:        storedShipping.Sign() == 0 || (source.Route.ShippingItemEnabled && strings.TrimSpace(source.Route.ShippingItemCode) != "" && strings.TrimSpace(source.Route.ShippingItemUnitCode) != ""),
+		ShippingItemCode:     strings.TrimSpace(source.Route.ShippingItemCode),
+		ShippingItemUnitCode: strings.TrimSpace(source.Route.ShippingItemUnitCode),
 	}
 	if !preview.Route.Ready {
 		appendTikTokBillShadowBlocker(&preview.Blockers, TikTokBillShadowBlocker{
@@ -373,7 +409,94 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 		return preview.Blockers[i].Code < preview.Blockers[j].Code
 	})
 	preview.ReadyForReviewedBill = len(preview.Blockers) == 0
+	preview.SourceHash = strings.TrimSpace(source.SourceHash)
+	preview.ReviewDigest = tikTokBillShadowReviewDigest(preview)
 	return preview, nil
+}
+
+func tikTokBillShadowReviewDigest(preview *TikTokBillShadowPreview) string {
+	if preview == nil {
+		return ""
+	}
+	type digestMapping struct {
+		Status                string `json:"status"`
+		AliasID               string `json:"alias_id"`
+		ItemCode              string `json:"item_code"`
+		UnitCode              string `json:"unit_code"`
+		MarketplaceQuantity   string `json:"marketplace_quantity"`
+		SMLQuantity           string `json:"sml_quantity"`
+		BaseQuantity          string `json:"base_quantity"`
+		MappingRevision       int64  `json:"mapping_revision"`
+		QuantityMultiplier    int64  `json:"quantity_multiplier"`
+		UnitStandValue        string `json:"unit_stand_value"`
+		UnitDivideValue       string `json:"unit_divide_value"`
+		UnitCatalogGeneration string `json:"unit_catalog_generation"`
+		SetDefinitionHash     string `json:"set_definition_hash"`
+	}
+	type digestItem struct {
+		ProductID     string        `json:"product_id"`
+		SKUID         string        `json:"sku_id"`
+		SellerSKU     string        `json:"seller_sku"`
+		ProductName   string        `json:"product_name"`
+		VariantName   string        `json:"variant_name"`
+		Quantity      int           `json:"quantity"`
+		UnitSalePrice string        `json:"unit_sale_price"`
+		LineTotal     string        `json:"line_total"`
+		Mapping       digestMapping `json:"mapping"`
+	}
+	items := make([]digestItem, 0, len(preview.Items))
+	for _, item := range preview.Items {
+		mapping := item.Mapping
+		items = append(items, digestItem{
+			ProductID: item.ProductID, SKUID: item.SKUID, SellerSKU: item.SellerSKU,
+			ProductName: item.ProductName, VariantName: item.VariantName, Quantity: item.Quantity,
+			UnitSalePrice: item.UnitSalePrice, LineTotal: item.LineTotal,
+			Mapping: digestMapping{
+				Status: mapping.Status, AliasID: mapping.AliasID, ItemCode: mapping.ItemCode, UnitCode: mapping.UnitCode,
+				MarketplaceQuantity: mapping.MarketplaceQuantity, SMLQuantity: mapping.SMLQuantity,
+				BaseQuantity: mapping.BaseQuantity, MappingRevision: mapping.MappingRevision,
+				QuantityMultiplier: mapping.QuantityMultiplier, UnitStandValue: mapping.UnitStandValue,
+				UnitDivideValue: mapping.UnitDivideValue, UnitCatalogGeneration: mapping.UnitCatalogGeneration,
+				SetDefinitionHash: mapping.SetDefinitionHash,
+			},
+		})
+	}
+	payload := struct {
+		Version      string                  `json:"version"`
+		ShopID       string                  `json:"shop_id"`
+		OrderID      string                  `json:"order_id"`
+		OrderStatus  OrderStatus             `json:"order_status"`
+		Currency     string                  `json:"currency"`
+		LastSyncedAt string                  `json:"last_synced_at"`
+		SourceHash   string                  `json:"source_hash"`
+		Amounts      TikTokBillShadowAmounts `json:"amounts"`
+		Route        struct {
+			Ready                bool   `json:"ready"`
+			SemanticRoute        string `json:"semantic_route"`
+			DocFormatCode        string `json:"doc_format_code"`
+			ShippingReady        bool   `json:"shipping_ready"`
+			ShippingItemCode     string `json:"shipping_item_code"`
+			ShippingItemUnitCode string `json:"shipping_item_unit_code"`
+		} `json:"route"`
+		Items []digestItem `json:"items"`
+	}{
+		Version: "tiktok_reviewed_bill_v1", ShopID: preview.ShopID, OrderID: preview.OrderID,
+		OrderStatus: preview.OrderStatus, Currency: preview.Currency,
+		LastSyncedAt: preview.LastSyncedAt.UTC().Format(time.RFC3339Nano), SourceHash: preview.SourceHash,
+		Amounts: preview.Amounts, Items: items,
+	}
+	payload.Route.Ready = preview.Route.Ready
+	payload.Route.SemanticRoute = preview.Route.SemanticRoute
+	payload.Route.DocFormatCode = preview.Route.DocFormatCode
+	payload.Route.ShippingReady = preview.Route.ShippingReady
+	payload.Route.ShippingItemCode = preview.Route.ShippingItemCode
+	payload.Route.ShippingItemUnitCode = preview.Route.ShippingItemUnitCode
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
 }
 
 func tikTokBillLifecycleReady(status OrderStatus) bool {
@@ -445,14 +568,14 @@ func (s *TikTokBillShadowStore) Load(ctx context.Context, shopID, orderID string
 		`SELECT s.shop_id, c.shop_name, s.order_status, s.currency,
 		        s.payment_total_amount::text, s.product_subtotal_amount::text,
 		        s.shipping_fee_amount::text, s.item_insurance_fee_amount::text,
-		        s.safe_order, s.safe_price_detail, s.normalized_items, s.last_synced_at
+		        s.safe_order, s.safe_price_detail, s.normalized_items, s.last_synced_at, s.source_hash
 		   FROM tiktok_shop_order_snapshots s
 		   JOIN tiktok_shop_connections c ON c.shop_id=s.shop_id AND c.disabled_at IS NULL
 		  WHERE s.shop_id=$1 AND s.order_id=$2`, shopID, orderID,
 	).Scan(
 		&source.ShopID, &source.ShopName, &source.StoredOrderStatus, &source.StoredCurrency,
 		&source.StoredPaymentTotal, &source.StoredProductSubtotal, &source.StoredShippingFee, &source.StoredItemInsuranceFee,
-		&safeOrder, &safePrice, &normalizedItems, &source.LastSyncedAt,
+		&safeOrder, &safePrice, &normalizedItems, &source.LastSyncedAt, &source.SourceHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrTikTokBillShadowNotFound
@@ -466,10 +589,14 @@ func (s *TikTokBillShadowStore) Load(ctx context.Context, shopID, orderID string
 	}
 
 	rows, err := s.database.QueryContext(ctx,
-		`SELECT a.external_item_id, a.external_variant_id, a.account_key,
+		`SELECT a.id::text, a.external_item_id, a.external_variant_id, a.account_key,
 		        a.item_code, a.unit_code, a.is_active, a.scope_confirmed,
 		        a.sales_enabled, a.conversion_status, a.quantity_multiplier,
 		        COALESCE(a.unit_stand_value::text,''), COALESCE(a.unit_divide_value::text,''),
+		        a.mapping_revision, COALESCE(a.unit_catalog_generation::text,''),
+		        COALESCE((SELECT catalog.set_definition_hash FROM sml_catalog catalog
+		                   WHERE catalog.catalog_generation_id=a.unit_catalog_generation
+		                     AND catalog.item_code=a.item_code AND catalog.is_active=true LIMIT 1),''),
 		        COALESCE(g.status='active'
 		          AND EXISTS (
 		            SELECT 1 FROM sml_catalog_units u
@@ -498,9 +625,10 @@ func (s *TikTokBillShadowStore) Load(ctx context.Context, shopID, orderID string
 	for rows.Next() {
 		var mapping TikTokBillShadowMappingSource
 		if err := rows.Scan(
-			&mapping.ProductID, &mapping.SKUID, &mapping.AccountKey, &mapping.ItemCode, &mapping.UnitCode,
+			&mapping.AliasID, &mapping.ProductID, &mapping.SKUID, &mapping.AccountKey, &mapping.ItemCode, &mapping.UnitCode,
 			&mapping.IsActive, &mapping.ScopeConfirmed, &mapping.SalesEnabled, &mapping.ConversionStatus,
-			&mapping.QuantityMultiplier, &mapping.UnitStandValue, &mapping.UnitDivideValue, &mapping.CatalogReady,
+			&mapping.QuantityMultiplier, &mapping.UnitStandValue, &mapping.UnitDivideValue,
+			&mapping.MappingRevision, &mapping.UnitCatalogGeneration, &mapping.SetDefinitionHash, &mapping.CatalogReady,
 		); err != nil {
 			return nil, fmt.Errorf("scan TikTok Shop bill shadow mapping: %w", err)
 		}
@@ -527,12 +655,13 @@ func (s *TikTokBillShadowStore) Load(ctx context.Context, shopID, orderID string
 
 	var existing TikTokBillShadowExistingBill
 	err = s.database.QueryRowContext(ctx,
-		`SELECT id::text, status, COALESCE(sml_doc_no,''), source_account_key
+		`SELECT id::text, status, COALESCE(sml_doc_no,''), source_account_key,
+		        COALESCE(raw_data->>'flow',''), document_route
 		   FROM bills
 		  WHERE source='tiktok' AND sml_order_id=$1 AND archived_at IS NULL
 		  ORDER BY created_at DESC, id DESC
 		  LIMIT 1`, orderID,
-	).Scan(&existing.ID, &existing.Status, &existing.SMLDocNo, &existing.SourceAccountKey)
+	).Scan(&existing.ID, &existing.Status, &existing.SMLDocNo, &existing.SourceAccountKey, &existing.SourceFlow, &existing.DocumentRoute)
 	if err == nil {
 		source.ExistingBill = &existing
 	} else if !errors.Is(err, sql.ErrNoRows) {

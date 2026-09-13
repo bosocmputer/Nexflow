@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/url"
@@ -57,6 +58,10 @@ type TikTokShopBillShadowMapper interface {
 	Confirm(context.Context, tiktokshop.TikTokBillShadowMappingConfirmation, string) (*repository.MarketplaceAliasCommitResult, error)
 }
 
+type TikTokShopReviewedBillCreator interface {
+	Create(context.Context, tiktokshop.TikTokReviewedBillInput) (*tiktokshop.TikTokReviewedBillResult, error)
+}
+
 type tikTokBillShadowMappingRequest struct {
 	ProductID               string `json:"product_id"`
 	SKUID                   string `json:"sku_id"`
@@ -65,6 +70,11 @@ type tikTokBillShadowMappingRequest struct {
 	QuantityMultiplier      int64  `json:"quantity_multiplier"`
 	ExpectedMappingRevision int64  `json:"expected_mapping_revision"`
 	ImpactDigest            string `json:"impact_digest"`
+}
+
+type tikTokReviewedBillRequest struct {
+	Confirm      string `json:"confirm"`
+	ReviewDigest string `json:"review_digest"`
 }
 
 type TikTokShopAPIHandler struct {
@@ -77,6 +87,7 @@ type TikTokShopAPIHandler struct {
 	orderReader  TikTokShopOrderReader
 	billShadow   TikTokShopBillShadowPreviewer
 	billMapper   TikTokShopBillShadowMapper
+	reviewedBill TikTokShopReviewedBillCreator
 	logger       *zap.Logger
 }
 
@@ -97,6 +108,13 @@ func (h *TikTokShopAPIHandler) WithBillShadowPreviewer(previewer TikTokShopBillS
 func (h *TikTokShopAPIHandler) WithBillShadowMapper(mapper TikTokShopBillShadowMapper) *TikTokShopAPIHandler {
 	if h != nil {
 		h.billMapper = mapper
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithReviewedBillCreator(creator TikTokShopReviewedBillCreator) *TikTokShopAPIHandler {
+	if h != nil {
+		h.reviewedBill = creator
 	}
 	return h
 }
@@ -432,6 +450,7 @@ func (h *TikTokShopAPIHandler) GetBillShadowPreview(c *gin.Context) {
 		}
 		return
 	}
+	preview.CanCreateBill = h.config != nil && h.config.TikTokShopReviewedBillEnabled && preview.ReadyForReviewedBill
 	readyMappings := 0
 	for _, item := range preview.Items {
 		if item.Mapping.Status == tiktokshop.TikTokBillShadowMappingReady {
@@ -448,6 +467,79 @@ func (h *TikTokShopAPIHandler) GetBillShadowPreview(c *gin.Context) {
 		zap.Int("blocker_count", len(preview.Blockers)), zap.String("trace_id", c.GetString("trace_id")),
 		zap.String("entry_point", "manual_api"))
 	c.JSON(http.StatusOK, preview)
+}
+
+func (h *TikTokShopAPIHandler) CreateReviewedBill(c *gin.Context) {
+	shopID := strings.TrimSpace(c.Param("shop_id"))
+	orderID := strings.TrimSpace(c.Param("order_id"))
+	if h == nil || h.config == nil || !h.config.TikTokShopOpenAPIEnabled || !h.config.TikTokShopReviewedBillEnabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดการสร้าง Bill TikTok Shop แบบตรวจทาน")
+		return
+	}
+	if h.reviewedBill == nil {
+		h.error(c, http.StatusServiceUnavailable, "reviewed_bill_not_configured", "ระบบสร้าง Bill TikTok Shop แบบตรวจทานยังไม่พร้อม")
+		return
+	}
+	var request tikTokReviewedBillRequest
+	if !tiktokshop.ValidTikTokShopID(shopID) || !tiktokshop.ValidTikTokShopID(orderID) ||
+		c.ShouldBindJSON(&request) != nil || request.Confirm != "CREATE_REVIEWED_BILL" || !validLowerSHA256(request.ReviewDigest) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "กรุณาตรวจข้อมูลล่าสุดและยืนยันสร้าง Bill อีกครั้ง")
+		return
+	}
+	actorID := strings.TrimSpace(c.GetString("user_id"))
+	if actorID == "" {
+		h.error(c, http.StatusUnauthorized, "session_expired", "กรุณาเข้าสู่ระบบใหม่")
+		return
+	}
+	result, err := h.reviewedBill.Create(c.Request.Context(), tiktokshop.TikTokReviewedBillInput{
+		ShopID: shopID, OrderID: orderID, ReviewDigest: strings.TrimSpace(request.ReviewDigest),
+		ActorID: actorID, TraceID: c.GetString("trace_id"),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, tiktokshop.ErrTikTokReviewedBillInvalidInput):
+			h.error(c, http.StatusBadRequest, "invalid_request", "กรุณาตรวจข้อมูลล่าสุดและยืนยันสร้าง Bill อีกครั้ง")
+		case errors.Is(err, tiktokshop.ErrTikTokBillShadowNotFound):
+			h.error(c, http.StatusNotFound, "snapshot_not_found", "ไม่พบ Snapshot ของออเดอร์ TikTok Shop นี้")
+		case errors.Is(err, tiktokshop.ErrTikTokReviewedBillNotReady):
+			h.error(c, http.StatusUnprocessableEntity, "bill_not_ready", "ข้อมูลออเดอร์หรือ Product Master ยังไม่พร้อม กรุณาตรวจตัวอย่างใหม่")
+		case errors.Is(err, tiktokshop.ErrTikTokReviewedBillReviewChanged):
+			h.error(c, http.StatusConflict, "bill_review_changed", "Snapshot, Product Master หรือเส้นทางเอกสารถูกเปลี่ยน กรุณาตรวจตัวอย่างใหม่ก่อนยืนยัน")
+		case errors.Is(err, tiktokshop.ErrTikTokReviewedBillConflict):
+			h.error(c, http.StatusConflict, "bill_conflict", "Order นี้มี Bill จากขอบเขตหรือช่องทางอื่นอยู่แล้ว กรุณาตรวจเอกสารเดิม")
+		default:
+			h.logger.Error("tiktok_shop_reviewed_bill_failed",
+				zap.String("shop_id", shopID), zap.String("order_id", orderID),
+				zap.String("actor_id", actorID), zap.String("trace_id", c.GetString("trace_id")),
+				zap.String("entry_point", "manual_api"), zap.Error(err))
+			h.error(c, http.StatusInternalServerError, "bill_create_failed", "สร้าง Bill TikTok Shop ไม่สำเร็จ ยังไม่มีการส่ง SML")
+		}
+		return
+	}
+	if result == nil || strings.TrimSpace(result.BillID) == "" {
+		h.logger.Error("tiktok_shop_reviewed_bill_response_invalid",
+			zap.String("shop_id", shopID), zap.String("order_id", orderID), zap.String("trace_id", c.GetString("trace_id")))
+		h.error(c, http.StatusInternalServerError, "bill_create_failed", "สร้าง Bill TikTok Shop ไม่สำเร็จ ยังไม่มีการส่ง SML")
+		return
+	}
+	h.logger.Info("tiktok_shop_reviewed_bill_created",
+		zap.String("shop_id", shopID), zap.String("order_id", orderID), zap.String("bill_id", result.BillID),
+		zap.String("status", result.Status), zap.Bool("reused", result.Reused), zap.String("actor_id", actorID),
+		zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "manual_api"))
+	status := http.StatusCreated
+	if result.Reused {
+		status = http.StatusOK
+	}
+	c.JSON(status, gin.H{"data": result, "sml_created": false, "notification_created": false})
+}
+
+func validLowerSHA256(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32
 }
 
 func (h *TikTokShopAPIHandler) PreviewBillShadowMapping(c *gin.Context) {

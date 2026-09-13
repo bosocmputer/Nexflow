@@ -105,6 +105,19 @@ type tenantTikTokBillShadowMapperFake struct {
 	confirmCalls  int
 }
 
+type tenantTikTokReviewedBillCreatorFake struct {
+	input  tiktokshop.TikTokReviewedBillInput
+	result *tiktokshop.TikTokReviewedBillResult
+	err    error
+	calls  int
+}
+
+func (f *tenantTikTokReviewedBillCreatorFake) Create(_ context.Context, input tiktokshop.TikTokReviewedBillInput) (*tiktokshop.TikTokReviewedBillResult, error) {
+	f.calls++
+	f.input = input
+	return f.result, f.err
+}
+
 func (f *tenantTikTokBillShadowMapperFake) Preview(_ context.Context, input tiktokshop.TikTokBillShadowMappingSelection) (models.MarketplaceAliasImpact, error) {
 	f.previewCalls++
 	f.previewInput = input
@@ -410,6 +423,98 @@ func TestTikTokShopAPIHandlerReturnsPIISafeBillShadowPreview(t *testing.T) {
 		if strings.Contains(strings.ToLower(response.Body.String()), forbidden) {
 			t.Fatalf("response leaked %q: %s", forbidden, response.Body.String())
 		}
+	}
+}
+
+func TestTikTokShopAPIHandlerEnablesReviewedBillOnlyWhenReadyAndFeatureEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previewer := &tenantTikTokBillShadowPreviewerFake{result: &tiktokshop.TikTokBillShadowPreview{
+		ShadowMode: true, ReadyForReviewedBill: true, ReviewDigest: strings.Repeat("a", 64),
+		ShopID: "7494619203789490654", OrderID: "586030483469993439", Currency: "THB",
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopReviewedBillEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.GET("/orders/:shop_id/:order_id/bill-shadow-preview", handler.GetBillShadowPreview)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet,
+		"/orders/7494619203789490654/586030483469993439/bill-shadow-preview", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"can_create_bill":true`) ||
+		!strings.Contains(response.Body.String(), `"review_digest":"`+strings.Repeat("a", 64)+`"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerCreatesReviewedBillWithExplicitConfirmation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	digest := strings.Repeat("a", 64)
+	creator := &tenantTikTokReviewedBillCreatorFake{result: &tiktokshop.TikTokReviewedBillResult{
+		BillID: "11111111-1111-4111-8111-111111111111", Status: "pending", DocumentRoute: "saleinvoice",
+		ReviewPath: "/sale-invoices", Message: "สร้าง Bill ใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML",
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopReviewedBillEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithReviewedBillCreator(creator)
+	router := gin.New()
+	router.POST("/orders/:shop_id/:order_id/reviewed-bill", func(c *gin.Context) {
+		c.Set("user_id", "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef")
+		c.Set("trace_id", "trace-reviewed-bill")
+		handler.CreateReviewedBill(c)
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/reviewed-bill",
+		strings.NewReader(`{"confirm":"CREATE_REVIEWED_BILL","review_digest":"`+digest+`"}`)))
+
+	if response.Code != http.StatusCreated || creator.calls != 1 || creator.input.ShopID != "7494619203789490654" ||
+		creator.input.OrderID != "586030483469993439" || creator.input.ReviewDigest != digest ||
+		creator.input.ActorID != "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef" || creator.input.TraceID != "trace-reviewed-bill" ||
+		!strings.Contains(response.Body.String(), `"sml_created":false`) {
+		t.Fatalf("status=%d input=%+v body=%s", response.Code, creator.input, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerReviewedBillFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	creator := &tenantTikTokReviewedBillCreatorFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopReviewedBillEnabled: false,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithReviewedBillCreator(creator)
+	router := gin.New()
+	router.POST("/orders/:shop_id/:order_id/reviewed-bill", func(c *gin.Context) {
+		c.Set("user_id", "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef")
+		handler.CreateReviewedBill(c)
+	})
+
+	disabled := httptest.NewRecorder()
+	router.ServeHTTP(disabled, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/reviewed-bill",
+		strings.NewReader(`{"confirm":"CREATE_REVIEWED_BILL","review_digest":"`+strings.Repeat("a", 64)+`"}`)))
+	if disabled.Code != http.StatusNotFound || creator.calls != 0 {
+		t.Fatalf("disabled status=%d calls=%d body=%s", disabled.Code, creator.calls, disabled.Body.String())
+	}
+
+	handler.config.TikTokShopReviewedBillEnabled = true
+	invalid := httptest.NewRecorder()
+	router.ServeHTTP(invalid, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/reviewed-bill",
+		strings.NewReader(`{"confirm":"YES","review_digest":"bad"}`)))
+	if invalid.Code != http.StatusBadRequest || creator.calls != 0 {
+		t.Fatalf("invalid status=%d calls=%d body=%s", invalid.Code, creator.calls, invalid.Body.String())
+	}
+
+	creator.err = tiktokshop.ErrTikTokReviewedBillReviewChanged
+	conflict := httptest.NewRecorder()
+	router.ServeHTTP(conflict, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/reviewed-bill",
+		strings.NewReader(`{"confirm":"CREATE_REVIEWED_BILL","review_digest":"`+strings.Repeat("a", 64)+`"}`)))
+	if conflict.Code != http.StatusConflict || creator.calls != 1 || !strings.Contains(conflict.Body.String(), "bill_review_changed") {
+		t.Fatalf("conflict status=%d calls=%d body=%s", conflict.Code, creator.calls, conflict.Body.String())
 	}
 }
 
