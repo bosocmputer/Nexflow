@@ -207,6 +207,18 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - หลัง real event มี 9 snapshots และ 5 AOY webhook jobs; Bill/SML attempt/in-app notification/LINE delivery ยังคง `323/27/537/252`, severe-log scan เป็นศูนย์ และ Seller Center แสดงรายการ `รอจัดส่ง` เหลือ 0
 - real `ORDER_STATUS_CHANGE` shadow UAT ผ่านแล้ว; การพิมพ์ฉลากครั้งนี้ทำโดยผู้ใช้ใน Seller Center และไม่ได้เปิด Nexflow fulfillment/shipping API
 
+### Bill Shadow Preview UAT evidence — 2026-09-13
+
+- AOY deploy commit `abd547e`; database backup `pre-deploy-20260913-022021.sql.gz`
+- route `GET /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview` อ่านเฉพาะ local typed snapshot และ local Product Master/Catalog/channel settings ไม่มี TikTok call ใน page-render path
+- response บังคับ `shadow_mode=true` และ `can_create_bill=false` ทุกกรณี; UI มีเพียงการตรวจสอบและปิด dialog ไม่มีปุ่มสร้าง Bill หรือส่ง SML
+- mapping สำหรับ TikTok API ต้องตรง `source=tiktok`, `account_key=shop:<shop_id>`, `product_id` และ `sku_id` พร้อม active Catalog item/unit; alias ที่ scope `default` ใช้เป็น migration candidate ได้ แต่ห้ามนับว่า API-ready
+- controlled order `586030483469993439` แสดงราคาสินค้า 300.00 THB, ค่าส่ง 0, ยอด Bill ที่เสนอ 300.00, ผู้ซื้อจ่าย 307.49 และแยก `item_insurance_fee` 7.49 เป็น platform-only charge ที่ไม่สร้างบรรทัด SML
+- blocker เดียวคือยังไม่มี shop-scoped mapping สำหรับ product `1729429119195974110` / SKU `1729429118580984286`; ไม่พบ Bill เดิมของ order นี้
+- browser QA ผ่านทั้ง desktop และ 390px โดยไม่ overflow และไม่มี console warning/error; structured log บันทึก `tiktok_shop_bill_shadow_preview_blocked` โดยไม่มี buyer PII หรือ raw payload
+- side-effect counts ก่อนและหลัง preview คงเดิมที่ snapshot/webhook job/Bill/SML attempt/in-app notification/LINE delivery = `9/5/323/27/537/252`; severe-log scan เป็นศูนย์
+- ขั้นถัดไปคือทำ UI สำหรับให้ผู้ใช้ยืนยัน Product Master item/unit แบบ scoped ต่อ TikTok shop แล้วเรียก shadow preview ซ้ำจนไม่มี blocker; ขั้นนี้ยังห้ามเปิด Bill/SML creation
+
 ## Rollback
 
 - ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่

@@ -747,6 +747,30 @@ Current AOY UAT scope:
     severe logs are empty. Seller Center's `รอจัดส่ง` result is now zero.
     This closes signed `ORDER_STATUS_CHANGE` shadow UAT; it does not enable
     Nexflow Bill/SML, LINE, stock, fulfillment, label, or cancellation actions.
+46. AOY-only TikTok Bill Shadow Preview is deployed at `abd547e` as of
+    2026-09-13. The authenticated read-only route
+    `GET /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview`
+    reads the exact local snapshot and returns proposed Bill amounts, grouped
+    product/SKU quantities, scoped Product Master mapping readiness, the
+    effective TikTok sale route, and structured blockers. It never calls TikTok
+    during page render and always returns `shadow_mode=true` plus
+    `can_create_bill=false`; it cannot create a Bill, reservation, SML attempt,
+    notification, fulfillment, stock, or cancellation write. Mapping readiness
+    is fail-closed to `source=tiktok`, `account_key=shop:<shop_id>`, exact
+    `product_id + sku_id`, active Catalog item, and active unit; a legacy
+    `default` alias is shown only as a migration candidate and is not treated as
+    API-ready. Production browser QA for controlled order
+    `586030483469993439` showed product 300.00 THB, shipping 0, proposed Bill
+    300.00, buyer payment 307.49, and excluded platform-only insurance 7.49.
+    The only blocker is the missing shop-scoped mapping for product
+    `1729429119195974110` / SKU `1729429118580984286`. Desktop and 390px QA
+    passed with no overflow or console errors. Snapshot/webhook-job/Bill/SML-
+    attempt/in-app-notification/LINE-delivery counts remained
+    `9/5/323/27/537/252`; severe logs were empty. The AOY backup is
+    `pre-deploy-20260913-022021.sql.gz`. Demo, Lanboon, and Ploy were not
+    deployed. The next safe slice is explicit TikTok API Product Master mapping
+    review for this shop, followed by the same preview until all blockers clear;
+    do not enable Bill/SML creation as part of that mapping change.
 
 Known deferred or incomplete validation:
 
@@ -828,7 +852,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–099** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–100** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -994,6 +1018,7 @@ POST /api/import/tiktok/preview | /confirm
 
 POST /api/tiktok-shop-api/orders/reconcile
 GET  /api/tiktok-shop-api/orders
+GET  /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
 
@@ -1013,4 +1038,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-09-12 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
+Last updated: 2026-09-13 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
