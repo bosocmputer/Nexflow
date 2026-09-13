@@ -31,27 +31,28 @@ import (
 )
 
 type BillHandler struct {
-	billRepo             *repository.BillRepo
-	mapperSvc            *mapper.Service
-	invoiceClient        *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
-	saleOrderClient      *sml.SaleOrderClient     // SML 248 saleorder REST (default)
-	poClient             *sml.PurchaseOrderClient // SML 248 purchaseorder REST
-	docNoClient          *sml.DocNoClient         // SML authoritative doc_no running
-	cfg                  *config.Config
-	lineSvc              *lineservice.Service
-	auditRepo            *repository.AuditLogRepo
-	catalogRepo          *repository.SMLCatalogRepo     // for unit_code defaults on item edit
-	channelDefaults      *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
-	docCounters          *repository.DocCounterRepo     // atomic doc_no generator
-	bulkJobRepo          *repository.SMLBulkJobRepo     // async SML bulk send jobs
-	artifactSvc          *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
-	warehouseCache       *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
-	smlReadiness         *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
-	appSettingsRepo      *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
-	shopeeRealtimeRepo   *repository.ShopeeRealtimeRepo
-	marketplaceAliasRepo *repository.MarketplaceAliasRepo
-	eventBroker          *events.Broker
-	log                  *zap.Logger
+	billRepo              *repository.BillRepo
+	mapperSvc             *mapper.Service
+	invoiceClient         *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
+	saleOrderClient       *sml.SaleOrderClient     // SML 248 saleorder REST (default)
+	poClient              *sml.PurchaseOrderClient // SML 248 purchaseorder REST
+	docNoClient           *sml.DocNoClient         // SML authoritative doc_no running
+	cfg                   *config.Config
+	lineSvc               *lineservice.Service
+	auditRepo             *repository.AuditLogRepo
+	catalogRepo           *repository.SMLCatalogRepo     // for unit_code defaults on item edit
+	channelDefaults       *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
+	docCounters           *repository.DocCounterRepo     // atomic doc_no generator
+	bulkJobRepo           *repository.SMLBulkJobRepo     // async SML bulk send jobs
+	artifactSvc           *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
+	warehouseCache        *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
+	smlReadiness          *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
+	appSettingsRepo       *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
+	shopeeRealtimeRepo    *repository.ShopeeRealtimeRepo
+	tiktokShipmentGateway TikTokShipmentGateway
+	marketplaceAliasRepo  *repository.MarketplaceAliasRepo
+	eventBroker           *events.Broker
+	log                   *zap.Logger
 }
 
 func NewBillHandler(
@@ -102,6 +103,12 @@ func (h *BillHandler) SetShopeeRealtimeSync(repo *repository.ShopeeRealtimeRepo,
 	}
 	h.shopeeRealtimeRepo = repo
 	h.eventBroker = broker
+}
+
+func (h *BillHandler) SetTikTokShipmentGateway(gateway TikTokShipmentGateway) {
+	if h != nil {
+		h.tiktokShipmentGateway = gateway
+	}
 }
 
 func (h *BillHandler) SetMarketplaceAliasRepo(repo *repository.MarketplaceAliasRepo) {
@@ -2160,6 +2167,7 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	}
 	profile, profileErr := h.resolveSaleOrderDocumentProfile(opts.Context, bill, def, req, reqDocNo)
 	if profileErr != nil && profile.Mode == smlprofile.ModeActive {
+		h.logTikTokShopSMLProfileBlocked(bill, opts, "resolve_shipment")
 		return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + profileErr.Error(), Route: route, Skipped: true}
 	}
 	payload := sml.BuildSaleOrderPayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, profile.Remark, sml.SaleOrderHeaderOptions{
@@ -2168,6 +2176,7 @@ func (h *BillHandler) sendSaleOrderToSML(bill *models.Bill, req RetryRequest, ur
 	})
 	if err := sml.ApplySaleOrderDocumentProfile(&payload, profile.Options); err != nil {
 		if profile.Mode == smlprofile.ModeActive {
+			h.logTikTokShopSMLProfileBlocked(bill, opts, "validate_payload")
 			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + err.Error(), Route: route, Skipped: true}
 		}
 		payload.ProfileMode = profile.Mode
@@ -2264,6 +2273,7 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	}
 	profile, profileErr := h.resolveInvoiceDocumentProfile(opts.Context, bill, def, req, reqDocNo)
 	if profileErr != nil && profile.Mode == smlprofile.ModeActive {
+		h.logTikTokShopSMLProfileBlocked(bill, opts, "resolve_shipment")
 		return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + profileErr.Error(), Route: route, Skipped: true}
 	}
 	payload := sml.BuildInvoicePayload(reqDocNo, docDate, docRef, docRefDate, items, cfg, productCache, profile.Remark, sml.InvoiceHeaderOptions{
@@ -2272,6 +2282,7 @@ func (h *BillHandler) sendSaleInvoiceToSML(bill *models.Bill, req RetryRequest, 
 	})
 	if err := sml.ApplyInvoiceDocumentProfile(&payload, profile.Options); err != nil {
 		if profile.Mode == smlprofile.ModeActive {
+			h.logTikTokShopSMLProfileBlocked(bill, opts, "validate_payload")
 			return retrySendResult{HTTPStatus: http.StatusUnprocessableEntity, Error: "Document Profile ไม่พร้อม: " + err.Error(), Route: route, Skipped: true}
 		}
 		payload.ProfileMode = profile.Mode

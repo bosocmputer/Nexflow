@@ -18,6 +18,7 @@ type OrderCredentialProvider interface {
 type TikTokOrderReader interface {
 	SearchOrders(context.Context, string, string, tiktokshop.SearchOrdersRequest) (*tiktokshop.SearchOrdersResult, string, error)
 	GetOrderDetails(context.Context, string, string, []string) ([]tiktokshop.Order, string, error)
+	GetShipmentRecipient(context.Context, string, string, string) (*tiktokshop.ShipmentRecipient, string, error)
 	GetPriceDetail(context.Context, string, string, string) (*tiktokshop.PriceDetail, string, error)
 }
 
@@ -41,6 +42,11 @@ type OrderDetailsResult struct {
 type OrderPriceDetailResult struct {
 	UpstreamRequestID string                  `json:"upstream_request_id"`
 	PriceDetail       *tiktokshop.PriceDetail `json:"price_detail"`
+}
+
+type ShipmentRecipientResult struct {
+	UpstreamRequestID string                        `json:"upstream_request_id"`
+	Recipient         *tiktokshop.ShipmentRecipient `json:"recipient"`
 }
 
 func NewOrderService(credentials OrderCredentialProvider, orders TikTokOrderReader) (*OrderService, error) {
@@ -81,6 +87,21 @@ func (s *OrderService) GetOrderDetails(ctx context.Context, tenantSlug, shopID s
 		return nil, fmt.Errorf("get TikTok Shop order details: %w", err)
 	}
 	return &OrderDetailsResult{UpstreamRequestID: strings.TrimSpace(upstreamRequestID), Orders: append([]tiktokshop.Order(nil), orders...)}, nil
+}
+
+func (s *OrderService) GetShipmentRecipient(ctx context.Context, tenantSlug, shopID, orderID string) (*ShipmentRecipientResult, error) {
+	credential, err := s.credential(ctx, tenantSlug, shopID)
+	if err != nil {
+		return nil, err
+	}
+	recipient, upstreamRequestID, err := s.orders.GetShipmentRecipient(ctx, credential.AccessToken, credential.ShopCipher, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("get TikTok Shop shipment recipient: %w", err)
+	}
+	if recipient == nil || strings.TrimSpace(recipient.OrderID) != strings.TrimSpace(orderID) {
+		return nil, tiktokshop.ErrInvalidOrderResponse
+	}
+	return &ShipmentRecipientResult{UpstreamRequestID: strings.TrimSpace(upstreamRequestID), Recipient: recipient}, nil
 }
 
 func (s *OrderService) GetPriceDetail(ctx context.Context, tenantSlug, shopID, orderID string) (*OrderPriceDetailResult, error) {

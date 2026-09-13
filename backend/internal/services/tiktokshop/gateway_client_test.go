@@ -100,6 +100,12 @@ func TestGatewayClientReadsOrdersThroughTenantScopedGateway(t *testing.T) {
 				t.Fatalf("details input = %+v, %v", input, err)
 			}
 			_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"tts-detail","orders":[{"id":"order-1","status":"COMPLETED"}]}}`))
+		case GatewayShipmentRecipientPath:
+			var input GatewayShipmentRecipientRequest
+			if err := json.Unmarshal(body, &input); err != nil || input.ShopID != "shop-1" || input.OrderID != "order-1" {
+				t.Fatalf("shipment recipient input = %+v, %v", input, err)
+			}
+			_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"tts-recipient","recipient":{"order_id":"order-1","name":"Recipient","address":"Bangkok","telephone":"0900000000"}}}`))
 		case GatewayOrderPriceDetailPath:
 			var input GatewayOrderPriceDetailRequest
 			if err := json.Unmarshal(body, &input); err != nil || input.ShopID != "shop-1" || input.OrderID != "order-1" {
@@ -125,6 +131,10 @@ func TestGatewayClientReadsOrdersThroughTenantScopedGateway(t *testing.T) {
 	if err != nil || details.UpstreamRequestID != "tts-detail" || len(details.Orders) != 1 || details.Orders[0].Status != OrderStatusCompleted {
 		t.Fatalf("GetOrderDetails() = %+v, %v", details, err)
 	}
+	recipient, err := client.GetShipmentRecipient(context.Background(), GatewayShipmentRecipientRequest{ShopID: "shop-1", OrderID: "order-1"})
+	if err != nil || recipient.UpstreamRequestID != "tts-recipient" || recipient.Recipient == nil || recipient.Recipient.Telephone != "0900000000" {
+		t.Fatalf("GetShipmentRecipient() = %+v, %v", recipient, err)
+	}
 	price, err := client.GetPriceDetail(context.Background(), GatewayOrderPriceDetailRequest{ShopID: "shop-1", OrderID: "order-1"})
 	if err != nil || price.UpstreamRequestID != "tts-price" || price.PriceDetail == nil || price.PriceDetail.Payment != "307.49" {
 		t.Fatalf("GetPriceDetail() = %+v, %v", price, err)
@@ -138,6 +148,9 @@ func TestGatewayClientRejectsInvalidOrderReadBeforeNetwork(t *testing.T) {
 	}
 	if _, err := client.GetOrderDetails(context.Background(), GatewayOrderDetailsRequest{ShopID: "shop-1", OrderIDs: nil}); !errors.Is(err, ErrInvalidGatewayInput) {
 		t.Fatalf("GetOrderDetails() error = %v", err)
+	}
+	if _, err := client.GetShipmentRecipient(context.Background(), GatewayShipmentRecipientRequest{ShopID: "shop-1", OrderID: " "}); !errors.Is(err, ErrInvalidGatewayInput) {
+		t.Fatalf("GetShipmentRecipient() error = %v", err)
 	}
 	if _, err := client.GetPriceDetail(context.Background(), GatewayOrderPriceDetailRequest{ShopID: "shop-1", OrderID: " "}); !errors.Is(err, ErrInvalidGatewayInput) {
 		t.Fatalf("GetPriceDetail() error = %v", err)

@@ -124,6 +124,20 @@ test('labels a blocked TikTok SML action without leaking the feature key', () =>
   assert.equal(summarize(log), 'ออเดอร์ 586030483469993439 · ส่งจากหน้าบิล · รออนุมัติ UAT')
 })
 
+test('summarizes a pre-send TikTok Document Profile block without recipient PII', () => {
+  const log = audit('tiktok_shop_sml_profile_blocked', {
+    order_id: '586030483469993439',
+    via: 'retry',
+    stage: 'resolve_shipment',
+    reason: 'shipment_recipient_unavailable',
+  }, 'tiktok_shop')
+
+  assert.equal(ACTION_META.tiktok_shop_sml_profile_blocked.label, 'ข้อมูลผู้รับ TikTok สำหรับ SML ยังไม่พร้อม')
+  assert.equal(isSMLAuditLog(log), true)
+  assert.equal(summarize(log), 'ออเดอร์ 586030483469993439 · ส่งจากหน้าบิล · ยังไม่ได้สร้างเอกสาร SML')
+  assert.doesNotMatch(JSON.stringify(log), /address|telephone|phone|buyer/i)
+})
+
 test('summarizes Auto SML setting changes without raw Shopee status keys', () => {
   assert.equal(summarize(audit('shopee_auto_sml_setting_updated', {
     before: { enabled: true, trigger_status: 'READY_TO_SHIP', config_version: 2 },

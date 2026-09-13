@@ -9,7 +9,12 @@ import (
 	"nexflow/internal/models"
 	"nexflow/internal/services/sml"
 	"nexflow/internal/services/smlprofile"
+	"nexflow/internal/services/tiktokshop"
 )
+
+type TikTokShipmentGateway interface {
+	GetShipmentRecipient(context.Context, tiktokshop.GatewayShipmentRecipientRequest) (*tiktokshop.GatewayShipmentRecipientResponse, error)
+}
 
 type resolvedInvoiceDocumentProfile struct {
 	Mode    string
@@ -106,6 +111,21 @@ func (h *BillHandler) resolveMarketplaceInvoiceShipment(ctx context.Context, bil
 		if shipment := invoiceShipmentFromJSON(snapshot.RawDetail); shipment != nil {
 			return shipment, nil
 		}
+	}
+	if shopID, orderID := tikTokShopBillAuditIdentity(bill); shopID != "" && orderID != "" && h != nil && h.tiktokShipmentGateway != nil {
+		result, err := h.tiktokShipmentGateway.GetShipmentRecipient(ctx, tiktokshop.GatewayShipmentRecipientRequest{ShopID: shopID, OrderID: orderID})
+		if err != nil || result == nil || result.Recipient == nil || strings.TrimSpace(result.Recipient.OrderID) != orderID {
+			return nil, fmt.Errorf("load TikTok Shop shipment recipient failed")
+		}
+		shipment := &sml.InvoiceShipment{
+			TransportName:      strings.TrimSpace(result.Recipient.Name),
+			TransportAddress:   strings.TrimSpace(result.Recipient.Address),
+			TransportTelephone: strings.TrimSpace(result.Recipient.Telephone),
+		}
+		if shipment.TransportName == "" || shipment.TransportAddress == "" || shipment.TransportTelephone == "" {
+			return nil, fmt.Errorf("TikTok Shop shipment recipient is incomplete")
+		}
+		return shipment, nil
 	}
 	return nil, fmt.Errorf("shipment recipient name, address, and telephone are required")
 }

@@ -51,6 +51,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   bill_doc_no_regenerate_failed: { label: 'ออกเลขเอกสารใหม่ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   bill_doc_no_preview_failed: { label: 'ดึงเลขล่าสุดไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_shop_sml_send_blocked: { label: 'ยังไม่เปิดการส่ง TikTok เข้า SML', emoji: '⏸️', tone: 'warning' },
+  tiktok_shop_sml_profile_blocked: { label: 'ข้อมูลผู้รับ TikTok สำหรับ SML ยังไม่พร้อม', emoji: '⚠️', tone: 'warning' },
   // SML push
   sml_sent: { label: 'ส่ง SML สำเร็จ', emoji: '✅', tone: 'success' },
   sml_failed: { label: 'ส่ง SML ล้มเหลว', emoji: '❌', tone: 'danger' },
@@ -354,6 +355,12 @@ export function summarize(log: AuditLog): string {
         d.order_id ? `ออเดอร์ ${d.order_id}` : '',
         d.via ? auditViaLabel(d.via) : '',
         'รออนุมัติ UAT',
+      ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_sml_profile_blocked':
+      return [
+        d.order_id ? `ออเดอร์ ${d.order_id}` : '',
+        d.via ? auditViaLabel(d.via) : '',
+        'ยังไม่ได้สร้างเอกสาร SML',
       ].filter(Boolean).join(' · ')
     case 'sml_sent':
       return [d.doc_no, d.route ? smlRouteLabel(d.route) : '', d.via ? auditViaLabel(d.via) : ''].filter(Boolean).join(' · ')

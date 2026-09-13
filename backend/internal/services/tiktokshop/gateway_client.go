@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	GatewayOAuthPath            = "/internal/v1/tiktok-shop/oauth/auth-url"
-	GatewayConnectionsPath      = "/internal/v1/tiktok-shop/connections"
-	GatewayOrderSearchPath      = "/internal/v1/tiktok-shop/orders/search"
-	GatewayOrderDetailsPath     = "/internal/v1/tiktok-shop/orders/detail"
-	GatewayOrderPriceDetailPath = "/internal/v1/tiktok-shop/orders/price-detail"
-	GatewayWebhookDeliveryPath  = "/internal/v1/tiktok-shop/webhooks/order-status"
-	GatewayWebhookConfigurePath = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
-	maxGatewayResponseSize      = 8 << 20
+	GatewayOAuthPath             = "/internal/v1/tiktok-shop/oauth/auth-url"
+	GatewayConnectionsPath       = "/internal/v1/tiktok-shop/connections"
+	GatewayOrderSearchPath       = "/internal/v1/tiktok-shop/orders/search"
+	GatewayOrderDetailsPath      = "/internal/v1/tiktok-shop/orders/detail"
+	GatewayShipmentRecipientPath = "/internal/v1/tiktok-shop/orders/shipment-recipient"
+	GatewayOrderPriceDetailPath  = "/internal/v1/tiktok-shop/orders/price-detail"
+	GatewayWebhookDeliveryPath   = "/internal/v1/tiktok-shop/webhooks/order-status"
+	GatewayWebhookConfigurePath  = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
+	maxGatewayResponseSize       = 8 << 20
 )
 
 var (
@@ -98,6 +99,11 @@ type GatewayOrderPriceDetailRequest struct {
 	OrderID string `json:"order_id"`
 }
 
+type GatewayShipmentRecipientRequest struct {
+	ShopID  string `json:"shop_id"`
+	OrderID string `json:"order_id"`
+}
+
 type GatewayOrderSearchResponse struct {
 	UpstreamRequestID string  `json:"upstream_request_id"`
 	NextPageToken     string  `json:"next_page_token"`
@@ -113,6 +119,11 @@ type GatewayOrderDetailsResponse struct {
 type GatewayOrderPriceDetailResponse struct {
 	UpstreamRequestID string       `json:"upstream_request_id"`
 	PriceDetail       *PriceDetail `json:"price_detail"`
+}
+
+type GatewayShipmentRecipientResponse struct {
+	UpstreamRequestID string             `json:"upstream_request_id"`
+	Recipient         *ShipmentRecipient `json:"recipient"`
 }
 
 type GatewayError struct {
@@ -220,6 +231,22 @@ func (c *GatewayClient) GetOrderDetails(ctx context.Context, input GatewayOrderD
 	}
 	if err := validateOrders(output.Orders, 50, expected); err != nil || len(output.Orders) != len(orderIDs) {
 		return nil, errors.New("TikTok Shop gateway returned invalid order detail data")
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) GetShipmentRecipient(ctx context.Context, input GatewayShipmentRecipientRequest) (*GatewayShipmentRecipientResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	input.OrderID = strings.TrimSpace(input.OrderID)
+	if input.ShopID == "" || input.OrderID == "" || strings.ContainsAny(input.OrderID, ",/?#") {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayShipmentRecipientResponse
+	if err := c.call(ctx, GatewayShipmentRecipientPath, input, &output); err != nil {
+		return nil, err
+	}
+	if output.Recipient == nil || strings.TrimSpace(output.Recipient.OrderID) != input.OrderID || !validShipmentRecipient(output.Recipient) {
+		return nil, errors.New("TikTok Shop gateway returned invalid shipment recipient data")
 	}
 	return &output, nil
 }

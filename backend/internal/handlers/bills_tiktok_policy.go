@@ -95,3 +95,31 @@ func (h *BillHandler) logTikTokShopSMLSendBlocked(bill *models.Bill, opts retryS
 		},
 	})
 }
+
+func (h *BillHandler) logTikTokShopSMLProfileBlocked(bill *models.Bill, opts retrySendOptions, stage string) {
+	if h == nil || bill == nil || !isTikTokShopReviewedBill(bill) {
+		return
+	}
+	shopID, orderID := tikTokShopBillAuditIdentity(bill)
+	if h.log != nil {
+		h.log.Warn("tiktok_shop_sml_profile_blocked", zap.String("bill_id", bill.ID),
+			zap.String("shop_id", shopID), zap.String("order_id", orderID), zap.String("stage", stage),
+			zap.String("via", opts.Via), zap.String("trace_id", opts.TraceID))
+	}
+	if h.auditRepo == nil {
+		return
+	}
+	billID := bill.ID
+	var userID *string
+	if value := strings.TrimSpace(opts.UserID); value != "" {
+		userID = &value
+	}
+	_ = h.auditRepo.Log(models.AuditEntry{
+		Action: "tiktok_shop_sml_profile_blocked", TargetID: &billID, UserID: userID,
+		Source: "tiktok_shop", Level: "warn", TraceID: opts.TraceID,
+		Detail: map[string]interface{}{
+			"shop_id": shopID, "order_id": orderID, "via": opts.Via,
+			"stage": stage, "reason": "shipment_recipient_unavailable",
+		},
+	})
+}

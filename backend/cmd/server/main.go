@@ -359,6 +359,7 @@ func main() {
 		BaseURL: cfg.TikTokShopGatewayBaseURL, Tenant: cfg.TikTokShopGatewayTenant,
 		SharedSecret: cfg.TikTokShopGatewayInternalSecret, HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	})
+	billH.SetTikTokShipmentGateway(tiktokGatewayClient)
 	tiktokSnapshotStore := tiktokshop.NewTikTokOrderSnapshotStore(db)
 	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokSnapshotStore)
 	tiktokBillShadowStore := tiktokshop.NewTikTokBillShadowStore(db)

@@ -45,6 +45,7 @@ type APILogRecorder interface {
 type OrderGatewayService interface {
 	SearchOrders(context.Context, string, string, tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error)
 	GetOrderDetails(context.Context, string, string, []string) (*OrderDetailsResult, error)
+	GetShipmentRecipient(context.Context, string, string, string) (*ShipmentRecipientResult, error)
 	GetPriceDetail(context.Context, string, string, string) (*OrderPriceDetailResult, error)
 }
 
@@ -103,6 +104,11 @@ type orderPriceDetailRequest struct {
 	OrderID string `json:"order_id"`
 }
 
+type shipmentRecipientRequest struct {
+	ShopID  string `json:"shop_id"`
+	OrderID string `json:"order_id"`
+}
+
 type webhookConfigRequest struct {
 	ShopID string `json:"shop_id"`
 }
@@ -128,8 +134,46 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(GatewayConnectionsPath, h.ListConnections)
 	router.POST(tiktokshop.GatewayOrderSearchPath, h.SearchOrders)
 	router.POST(tiktokshop.GatewayOrderDetailsPath, h.GetOrderDetails)
+	router.POST(tiktokshop.GatewayShipmentRecipientPath, h.GetShipmentRecipient)
 	router.POST(tiktokshop.GatewayOrderPriceDetailPath, h.GetOrderPriceDetail)
 	router.PUT(tiktokshop.GatewayWebhookConfigurePath, h.ConfigureOrderStatusWebhook)
+}
+
+func (h *Handler) GetShipmentRecipient(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "shipment_recipient", statusCode, startedAt, errorCode, requestID) }()
+	if h.orders == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, oauthErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input shipmentRecipientRequest
+	if err := decodeStrictJSON(body, &input); err != nil || !validOrderPathInput(input.ShopID, input.OrderID) {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_order_request"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.orders.GetShipmentRecipient(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID))
+	if err != nil {
+		statusCode, errorCode = orderErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil || result.Recipient == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	// Do not log or otherwise duplicate the recipient payload. The signed
+	// response is consumed immediately by the requesting tenant's SML send.
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 func (h *Handler) ConfigureOrderStatusWebhook(c *gin.Context) {
@@ -281,7 +325,7 @@ func (h *Handler) GetOrderPriceDetail(c *gin.Context) {
 }
 
 func validOrderPathInput(shopID, orderID string) bool {
-	return strings.TrimSpace(shopID) != "" && strings.TrimSpace(orderID) != "" && !strings.ContainsAny(orderID, "/?#")
+	return strings.TrimSpace(shopID) != "" && strings.TrimSpace(orderID) != "" && !strings.ContainsAny(orderID, ",/?#")
 }
 
 func (h *Handler) ListConnections(c *gin.Context) {

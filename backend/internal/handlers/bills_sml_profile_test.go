@@ -9,7 +9,19 @@ import (
 	"nexflow/internal/config"
 	"nexflow/internal/models"
 	"nexflow/internal/services/smlprofile"
+	"nexflow/internal/services/tiktokshop"
 )
+
+type tikTokShipmentGatewayFake struct {
+	input  tiktokshop.GatewayShipmentRecipientRequest
+	result *tiktokshop.GatewayShipmentRecipientResponse
+	err    error
+}
+
+func (f *tikTokShipmentGatewayFake) GetShipmentRecipient(_ context.Context, input tiktokshop.GatewayShipmentRecipientRequest) (*tiktokshop.GatewayShipmentRecipientResponse, error) {
+	f.input = input
+	return f.result, f.err
+}
 
 func TestResolveInvoiceDocumentProfileUsesDocumentPrecedenceAndShipment(t *testing.T) {
 	h := &BillHandler{cfg: &config.Config{SMLDocumentProfileMode: smlprofile.ModeActive}}
@@ -57,6 +69,28 @@ func TestResolveInvoiceDocumentProfileDoesNotReturnBuyerValuesInMissingError(t *
 		if strings.Contains(err.Error(), forbidden) {
 			t.Fatalf("missing-shipment error leaked %s: %v", forbidden, err)
 		}
+	}
+}
+
+func TestResolveInvoiceDocumentProfileFetchesTikTokShipmentWithoutPersistingItInBill(t *testing.T) {
+	gateway := &tikTokShipmentGatewayFake{result: &tiktokshop.GatewayShipmentRecipientResponse{
+		UpstreamRequestID: "tts-request-recipient",
+		Recipient:         &tiktokshop.ShipmentRecipient{OrderID: "order-1", Name: "Recipient", Address: "Bangkok", Telephone: "0900000000"},
+	}}
+	h := &BillHandler{cfg: &config.Config{SMLDocumentProfileMode: smlprofile.ModeActive}, tiktokShipmentGateway: gateway}
+	bill := &models.Bill{BillType: "sale", Source: "tiktok", RawData: json.RawMessage(`{
+		"flow":"tiktok_shop_api_reviewed","tiktok_shop_id":"shop-1","tiktok_order_id":"order-1"
+	}`)}
+	originalRaw := append([]byte(nil), bill.RawData...)
+	got, err := h.resolveInvoiceDocumentProfile(context.Background(), bill, &models.ChannelDefault{Channel: "tiktok_shop", BillType: "sale"}, RetryRequest{}, "BF-1")
+	if err != nil || got.Options.Shipment == nil || got.Options.Shipment.TransportTelephone != "0900000000" {
+		t.Fatalf("profile=%+v err=%v", got, err)
+	}
+	if gateway.input.ShopID != "shop-1" || gateway.input.OrderID != "order-1" {
+		t.Fatalf("gateway input=%+v", gateway.input)
+	}
+	if string(bill.RawData) != string(originalRaw) || strings.Contains(string(bill.RawData), "Recipient") || strings.Contains(string(bill.RawData), "0900000000") {
+		t.Fatalf("bill raw_data was widened with recipient PII: %s", bill.RawData)
 	}
 }
 

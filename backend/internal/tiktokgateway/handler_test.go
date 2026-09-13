@@ -62,15 +62,16 @@ type handlerAuditFake struct {
 }
 
 type handlerOrderServiceFake struct {
-	searchResult *OrderSearchResult
-	detailResult *OrderDetailsResult
-	priceResult  *OrderPriceDetailResult
-	err          error
-	tenant       string
-	shopID       string
-	searchInput  tiktokshop.SearchOrdersRequest
-	orderIDs     []string
-	priceOrderID string
+	searchResult    *OrderSearchResult
+	detailResult    *OrderDetailsResult
+	priceResult     *OrderPriceDetailResult
+	recipientResult *ShipmentRecipientResult
+	err             error
+	tenant          string
+	shopID          string
+	searchInput     tiktokshop.SearchOrdersRequest
+	orderIDs        []string
+	priceOrderID    string
 }
 
 type handlerWebhookConfigServiceFake struct {
@@ -92,6 +93,11 @@ func (f *handlerOrderServiceFake) SearchOrders(_ context.Context, tenant, shopID
 func (f *handlerOrderServiceFake) GetOrderDetails(_ context.Context, tenant, shopID string, orderIDs []string) (*OrderDetailsResult, error) {
 	f.tenant, f.shopID, f.orderIDs = tenant, shopID, append([]string(nil), orderIDs...)
 	return f.detailResult, f.err
+}
+
+func (f *handlerOrderServiceFake) GetShipmentRecipient(_ context.Context, tenant, shopID, orderID string) (*ShipmentRecipientResult, error) {
+	f.tenant, f.shopID, f.priceOrderID = tenant, shopID, orderID
+	return f.recipientResult, f.err
 }
 
 func (f *handlerOrderServiceFake) GetPriceDetail(_ context.Context, tenant, shopID, orderID string) (*OrderPriceDetailResult, error) {
@@ -309,6 +315,31 @@ func TestTikTokGatewayHandlerGetsOrderDetails(t *testing.T) {
 
 	if response.Code != http.StatusOK || len(orders.orderIDs) != 1 || orders.orderIDs[0] != "order-1" {
 		t.Fatalf("status=%d body=%s orders=%+v", response.Code, response.Body.String(), orders)
+	}
+}
+
+func TestTikTokGatewayHandlerGetsShipmentRecipientWithoutLoggingPII(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	orders := &handlerOrderServiceFake{recipientResult: &ShipmentRecipientResult{
+		UpstreamRequestID: "tts-request-recipient",
+		Recipient:         &tiktokshop.ShipmentRecipient{OrderID: "order-1", Name: "Recipient", Address: "Bangkok", Telephone: "0900000000"},
+	}}
+	audit := &handlerAuditFake{}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, audit, Config{}, nil, WithOrderGatewayService(orders))
+	router := gin.New()
+	handler.Register(router)
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayShipmentRecipientPath, strings.NewReader(`{"shop_id":"shop-1","order_id":"order-1"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || orders.priceOrderID != "order-1" || !strings.Contains(response.Body.String(), `"telephone":"0900000000"`) {
+		t.Fatalf("status=%d body=%s orders=%+v", response.Code, response.Body.String(), orders)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+	}
+	if audit.operation != "shipment_recipient" || strings.Contains(audit.operation+audit.errorCode+audit.requestID, "Recipient") || strings.Contains(audit.operation+audit.errorCode+audit.requestID, "0900000000") {
+		t.Fatalf("audit leaked recipient: %+v", audit)
 	}
 }
 

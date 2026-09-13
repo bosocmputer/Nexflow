@@ -188,6 +188,16 @@ type OrderPackage struct {
 	ID string `json:"id"`
 }
 
+// ShipmentRecipient is the minimum recipient data required by Nexflow's SML
+// Document Profile. It is deliberately fetched through a separate, single-
+// order path so recipient PII never becomes part of ordinary order snapshots.
+type ShipmentRecipient struct {
+	OrderID   string `json:"order_id"`
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	Telephone string `json:"telephone"`
+}
+
 // PriceDetail mirrors TikTok Shop's read-only Get Price Detail response. The
 // nested line items use the same amount fields as the order-level detail.
 type PriceDetail struct {
@@ -310,6 +320,70 @@ func (c *OrderClient) GetOrderDetails(ctx context.Context, accessToken, shopCiph
 		return nil, requestID, ErrInvalidOrderResponse
 	}
 	return result.Orders, requestID, nil
+}
+
+func (c *OrderClient) GetShipmentRecipient(ctx context.Context, accessToken, shopCipher, orderID string) (*ShipmentRecipient, string, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	shopCipher = strings.TrimSpace(shopCipher)
+	orderID = strings.TrimSpace(orderID)
+	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || orderID == "" || strings.ContainsAny(orderID, ",/?#") {
+		return nil, "", ErrInvalidOrderInput
+	}
+	query := c.baseQuery(shopCipher)
+	query.Set("ids", orderID)
+	var result struct {
+		Orders []struct {
+			ID               string `json:"id"`
+			RecipientAddress struct {
+				Name        string `json:"name"`
+				PhoneNumber string `json:"phone_number"`
+				Phone       string `json:"phone"`
+				FullAddress string `json:"full_address"`
+			} `json:"recipient_address"`
+		} `json:"orders"`
+	}
+	requestID, err := c.do(ctx, http.MethodGet, PathGetOrderDetails, query, nil, accessToken, &result)
+	if err != nil {
+		return nil, requestID, err
+	}
+	if len(result.Orders) != 1 || strings.TrimSpace(result.Orders[0].ID) != orderID {
+		return nil, requestID, ErrInvalidOrderResponse
+	}
+	recipient := &ShipmentRecipient{
+		OrderID: orderID,
+		Name:    strings.TrimSpace(result.Orders[0].RecipientAddress.Name),
+		Address: strings.TrimSpace(result.Orders[0].RecipientAddress.FullAddress),
+		Telephone: strings.TrimSpace(firstNonEmptyOrderValue(
+			result.Orders[0].RecipientAddress.PhoneNumber,
+			result.Orders[0].RecipientAddress.Phone,
+		)),
+	}
+	if !validShipmentRecipient(recipient) {
+		return nil, requestID, ErrInvalidOrderResponse
+	}
+	return recipient, requestID, nil
+}
+
+func firstNonEmptyOrderValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func validShipmentRecipient(recipient *ShipmentRecipient) bool {
+	if recipient == nil || strings.TrimSpace(recipient.OrderID) == "" || strings.TrimSpace(recipient.Name) == "" ||
+		strings.TrimSpace(recipient.Address) == "" || strings.TrimSpace(recipient.Telephone) == "" {
+		return false
+	}
+	for _, value := range []string{recipient.Name, recipient.Address, recipient.Telephone} {
+		if strings.ContainsAny(value, "*•") {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *OrderClient) GetPriceDetail(ctx context.Context, accessToken, shopCipher, orderID string) (*PriceDetail, string, error) {

@@ -112,6 +112,43 @@ func TestOrderClientGetOrderDetailsUsesCurrentVersionAndCapsIDs(t *testing.T) {
 	}
 }
 
+func TestOrderClientGetsOnlyValidatedShipmentRecipient(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != PathGetOrderDetails || r.URL.Query().Get("ids") != "order-1" {
+			t.Fatalf("request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-recipient","data":{"orders":[{"id":"order-1","buyer_email":"must-not-cross-gateway@example.com","recipient_address":{"name":"Recipient","phone_number":"0900000000","full_address":"Bangkok 10000"}}]}}`))
+	}))
+	defer server.Close()
+
+	client := newTestOrderClient(t, server, now)
+	recipient, requestID, err := client.GetShipmentRecipient(context.Background(), "seller-access-token", "shop-cipher", "order-1")
+	if err != nil || requestID != "req-recipient" || recipient == nil || recipient.OrderID != "order-1" || recipient.Name != "Recipient" || recipient.Address != "Bangkok 10000" || recipient.Telephone != "0900000000" {
+		t.Fatalf("GetShipmentRecipient() = %+v, requestID=%q, err=%v", recipient, requestID, err)
+	}
+	encoded, _ := json.Marshal(recipient)
+	if strings.Contains(string(encoded), "buyer_email") || strings.Contains(string(encoded), "must-not-cross") {
+		t.Fatalf("recipient response widened PII boundary: %s", encoded)
+	}
+}
+
+func TestOrderClientRejectsMaskedOrMismatchedShipmentRecipient(t *testing.T) {
+	responses := []string{
+		`{"code":0,"data":{"orders":[{"id":"other-order","recipient_address":{"name":"Recipient","phone_number":"0900000000","full_address":"Bangkok"}}]}}`,
+		`{"code":0,"data":{"orders":[{"id":"order-1","recipient_address":{"name":"Rec***","phone_number":"0900***000","full_address":"Bangkok"}}]}}`,
+	}
+	for _, responseBody := range responses {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(responseBody)) }))
+		client := newTestOrderClient(t, server, time.Unix(1_725_000_000, 0))
+		_, _, err := client.GetShipmentRecipient(context.Background(), "seller-access-token", "shop-cipher", "order-1")
+		server.Close()
+		if !errors.Is(err, ErrInvalidOrderResponse) {
+			t.Fatalf("error = %v, want ErrInvalidOrderResponse", err)
+		}
+	}
+}
+
 func TestOrderClientGetsPriceDetailForOneOrder(t *testing.T) {
 	now := time.Unix(1_725_000_000, 0)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
