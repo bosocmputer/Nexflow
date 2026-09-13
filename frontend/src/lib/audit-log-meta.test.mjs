@@ -210,3 +210,15 @@ test('summarizes catalog preparation without exposing internal job keys', () => 
     stock_paused: true,
   }, 'sml_catalog')), 'พักการซิงก์สต๊อกชั่วคราวระหว่างตรวจข้อมูล')
 })
+
+test('presents TikTok Product Catalog refresh results in operator language', () => {
+  assert.equal(ACTION_META.tiktok_shop_product_catalog_synced.label, 'อัปเดตรายการสินค้า TikTok Shop แล้ว')
+  assert.equal(summarize(audit('tiktok_shop_product_catalog_synced', {
+    product_count: 4,
+    sku_count: 5,
+    warehouse_count: 5,
+  }, 'tiktok_shop')), '4 สินค้า · 5 SKU · 5 คลัง/รายการ')
+  assert.equal(summarize(audit('tiktok_shop_product_catalog_sync_failed', {
+    error_code: 'source_invalid',
+  }, 'tiktok_shop')), 'TikTok ส่งข้อมูลไม่ครบ ระบบเก็บ snapshot เดิมไว้')
+})

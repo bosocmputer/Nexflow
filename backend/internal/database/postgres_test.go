@@ -465,6 +465,24 @@ func TestMigration102AddsPIIMinimizedTikTokProductCatalogWithoutBackfill(t *test
 	}
 }
 
+func TestMigration103PreparesTikTokStockMenuForExistingAdminsOnly(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/103_tiktok_shop_stock_menu_permission.sql")
+	if err != nil {
+		t.Fatalf("read migration 103: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{"insert into user_menu_permissions", "tiktok_shop_stock", "role = 'admin'", "on conflict"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 103 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 103 contains destructive statement %q", forbidden)
+		}
+	}
+}
+
 func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {

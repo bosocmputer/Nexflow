@@ -30,6 +30,7 @@ import {
   ENABLE_SHOPEE_REALTIME_OPS,
   ENABLE_TIKTOK_EXCEL,
   ENABLE_TIKTOK_SHOP_API,
+  ENABLE_TIKTOK_SHOP_STOCK,
 } from '@/lib/featureFlags'
 import type { User, UserMenuPermission } from '@/types'
 
@@ -124,6 +125,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'marketplace_aliases', to: '/marketplace-aliases', label: 'จับคู่สินค้า Marketplace', icon: Tags, hasBadge: 'marketplace_aliases', hint: 'จัดการความสัมพันธ์สินค้า Marketplace ไปยัง SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'catalog', to: '/settings/catalog', label: 'รายการสินค้า SML', icon: Database, hint: 'ดู ค้นหา และรีเฟรชสินค้าปลายทางจาก SML' },
       { menuKey: 'shopee_stock', to: '/settings/shopee-stock', label: 'ซิงก์สต๊อก Shopee', icon: PackageCheck, hint: 'คุมสต๊อก Shopee จากยอดพร้อมขายใน SML' },
+      { menuKey: 'tiktok_shop_stock', to: '/settings/tiktok-shop-stock', label: 'ซิงก์สต๊อก TikTok Shop', icon: PackageCheck, hint: 'ตรวจ Product Catalog และเตรียมคุมสต๊อก TikTok Shop จาก SML', enabled: ENABLE_TIKTOK_SHOP_STOCK },
     ],
   },
   {

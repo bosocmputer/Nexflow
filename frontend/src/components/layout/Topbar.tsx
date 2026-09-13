@@ -33,6 +33,8 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
       ? 'ขายสินค้าและบริการ'
       : location.pathname.startsWith('/settings/shopee-stock')
         ? 'ซิงก์สต๊อก Shopee'
+      : location.pathname.startsWith('/settings/tiktok-shop-stock')
+        ? 'ซิงก์สต๊อก TikTok Shop'
       : location.pathname.startsWith('/import/shopee')
         ? 'นำเข้า Shopee'
         : location.pathname.startsWith('/nextstep-marketplace')

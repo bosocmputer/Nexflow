@@ -52,6 +52,8 @@ export const ACTION_META: Record<string, ActionMeta> = {
   bill_doc_no_preview_failed: { label: 'ดึงเลขล่าสุดไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_shop_sml_send_blocked: { label: 'ยังไม่เปิดการส่ง TikTok เข้า SML', emoji: '⏸️', tone: 'warning' },
   tiktok_shop_sml_profile_blocked: { label: 'ข้อมูลผู้รับ TikTok สำหรับ SML ยังไม่พร้อม', emoji: '⚠️', tone: 'warning' },
+  tiktok_shop_product_catalog_synced: { label: 'อัปเดตรายการสินค้า TikTok Shop แล้ว', emoji: '✅', tone: 'success' },
+  tiktok_shop_product_catalog_sync_failed: { label: 'อัปเดตรายการสินค้า TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   // SML push
   sml_sent: { label: 'ส่ง SML สำเร็จ', emoji: '✅', tone: 'success' },
   sml_failed: { label: 'ส่ง SML ล้มเหลว', emoji: '❌', tone: 'danger' },
@@ -362,6 +364,21 @@ export function summarize(log: AuditLog): string {
         d.via ? auditViaLabel(d.via) : '',
         'ยังไม่ได้สร้างเอกสาร SML',
       ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_product_catalog_synced':
+      return [
+        d.product_count != null ? `${Number(d.product_count).toLocaleString('th-TH')} สินค้า` : '',
+        d.sku_count != null ? `${Number(d.sku_count).toLocaleString('th-TH')} SKU` : '',
+        d.warehouse_count != null ? `${Number(d.warehouse_count).toLocaleString('th-TH')} คลัง/รายการ` : '',
+      ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_product_catalog_sync_failed': {
+      const labels: Record<string, string> = {
+        product_scope_required: 'ยังไม่มีสิทธิ์ Product Basic',
+        source_invalid: 'TikTok ส่งข้อมูลไม่ครบ ระบบเก็บ snapshot เดิมไว้',
+        sync_in_progress: 'มีงานอัปเดตรายการของร้านนี้กำลังทำอยู่',
+        gateway_request_failed: 'เชื่อมต่อ TikTok Shop Gateway ไม่สำเร็จ',
+      }
+      return labels[String(d.error_code ?? '')] ?? 'ระบบเก็บ snapshot เดิมไว้ กรุณาลองใหม่'
+    }
     case 'sml_sent':
       return [d.doc_no, d.route ? smlRouteLabel(d.route) : '', d.via ? auditViaLabel(d.via) : ''].filter(Boolean).join(' · ')
     case 'sml_erp_log_warning':

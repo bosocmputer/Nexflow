@@ -15,6 +15,7 @@ interface TikTokShopStatus {
   configured: boolean
   mode: 'gateway'
   redirect_url?: string
+  product_catalog_enabled?: boolean
 }
 
 interface TikTokShopConnection {
@@ -156,7 +157,7 @@ export default function TikTokShopConnections() {
             <div>
               <h2 className="text-sm font-semibold text-foreground">{ready ? 'Gateway พร้อมเชื่อมร้าน' : 'Gateway ยังไม่พร้อม'}</h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                {ready ? 'ระบบขอเฉพาะสิทธิ์อ่านข้อมูลร้านและคำสั่งซื้อ การซิงก์ออเดอร์ทำงานเป็น Snapshot แบบ read-only และยังไม่ส่งสต๊อก ยืนยันจัดส่ง หรือสร้าง Bill/SML อัตโนมัติ' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
+                {ready ? 'ระบบอ่านข้อมูลร้าน คำสั่งซื้อ และ Product Catalog ตามสิทธิ์ที่อนุมัติ การเขียนสต๊อกยังแยกปิดจนกว่าจะผ่าน dry-run และ canary' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
               </p>
               {status?.redirect_url && <p className="mt-2 break-all font-mono text-xs text-muted-foreground">Callback: {status.redirect_url}</p>}
             </div>
@@ -194,6 +195,7 @@ export default function TikTokShopConnections() {
                       {connection.shop_code && <span>รหัสร้าน {connection.shop_code}</span>}
                       <span>อนุญาต {scopeLabel(connection.granted_scopes)}</span>
                     </div>
+                    <ProductScopeLine scopes={connection.granted_scopes} catalogEnabled={Boolean(status?.product_catalog_enabled)} />
                     <OrderSyncLine workerEnabled={Boolean(orderSync?.worker_enabled)} setting={orderSync?.data.find((item) => item.shop_id === connection.shop_id)} />
                   </div>
                   <div className="shrink-0 text-xs text-muted-foreground lg:text-right">
@@ -233,10 +235,30 @@ function OrderSyncLine({ workerEnabled, setting }: { workerEnabled: boolean; set
   )
 }
 
+function ProductScopeLine({ scopes, catalogEnabled }: { scopes: string[]; catalogEnabled: boolean }) {
+  const basic = scopes.includes('seller.product.basic')
+  const modify = scopes.includes('seller.product.write')
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+      <span className={cn('inline-flex items-center gap-1 font-medium', basic ? 'text-success' : 'text-warning')}>
+        <span className={cn('h-1.5 w-1.5 rounded-full', basic ? 'bg-success' : 'bg-warning')} />
+        Product Basic {basic ? 'พร้อม' : 'ยังไม่ได้อนุมัติ'}
+      </span>
+      <span className={cn('inline-flex items-center gap-1 font-medium', modify ? 'text-success' : 'text-muted-foreground')}>
+        <span className={cn('h-1.5 w-1.5 rounded-full', modify ? 'bg-success' : 'bg-muted-foreground/50')} />
+        Product Modify {modify ? 'พร้อม' : 'ยังไม่เปิด'}
+      </span>
+      {basic && !catalogEnabled && <span className="text-muted-foreground">Server ยังปิด Catalog UAT</span>}
+    </div>
+  )
+}
+
 function scopeLabel(scopes: string[]) {
   const labels: string[] = []
   if (scopes.includes('seller.authorization.info')) labels.push('ข้อมูลร้าน')
   if (scopes.includes('seller.order.info')) labels.push('คำสั่งซื้อ')
+  if (scopes.includes('seller.product.basic')) labels.push('สินค้า')
+  if (scopes.includes('seller.product.write')) labels.push('แก้ไขสินค้า/สต๊อก')
   return labels.length > 0 ? labels.join(' · ') : 'สิทธิ์ไม่ครบ'
 }
 

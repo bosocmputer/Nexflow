@@ -44,3 +44,13 @@ test('places TikTok Shop read-only orders in orders and documents with its own p
   assert.equal(orders.to, '/tiktok-shop-operations')
   assert.match(orders.hint, /Snapshot/)
 })
+
+test('keeps TikTok Shop stock beside Shopee stock with its own permission and feature gate', () => {
+  const group = NAV_GROUPS.find((item) => item.label === 'สินค้าและสต๊อก')
+  const stock = group?.items.find((item) => item.label === 'ซิงก์สต๊อก TikTok Shop')
+
+  assert.ok(stock)
+  assert.equal(stock.menuKey, 'tiktok_shop_stock')
+  assert.equal(stock.to, '/settings/tiktok-shop-stock')
+  assert.match(stock.hint, /Product Catalog/)
+})

@@ -38,6 +38,7 @@ var menuPermissionDefaults = []menuPermissionDefault{
 	{"shopee_settlements", true, true, true, false, true, true, true, false, false, false, false, false},
 	{"catalog", true, true, true, true, true, true, true, false, true, false, false, false},
 	{"shopee_stock", true, false, true, false, false, false, false, false, false, false, false, false},
+	{"tiktok_shop_stock", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"line_notifications", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"line_myshop", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"setup", true, false, true, false, false, false, false, false, false, false, false, false},

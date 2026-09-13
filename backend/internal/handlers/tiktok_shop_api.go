@@ -178,6 +178,7 @@ func (h *TikTokShopAPIHandler) Status(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"enabled": enabled, "configured": configured,
 		"mode": "gateway", "redirect_url": redirectURL,
+		"product_catalog_enabled": h != nil && h.config != nil && h.config.TikTokShopProductCatalogEnabled,
 	})
 }
 
