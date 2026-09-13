@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/url"
@@ -12,6 +13,8 @@ import (
 	"go.uber.org/zap"
 
 	"nexflow/internal/config"
+	"nexflow/internal/models"
+	"nexflow/internal/repository"
 	"nexflow/internal/services/tiktokshop"
 )
 
@@ -49,6 +52,21 @@ type TikTokShopBillShadowPreviewer interface {
 	Preview(context.Context, string, string) (*tiktokshop.TikTokBillShadowPreview, error)
 }
 
+type TikTokShopBillShadowMapper interface {
+	Preview(context.Context, tiktokshop.TikTokBillShadowMappingSelection) (models.MarketplaceAliasImpact, error)
+	Confirm(context.Context, tiktokshop.TikTokBillShadowMappingConfirmation, string) (*repository.MarketplaceAliasCommitResult, error)
+}
+
+type tikTokBillShadowMappingRequest struct {
+	ProductID               string `json:"product_id"`
+	SKUID                   string `json:"sku_id"`
+	ItemCode                string `json:"item_code"`
+	UnitCode                string `json:"unit_code"`
+	QuantityMultiplier      int64  `json:"quantity_multiplier"`
+	ExpectedMappingRevision int64  `json:"expected_mapping_revision"`
+	ImpactDigest            string `json:"impact_digest"`
+}
+
 type TikTokShopAPIHandler struct {
 	config       *config.Config
 	gateway      TikTokShopGateway
@@ -58,6 +76,7 @@ type TikTokShopAPIHandler struct {
 	syncSettings TikTokShopOrderSyncSettings
 	orderReader  TikTokShopOrderReader
 	billShadow   TikTokShopBillShadowPreviewer
+	billMapper   TikTokShopBillShadowMapper
 	logger       *zap.Logger
 }
 
@@ -71,6 +90,13 @@ func (h *TikTokShopAPIHandler) WithOrderReader(reader TikTokShopOrderReader) *Ti
 func (h *TikTokShopAPIHandler) WithBillShadowPreviewer(previewer TikTokShopBillShadowPreviewer) *TikTokShopAPIHandler {
 	if h != nil {
 		h.billShadow = previewer
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithBillShadowMapper(mapper TikTokShopBillShadowMapper) *TikTokShopAPIHandler {
+	if h != nil {
+		h.billMapper = mapper
 	}
 	return h
 }
@@ -422,6 +448,87 @@ func (h *TikTokShopAPIHandler) GetBillShadowPreview(c *gin.Context) {
 		zap.Int("blocker_count", len(preview.Blockers)), zap.String("trace_id", c.GetString("trace_id")),
 		zap.String("entry_point", "manual_api"))
 	c.JSON(http.StatusOK, preview)
+}
+
+func (h *TikTokShopAPIHandler) PreviewBillShadowMapping(c *gin.Context) {
+	shopID, orderID, selection, _, ok := h.bindBillShadowMappingSelection(c)
+	if !ok {
+		return
+	}
+	impact, err := h.billMapper.Preview(c.Request.Context(), selection)
+	if err != nil {
+		h.writeBillShadowMappingError(c, err, shopID, orderID, selection.ProductID, selection.SKUID, "preview")
+		return
+	}
+	h.logger.Info("tiktok_shop_bill_shadow_mapping_previewed",
+		zap.String("shop_id", shopID), zap.String("order_id", orderID),
+		zap.String("product_id", selection.ProductID), zap.String("sku_id", selection.SKUID),
+		zap.String("item_code", selection.ItemCode), zap.Int64("mapping_revision", impact.CurrentMappingRevision),
+		zap.String("actor_id", c.GetString("user_id")), zap.String("trace_id", c.GetString("trace_id")))
+	c.JSON(http.StatusOK, impact)
+}
+
+func (h *TikTokShopAPIHandler) ConfirmBillShadowMapping(c *gin.Context) {
+	shopID, orderID, selection, reviewed, ok := h.bindBillShadowMappingSelection(c)
+	if !ok {
+		return
+	}
+	result, err := h.billMapper.Confirm(c.Request.Context(), tiktokshop.TikTokBillShadowMappingConfirmation{
+		Selection: selection, ExpectedMappingRevision: reviewed.ExpectedMappingRevision, ImpactDigest: reviewed.ImpactDigest,
+	}, c.GetString("user_id"))
+	if err != nil {
+		h.writeBillShadowMappingError(c, err, shopID, orderID, selection.ProductID, selection.SKUID, "confirm")
+		return
+	}
+	h.logger.Info("tiktok_shop_bill_shadow_mapping_confirmed",
+		zap.String("shop_id", shopID), zap.String("order_id", orderID),
+		zap.String("product_id", selection.ProductID), zap.String("sku_id", selection.SKUID),
+		zap.String("item_code", selection.ItemCode), zap.String("alias_id", result.Job.AliasID),
+		zap.Int64("target_revision", result.Job.TargetRevision), zap.String("actor_id", c.GetString("user_id")),
+		zap.String("trace_id", c.GetString("trace_id")))
+	c.JSON(http.StatusAccepted, result)
+}
+
+func (h *TikTokShopAPIHandler) bindBillShadowMappingSelection(c *gin.Context) (string, string, tiktokshop.TikTokBillShadowMappingSelection, tikTokBillShadowMappingRequest, bool) {
+	shopID := strings.TrimSpace(c.Param("shop_id"))
+	orderID := strings.TrimSpace(c.Param("order_id"))
+	if h == nil || h.config == nil || !h.config.TikTokShopOpenAPIEnabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return shopID, orderID, tiktokshop.TikTokBillShadowMappingSelection{}, tikTokBillShadowMappingRequest{}, false
+	}
+	if h.billMapper == nil {
+		h.error(c, http.StatusServiceUnavailable, "bill_shadow_mapping_not_configured", "ระบบจับคู่ Product Master ของ TikTok Shop ยังไม่พร้อม")
+		return shopID, orderID, tiktokshop.TikTokBillShadowMappingSelection{}, tikTokBillShadowMappingRequest{}, false
+	}
+	var input tikTokBillShadowMappingRequest
+	if !tiktokshop.ValidTikTokShopID(shopID) || !tiktokshop.ValidTikTokShopID(orderID) || c.ShouldBindJSON(&input) != nil {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลสินค้าและหน่วย SML ไม่ถูกต้อง")
+		return shopID, orderID, tiktokshop.TikTokBillShadowMappingSelection{}, tikTokBillShadowMappingRequest{}, false
+	}
+	selection := tiktokshop.TikTokBillShadowMappingSelection{
+		ShopID: shopID, OrderID: orderID, ProductID: input.ProductID, SKUID: input.SKUID,
+		ItemCode: input.ItemCode, UnitCode: input.UnitCode, QuantityMultiplier: input.QuantityMultiplier,
+	}
+	return shopID, orderID, selection, input, true
+}
+
+func (h *TikTokShopAPIHandler) writeBillShadowMappingError(c *gin.Context, err error, shopID, orderID, productID, skuID, operation string) {
+	switch {
+	case errors.Is(err, tiktokshop.ErrTikTokBillShadowMappingInvalidInput):
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลสินค้าและหน่วย SML ไม่ถูกต้อง")
+	case errors.Is(err, tiktokshop.ErrTikTokBillShadowNotFound), errors.Is(err, tiktokshop.ErrTikTokBillShadowMappingItemNotFound):
+		h.error(c, http.StatusNotFound, "snapshot_item_not_found", "ไม่พบสินค้านี้ใน Snapshot ล่าสุด กรุณารีเฟรชออเดอร์แล้วลองใหม่")
+	case errors.Is(err, repository.ErrMarketplaceAliasConflict), errors.Is(err, repository.ErrMarketplaceImpactChanged):
+		h.error(c, http.StatusConflict, "mapping_changed", "Product Master ถูกแก้ไขแล้ว กรุณาตรวจผลกระทบใหม่ก่อนยืนยัน")
+	case errors.Is(err, repository.ErrMarketplaceUnitNotReady), errors.Is(err, sql.ErrNoRows):
+		h.error(c, http.StatusUnprocessableEntity, "catalog_not_ready", "สินค้า/หน่วย SML ไม่อยู่ใน Catalog รุ่นที่ใช้งาน กรุณาอัปเดต Catalog แล้วเลือกใหม่")
+	default:
+		h.logger.Error("tiktok_shop_bill_shadow_mapping_failed",
+			zap.String("operation", operation), zap.String("shop_id", shopID), zap.String("order_id", orderID),
+			zap.String("product_id", productID), zap.String("sku_id", skuID),
+			zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "mapping_failed", "บันทึกการจับคู่ Product Master ไม่สำเร็จ และยังไม่มีข้อมูลถูกเปลี่ยน")
+	}
 }
 
 func (h *TikTokShopAPIHandler) UpdateOrderSyncSetting(c *gin.Context) {

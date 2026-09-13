@@ -361,7 +361,9 @@ func main() {
 	})
 	tiktokSnapshotStore := tiktokshop.NewTikTokOrderSnapshotStore(db)
 	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokSnapshotStore)
-	tiktokBillShadowService := tiktokshop.NewTikTokBillShadowService(tiktokshop.NewTikTokBillShadowStore(db))
+	tiktokBillShadowStore := tiktokshop.NewTikTokBillShadowStore(db)
+	tiktokBillShadowService := tiktokshop.NewTikTokBillShadowService(tiktokBillShadowStore)
+	tiktokBillShadowMappingService := tiktokshop.NewTikTokBillShadowMappingService(tiktokBillShadowStore, aliasRepo)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
 	tiktokReconcileService := tiktokshop.NewTikTokOrderReconciler(tiktokGatewayClient, tiktokSnapshotService, tiktokReconcileStore)
 	tiktokWebhookStore := tiktokshop.NewTikTokWebhookStore(db)
@@ -370,7 +372,8 @@ func main() {
 		WithOrderReconciler(tiktokReconcileService).
 		WithOrderSyncSettings(tiktokReconcileStore).
 		WithOrderReader(tiktokSnapshotStore).
-		WithBillShadowPreviewer(tiktokBillShadowService)
+		WithBillShadowPreviewer(tiktokBillShadowService).
+		WithBillShadowMapper(tiktokBillShadowMappingService)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
 	tiktokshop.NewTikTokWebhookWorker(cfg.TikTokShopWebhookEnabled, tiktokWebhookStore, tiktokSnapshotService, logger).Start(appCtx)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
@@ -596,6 +599,8 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/reconcile", middleware.RequireRole("admin", "staff"), tiktokAPIH.ReconcileOrders)
 		api.GET("/tiktok-shop-api/orders", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrders)
 		api.GET("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetBillShadowPreview)
+		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview", middleware.RequireRole("admin"), tiktokAPIH.PreviewBillShadowMapping)
+		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm", middleware.RequireRole("admin"), tiktokAPIH.ConfirmBillShadowMapping)
 		api.GET("/tiktok-shop-api/order-sync-settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrderSyncSettings)
 		api.PUT("/tiktok-shop-api/order-sync-settings/:shop_id", middleware.RequireRole("admin"), tiktokAPIH.UpdateOrderSyncSetting)
 		api.GET("/shopee-settlements", middleware.RequireRole("admin", "staff"), shopeeH.ListSettlementRuns)

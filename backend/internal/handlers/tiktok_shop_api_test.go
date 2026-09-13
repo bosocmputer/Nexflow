@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/config"
+	"nexflow/internal/models"
+	"nexflow/internal/repository"
 	"nexflow/internal/services/tiktokshop"
 )
 
@@ -89,6 +92,30 @@ type tenantTikTokBillShadowPreviewerFake struct {
 	result  *tiktokshop.TikTokBillShadowPreview
 	err     error
 	calls   int
+}
+
+type tenantTikTokBillShadowMapperFake struct {
+	previewInput  tiktokshop.TikTokBillShadowMappingSelection
+	confirmInput  tiktokshop.TikTokBillShadowMappingConfirmation
+	actorID       string
+	previewResult models.MarketplaceAliasImpact
+	confirmResult *repository.MarketplaceAliasCommitResult
+	err           error
+	previewCalls  int
+	confirmCalls  int
+}
+
+func (f *tenantTikTokBillShadowMapperFake) Preview(_ context.Context, input tiktokshop.TikTokBillShadowMappingSelection) (models.MarketplaceAliasImpact, error) {
+	f.previewCalls++
+	f.previewInput = input
+	return f.previewResult, f.err
+}
+
+func (f *tenantTikTokBillShadowMapperFake) Confirm(_ context.Context, input tiktokshop.TikTokBillShadowMappingConfirmation, actorID string) (*repository.MarketplaceAliasCommitResult, error) {
+	f.confirmCalls++
+	f.confirmInput = input
+	f.actorID = actorID
+	return f.confirmResult, f.err
 }
 
 func (f *tenantTikTokBillShadowPreviewerFake) Preview(_ context.Context, shopID, orderID string) (*tiktokshop.TikTokBillShadowPreview, error) {
@@ -404,6 +431,88 @@ func TestTikTokShopAPIHandlerBillShadowPreviewValidatesPathAndMapsNotFound(t *te
 	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/orders/7494619203789490654/586030483469993439/bill-shadow-preview", nil))
 	if missing.Code != http.StatusNotFound || previewer.calls != 1 || !strings.Contains(missing.Body.String(), "snapshot_not_found") {
 		t.Fatalf("missing status=%d calls=%d body=%s", missing.Code, previewer.calls, missing.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerPreviewsExactScopedBillShadowMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mapper := &tenantTikTokBillShadowMapperFake{previewResult: models.MarketplaceAliasImpact{
+		ConversionStatus: "ready", ImpactDigest: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowMapper(mapper)
+	router := gin.New()
+	router.POST("/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview", handler.PreviewBillShadowMapping)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/bill-shadow-mapping/impact-preview",
+		strings.NewReader(`{"product_id":"1729429119195974110","sku_id":"1729429118580984286","item_code":"AH-0006","unit_code":"แท่ง","quantity_multiplier":2,"shop_id":"malicious"}`)))
+
+	if response.Code != http.StatusOK || mapper.previewCalls != 1 || mapper.confirmCalls != 0 ||
+		mapper.previewInput.ShopID != "7494619203789490654" || mapper.previewInput.OrderID != "586030483469993439" ||
+		mapper.previewInput.ProductID != "1729429119195974110" || mapper.previewInput.SKUID != "1729429118580984286" ||
+		mapper.previewInput.ItemCode != "AH-0006" || mapper.previewInput.UnitCode != "แท่ง" || mapper.previewInput.QuantityMultiplier != 2 ||
+		!strings.Contains(response.Body.String(), `"conversion_status":"ready"`) {
+		t.Fatalf("status=%d input=%+v body=%s", response.Code, mapper.previewInput, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerConfirmsOnlyReviewedBillShadowMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	mapper := &tenantTikTokBillShadowMapperFake{confirmResult: &repository.MarketplaceAliasCommitResult{
+		Alias: &models.MarketplaceItemAlias{ID: "11111111-1111-4111-8111-111111111111", AccountKey: "shop:7494619203789490654"},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowMapper(mapper)
+	router := gin.New()
+	router.POST("/orders/:shop_id/:order_id/bill-shadow-mapping/confirm", func(c *gin.Context) {
+		c.Set("user_id", "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef")
+		handler.ConfirmBillShadowMapping(c)
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/bill-shadow-mapping/confirm",
+		strings.NewReader(`{"product_id":"1729429119195974110","sku_id":"1729429118580984286","item_code":"AH-0006","unit_code":"แท่ง","quantity_multiplier":1,"expected_mapping_revision":0,"impact_digest":"`+digest+`"}`)))
+
+	if response.Code != http.StatusAccepted || mapper.confirmCalls != 1 || mapper.previewCalls != 0 ||
+		mapper.actorID != "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef" || mapper.confirmInput.ImpactDigest != digest ||
+		mapper.confirmInput.Selection.ShopID != "7494619203789490654" ||
+		!strings.Contains(response.Body.String(), `"account_key":"shop:7494619203789490654"`) {
+		t.Fatalf("status=%d actor=%q input=%+v body=%s", response.Code, mapper.actorID, mapper.confirmInput, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerBillShadowMappingFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mapper := &tenantTikTokBillShadowMapperFake{err: repository.ErrMarketplaceImpactChanged}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowMapper(mapper)
+	router := gin.New()
+	router.POST("/orders/:shop_id/:order_id/bill-shadow-mapping/confirm", handler.ConfirmBillShadowMapping)
+
+	invalid := httptest.NewRecorder()
+	router.ServeHTTP(invalid, httptest.NewRequest(http.MethodPost,
+		"/orders/not-a-shop/586030483469993439/bill-shadow-mapping/confirm", strings.NewReader(`{}`)))
+	if invalid.Code != http.StatusBadRequest || mapper.confirmCalls != 0 {
+		t.Fatalf("invalid status=%d calls=%d body=%s", invalid.Code, mapper.confirmCalls, invalid.Body.String())
+	}
+
+	conflict := httptest.NewRecorder()
+	router.ServeHTTP(conflict, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/bill-shadow-mapping/confirm",
+		strings.NewReader(`{"product_id":"1729429119195974110","sku_id":"1729429118580984286","item_code":"AH-0006","unit_code":"แท่ง","quantity_multiplier":1,"expected_mapping_revision":0,"impact_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`)))
+	if conflict.Code != http.StatusConflict || mapper.confirmCalls != 1 || !strings.Contains(conflict.Body.String(), "mapping_changed") {
+		t.Fatalf("conflict status=%d calls=%d body=%s", conflict.Code, mapper.confirmCalls, conflict.Body.String())
+	}
+
+	mapper.err = errors.New("database unavailable")
+	failed := httptest.NewRecorder()
+	router.ServeHTTP(failed, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/bill-shadow-mapping/confirm",
+		strings.NewReader(`{"product_id":"1729429119195974110","sku_id":"1729429118580984286","item_code":"AH-0006","unit_code":"แท่ง","quantity_multiplier":1,"expected_mapping_revision":0,"impact_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`)))
+	if failed.Code != http.StatusInternalServerError || !strings.Contains(failed.Body.String(), "mapping_failed") {
+		t.Fatalf("failed status=%d body=%s", failed.Code, failed.Body.String())
 	}
 }
 
