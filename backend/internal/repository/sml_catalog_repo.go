@@ -407,7 +407,9 @@ func (r *SMLCatalogRepo) attachMarketplaceSummaries(items []models.CatalogItem) 
 		return nil
 	}
 	rows, err := r.db.Query(`
-		SELECT a.item_code, a.source, COUNT(*)::int,
+		SELECT a.item_code, a.source,
+		       CASE WHEN a.source='tiktok' AND a.account_key LIKE 'shop:%' THEN 'shop:observed' ELSE '' END,
+		       COUNT(*)::int,
 		       COUNT(DISTINCT a.account_key||chr(31)||COALESCE(NULLIF(a.parent_key,''),NULLIF(a.external_parent_id,''),NULLIF(a.external_item_id,''),a.id::text))::int,
 		       COUNT(DISTINCT a.account_key)::int,
 		       BOOL_OR(a.source='shopee' AND (
@@ -423,23 +425,26 @@ func (r *SMLCatalogRepo) attachMarketplaceSummaries(items []models.CatalogItem) 
 		       ))
 		FROM marketplace_item_aliases a
 		WHERE a.is_active=true AND a.item_code=ANY($1)
-		GROUP BY a.item_code,a.source
-		ORDER BY a.item_code,a.source`, pq.Array(codes))
+		GROUP BY a.item_code,a.source,
+		         CASE WHEN a.source='tiktok' AND a.account_key LIKE 'shop:%' THEN 'shop:observed' ELSE '' END
+		ORDER BY a.item_code,a.source,
+		         CASE WHEN a.source='tiktok' AND a.account_key LIKE 'shop:%' THEN 'shop:observed' ELSE '' END`, pq.Array(codes))
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var itemCode string
+		var accountScope string
 		var summary models.CatalogMarketplaceSummary
 		var shopeeAPIUsed, shopeeExcelUsed bool
 		if err := rows.Scan(
-			&itemCode, &summary.Source, &summary.MappingCount, &summary.ProductCount, &summary.AccountCount,
+			&itemCode, &summary.Source, &accountScope, &summary.MappingCount, &summary.ProductCount, &summary.AccountCount,
 			&shopeeAPIUsed, &shopeeExcelUsed,
 		); err != nil {
 			return err
 		}
-		summary.InputChannels = observedShopeeInputChannels(summary.Source, shopeeAPIUsed, shopeeExcelUsed)
+		summary.InputChannels = observedMarketplaceInputChannels(summary.Source, accountScope, shopeeAPIUsed, shopeeExcelUsed)
 		if index, ok := indexes[itemCode]; ok {
 			items[index].MarketplaceSummaries = append(items[index].MarketplaceSummaries, summary)
 		}
@@ -471,7 +476,7 @@ func (r *SMLCatalogRepo) MarketplaceLinks(ctx context.Context, filter CatalogMar
 	args = append(args, filter.Limit+1)
 	query := fmt.Sprintf(`
 		SELECT a.id::text,a.source,a.account_key,
-		       CASE WHEN a.source='shopee' THEN COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),'') ELSE '' END,
+		       CASE WHEN a.source IN ('shopee','tiktok') THEN COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),NULLIF(tc.label,''),NULLIF(tc.shop_name,''),'') ELSE '' END,
 		       COALESCE(NULLIF(a.source_product_name,''),NULLIF(split_part(a.raw_name,' / ',1),''),a.raw_name),
 		       COALESCE(NULLIF(a.source_variant_name,''),NULLIF(split_part(a.raw_name,' / ',2),''),a.raw_name),
 		       a.source_sku,a.external_item_id,a.external_variant_id,a.unit_code,
@@ -490,6 +495,8 @@ func (r *SMLCatalogRepo) MarketplaceLinks(ctx context.Context, filter CatalogMar
 		FROM marketplace_item_aliases a
 		LEFT JOIN shopee_api_connections sc
 		  ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+		LEFT JOIN tiktok_shop_connections tc
+		  ON a.source='tiktok' AND a.account_key='shop:'||tc.shop_id
 		WHERE %s
 		ORDER BY a.source,a.account_key,a.id
 		LIMIT $%d`, strings.Join(where, " AND "), len(args))
@@ -511,7 +518,7 @@ func (r *SMLCatalogRepo) MarketplaceLinks(ctx context.Context, filter CatalogMar
 		); err != nil {
 			return nil, false, err
 		}
-		link.InputChannels = observedShopeeInputChannels(link.Source, shopeeAPIUsed, shopeeExcelUsed)
+		link.InputChannels = observedMarketplaceInputChannels(link.Source, link.AccountKey, shopeeAPIUsed, shopeeExcelUsed)
 		links = append(links, link)
 	}
 	if err := rows.Err(); err != nil {

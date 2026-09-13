@@ -187,7 +187,7 @@ export default function CatalogSettings() {
                             <span className="flex flex-wrap gap-1.5">
                               {marketplaceSummaries.map((summary) => (
                                 <MarketplaceSourceChannelBadges
-                                  key={summary.source}
+                                  key={`${summary.source}:${summary.input_channels?.join(',') ?? ''}`}
                                   source={summary.source}
                                   count={summary.mapping_count}
                                   channels={marketplaceDisplayInputChannels(summary.source, { inputChannels: summary.input_channels })}

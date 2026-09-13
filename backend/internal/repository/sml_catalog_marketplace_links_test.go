@@ -29,11 +29,11 @@ func TestCatalogListAttachesMarketplaceSummariesInOneBatch(t *testing.T) {
 			"SKU-1", "สินค้า 1", "", "ชิ้น", "", "", "", nil, "disabled", nil, true,
 			0, nil, "", nil, nil, now, now, 0, 0, "", true, true, []byte(`[]`),
 		))
-	mock.ExpectQuery(`(?s)SELECT a.item_code, a.source, COUNT\(\*\).*shopee_stock_mappings.*raw_data->>'flow'.*shopee_excel.*FROM marketplace_item_aliases a`).
+	mock.ExpectQuery(`(?s)SELECT a.item_code, a.source,.*COUNT\(\*\).*shopee_stock_mappings.*raw_data->>'flow'.*shopee_excel.*FROM marketplace_item_aliases a`).
 		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"item_code", "source", "mapping_count", "product_count", "account_count", "shopee_api_used", "shopee_excel_used"}).
-			AddRow("SKU-1", "shopee", 3, 2, 1, true, false).
-			AddRow("SKU-1", "tiktok", 1, 1, 1, false, false))
+		WillReturnRows(sqlmock.NewRows([]string{"item_code", "source", "account_scope", "mapping_count", "product_count", "account_count", "shopee_api_used", "shopee_excel_used"}).
+			AddRow("SKU-1", "shopee", "", 3, 2, 1, true, false).
+			AddRow("SKU-1", "tiktok", "shop:observed", 1, 1, 1, false, false))
 
 	items, total, err := NewSMLCatalogRepo(db).List(1, 50, "", "")
 	if err != nil {
@@ -50,6 +50,50 @@ func TestCatalogListAttachesMarketplaceSummariesInOneBatch(t *testing.T) {
 	}
 	if got := items[0].MarketplaceSummaries[0].InputChannels; len(got) != 1 || got[0] != "shopee" {
 		t.Fatalf("Shopee summary input channels = %v, want API only", got)
+	}
+	if got := items[0].MarketplaceSummaries[1].InputChannels; len(got) != 1 || got[0] != "tiktok_shop" {
+		t.Fatalf("TikTok summary input channels = %v, want Shop API only", got)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+func TestCatalogMarketplaceLinksLabelsTikTokShopAPIWithConnectedShop(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Date(2026, 9, 13, 9, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`(?s)CASE WHEN a.source IN \('shopee','tiktok'\).*LEFT JOIN tiktok_shop_connections tc.*a.account_key='shop:'\|\|tc.shop_id`).
+		WithArgs("AH-0002", 51).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "account_key", "account_name", "product_name", "variant_name",
+			"source_sku", "external_item_id", "external_variant_id", "unit_code",
+			"quantity_multiplier", "conversion_status", "scope_confirmed", "updated_at",
+			"shopee_api_used", "shopee_excel_used",
+		}).AddRow(
+			"alias-tiktok", "tiktok", "shop:7494619203789490654", "henna_milkford",
+			"สินค้า TikTok", "ตัวเลือก", "TTS-1", "1729429119195974110", "sku-1", "กล่อง",
+			1, "ready", true, now, false, false,
+		))
+
+	links, hasMore, err := NewSMLCatalogRepo(db).MarketplaceLinks(t.Context(), CatalogMarketplaceLinkFilter{
+		ItemCode: "AH-0002", Limit: 50,
+	})
+	if err != nil {
+		t.Fatalf("MarketplaceLinks: %v", err)
+	}
+	if hasMore || len(links) != 1 {
+		t.Fatalf("hasMore/len=%v/%d, want false/1", hasMore, len(links))
+	}
+	if links[0].AccountName != "henna_milkford" {
+		t.Fatalf("account name=%q, want connected TikTok shop", links[0].AccountName)
+	}
+	if got := links[0].InputChannels; len(got) != 1 || got[0] != "tiktok_shop" {
+		t.Fatalf("input channels=%v, want TikTok Shop API only", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)

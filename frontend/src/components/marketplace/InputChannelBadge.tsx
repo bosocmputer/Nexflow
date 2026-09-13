@@ -24,6 +24,11 @@ function shopeeChannelTitle(channels: readonly BillInputChannel[]) {
   return 'รายการนี้มาจาก Shopee Excel'
 }
 
+function tiktokChannelTitle(channels: readonly BillInputChannel[]) {
+  if (channels.includes('tiktok_shop')) return 'รายการนี้มาจาก TikTok Shop API ของร้านที่เชื่อมต่อ'
+  return 'รายการนี้มาจาก TikTok Excel'
+}
+
 export function InputChannelBadge({
   channel,
   count,
@@ -68,7 +73,9 @@ export function MarketplaceSourceChannelBadges({
   if (channels.length === 0) {
     return <Badge variant="secondary" className={className}>{source || 'Marketplace'}</Badge>
   }
-  const title = source === 'shopee' ? shopeeChannelTitle(channels) : undefined
+  const title = source === 'shopee'
+    ? shopeeChannelTitle(channels)
+    : source === 'tiktok' ? tiktokChannelTitle(channels) : undefined
   return (
     <span className={cn('flex flex-wrap gap-1.5', className)} title={title}>
       {channels.map((channel) => (
@@ -76,7 +83,7 @@ export function MarketplaceSourceChannelBadges({
           key={channel}
           channel={channel}
           count={count}
-          label={channel === 'shopee' && accountName ? `${billInputChannelLabel(channel)} (${accountName})` : undefined}
+          label={(channel === 'shopee' || channel === 'tiktok_shop') && accountName ? `${billInputChannelLabel(channel)} (${accountName})` : undefined}
         />
       ))}
     </span>

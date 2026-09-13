@@ -543,7 +543,7 @@ export default function MarketplaceAliases() {
                 <SelectItem value="all">ทุกช่องทาง</SelectItem>
                 <SelectItem value="shopee">Shopee API + Excel</SelectItem>
                 <SelectItem value="lazada">Lazada Excel</SelectItem>
-                <SelectItem value="tiktok">TikTok Excel</SelectItem>
+                <SelectItem value="tiktok">TikTok Shop API + Excel</SelectItem>
               </SelectContent>
             </Select>
 			{tab === 'saved' && groupedAvailable !== false && (
@@ -976,7 +976,7 @@ function actionDescription(action: PendingAction | null) {
 
 function ChannelAccount({ source, accountName, accountKey, inputChannels, catalogProduct = false }: { source: string; accountName?: string; accountKey: string; inputChannels?: string[]; catalogProduct?: boolean }) {
   const name = accountName || (accountKey.startsWith('shop:') ? `ร้าน ${accountKey.slice(5)}` : '')
-  const channels = marketplaceDisplayInputChannels(source, { inputChannels, catalogProduct })
+  const channels = marketplaceDisplayInputChannels(source, { inputChannels, catalogProduct, accountKey })
   return (
     <div className="shrink-0">
       <MarketplaceSourceChannelBadges source={source} accountName={name} channels={channels} />

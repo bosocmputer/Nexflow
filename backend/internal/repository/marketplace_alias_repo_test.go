@@ -69,6 +69,17 @@ func TestMarketplaceAliasProductGroupsReportsObservedShopeeInputChannels(t *test
 	}
 }
 
+func TestObservedMarketplaceInputChannelsKeepsTikTokAPIScopeSeparateFromExcel(t *testing.T) {
+	api := observedMarketplaceInputChannels("tiktok", "shop:7494619203789490654", false, false)
+	if len(api) != 1 || api[0] != "tiktok_shop" {
+		t.Fatalf("API channels=%v, want TikTok Shop API only", api)
+	}
+	excel := observedMarketplaceInputChannels("tiktok", "default", false, false)
+	if len(excel) != 1 || excel[0] != "tiktok_excel" {
+		t.Fatalf("Excel channels=%v, want TikTok Excel only", excel)
+	}
+}
+
 func TestMarketplaceAliasGroupVariantsUsesChildKeysetWithoutOffset(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

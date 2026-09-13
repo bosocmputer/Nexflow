@@ -76,18 +76,27 @@ func marketplaceAliasParentKeySQL(alias string) string {
 	'derived:'||md5(%[1]s.source||chr(31)||%[1]s.account_key||chr(31)||COALESCE(NULLIF(%[1]s.source_product_name,''),split_part(%[1]s.raw_name,' / ',1),%[1]s.normalized_key)))`, alias)
 }
 
-func observedShopeeInputChannels(source string, apiUsed, excelUsed bool) []string {
-	if strings.ToLower(strings.TrimSpace(source)) != "shopee" {
+func observedMarketplaceInputChannels(source, accountKey string, apiUsed, excelUsed bool) []string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "shopee":
+		channels := make([]string, 0, 2)
+		if apiUsed {
+			channels = append(channels, "shopee")
+		}
+		if excelUsed {
+			channels = append(channels, "shopee_excel")
+		}
+		return channels
+	case "lazada":
+		return []string{"lazada_excel"}
+	case "tiktok":
+		if strings.HasPrefix(strings.TrimSpace(accountKey), "shop:") {
+			return []string{"tiktok_shop"}
+		}
+		return []string{"tiktok_excel"}
+	default:
 		return nil
 	}
-	channels := make([]string, 0, 2)
-	if apiUsed {
-		channels = append(channels, "shopee")
-	}
-	if excelUsed {
-		channels = append(channels, "shopee_excel")
-	}
-	return channels
 }
 
 func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter MarketplaceProductGroupFilter) ([]models.MarketplaceProductGroup, bool, error) {
@@ -129,7 +138,7 @@ func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter Marketp
 		ORDER BY matched.source,matched.account_key,%s
 		LIMIT $%d
 	)
-	SELECT k.source,k.account_key,MAX(COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),'')),k.group_key,
+	SELECT k.source,k.account_key,MAX(COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),NULLIF(tc.label,''),NULLIF(tc.shop_name,''),'')),k.group_key,
 	       MAX(CASE WHEN a.parent_key<>'' THEN a.parent_key_kind
 	                WHEN a.external_parent_id<>'' OR a.external_item_id<>'' THEN 'external'
 	                ELSE 'derived' END),
@@ -154,6 +163,7 @@ func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter Marketp
 	JOIN marketplace_item_aliases a ON a.is_active=true AND a.source=k.source AND a.account_key=k.account_key
 	 AND %s=k.group_key
 	LEFT JOIN shopee_api_connections sc ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+	LEFT JOIN tiktok_shop_connections tc ON a.source='tiktok' AND a.account_key='shop:'||tc.shop_id
 	GROUP BY k.source,k.account_key,k.group_key
 	ORDER BY k.source,k.account_key,k.group_key`, matchedParentKeySQL, strings.Join(allWhere, " AND "), strings.Join(matchedWhere, " AND "),
 		matchedParentKeySQL, matchedParentKeySQL, len(args), marketplaceAliasParentKeySQL("a"))
@@ -171,7 +181,7 @@ func (r *MarketplaceAliasRepo) ProductGroups(ctx context.Context, filter Marketp
 			&shopeeAPIUsed, &shopeeExcelUsed); err != nil {
 			return nil, false, err
 		}
-		group.InputChannels = observedShopeeInputChannels(group.Source, shopeeAPIUsed, shopeeExcelUsed)
+		group.InputChannels = observedMarketplaceInputChannels(group.Source, group.AccountKey, shopeeAPIUsed, shopeeExcelUsed)
 		groups = append(groups, group)
 	}
 	if err := rows.Err(); err != nil {
@@ -217,13 +227,14 @@ func (r *MarketplaceAliasRepo) ProductGroupVariants(ctx context.Context, filter 
 	       a.mapping_revision, a.metadata_updated_at, a.quantity_multiplier,
 	       a.unit_stand_value::text, a.unit_divide_value::text, a.unit_catalog_generation::text,
 	       a.conversion_status, a.sales_enabled, a.stock_policy,
-	       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),''), COALESCE(c.item_name,''), COALESCE(u.email,''),
+	       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),NULLIF(tc.label,''),NULLIF(tc.shop_name,''),''), COALESCE(c.item_name,''), COALESCE(u.email,''),
 	       COALESCE(c.is_active,false), 0, (SELECT COUNT(*) FROM shopee_stock_mappings sm WHERE sm.marketplace_alias_id=a.id)
 	FROM marketplace_item_aliases a
 	CROSS JOIN LATERAL (SELECT %s AS alias_parent_key) parent
 	LEFT JOIN sml_catalog c ON c.item_code=a.item_code
 	LEFT JOIN users u ON u.id=a.confirmed_by
 	LEFT JOIN shopee_api_connections sc ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+	LEFT JOIN tiktok_shop_connections tc ON a.source='tiktok' AND a.account_key='shop:'||tc.shop_id
 	WHERE %s
 	ORDER BY COALESCE(a.external_variant_id,''),a.id
 	LIMIT $%d`, marketplaceAliasParentKeySQL("a"), strings.Join(where, " AND "), len(args))
@@ -542,7 +553,7 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 		       a.mapping_revision, a.metadata_updated_at, a.quantity_multiplier,
 		       a.unit_stand_value::text, a.unit_divide_value::text, a.unit_catalog_generation::text,
 		       a.conversion_status, a.sales_enabled, a.stock_policy,
-		       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),''),
+		       COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),NULLIF(tc.label,''),NULLIF(tc.shop_name,''),''),
 		       COALESCE(c.item_name, ''), COALESCE(u.email, ''),
 		       COALESCE(c.is_active, FALSE),
 		       (SELECT COUNT(*)
@@ -580,6 +591,7 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 		LEFT JOIN sml_catalog c ON c.item_code = a.item_code
 		LEFT JOIN users u ON u.id = a.confirmed_by
 		LEFT JOIN shopee_api_connections sc ON a.source='shopee' AND a.account_key='shop:'||sc.shop_id::text
+		LEFT JOIN tiktok_shop_connections tc ON a.source='tiktok' AND a.account_key='shop:'||tc.shop_id
 		WHERE %s
 		ORDER BY a.updated_at DESC
 		LIMIT $%d OFFSET $%d`, where, len(args)-1, len(args)), args...)
@@ -609,7 +621,7 @@ func (r *MarketplaceAliasRepo) List(source, query string, usableOnly bool, page,
 		); err != nil {
 			return nil, 0, err
 		}
-		alias.InputChannels = observedShopeeInputChannels(alias.Source, shopeeAPIUsed, shopeeExcelUsed)
+		alias.InputChannels = observedMarketplaceInputChannels(alias.Source, alias.AccountKey, shopeeAPIUsed, shopeeExcelUsed)
 		aliases = append(aliases, alias)
 	}
 	return aliases, total, rows.Err()
@@ -738,11 +750,12 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 
 	rows, err := r.db.Query(
 		fmt.Sprintf(`SELECT b.id, b.source, b.source_account_key,
-		        COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),''), b.bill_type, bi.id, bi.raw_name,
+		        COALESCE(NULLIF(sc.label,''),NULLIF(sc.shop_name,''),NULLIF(tc.label,''),NULLIF(tc.shop_name,''),''), b.bill_type, bi.id, bi.raw_name,
 		        COALESCE(bi.source_sku, ''), COALESCE(bi.source_item_id, ''), COALESCE(bi.source_variant_id, '')
 		   FROM bill_items bi
 		   JOIN bills b ON b.id = bi.bill_id
 		   LEFT JOIN shopee_api_connections sc ON b.source='shopee' AND b.source_account_key='shop:'||sc.shop_id::text
+		   LEFT JOIN tiktok_shop_connections tc ON b.source='tiktok' AND b.source_account_key='shop:'||tc.shop_id
 		  WHERE %s
 		  ORDER BY b.created_at DESC`, strings.Join(conditions, " AND ")),
 		args...,
@@ -802,6 +815,7 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 	out := make([]models.MarketplaceAliasReviewGroup, 0, len(groups))
 	for _, g := range groups {
 		g.BillCount = len(g.bills)
+		g.InputChannels = observedMarketplaceInputChannels(g.Source, g.AccountKey, false, false)
 		out = append(out, g.MarketplaceAliasReviewGroup)
 	}
 	sortMarketplaceReviewGroups(out, sortKey)

@@ -50,3 +50,25 @@ test('keeps TikTok Shop API separate from TikTok Excel', () => {
     'tiktok_excel',
   )
 })
+
+test('uses observed TikTok Shop API evidence instead of the legacy Excel fallback', () => {
+  assert.deepEqual(
+    marketplaceDisplayInputChannels('tiktok', { inputChannels: ['tiktok_shop'] }),
+    ['tiktok_shop'],
+  )
+  assert.deepEqual(
+    marketplaceDisplayInputChannels('tiktok', { inputChannels: ['tiktok_excel'] }),
+    ['tiktok_excel'],
+  )
+})
+
+test('falls back to the exact TikTok account scope when observed evidence is unavailable', () => {
+  assert.deepEqual(
+    marketplaceDisplayInputChannels('tiktok', { accountKey: 'shop:7494619203789490654' }),
+    ['tiktok_shop'],
+  )
+  assert.deepEqual(
+    marketplaceDisplayInputChannels('tiktok', { accountKey: 'default' }),
+    ['tiktok_excel'],
+  )
+})

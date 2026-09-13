@@ -41,17 +41,20 @@ export function marketplaceSourceInputChannels(source: string): readonly BillInp
 
 export function marketplaceDisplayInputChannels(
   source: string,
-  evidence: { inputChannels?: readonly string[]; catalogProduct?: boolean } = {},
+  evidence: { inputChannels?: readonly string[]; catalogProduct?: boolean; accountKey?: string } = {},
 ): readonly BillInputChannel[] {
   const fallback = marketplaceSourceInputChannels(source)
-  if (source.trim().toLowerCase() !== 'shopee') return fallback
-
+  const normalizedSource = source.trim().toLowerCase()
   const observed = new Set((evidence.inputChannels ?? []).filter(isBillInputChannel))
   if (observed.size > 0) {
     return BILL_INPUT_CHANNEL_OPTIONS
       .map((option) => option.value)
       .filter((channel) => observed.has(channel))
   }
+  if (normalizedSource === 'tiktok') {
+    return evidence.accountKey?.trim().startsWith('shop:') ? ['tiktok_shop'] : ['tiktok_excel']
+  }
+  if (normalizedSource !== 'shopee') return fallback
   if (evidence.catalogProduct) return ['shopee']
   return fallback
 }
