@@ -300,11 +300,11 @@ export function TikTokBillShadowDialog({
   )
 }
 
-export function TikTokBillShadowButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+export function TikTokBillShadowButton({ loading, label = 'ตรวจตัวอย่าง Bill', onClick }: { loading: boolean; label?: string; onClick: () => void }) {
   return (
     <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={loading} onClick={onClick}>
       {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSearch className="h-3.5 w-3.5" />}
-      ตรวจตัวอย่าง Bill
+      {label}
     </Button>
   )
 }

@@ -5,12 +5,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  Eye,
   Loader2,
   RadioTower,
   RefreshCw,
   Search,
 } from 'lucide-react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
@@ -32,6 +33,7 @@ import {
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokOrderStatusLabel,
+  tiktokDocumentState,
   tiktokStatusGroupCount,
   tiktokSyncState,
   type TikTokStatusCounts,
@@ -54,6 +56,10 @@ interface TikTokOrderRow {
   sku_count: number
   last_order_update_at?: string
   last_synced_at: string
+  bill_id?: string
+  bill_status?: string
+  sml_doc_no?: string
+  document_path?: string
 }
 
 interface TikTokOrderPage {
@@ -473,6 +479,12 @@ function TikTokOperationsHealthLine({ state, setting }: { state: ReturnType<type
 }
 
 function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; previewLoading: boolean; onPreview: () => void }) {
+  const document = tiktokDocumentState({
+    billID: row.bill_id,
+    billStatus: row.bill_status,
+    smlDocNo: row.sml_doc_no,
+    documentPath: row.document_path,
+  })
   return (
     <tr className="border-t border-border hover:bg-muted/30">
       <td className="px-3 py-2 align-top">
@@ -491,8 +503,25 @@ function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; p
       </td>
       <td className="px-3 py-2 align-top"><OrderStatusBadge status={row.order_status} /></td>
       <td className="px-3 py-2 align-top">
-        <TikTokBillShadowButton loading={previewLoading} onClick={onPreview} />
-        <div className="mt-1 text-[11px] text-muted-foreground">Shadow เท่านั้น · ยังไม่สร้างเอกสาร</div>
+        <div className="flex max-w-[300px] flex-col items-start gap-1.5">
+          <Badge variant="outline" className={documentBadgeClass(document.tone)}>{document.label}</Badge>
+          <div className="text-[11px] text-muted-foreground">{document.detail}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {document.path && (
+              <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
+                <Link to={document.path}>
+                  <Eye className="h-3.5 w-3.5" />
+                  เอกสาร
+                </Link>
+              </Button>
+            )}
+            <TikTokBillShadowButton
+              loading={previewLoading}
+              label={document.path ? 'ตรวจข้อมูลต้นทาง' : undefined}
+              onClick={onPreview}
+            />
+          </div>
+        </div>
       </td>
       <td className="px-3 py-2 align-top text-xs text-muted-foreground">
         <div>สินค้า {formatTikTokMoney(row.product_subtotal_amount, row.currency)}</div>
@@ -503,6 +532,13 @@ function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; p
       <td className="px-3 py-2 align-top text-xs text-muted-foreground">{formatDateTime(row.last_synced_at)}</td>
     </tr>
   )
+}
+
+function documentBadgeClass(tone: ReturnType<typeof tiktokDocumentState>['tone']) {
+  if (tone === 'success') return 'border-accentStrong/40 bg-primary/10 text-accentStrong'
+  if (tone === 'danger') return 'border-destructive/30 bg-destructive/10 text-destructive'
+  if (tone === 'warning') return 'border-warning/40 bg-warning/10 text-warning'
+  return 'border-border bg-muted/40 text-muted-foreground'
 }
 
 function OrderStatusBadge({ status }: { status: string }) {

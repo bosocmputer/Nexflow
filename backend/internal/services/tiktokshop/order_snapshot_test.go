@@ -251,15 +251,17 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 		WithArgs("7494619203789490654", "5856%").
 		WillReturnRows(sqlmock.NewRows([]string{"total", "unpaid", "to_ship", "shipping", "completed", "cancelled"}).
 			AddRow(int64(4), int64(0), int64(1), int64(2), int64(1), int64(0)))
-	mock.ExpectQuery("SELECT s.shop_id, c.shop_name").
+	mock.ExpectQuery("SELECT s.shop_id, c.shop_name.*LEFT JOIN LATERAL").
 		WithArgs("7494619203789490654", "", "completed", "5856%", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"shop_id", "shop_name", "order_id", "order_status", "currency",
 			"payment_total_amount", "product_subtotal_amount", "shipping_fee_amount", "item_insurance_fee_amount",
 			"item_count", "sku_count", "last_order_update_at", "last_synced_at",
+			"bill_id", "bill_status", "sml_doc_no", "document_path",
 		}).AddRow(
 			"7494619203789490654", "henna_milkford", "585684843131602849", "COMPLETED", "THB",
 			"307.49", "300", "0", "7.49", 1, 1, updatedAt, syncedAt,
+			"03ee1216-acb4-4a88-842c-7edc6eb44292", "pending", "", "/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292",
 		))
 
 	result, err := NewTikTokOrderSnapshotStore(database).List(t.Context(), TikTokOrderSnapshotListFilter{
@@ -275,7 +277,9 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 		t.Fatalf("List() status counts = %+v", result.StatusCounts)
 	}
 	row := result.Data[0]
-	if row.ShopName != "henna_milkford" || row.PaymentTotalAmount != "307.49" || row.ItemInsuranceFeeAmount != "7.49" {
+	if row.ShopName != "henna_milkford" || row.PaymentTotalAmount != "307.49" || row.ItemInsuranceFeeAmount != "7.49" ||
+		row.BillID != "03ee1216-acb4-4a88-842c-7edc6eb44292" || row.BillStatus != "pending" || row.SMLDocNo != "" ||
+		row.DocumentPath != "/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292" {
 		t.Fatalf("List() row = %+v", row)
 	}
 	encoded, err := json.Marshal(result)

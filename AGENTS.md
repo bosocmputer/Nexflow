@@ -920,9 +920,12 @@ Current AOY UAT scope:
     for a separate current `AWAITING_SHIPMENT` order, ruling out masking only
     after shipment preparation. The latter upstream request ID is
     `20260913150725DB02F022F9F939433BB8`. Partner Center has
-    `seller.order.info` active, but the Custom multi-channel Connector App
-    Review form is unsubmitted; official guidance requires App Review/beta
-    testing for Custom Connectors and Protected Data may require DSPR approval.
+    `seller.order.info` active. The Custom multi-channel Connector App Review
+    was submitted on 2026-09-13 with a read-only reviewer account, three
+    screenshots, a short workflow video, and the Nexflow TikTok Shop PRD;
+    Partner Center reported an expected review time of 10–12 business days and
+    automatic publishing after the app and listing reviews pass. Protected Data
+    may still require DSPR approval.
     `TIKTOK_SHOP_SML_SEND_ENABLED=false` remains enforced. Do not invent or
     substitute recipient data. Complete TikTok review, reauthorize AOY if
     requested, rerun structural preflight, then obtain a fresh user confirmation

@@ -289,17 +289,27 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
   `20260913150725DB02F022F9F939433BB8`. This rules out masking only after label
   printing or collection handoff.
 - Partner Center shows `seller.order.info` active and includes the current Get
-  Order Detail API, but the Custom multi-channel Connector App Review form is
-  still unsubmitted. Official launch guidance requires App Review and beta
-  testing for Custom Connector apps, and Protected Data access may additionally
-  require Data Security and Privacy Review. Treat incomplete review/protected-
-  data approval as the current external blocker; do not weaken recipient
-  validation or invent SML transport data.
+  Order Detail API. The Custom multi-channel Connector App Review was submitted
+  on 2026-09-13 with a read-only reviewer account, three screenshots, a short
+  workflow video, and the Nexflow TikTok Shop PRD. Partner Center reported an
+  expected review time of 10–12 business days and automatic publishing after
+  both the app and listing reviews pass. Protected Data access may additionally
+  require Data Security and Privacy Review. Treat pending review/protected-data
+  approval as the current external blocker; do not weaken recipient validation
+  or invent SML transport data.
 - `TIKTOK_SHOP_SML_SEND_ENABLED=false` remains enforced. Complete the required
   TikTok review, reauthorize AOY if prompted, and rerun the structural preflight.
   If all three fields become `present`, obtain a fresh user confirmation
   immediately before one controlled SML send. If they remain masked, escalate
   to TikTok support with the upstream request IDs above.
+- Keep the temporary reviewer account active and read-only while the review is
+  pending. Its permitted workflow is Dashboard -> `คำสั่งซื้อ TikTok Shop` ->
+  search an Order ID -> inspect the Bill preview and linked Nexflow Bill. Do not
+  grant settings, mapping writes, SML send, stock, delete, or admin permissions.
+- Local non-secret review evidence, intentionally kept outside git, is retained at
+  `output/video/nexflow-tiktok-shop-app-review-demo.mp4` and
+  `output/pdf/nexflow-tiktok-shop-app-review-prd.pdf`; credentials and App
+  Secret must never be copied into documentation or git.
 
 ## Rollback
 

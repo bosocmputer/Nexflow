@@ -19,6 +19,7 @@ const {
   tiktokBillShadowMappingLabel,
   tiktokBillShadowRouteLabel,
   tiktokBillShadowReadinessLabel,
+  tiktokDocumentState,
   tiktokShadowMappingValidation,
   tiktokSyncState,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
@@ -102,4 +103,33 @@ test('builds an explicit reviewed Bill confirmation and rejects stale-shaped evi
   })
   assert.throws(() => buildTikTokReviewedBillRequest('A'.repeat(64)), /review digest/i)
   assert.throws(() => buildTikTokReviewedBillRequest('not-a-digest'), /review digest/i)
+})
+
+test('presents TikTok Nexflow and SML document states with the same operational vocabulary as Shopee', () => {
+  assert.deepEqual(tiktokDocumentState({}), {
+    label: 'รอสร้างเอกสาร',
+    detail: 'ตรวจตัวอย่าง Bill ก่อนสร้าง',
+    tone: 'muted',
+  })
+  assert.deepEqual(tiktokDocumentState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    billStatus: 'pending',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  }), {
+    label: 'สร้างเอกสารแล้ว',
+    detail: 'ยังไม่ส่ง SML',
+    tone: 'warning',
+    path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  })
+  assert.deepEqual(tiktokDocumentState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    billStatus: 'sent',
+    smlDocNo: 'BF-INV26090001',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  }), {
+    label: 'ส่ง SML แล้ว',
+    detail: 'BF-INV26090001',
+    tone: 'success',
+    path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  })
 })

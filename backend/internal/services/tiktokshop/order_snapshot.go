@@ -123,6 +123,10 @@ type TikTokOrderSnapshotListItem struct {
 	SKUCount               int         `json:"sku_count"`
 	LastOrderUpdateAt      *time.Time  `json:"last_order_update_at,omitempty"`
 	LastSyncedAt           time.Time   `json:"last_synced_at"`
+	BillID                 string      `json:"bill_id,omitempty"`
+	BillStatus             string      `json:"bill_status,omitempty"`
+	SMLDocNo               string      `json:"sml_doc_no,omitempty"`
+	DocumentPath           string      `json:"document_path,omitempty"`
 }
 
 type TikTokOrderSnapshotListResult struct {
@@ -529,9 +533,28 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 		`SELECT s.shop_id, c.shop_name, s.order_id, s.order_status, s.currency,
 		        s.payment_total_amount::text, s.product_subtotal_amount::text,
 		        s.shipping_fee_amount::text, s.item_insurance_fee_amount::text,
-		        s.item_count, s.sku_count, s.last_order_update_at, s.last_synced_at
+		        s.item_count, s.sku_count, s.last_order_update_at, s.last_synced_at,
+		        COALESCE(b.bill_id, ''), COALESCE(b.bill_status, ''),
+		        COALESCE(b.sml_doc_no, ''), COALESCE(b.document_path, '')
 		   FROM tiktok_shop_order_snapshots s
 		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
+		   LEFT JOIN LATERAL (
+		     SELECT bill.id::text AS bill_id, bill.status AS bill_status,
+		            COALESCE(bill.sml_doc_no, '') AS sml_doc_no,
+		            CASE bill.document_route
+		              WHEN 'saleinvoice' THEN '/sale-invoices/' || bill.id::text
+		              WHEN 'saleorder' THEN '/sales-orders/' || bill.id::text
+		              ELSE ''
+		            END AS document_path
+		       FROM bills bill
+		      WHERE bill.source = 'tiktok'
+		        AND bill.source_account_key = 'shop:' || s.shop_id
+		        AND bill.sml_order_id = s.order_id
+		        AND COALESCE(bill.raw_data->>'flow', '') = 'tiktok_shop_api_reviewed'
+		        AND bill.archived_at IS NULL
+		      ORDER BY bill.created_at DESC, bill.id DESC
+		      LIMIT 1
+		   ) b ON TRUE
 		  WHERE ($1 = '' OR s.shop_id = $1)
 		    AND ($2 = '' OR s.order_status = $2)
 		    AND ($3 = ''
@@ -556,6 +579,7 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 			&item.ShopID, &item.ShopName, &item.OrderID, &item.OrderStatus, &item.Currency,
 			&item.PaymentTotalAmount, &item.ProductSubtotalAmount, &item.ShippingFeeAmount, &item.ItemInsuranceFeeAmount,
 			&item.ItemCount, &item.SKUCount, &lastUpdate, &item.LastSyncedAt,
+			&item.BillID, &item.BillStatus, &item.SMLDocNo, &item.DocumentPath,
 		); err != nil {
 			return nil, err
 		}

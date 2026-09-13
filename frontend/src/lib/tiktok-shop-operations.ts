@@ -10,6 +10,20 @@ export interface TikTokStatusCounts {
   cancelled: number
 }
 
+export interface TikTokDocumentStateInput {
+  billID?: string
+  billStatus?: string
+  smlDocNo?: string
+  documentPath?: string
+}
+
+export interface TikTokDocumentState {
+  label: string
+  detail: string
+  tone: 'muted' | 'warning' | 'danger' | 'success'
+  path?: string
+}
+
 const TIKTOK_STATUS_GROUPS: TikTokStatusGroup[] = ['all', 'unpaid', 'to_ship', 'shipping', 'completed', 'cancelled']
 
 const STATUS_LABELS: Record<string, string> = {
@@ -56,6 +70,30 @@ export function normalizeTikTokStatusGroup(value: string | null | undefined): Ti
 
 export function tiktokStatusGroupCount(counts: TikTokStatusCounts, group: TikTokStatusGroup): number {
   return group === 'all' ? counts.total : counts[group]
+}
+
+export function tiktokDocumentState(input: TikTokDocumentStateInput): TikTokDocumentState {
+  const billID = input.billID?.trim() ?? ''
+  const billStatus = input.billStatus?.trim().toLowerCase() ?? ''
+  const smlDocNo = input.smlDocNo?.trim() ?? ''
+  const documentPath = input.documentPath?.trim() ?? ''
+  const path = billID && documentPath ? documentPath : undefined
+
+  if (!billID) {
+    return { label: 'รอสร้างเอกสาร', detail: 'ตรวจตัวอย่าง Bill ก่อนสร้าง', tone: 'muted' }
+  }
+  if (smlDocNo || billStatus === 'sent') {
+    return { label: 'ส่ง SML แล้ว', detail: smlDocNo || 'บันทึกเข้า SML แล้ว', tone: 'success', ...(path ? { path } : {}) }
+  }
+  if (billStatus === 'failed') {
+    return { label: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจสอบ', tone: 'danger', ...(path ? { path } : {}) }
+  }
+  return {
+    label: 'สร้างเอกสารแล้ว',
+    detail: billStatus === 'needs_review' ? 'ต้องตรวจข้อมูลก่อนส่ง SML' : 'ยังไม่ส่ง SML',
+    tone: 'warning',
+    ...(path ? { path } : {}),
+  }
 }
 
 export function tiktokBillShadowReadinessLabel(ready: boolean, blockerCount: number): string {
