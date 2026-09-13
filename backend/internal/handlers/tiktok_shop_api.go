@@ -45,6 +45,10 @@ type TikTokShopOrderReader interface {
 	List(context.Context, tiktokshop.TikTokOrderSnapshotListFilter) (*tiktokshop.TikTokOrderSnapshotListResult, error)
 }
 
+type TikTokShopBillShadowPreviewer interface {
+	Preview(context.Context, string, string) (*tiktokshop.TikTokBillShadowPreview, error)
+}
+
 type TikTokShopAPIHandler struct {
 	config       *config.Config
 	gateway      TikTokShopGateway
@@ -53,12 +57,20 @@ type TikTokShopAPIHandler struct {
 	reconciler   TikTokShopOrderReconciler
 	syncSettings TikTokShopOrderSyncSettings
 	orderReader  TikTokShopOrderReader
+	billShadow   TikTokShopBillShadowPreviewer
 	logger       *zap.Logger
 }
 
 func (h *TikTokShopAPIHandler) WithOrderReader(reader TikTokShopOrderReader) *TikTokShopAPIHandler {
 	if h != nil {
 		h.orderReader = reader
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithBillShadowPreviewer(previewer TikTokShopBillShadowPreviewer) *TikTokShopAPIHandler {
+	if h != nil {
+		h.billShadow = previewer
 	}
 	return h
 }
@@ -361,6 +373,55 @@ func (h *TikTokShopAPIHandler) ListOrders(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *TikTokShopAPIHandler) GetBillShadowPreview(c *gin.Context) {
+	enabled, _ := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if h.billShadow == nil {
+		h.error(c, http.StatusServiceUnavailable, "bill_shadow_not_configured", "ระบบตรวจตัวอย่าง Bill TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	shopID := strings.TrimSpace(c.Param("shop_id"))
+	orderID := strings.TrimSpace(c.Param("order_id"))
+	if !tiktokshop.ValidTikTokShopID(shopID) || !tiktokshop.ValidTikTokShopID(orderID) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "Shop ID หรือ Order ID ของ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	preview, err := h.billShadow.Preview(c.Request.Context(), shopID, orderID)
+	if err != nil {
+		switch {
+		case errors.Is(err, tiktokshop.ErrTikTokBillShadowInvalidInput):
+			h.error(c, http.StatusBadRequest, "invalid_request", "Shop ID หรือ Order ID ของ TikTok Shop ไม่ถูกต้อง")
+		case errors.Is(err, tiktokshop.ErrTikTokBillShadowNotFound):
+			h.error(c, http.StatusNotFound, "snapshot_not_found", "ไม่พบ Snapshot ของออเดอร์ TikTok Shop นี้")
+		default:
+			h.logger.Error("tiktok_shop_bill_shadow_preview_failed",
+				zap.String("shop_id", shopID), zap.String("order_id", orderID),
+				zap.String("trace_id", c.GetString("trace_id")), zap.String("entry_point", "manual_api"), zap.Error(err))
+			h.error(c, http.StatusInternalServerError, "bill_shadow_failed", "ตรวจตัวอย่าง Bill TikTok Shop ไม่สำเร็จ")
+		}
+		return
+	}
+	readyMappings := 0
+	for _, item := range preview.Items {
+		if item.Mapping.Status == tiktokshop.TikTokBillShadowMappingReady {
+			readyMappings++
+		}
+	}
+	event := "tiktok_shop_bill_shadow_preview_blocked"
+	if preview.ReadyForReviewedBill {
+		event = "tiktok_shop_bill_shadow_preview_succeeded"
+	}
+	h.logger.Info(event,
+		zap.String("shop_id", shopID), zap.String("order_id", orderID),
+		zap.Int("mapping_ready_count", readyMappings), zap.Int("item_count", len(preview.Items)),
+		zap.Int("blocker_count", len(preview.Blockers)), zap.String("trace_id", c.GetString("trace_id")),
+		zap.String("entry_point", "manual_api"))
+	c.JSON(http.StatusOK, preview)
 }
 
 func (h *TikTokShopAPIHandler) UpdateOrderSyncSetting(c *gin.Context) {

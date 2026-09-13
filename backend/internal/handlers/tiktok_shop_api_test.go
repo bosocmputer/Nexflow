@@ -83,6 +83,21 @@ type tenantTikTokOrderReaderFake struct {
 	calls  int
 }
 
+type tenantTikTokBillShadowPreviewerFake struct {
+	shopID  string
+	orderID string
+	result  *tiktokshop.TikTokBillShadowPreview
+	err     error
+	calls   int
+}
+
+func (f *tenantTikTokBillShadowPreviewerFake) Preview(_ context.Context, shopID, orderID string) (*tiktokshop.TikTokBillShadowPreview, error) {
+	f.calls++
+	f.shopID = shopID
+	f.orderID = orderID
+	return f.result, f.err
+}
+
 func (f *tenantTikTokOrderReaderFake) List(_ context.Context, filter tiktokshop.TikTokOrderSnapshotListFilter) (*tiktokshop.TikTokOrderSnapshotListResult, error) {
 	f.calls++
 	f.filter = filter
@@ -342,6 +357,53 @@ func TestTikTokShopAPIHandlerListsLocalOrderSnapshotsWithBoundedFilters(t *testi
 		if strings.Contains(strings.ToLower(response.Body.String()), forbidden) {
 			t.Fatalf("response leaked %q: %s", forbidden, response.Body.String())
 		}
+	}
+}
+
+func TestTikTokShopAPIHandlerReturnsPIISafeBillShadowPreview(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previewer := &tenantTikTokBillShadowPreviewerFake{result: &tiktokshop.TikTokBillShadowPreview{
+		ShadowMode: true, CanCreateBill: false, ReadyForReviewedBill: false,
+		ShopID: "7494619203789490654", OrderID: "586030483469993439", Currency: "THB",
+		Blockers: []tiktokshop.TikTokBillShadowBlocker{{Code: tiktokshop.TikTokBillShadowBlockerMappingMissing, Message: "ยังไม่ได้จับคู่สินค้า"}},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.GET("/orders/:shop_id/:order_id/bill-shadow-preview", handler.GetBillShadowPreview)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/orders/7494619203789490654/586030483469993439/bill-shadow-preview", nil))
+
+	if response.Code != http.StatusOK || previewer.calls != 1 || previewer.shopID != "7494619203789490654" ||
+		previewer.orderID != "586030483469993439" || !strings.Contains(response.Body.String(), `"shadow_mode":true`) ||
+		!strings.Contains(response.Body.String(), `"can_create_bill":false`) {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, previewer.calls, response.Body.String())
+	}
+	for _, forbidden := range []string{"safe_order", "line_ids", "request_id", "source_hash", "token", "signature"} {
+		if strings.Contains(strings.ToLower(response.Body.String()), forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
+func TestTikTokShopAPIHandlerBillShadowPreviewValidatesPathAndMapsNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previewer := &tenantTikTokBillShadowPreviewerFake{err: tiktokshop.ErrTikTokBillShadowNotFound}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.GET("/orders/:shop_id/:order_id/bill-shadow-preview", handler.GetBillShadowPreview)
+
+	invalid := httptest.NewRecorder()
+	router.ServeHTTP(invalid, httptest.NewRequest(http.MethodGet, "/orders/not-a-shop/586030483469993439/bill-shadow-preview", nil))
+	if invalid.Code != http.StatusBadRequest || previewer.calls != 0 {
+		t.Fatalf("invalid status=%d calls=%d body=%s", invalid.Code, previewer.calls, invalid.Body.String())
+	}
+
+	missing := httptest.NewRecorder()
+	router.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/orders/7494619203789490654/586030483469993439/bill-shadow-preview", nil))
+	if missing.Code != http.StatusNotFound || previewer.calls != 1 || !strings.Contains(missing.Body.String(), "snapshot_not_found") {
+		t.Fatalf("missing status=%d calls=%d body=%s", missing.Code, previewer.calls, missing.Body.String())
 	}
 }
 
