@@ -462,6 +462,7 @@ func TestTikTokShopAPIHandlerConfirmsOnlyReviewedBillShadowMapping(t *testing.T)
 	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	mapper := &tenantTikTokBillShadowMapperFake{confirmResult: &repository.MarketplaceAliasCommitResult{
 		Alias: &models.MarketplaceItemAlias{ID: "11111111-1111-4111-8111-111111111111", AccountKey: "shop:7494619203789490654"},
+		Job:   models.MarketplaceMappingJob{AliasID: "11111111-1111-4111-8111-111111111111", TargetRevision: 1},
 	}}
 	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
 		WithBillShadowMapper(mapper)
@@ -513,6 +514,16 @@ func TestTikTokShopAPIHandlerBillShadowMappingFailsClosed(t *testing.T) {
 		strings.NewReader(`{"product_id":"1729429119195974110","sku_id":"1729429118580984286","item_code":"AH-0006","unit_code":"แท่ง","quantity_multiplier":1,"expected_mapping_revision":0,"impact_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`)))
 	if failed.Code != http.StatusInternalServerError || !strings.Contains(failed.Body.String(), "mapping_failed") {
 		t.Fatalf("failed status=%d body=%s", failed.Code, failed.Body.String())
+	}
+
+	mapper.err = nil
+	mapper.confirmResult = nil
+	incomplete := httptest.NewRecorder()
+	router.ServeHTTP(incomplete, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/bill-shadow-mapping/confirm",
+		strings.NewReader(`{"product_id":"1729429119195974110","sku_id":"1729429118580984286","item_code":"AH-0006","unit_code":"แท่ง","quantity_multiplier":1,"expected_mapping_revision":0,"impact_digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}`)))
+	if incomplete.Code != http.StatusInternalServerError || !strings.Contains(incomplete.Body.String(), "mapping_failed") {
+		t.Fatalf("incomplete status=%d body=%s", incomplete.Code, incomplete.Body.String())
 	}
 }
 

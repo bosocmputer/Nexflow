@@ -480,6 +480,14 @@ func (h *TikTokShopAPIHandler) ConfirmBillShadowMapping(c *gin.Context) {
 		h.writeBillShadowMappingError(c, err, shopID, orderID, selection.ProductID, selection.SKUID, "confirm")
 		return
 	}
+	if result == nil || result.Alias == nil || strings.TrimSpace(result.Job.AliasID) == "" {
+		h.logger.Error("tiktok_shop_bill_shadow_mapping_response_invalid",
+			zap.String("shop_id", shopID), zap.String("order_id", orderID),
+			zap.String("product_id", selection.ProductID), zap.String("sku_id", selection.SKUID),
+			zap.String("trace_id", c.GetString("trace_id")))
+		h.error(c, http.StatusInternalServerError, "mapping_failed", "บันทึกการจับคู่ Product Master ไม่สำเร็จ กรุณาตรวจผลกระทบใหม่ก่อนลองอีกครั้ง")
+		return
+	}
 	h.logger.Info("tiktok_shop_bill_shadow_mapping_confirmed",
 		zap.String("shop_id", shopID), zap.String("order_id", orderID),
 		zap.String("product_id", selection.ProductID), zap.String("sku_id", selection.SKUID),
