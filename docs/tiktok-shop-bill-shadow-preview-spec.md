@@ -1,0 +1,106 @@
+# TikTok Shop Bill Shadow Preview
+
+Status: implementation specification  
+Scope: AOY controlled UAT, reusable for multiple TikTok Shop connections  
+Safety mode: read-only shadow
+
+## Outcome
+
+Nexflow can inspect one trusted local TikTok Shop order snapshot and explain
+whether it is ready to become a sale Bill. The preview exposes the proposed
+document amount, marketplace-to-SML item mapping, quantity conversion, and
+blocking reasons without creating or modifying any Bill, SML document,
+Product Master alias, reservation, notification, stock, fulfilment, or TikTok
+Shop resource.
+
+## API contract
+
+`GET /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview`
+
+- Roles: `admin`, `staff`.
+- `shop_id` and `order_id` must be numeric TikTok identifiers.
+- Source: the current row in `tiktok_shop_order_snapshots` only. Rendering a
+  preview must never call TikTok Shop or the Central Gateway.
+- A missing snapshot returns `404 snapshot_not_found`.
+- An internal source-integrity failure returns a generic safe `500` response.
+- The response excludes buyer data, raw snapshot JSON, line IDs, upstream
+  request IDs, source hashes, tokens, signatures, and application secrets.
+- `can_create_bill` is always `false` in this phase. A future reviewed create
+  endpoint requires a separate specification and activation decision.
+
+The response includes:
+
+- shop and order identity, current TikTok status, currency, and snapshot time;
+- `shadow_mode: true`, `can_create_bill: false`, and
+  `ready_for_reviewed_bill`;
+- proposed product, shipping, document, buyer-payment, and excluded
+  buyer/platform-only charge totals;
+- one grouped product/SKU row with Marketplace quantity, line amount, exact
+  shop-scoped Product Master mapping, and calculated SML quantity;
+- non-secret route readiness (`doc_format_code` and semantic route only);
+- stable blocker codes and Thai operator-facing explanations;
+- an existing active TikTok Bill reference, when one already exists for the
+  same Order ID, to prevent duplicate creation across API and Excel entry
+  points.
+
+## Multi-store identity
+
+TikTok Shop API mapping identity is:
+
+`source=tiktok + account_key=shop:<shop_id> + product_id + sku_id`
+
+The shadow preview never treats an alias under `account_key=default` as ready
+for an API order. A matching unscoped alias may be reported as a legacy
+candidate requiring review, but it must not cross shops automatically. TikTok
+Excel remains under `account_key=default` until an explicit import-to-shop
+linking workflow is designed.
+
+## Readiness rules
+
+The preview is ready for a future reviewed Bill only when all rules pass:
+
+1. The snapshot belongs to an active TikTok Shop connection.
+2. Status is one of `AWAITING_COLLECTION`, `IN_TRANSIT`, `DELIVERED`, or
+   `COMPLETED`. Earlier, cancelled, and unknown states remain visible but are
+   blocked.
+3. The local order, price detail, normalized items, stored totals, and grouped
+   line amounts reconcile exactly.
+4. Every product/SKU has one active, scope-confirmed, sales-enabled mapping
+   whose conversion status is `ready` in the active unit Catalog generation.
+5. Marketplace quantity conversion is exact and finite.
+6. A positive seller shipping amount has a configured TikTok shipping item and
+   unit. Zero shipping does not require a shipping item.
+7. The TikTok sale route exists and has a document format and supported sale
+   endpoint.
+8. No active TikTok Bill already uses the same Order ID. Duplicate detection is
+   intentionally broader than the shop scope so an earlier TikTok Excel import
+   cannot be recreated through the API path.
+
+## Amount semantics
+
+- Proposed product total is the trusted TikTok product subtotal and must equal
+  the sum of grouped line sale prices.
+- Proposed shipping total is the seller document shipping amount.
+- Proposed document total is product plus shipping.
+- Buyer payment remains visible as reconciliation evidence but is not assumed
+  to be the SML document total.
+- Item insurance is a buyer/platform-only charge in the current AOY evidence;
+  it is shown as excluded and never converted into a synthetic SML item.
+- If buyer payment cannot be explained by the supported components, or line
+  totals differ from the stored subtotal, the preview fails closed with an
+  amount blocker.
+
+Controlled order `586030483469993439` is expected to show product/document
+total `300.00 THB`, buyer payment `307.49 THB`, excluded item insurance
+`7.49 THB`, and a missing shop-scoped Product Master mapping blocker.
+
+## Observability and acceptance
+
+Each request logs a bounded structured event with trace ID, entry point, shop
+ID, order ID, mapping-ready count, total item count, blocker count, and outcome.
+Logs contain no product names, raw payloads, buyer data, or credentials.
+
+Acceptance requires backend unit/handler tests, race tests for changed Go
+packages, `go vet`, frontend regression tests, lint/build, desktop and 390 px
+browser QA, production health/Gateway checks, and proof that Bill, SML attempt,
+notification, and LINE-delivery counts are unchanged after preview use.
