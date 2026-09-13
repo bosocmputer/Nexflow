@@ -10,7 +10,8 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { toast } from 'sonner'
 
 import client from '@/api/client'
 import {
@@ -27,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  buildTikTokReviewedBillRequest,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokOrderStatusLabel,
@@ -78,6 +80,19 @@ interface TikTokOrderSyncResponse {
   data: TikTokOrderSyncSetting[]
 }
 
+interface TikTokReviewedBillResponse {
+  data: {
+    bill_id: string
+    status: string
+    reused: boolean
+    document_route: string
+    review_path: string
+    message: string
+  }
+  sml_created: false
+  notification_created: false
+}
+
 const ALL = 'all'
 const DEFAULT_PER_PAGE = 20
 const PAGE_SIZE_OPTIONS = [20, 50] as const
@@ -110,6 +125,7 @@ const EMPTY_COUNTS: TikTokStatusCounts = {
 }
 
 export default function TikTokShopOperations() {
+  const navigate = useNavigate()
   const canManage = useAuthStore((state) => state.user?.role === 'admin')
   const [params, setParams] = useSearchParams()
   const [orders, setOrders] = useState<TikTokOrderPage | null>(null)
@@ -122,6 +138,8 @@ export default function TikTokShopOperations() {
   const [billPreview, setBillPreview] = useState<TikTokBillShadowPreview | null>(null)
   const [billPreviewLoading, setBillPreviewLoading] = useState(false)
   const [billPreviewError, setBillPreviewError] = useState('')
+  const [billCreating, setBillCreating] = useState(false)
+  const [billCreateError, setBillCreateError] = useState('')
   const [mappingItem, setMappingItem] = useState<TikTokBillShadowItem | null>(null)
   const [mappingOpen, setMappingOpen] = useState(false)
   const page = readPage(params)
@@ -218,11 +236,37 @@ export default function TikTokShopOperations() {
   }
   const openBillPreview = (row: TikTokOrderRow) => {
     setPreviewOrder(row)
+    setBillCreateError('')
     setPreviewOpen(true)
   }
   const setBillPreviewOpen = (open: boolean) => {
     setPreviewOpen(open)
-    if (!open) setBillPreviewLoading(false)
+    if (!open) {
+      setBillPreviewLoading(false)
+      setBillCreateError('')
+    }
+  }
+  const createReviewedBill = async () => {
+    if (!previewOrder || !billPreview?.can_create_bill) return
+    setBillCreating(true)
+    setBillCreateError('')
+    try {
+      const response = await client.post<TikTokReviewedBillResponse>(
+        `/api/tiktok-shop-api/orders/${encodeURIComponent(previewOrder.shop_id)}/${encodeURIComponent(previewOrder.order_id)}/reviewed-bill`,
+        buildTikTokReviewedBillRequest(billPreview.review_digest),
+      )
+      const result = response.data.data
+      toast.success(result.reused ? 'พบ Bill ที่สร้างจาก Order นี้แล้ว' : 'สร้าง Bill TikTok Shop ใน Nexflow แล้ว', {
+        description: 'ยังไม่ได้ส่งเข้า SML, แจ้ง LINE หรือเขียนสต๊อก',
+      })
+      setPreviewOpen(false)
+      setRefreshTick((value) => value + 1)
+      navigate(result.review_path)
+    } catch (cause: unknown) {
+      setBillCreateError(apiErrorMessage(cause, 'สร้าง Bill TikTok Shop ไม่สำเร็จ กรุณาเปิดตัวอย่างใหม่แล้วตรวจอีกครั้ง'))
+    } finally {
+      setBillCreating(false)
+    }
   }
   const openProductMapping = (item: TikTokBillShadowItem) => {
     setPreviewOpen(false)
@@ -247,7 +291,7 @@ export default function TikTokShopOperations() {
               <h1 id="tiktok-operations-title" className="text-lg font-semibold tracking-normal">คำสั่งซื้อ TikTok Shop</h1>
               <Badge className="h-6 border-foreground bg-foreground px-2 text-[11px] text-background hover:bg-foreground">Snapshot</Badge>
               <span className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground">
-                อ่านอย่างเดียว · ยังไม่สร้าง Bill/SML
+                ตรวจทานก่อนสร้าง · ยังไม่ส่ง SML
               </span>
             </div>
             <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
@@ -392,7 +436,10 @@ export default function TikTokShopOperations() {
         error={billPreviewError}
         preview={billPreview}
         canManage={canManage}
+        creatingBill={billCreating}
+        createError={billCreateError}
         onMapItem={openProductMapping}
+        onCreateBill={createReviewedBill}
         onOpenChange={setBillPreviewOpen}
       />
       <TikTokProductMappingDialog

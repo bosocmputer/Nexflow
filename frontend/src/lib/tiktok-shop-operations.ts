@@ -110,3 +110,19 @@ export function tiktokShadowMappingValidation(itemCode: string, unitCode: string
   }
   return ''
 }
+
+export interface TikTokReviewedBillRequest {
+  confirm: 'CREATE_REVIEWED_BILL'
+  review_digest: string
+}
+
+export function buildTikTokReviewedBillRequest(reviewDigest: string): TikTokReviewedBillRequest {
+  const digest = reviewDigest.trim()
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error('invalid review digest')
+  }
+  return {
+    confirm: 'CREATE_REVIEWED_BILL',
+    review_digest: digest,
+  }
+}

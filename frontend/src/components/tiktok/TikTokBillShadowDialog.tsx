@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, FileSearch, Loader2, ShieldCheck } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { AlertTriangle, CheckCircle2, FileCheck2, FileSearch, Loader2, ShieldCheck } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -44,6 +45,7 @@ export interface TikTokBillShadowPreview {
   shadow_mode: boolean
   can_create_bill: boolean
   ready_for_reviewed_bill: boolean
+  review_digest: string
   shop_id: string
   shop_name: string
   order_id: string
@@ -88,18 +90,44 @@ interface Props {
   error: string
   preview: TikTokBillShadowPreview | null
   canManage: boolean
+  creatingBill: boolean
+  createError: string
   onMapItem: (item: TikTokBillShadowItem) => void
+  onCreateBill: () => void
   onOpenChange: (open: boolean) => void
 }
 
-export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error, preview, canManage, onMapItem, onOpenChange }: Props) {
+export function TikTokBillShadowDialog({
+  open,
+  orderID,
+  shopName,
+  loading,
+  error,
+  preview,
+  canManage,
+  creatingBill,
+  createError,
+  onMapItem,
+  onCreateBill,
+  onOpenChange,
+}: Props) {
+  const [confirming, setConfirming] = useState(false)
+
+  useEffect(() => {
+    setConfirming(false)
+  }, [open, preview?.review_digest])
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!creatingBill) onOpenChange(nextOpen)
+    }}>
       <DialogContent className="grid max-h-[92dvh] max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b border-border px-4 py-4 pr-12 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
             <DialogTitle>ตรวจตัวอย่าง Bill TikTok Shop</DialogTitle>
-            <Badge variant="outline" className="border-info/30 bg-info/10 text-info">Shadow</Badge>
+            <Badge variant="outline" className="border-info/30 bg-info/10 text-info">
+              {preview?.can_create_bill ? 'Reviewed Bill' : 'Shadow'}
+            </Badge>
           </div>
           <DialogDescription>
             Order <span className="font-mono text-foreground">{orderID}</span>{shopName ? ` · ${shopName}` : ''}
@@ -133,7 +161,9 @@ export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error
                   : <AlertTriangle className="h-4 w-4 text-warning" />}
                 <AlertTitle>{tiktokBillShadowReadinessLabel(preview.ready_for_reviewed_bill, preview.blockers.length)}</AlertTitle>
                 <AlertDescription>
-                  หน้านี้ใช้ตรวจข้อมูลเท่านั้น ยังไม่สร้าง Bill ไม่ส่ง SML และไม่เปลี่ยนข้อมูลสินค้า
+                  {preview.can_create_bill
+                    ? 'ตรวจข้อมูลให้ครบก่อนยืนยัน ระบบจะสร้าง Bill ใน Nexflow เท่านั้น โดยยังไม่ส่ง SML, LINE หรือแก้สต๊อก'
+                    : 'หน้านี้ใช้ตรวจข้อมูลเท่านั้น ยังไม่สร้าง Bill ไม่ส่ง SML และไม่เปลี่ยนข้อมูลสินค้า'}
                 </AlertDescription>
               </Alert>
 
@@ -217,6 +247,14 @@ export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error
                 </section>
               )}
 
+              {createError && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>สร้าง Bill ไม่สำเร็จ</AlertTitle>
+                  <AlertDescription>{createError}</AlertDescription>
+                </Alert>
+              )}
+
               <div className="flex flex-col gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
                 <span className="inline-flex items-center gap-1.5">
                   <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -229,9 +267,33 @@ export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error
         </div>
 
         <DialogFooter className="border-t border-border bg-muted/30 px-4 py-3 sm:px-6">
-          <DialogClose asChild>
-            <Button type="button" variant="outline">ปิดตัวอย่าง</Button>
-          </DialogClose>
+          {confirming && preview?.can_create_bill && canManage ? (
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs leading-5 text-muted-foreground">
+                <strong className="block text-sm text-foreground">ยืนยันสร้าง Bill สำหรับ Order {preview.order_id}</strong>
+                สร้าง 1 Bill ใน Nexflow · ไม่ส่ง SML · ไม่แจ้ง LINE · ไม่เขียนสต๊อก
+              </div>
+              <div className="flex shrink-0 justify-end gap-2">
+                <Button type="button" variant="outline" disabled={creatingBill} onClick={() => setConfirming(false)}>ย้อนกลับ</Button>
+                <Button type="button" disabled={creatingBill} className="gap-2" onClick={onCreateBill}>
+                  {creatingBill ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
+                  ยืนยันสร้าง Bill
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" disabled={creatingBill}>ปิดตัวอย่าง</Button>
+              </DialogClose>
+              {preview?.can_create_bill && canManage && (
+                <Button type="button" className="gap-2" disabled={creatingBill} onClick={() => setConfirming(true)}>
+                  <FileCheck2 className="h-4 w-4" />
+                  สร้าง Bill ที่ตรวจแล้ว
+                </Button>
+              )}
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

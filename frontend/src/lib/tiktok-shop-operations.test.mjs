@@ -10,6 +10,7 @@ const vite = await createServer({
 })
 
 const {
+  buildTikTokReviewedBillRequest,
   buildTikTokShadowMappingPayload,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
@@ -91,4 +92,14 @@ test('blocks incomplete or unsafe TikTok shadow mapping selections', () => {
   assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 1.5), 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000')
   assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 1_000_001), 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000')
   assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 2), '')
+})
+
+test('builds an explicit reviewed Bill confirmation and rejects stale-shaped evidence', () => {
+  const digest = 'a'.repeat(64)
+  assert.deepEqual(buildTikTokReviewedBillRequest(digest), {
+    confirm: 'CREATE_REVIEWED_BILL',
+    review_digest: digest,
+  })
+  assert.throws(() => buildTikTokReviewedBillRequest('A'.repeat(64)), /review digest/i)
+  assert.throws(() => buildTikTokReviewedBillRequest('not-a-digest'), /review digest/i)
 })
