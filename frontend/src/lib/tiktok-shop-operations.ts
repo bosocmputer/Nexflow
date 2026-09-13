@@ -75,3 +75,38 @@ export function tiktokBillShadowRouteLabel(route: string): string {
   if (route === 'sale_order') return 'ใบสั่งขาย'
   return 'ยังไม่ได้ตั้งค่า'
 }
+
+export interface TikTokShadowMappingPayloadInput {
+  productID: string
+  skuID: string
+  itemCode: string
+  unitCode: string
+  quantityMultiplier: number
+}
+
+export interface TikTokShadowMappingPayload {
+  product_id: string
+  sku_id: string
+  item_code: string
+  unit_code: string
+  quantity_multiplier: number
+}
+
+export function buildTikTokShadowMappingPayload(input: TikTokShadowMappingPayloadInput): TikTokShadowMappingPayload {
+  return {
+    product_id: input.productID.trim(),
+    sku_id: input.skuID.trim(),
+    item_code: input.itemCode.trim(),
+    unit_code: input.unitCode.trim(),
+    quantity_multiplier: input.quantityMultiplier,
+  }
+}
+
+export function tiktokShadowMappingValidation(itemCode: string, unitCode: string, quantityMultiplier: number): string {
+  if (!itemCode.trim()) return 'กรุณาเลือกสินค้า SML'
+  if (!unitCode.trim()) return 'กรุณาเลือกหน่วย SML'
+  if (!Number.isInteger(quantityMultiplier) || quantityMultiplier < 1 || quantityMultiplier > 1_000_000) {
+    return 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000'
+  }
+  return ''
+}

@@ -10,6 +10,7 @@ const vite = await createServer({
 })
 
 const {
+  buildTikTokShadowMappingPayload,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokStatusGroupCount,
@@ -17,6 +18,7 @@ const {
   tiktokBillShadowMappingLabel,
   tiktokBillShadowRouteLabel,
   tiktokBillShadowReadinessLabel,
+  tiktokShadowMappingValidation,
   tiktokSyncState,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
 
@@ -61,4 +63,32 @@ test('presents bill shadow state in operator language without exposing route int
   assert.equal(tiktokBillShadowRouteLabel('sale_invoice'), 'ขายสินค้าและบริการ / SI')
   assert.equal(tiktokBillShadowRouteLabel('sale_order'), 'ใบสั่งขาย')
   assert.equal(tiktokBillShadowRouteLabel(''), 'ยังไม่ได้ตั้งค่า')
+})
+
+test('builds only the exact TikTok product and SKU mapping payload', () => {
+  assert.deepEqual(buildTikTokShadowMappingPayload({
+    productID: '1729429119195974110',
+    skuID: '1729429118580984286',
+    itemCode: ' AH-0006 ',
+    unitCode: ' แท่ง ',
+    quantityMultiplier: 2,
+  }), {
+    product_id: '1729429119195974110',
+    sku_id: '1729429118580984286',
+    item_code: 'AH-0006',
+    unit_code: 'แท่ง',
+    quantity_multiplier: 2,
+  })
+  assert.equal('account_key' in buildTikTokShadowMappingPayload({
+    productID: '1', skuID: '2', itemCode: 'A', unitCode: 'ชิ้น', quantityMultiplier: 1,
+  }), false)
+})
+
+test('blocks incomplete or unsafe TikTok shadow mapping selections', () => {
+  assert.equal(tiktokShadowMappingValidation('', 'แท่ง', 1), 'กรุณาเลือกสินค้า SML')
+  assert.equal(tiktokShadowMappingValidation('AH-0006', '', 1), 'กรุณาเลือกหน่วย SML')
+  assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 0), 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000')
+  assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 1.5), 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000')
+  assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 1_000_001), 'จำนวนต้องเป็นเลขจำนวนเต็ม 1 ถึง 1,000,000')
+  assert.equal(tiktokShadowMappingValidation('AH-0006', 'แท่ง', 2), '')
 })
