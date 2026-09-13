@@ -827,6 +827,28 @@ Current AOY UAT scope:
     `TIKTOK_SHOP_REVIEWED_BILL_ENABLED` or create the first Bill without the
     user's explicit controlled-canary authorization; that authorization does
     not include an SML send.
+49. AOY-only dedicated TikTok Shop API SML document routing is deployed at
+    `56410df` with additive migration 101 as of 2026-09-13. The new
+    `tiktok_shop` channel is independent from the legacy `tiktok` Excel route;
+    migration 101 changes only the allowed schema values and does not seed,
+    copy, or overwrite tenant configuration. `/settings/channels` now shows
+    `คำสั่งซื้อ TikTok Shop` as a separate main-work row linked to
+    `/tiktok-shop-operations`. Its dialog permits only sale order or sale
+    invoice destinations and requires an explicit SML customer, document
+    format/prefix/running format, warehouse/location, and VAT; the optional
+    buyer-paid shipping line has its own SML item/unit. Reviewed Bill preview
+    and creation read only `tiktok_shop`, require a complete managed route, and
+    bind its `config_version` into the review digest so edits invalidate prior
+    review evidence. TikTok Excel continues to use its unchanged SI route.
+    Production browser QA verified the separate rows, missing-configuration
+    state, disabled save, required fields, and the two allowed destinations.
+    Production DB verification found zero `tiktok_shop` route rows and the
+    Reviewed Bill feature flag remains false, so this rollout created no Bill
+    or SML write. The AOY backup is
+    `pre-deploy-20260913-040230.sql.gz`; Demo, Lanboon, Ploy, and both Central
+    Gateways were not deployed. The user will first create the TikTok customer
+    and shipping service master in SML, then explicitly configure this route
+    before a fresh shadow review and separately authorized one-Bill canary.
 
 Known deferred or incomplete validation:
 
