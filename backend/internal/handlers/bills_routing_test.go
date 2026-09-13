@@ -260,6 +260,18 @@ func TestTikTokShopReviewedBillSMLSendIsFailClosed(t *testing.T) {
 	}
 }
 
+func TestTikTokShopSMLQueueFilterFollowsSendGate(t *testing.T) {
+	if !tikTokShopSMLQueueMustExclude(nil) {
+		t.Fatal("nil config must exclude reviewed TikTok Bills from the SML queue")
+	}
+	if !tikTokShopSMLQueueMustExclude(&config.Config{}) {
+		t.Fatal("default config must exclude reviewed TikTok Bills from the SML queue")
+	}
+	if tikTokShopSMLQueueMustExclude(&config.Config{TikTokShopSMLSendEnabled: true}) {
+		t.Fatal("enabled SML send must include reviewed TikTok Bills in the SML queue")
+	}
+}
+
 func TestValidateBulkBillIDsGuardsProductionBatch(t *testing.T) {
 	validA := "11111111-1111-1111-1111-111111111111"
 	validB := "22222222-2222-2222-2222-222222222222"

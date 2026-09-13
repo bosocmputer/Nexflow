@@ -717,6 +717,7 @@ func (h *BillHandler) List(c *gin.Context) {
 	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
 		f.BillType = "sale"
 	}
+	f.SMLSendQueue = f.SMLSendQueue && tikTokShopSMLQueueMustExclude(h.cfg)
 	if f.PerPage > 0 {
 		f.PageSize = f.PerPage
 	}
@@ -766,6 +767,7 @@ func (h *BillHandler) Counts(c *gin.Context) {
 	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
 		f.BillType = "sale"
 	}
+	f.SMLSendQueue = tikTokShopSMLQueueMustExclude(h.cfg)
 	counts, err := h.billRepo.QueueCounts(f)
 	if err != nil {
 		h.log.Error("Bill counts", zap.Error(err))
@@ -1107,6 +1109,10 @@ func isTikTokShopReviewedBill(bill *models.Bill) bool {
 
 func tikTokShopSMLSendBlocked(cfg *config.Config, bill *models.Bill) bool {
 	return isTikTokShopReviewedBill(bill) && (cfg == nil || !cfg.TikTokShopSMLSendEnabled)
+}
+
+func tikTokShopSMLQueueMustExclude(cfg *config.Config) bool {
+	return cfg == nil || !cfg.TikTokShopSMLSendEnabled
 }
 
 func isShopeeRealtimeBill(bill *models.Bill) bool {

@@ -235,6 +235,7 @@ type BillListFilter struct {
 	Limit          int    `form:"limit"`
 	CursorMode     bool   `form:"-"`
 	IncludeTotal   bool   `form:"include_total"`
+	SMLSendQueue   bool   `form:"sml_send_queue"`
 	Page           int    `form:"page,default=1"`
 	PageSize       int    `form:"page_size,default=20"`
 	PerPage        int    `form:"per_page"`

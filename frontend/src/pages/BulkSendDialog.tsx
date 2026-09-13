@@ -554,6 +554,7 @@ export function BulkSendDialog({
           source: filters.source,
           bill_type: filters.bill_type,
           status: 'pending',
+          sml_send_queue: 'true',
           page: '1',
           per_page: String(BULK_BATCH_SIZE),
           include_total: 'true',

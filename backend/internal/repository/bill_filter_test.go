@@ -91,6 +91,16 @@ func TestBillWhereInputChannelFilters(t *testing.T) {
 	}
 }
 
+func TestBillWhereSMLSendQueueExcludesGatedTikTokReviewedBills(t *testing.T) {
+	where, args, _ := billWhere(models.BillListFilter{SMLSendQueue: true})
+	if !strings.Contains(where, "NOT (b.source = $") || !strings.Contains(where, "b.raw_data->>'flow' = $") {
+		t.Fatalf("where = %q, missing gated TikTok reviewed exclusion", where)
+	}
+	if len(args) != 2 || args[0] != "tiktok" || args[1] != "tiktok_shop_api_reviewed" {
+		t.Fatalf("args = %#v, want TikTok reviewed flow", args)
+	}
+}
+
 func TestBillWhereOrderLikeSearchUsesExactOrderPredicate(t *testing.T) {
 	where, args, _ := billWhere(models.BillListFilter{Search: "260518Q4C1HSMB"})
 	for _, want := range []string{
