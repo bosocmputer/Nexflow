@@ -264,6 +264,43 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - `TIKTOK_SHOP_REVIEWED_BILL_ENABLED` was returned to false after the one-Bill canary; `TIKTOK_SHOP_SML_SEND_ENABLED` is false. The post-canary runtime backup is `.env.post-tiktok-reviewed-bill-20260913-044632`
 - do not send this Bill to SML until the user separately authorizes the first SML canary and its payload/document-number preview has been reviewed
 
+### First AOY SML recipient preflight — 2026-09-13
+
+- Commit `d21f676` added a one-time, no-store shipment-recipient read at the SML
+  Document Profile boundary. It does not widen the normal TikTok snapshot or
+  persist/log recipient values.
+- Two explicitly confirmed UI send attempts for Bill
+  `03ee1216-acb4-4a88-842c-7edc6eb44292` stopped before any SML attempt or
+  document. The Bill remains `pending / unattempted`, and SML contains zero
+  TRANS_FLAG 44 rows for preview number `BF-INV26090012`.
+- Commit `bd9288a` classifies each required recipient field only as
+  `present`, `missing`, or `masked`, preserves the TikTok upstream request ID,
+  returns `shipment_recipient_unavailable` instead of a generic internal error,
+  and emits structured Gateway diagnostics without buyer PII. The AOY backup
+  is `pre-deploy-20260913-070039.sql.gz`; both Gateway and AOY health/network/
+  edge checks passed.
+- Signed read-only preflight for controlled order `586030483469993439`
+  (`AWAITING_COLLECTION`) returned API success but
+  `name/address/telephone = masked/masked/masked`; upstream request ID is
+  `2026091315022004120B2B4BCE0D684233`. A second completed order produced the
+  same structural result.
+- A separate current order `586046366200923851` still in
+  `AWAITING_SHIPMENT` also returned `masked/masked/masked`, upstream request ID
+  `20260913150725DB02F022F9F939433BB8`. This rules out masking only after label
+  printing or collection handoff.
+- Partner Center shows `seller.order.info` active and includes the current Get
+  Order Detail API, but the Custom multi-channel Connector App Review form is
+  still unsubmitted. Official launch guidance requires App Review and beta
+  testing for Custom Connector apps, and Protected Data access may additionally
+  require Data Security and Privacy Review. Treat incomplete review/protected-
+  data approval as the current external blocker; do not weaken recipient
+  validation or invent SML transport data.
+- `TIKTOK_SHOP_SML_SEND_ENABLED=false` remains enforced. Complete the required
+  TikTok review, reauthorize AOY if prompted, and rerun the structural preflight.
+  If all three fields become `present`, obtain a fresh user confirmation
+  immediately before one controlled SML send. If they remain masked, escalate
+  to TikTok support with the upstream request IDs above.
+
 ## Rollback
 
 - ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่

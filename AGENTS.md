@@ -907,6 +907,28 @@ Current AOY UAT scope:
     `pre-deploy-20260913-051643.sql.gz`; Demo, Lanboon, Ploy, and both Central
     Gateways were not deployed. A first TikTok SML write still requires separate
     explicit canary authorization.
+52. AOY TikTok SML shipment-recipient preflight is fail-closed at `bd9288a`
+    (initial one-time fetch `d21f676`) as of 2026-09-13. The Central Gateway now
+    reports only bounded `present`/`missing`/`masked` field states plus TikTok's
+    upstream request ID; recipient values remain outside normal snapshots,
+    logs, audits, notifications, and browser responses. Controlled Bill
+    `03ee1216-acb4-4a88-842c-7edc6eb44292` is still
+    `pending / unattempted`; two confirmed send attempts stopped before an SML
+    attempt/document, and SML has zero TRANS_FLAG 44 rows for preview
+    `BF-INV26090012`. Read-only preflights returned
+    `masked/masked/masked` for the controlled `AWAITING_COLLECTION` order and
+    for a separate current `AWAITING_SHIPMENT` order, ruling out masking only
+    after shipment preparation. The latter upstream request ID is
+    `20260913150725DB02F022F9F939433BB8`. Partner Center has
+    `seller.order.info` active, but the Custom multi-channel Connector App
+    Review form is unsubmitted; official guidance requires App Review/beta
+    testing for Custom Connectors and Protected Data may require DSPR approval.
+    `TIKTOK_SHOP_SML_SEND_ENABLED=false` remains enforced. Do not invent or
+    substitute recipient data. Complete TikTok review, reauthorize AOY if
+    requested, rerun structural preflight, then obtain a fresh user confirmation
+    immediately before any real SML send. The AOY backup is
+    `pre-deploy-20260913-070039.sql.gz`; Gateway/AOY health and edge/network
+    checks passed.
 
 Known deferred or incomplete validation:
 
