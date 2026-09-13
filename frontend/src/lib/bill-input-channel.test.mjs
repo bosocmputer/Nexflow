@@ -9,7 +9,7 @@ const vite = await createServer({
   server: { middlewareMode: true },
 })
 
-const { marketplaceDisplayInputChannels } = await vite.ssrLoadModule('/src/lib/billInputChannel.ts')
+const { classifyBillInputChannel, marketplaceDisplayInputChannels } = await vite.ssrLoadModule('/src/lib/billInputChannel.ts')
 
 test.after(async () => {
   await vite.close()
@@ -37,5 +37,16 @@ test('rejects unknown channel evidence and keeps the legacy shared fallback', ()
   assert.deepEqual(
     marketplaceDisplayInputChannels('shopee', { inputChannels: ['bad_channel'] }),
     ['shopee', 'shopee_excel'],
+  )
+})
+
+test('keeps TikTok Shop API separate from TikTok Excel', () => {
+  assert.equal(
+    classifyBillInputChannel({ source: 'tiktok', raw_data: { flow: 'tiktok_shop_api_reviewed' } }),
+    'tiktok_shop',
+  )
+  assert.equal(
+    classifyBillInputChannel({ source: 'tiktok', raw_data: { flow: 'tiktok_excel' } }),
+    'tiktok_excel',
   )
 })

@@ -435,6 +435,10 @@ func billWhere(f models.BillListFilter) (string, []interface{}, int) {
 		where += fmt.Sprintf(" AND b.source = $%d AND b.raw_data->>'flow' = $%d", argN, argN+1)
 		args = append(args, source, f.InputChannel)
 		argN += 2
+	case "tiktok_shop":
+		where += fmt.Sprintf(" AND b.source = $%d AND b.raw_data->>'flow' = $%d", argN, argN+1)
+		args = append(args, "tiktok", "tiktok_shop_api_reviewed")
+		argN += 2
 	}
 	if f.BillType != "" {
 		where += fmt.Sprintf(" AND b.bill_type = $%d", argN)

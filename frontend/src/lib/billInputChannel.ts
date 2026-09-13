@@ -1,6 +1,6 @@
 import type { Bill } from '@/types'
 
-export type BillInputChannel = 'shopee' | 'shopee_excel' | 'lazada_excel' | 'tiktok_excel'
+export type BillInputChannel = 'shopee' | 'shopee_excel' | 'lazada_excel' | 'tiktok_excel' | 'tiktok_shop'
 
 export const BILL_INPUT_CHANNEL_OPTIONS: Array<{
   value: BillInputChannel
@@ -12,6 +12,7 @@ export const BILL_INPUT_CHANNEL_OPTIONS: Array<{
   { value: 'shopee_excel', label: 'Shopee Excel', source: 'shopee', excel: true },
   { value: 'lazada_excel', label: 'Lazada Excel', source: 'lazada', excel: true },
   { value: 'tiktok_excel', label: 'TikTok Excel', source: 'tiktok', excel: true },
+  { value: 'tiktok_shop', label: 'TikTok Shop API', source: 'tiktok', excel: false },
 ]
 
 const MARKETPLACE_SOURCE_INPUT_CHANNELS: Record<string, readonly BillInputChannel[]> = {
@@ -64,5 +65,6 @@ export function classifyBillInputChannel(
   }
   if (bill.source === 'lazada' && flow === 'lazada_excel') return 'lazada_excel'
   if (bill.source === 'tiktok' && flow === 'tiktok_excel') return 'tiktok_excel'
+  if (bill.source === 'tiktok' && flow === 'tiktok_shop_api_reviewed') return 'tiktok_shop'
   return null
 }

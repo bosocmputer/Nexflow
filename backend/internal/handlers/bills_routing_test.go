@@ -235,6 +235,31 @@ func TestChannelDefaultKeyForBillSeparatesTikTokShopReviewedFlow(t *testing.T) {
 	}
 }
 
+func TestTikTokShopReviewedBillSMLSendIsFailClosed(t *testing.T) {
+	bill := &models.Bill{
+		Source:  "tiktok",
+		RawData: json.RawMessage(`{"flow":"tiktok_shop_api_reviewed"}`),
+	}
+
+	if !tikTokShopSMLSendBlocked(nil, bill) {
+		t.Fatal("nil config must block TikTok Shop SML send")
+	}
+	if !tikTokShopSMLSendBlocked(&config.Config{}, bill) {
+		t.Fatal("default config must block TikTok Shop SML send")
+	}
+	if tikTokShopSMLSendBlocked(&config.Config{TikTokShopSMLSendEnabled: true}, bill) {
+		t.Fatal("explicit TikTok Shop SML send flag should allow the reviewed flow")
+	}
+	if tikTokShopSMLSendBlocked(&config.Config{}, &models.Bill{Source: "tiktok", RawData: json.RawMessage(`{"flow":"tiktok_excel"}`)}) {
+		t.Fatal("TikTok Excel must keep its existing SML behavior")
+	}
+
+	result := (&BillHandler{cfg: &config.Config{}}).sendBillToSML(bill, RetryRequest{}, retrySendOptions{})
+	if result.HTTPStatus != http.StatusForbidden || !result.Skipped {
+		t.Fatalf("blocked send result = %#v, want forbidden skipped result", result)
+	}
+}
+
 func TestValidateBulkBillIDsGuardsProductionBatch(t *testing.T) {
 	validA := "11111111-1111-1111-1111-111111111111"
 	validB := "22222222-2222-2222-2222-222222222222"
@@ -313,6 +338,15 @@ func TestValidateBillInputChannel(t *testing.T) {
 	}
 	if invalidRecorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", invalidRecorder.Code, http.StatusBadRequest)
+	}
+}
+
+func TestValidateBillInputChannelAcceptsTikTokShopAPI(t *testing.T) {
+	filter := models.BillListFilter{InputChannel: " tiktok_shop "}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	if !validateBillInputChannel(context, &filter) || filter.InputChannel != "tiktok_shop" {
+		t.Fatalf("TikTok Shop API channel was rejected or not normalized: %#v", filter)
 	}
 }
 

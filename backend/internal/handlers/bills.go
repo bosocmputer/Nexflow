@@ -681,7 +681,7 @@ func validateBillInputChannel(c *gin.Context, f *models.BillListFilter) bool {
 		return true
 	}
 	switch f.InputChannel {
-	case "shopee", "shopee_excel", "lazada_excel", "tiktok_excel":
+	case "shopee", "shopee_excel", "lazada_excel", "tiktok_excel", "tiktok_shop":
 		return true
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "input_channel ไม่ถูกต้อง"})
@@ -1103,6 +1103,10 @@ func isTikTokShopReviewedBill(bill *models.Bill) bool {
 		return false
 	}
 	return strings.TrimSpace(raw.Flow) == "tiktok_shop_api_reviewed"
+}
+
+func tikTokShopSMLSendBlocked(cfg *config.Config, bill *models.Bill) bool {
+	return isTikTokShopReviewedBill(bill) && (cfg == nil || !cfg.TikTokShopSMLSendEnabled)
 }
 
 func isShopeeRealtimeBill(bill *models.Bill) bool {
@@ -1703,6 +1707,14 @@ func (h *BillHandler) EnsureShopeeShippingLine(c *gin.Context) {
 func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts retrySendOptions) (result retrySendResult) {
 	if bill == nil {
 		return retrySendResult{HTTPStatus: http.StatusNotFound, Error: "bill not found"}
+	}
+	if tikTokShopSMLSendBlocked(h.cfg, bill) {
+		return retrySendResult{
+			HTTPStatus: http.StatusForbidden,
+			Error:      "การส่ง SML สำหรับคำสั่งซื้อ TikTok Shop ยังไม่เปิดใช้งาน",
+			Message:    "Bill นี้เก็บไว้ตรวจสอบใน Nexflow และยังไม่ถูกส่งเข้า SML",
+			Skipped:    true,
+		}
 	}
 	ctx := opts.Context
 	if ctx == nil {

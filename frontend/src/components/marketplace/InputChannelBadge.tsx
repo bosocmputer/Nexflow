@@ -13,6 +13,7 @@ const CHANNEL_CLASS: Record<BillInputChannel, string> = {
   shopee_excel: 'border-[#EE4D2D] bg-[#EE4D2D] text-white',
   lazada_excel: 'border-[#1d3491] bg-[#1d3491] text-white',
   tiktok_excel: 'border-[#111817] bg-[#111817] text-white',
+  tiktok_shop: 'border-[#111817] bg-[#111817] text-white',
 }
 
 function shopeeChannelTitle(channels: readonly BillInputChannel[]) {

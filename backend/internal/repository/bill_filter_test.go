@@ -72,6 +72,7 @@ func TestBillWhereInputChannelFilters(t *testing.T) {
 		{name: "Shopee Excel", channel: "shopee_excel", wantSource: "shopee", wantFlow: "shopee_excel"},
 		{name: "Lazada Excel", channel: "lazada_excel", wantSource: "lazada", wantFlow: "lazada_excel"},
 		{name: "TikTok Excel", channel: "tiktok_excel", wantSource: "tiktok", wantFlow: "tiktok_excel"},
+		{name: "TikTok Shop API", channel: "tiktok_shop", wantSource: "tiktok", wantFlow: "tiktok_shop_api_reviewed"},
 	}
 
 	for _, tt := range tests {
