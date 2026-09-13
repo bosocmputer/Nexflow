@@ -21,6 +21,25 @@ import {
 } from '@/lib/tiktok-shop-operations'
 import { cn } from '@/lib/utils'
 
+export interface TikTokBillShadowItem {
+  product_id: string
+  sku_id: string
+  seller_sku?: string
+  product_name: string
+  variant_name: string
+  quantity: number
+  unit_sale_price: string
+  line_total: string
+  mapping: {
+    status: string
+    item_code?: string
+    unit_code?: string
+    marketplace_quantity: string
+    sml_quantity?: string
+    base_quantity?: string
+  }
+}
+
 export interface TikTokBillShadowPreview {
   shadow_mode: boolean
   can_create_bill: boolean
@@ -46,24 +65,7 @@ export interface TikTokBillShadowPreview {
     doc_format_code?: string
     shipping_ready: boolean
   }
-  items: Array<{
-    product_id: string
-    sku_id: string
-    seller_sku?: string
-    product_name: string
-    variant_name: string
-    quantity: number
-    unit_sale_price: string
-    line_total: string
-    mapping: {
-      status: string
-      item_code?: string
-      unit_code?: string
-      marketplace_quantity: string
-      sml_quantity?: string
-      base_quantity?: string
-    }
-  }>
+  items: TikTokBillShadowItem[]
   blockers: Array<{
     code: string
     message: string
@@ -85,10 +87,12 @@ interface Props {
   loading: boolean
   error: string
   preview: TikTokBillShadowPreview | null
+  canManage: boolean
+  onMapItem: (item: TikTokBillShadowItem) => void
   onOpenChange: (open: boolean) => void
 }
 
-export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error, preview, onOpenChange }: Props) {
+export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error, preview, canManage, onMapItem, onOpenChange }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="grid max-h-[92dvh] max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
@@ -180,6 +184,18 @@ export function TikTokBillShadowDialog({ open, orderID, shopName, loading, error
                           <span>SML <strong className="font-mono font-medium">{item.mapping.item_code}</strong></span>
                           <span>หน่วย <strong className="font-medium">{item.mapping.unit_code}</strong></span>
                           <span>จำนวนเข้า SML <strong className="font-medium tabular-nums">{item.mapping.sml_quantity}</strong></span>
+                        </div>
+                      )}
+                      {item.mapping.status !== 'ready' && (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                          <span className="text-xs text-muted-foreground">
+                            {canManage ? 'เลือกสินค้าและหน่วย SML ที่ใช้กับ SKU นี้' : 'ให้ผู้ดูแลระบบยืนยัน Product Master ของ SKU นี้'}
+                          </span>
+                          {canManage && (
+                            <Button type="button" size="sm" onClick={() => onMapItem(item)}>
+                              {item.mapping.status === 'missing' ? 'จับคู่สินค้า SML' : 'ตรวจและแก้การจับคู่'}
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>

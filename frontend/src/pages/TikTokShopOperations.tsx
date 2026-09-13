@@ -16,8 +16,10 @@ import client from '@/api/client'
 import {
   TikTokBillShadowButton,
   TikTokBillShadowDialog,
+  type TikTokBillShadowItem,
   type TikTokBillShadowPreview,
 } from '@/components/tiktok/TikTokBillShadowDialog'
+import { TikTokProductMappingDialog } from '@/components/tiktok/TikTokProductMappingDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,6 +36,7 @@ import {
   type TikTokStatusGroup,
 } from '@/lib/tiktok-shop-operations'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/store/auth'
 
 interface TikTokOrderRow {
   shop_id: string
@@ -107,6 +110,7 @@ const EMPTY_COUNTS: TikTokStatusCounts = {
 }
 
 export default function TikTokShopOperations() {
+  const canManage = useAuthStore((state) => state.user?.role === 'admin')
   const [params, setParams] = useSearchParams()
   const [orders, setOrders] = useState<TikTokOrderPage | null>(null)
   const [sync, setSync] = useState<TikTokOrderSyncResponse | null>(null)
@@ -118,6 +122,8 @@ export default function TikTokShopOperations() {
   const [billPreview, setBillPreview] = useState<TikTokBillShadowPreview | null>(null)
   const [billPreviewLoading, setBillPreviewLoading] = useState(false)
   const [billPreviewError, setBillPreviewError] = useState('')
+  const [mappingItem, setMappingItem] = useState<TikTokBillShadowItem | null>(null)
+  const [mappingOpen, setMappingOpen] = useState(false)
   const page = readPage(params)
   const perPage = readPerPage(params)
   const statusGroup = normalizeTikTokStatusGroup(params.get('status_group'))
@@ -217,6 +223,19 @@ export default function TikTokShopOperations() {
   const setBillPreviewOpen = (open: boolean) => {
     setPreviewOpen(open)
     if (!open) setBillPreviewLoading(false)
+  }
+  const openProductMapping = (item: TikTokBillShadowItem) => {
+    setPreviewOpen(false)
+    setBillPreviewLoading(false)
+    setMappingItem(item)
+    setMappingOpen(true)
+  }
+  const setProductMappingOpen = (open: boolean) => {
+    setMappingOpen(open)
+    if (!open) {
+      setMappingItem(null)
+      if (previewOrder) setPreviewOpen(true)
+    }
   }
 
   return (
@@ -372,7 +391,17 @@ export default function TikTokShopOperations() {
         loading={billPreviewLoading}
         error={billPreviewError}
         preview={billPreview}
+        canManage={canManage}
+        onMapItem={openProductMapping}
         onOpenChange={setBillPreviewOpen}
+      />
+      <TikTokProductMappingDialog
+        open={mappingOpen}
+        shopID={previewOrder?.shop_id ?? ''}
+        shopName={previewOrder?.shop_name ?? ''}
+        orderID={previewOrder?.order_id ?? ''}
+        item={mappingItem}
+        onOpenChange={setProductMappingOpen}
       />
     </div>
   )
