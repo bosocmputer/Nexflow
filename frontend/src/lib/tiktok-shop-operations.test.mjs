@@ -14,6 +14,9 @@ const {
   normalizeTikTokStatusGroup,
   tiktokStatusGroupCount,
   tiktokOrderStatusLabel,
+  tiktokBillShadowMappingLabel,
+  tiktokBillShadowRouteLabel,
+  tiktokBillShadowReadinessLabel,
   tiktokSyncState,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
 
@@ -47,4 +50,15 @@ test('normalizes operations status tabs and reads their server counts', () => {
   assert.equal(normalizeTikTokStatusGroup('future'), 'all')
   assert.equal(tiktokStatusGroupCount(counts, 'all'), 9)
   assert.equal(tiktokStatusGroupCount(counts, 'to_ship'), 2)
+})
+
+test('presents bill shadow state in operator language without exposing route internals', () => {
+  assert.equal(tiktokBillShadowReadinessLabel(false, 1), 'ต้องแก้ไข 1 จุดก่อนสร้าง Bill')
+  assert.equal(tiktokBillShadowReadinessLabel(true, 0), 'ข้อมูลพร้อมสำหรับขั้นตรวจทาน')
+  assert.equal(tiktokBillShadowMappingLabel('ready'), 'พร้อมใช้')
+  assert.equal(tiktokBillShadowMappingLabel('legacy_unscoped'), 'ต้องยืนยันร้าน')
+  assert.equal(tiktokBillShadowMappingLabel('future_state'), 'ยังไม่พร้อม')
+  assert.equal(tiktokBillShadowRouteLabel('sale_invoice'), 'ขายสินค้าและบริการ / SI')
+  assert.equal(tiktokBillShadowRouteLabel('sale_order'), 'ใบสั่งขาย')
+  assert.equal(tiktokBillShadowRouteLabel(''), 'ยังไม่ได้ตั้งค่า')
 })

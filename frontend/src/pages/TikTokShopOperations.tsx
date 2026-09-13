@@ -13,6 +13,11 @@ import {
 import { useSearchParams } from 'react-router-dom'
 
 import client from '@/api/client'
+import {
+  TikTokBillShadowButton,
+  TikTokBillShadowDialog,
+  type TikTokBillShadowPreview,
+} from '@/components/tiktok/TikTokBillShadowDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -108,6 +113,11 @@ export default function TikTokShopOperations() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshTick, setRefreshTick] = useState(0)
+  const [previewOrder, setPreviewOrder] = useState<TikTokOrderRow | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [billPreview, setBillPreview] = useState<TikTokBillShadowPreview | null>(null)
+  const [billPreviewLoading, setBillPreviewLoading] = useState(false)
+  const [billPreviewError, setBillPreviewError] = useState('')
   const page = readPage(params)
   const perPage = readPerPage(params)
   const statusGroup = normalizeTikTokStatusGroup(params.get('status_group'))
@@ -160,6 +170,24 @@ export default function TikTokShopOperations() {
     return () => { active = false }
   }, [orderID, page, perPage, refreshTick, shopID, status, statusGroup])
 
+  useEffect(() => {
+    if (!previewOpen || !previewOrder) return
+    let active = true
+    setBillPreview(null)
+    setBillPreviewError('')
+    setBillPreviewLoading(true)
+    client.get<TikTokBillShadowPreview>(
+      `/api/tiktok-shop-api/orders/${encodeURIComponent(previewOrder.shop_id)}/${encodeURIComponent(previewOrder.order_id)}/bill-shadow-preview`,
+    ).then((response) => {
+      if (active) setBillPreview(response.data)
+    }).catch((cause: unknown) => {
+      if (active) setBillPreviewError(apiErrorMessage(cause, 'ตรวจตัวอย่าง Bill TikTok Shop ไม่สำเร็จ'))
+    }).finally(() => {
+      if (active) setBillPreviewLoading(false)
+    })
+    return () => { active = false }
+  }, [previewOpen, previewOrder])
+
   const selectedSetting = useMemo(() => {
     const settings = sync?.data ?? []
     return shopID !== ALL ? settings.find((item) => item.shop_id === shopID) : settings[0]
@@ -181,6 +209,14 @@ export default function TikTokShopOperations() {
       return
     }
     setPage(Math.min(next, totalPages))
+  }
+  const openBillPreview = (row: TikTokOrderRow) => {
+    setPreviewOrder(row)
+    setPreviewOpen(true)
+  }
+  const setBillPreviewOpen = (open: boolean) => {
+    setPreviewOpen(open)
+    if (!open) setBillPreviewLoading(false)
   }
 
   return (
@@ -295,7 +331,14 @@ export default function TikTokShopOperations() {
                 </tr>
               )}
               {!loading && (orders?.data ?? []).length === 0 && <EmptyRow />}
-              {!loading && orders?.data.map((row) => <DesktopRow key={`${row.shop_id}:${row.order_id}`} row={row} />)}
+              {!loading && orders?.data.map((row) => (
+                <DesktopRow
+                  key={`${row.shop_id}:${row.order_id}`}
+                  row={row}
+                  previewLoading={billPreviewLoading && previewOrder?.shop_id === row.shop_id && previewOrder?.order_id === row.order_id}
+                  onPreview={() => openBillPreview(row)}
+                />
+              ))}
             </tbody>
           </table>
         </div>
@@ -321,6 +364,16 @@ export default function TikTokShopOperations() {
           </div>
         </div>
       </div>
+
+      <TikTokBillShadowDialog
+        open={previewOpen}
+        orderID={previewOrder?.order_id ?? ''}
+        shopName={previewOrder?.shop_name ?? ''}
+        loading={billPreviewLoading}
+        error={billPreviewError}
+        preview={billPreview}
+        onOpenChange={setBillPreviewOpen}
+      />
     </div>
   )
 }
@@ -343,7 +396,7 @@ function TikTokOperationsHealthLine({ state, setting }: { state: ReturnType<type
   )
 }
 
-function DesktopRow({ row }: { row: TikTokOrderRow }) {
+function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; previewLoading: boolean; onPreview: () => void }) {
   return (
     <tr className="border-t border-border hover:bg-muted/30">
       <td className="px-3 py-2 align-top">
@@ -362,8 +415,8 @@ function DesktopRow({ row }: { row: TikTokOrderRow }) {
       </td>
       <td className="px-3 py-2 align-top"><OrderStatusBadge status={row.order_status} /></td>
       <td className="px-3 py-2 align-top">
-        <Badge variant="outline" className="bg-muted/40 text-muted-foreground">ยังไม่เปิดใช้งาน</Badge>
-        <div className="mt-1 text-[11px] text-muted-foreground">Snapshot เท่านั้น</div>
+        <TikTokBillShadowButton loading={previewLoading} onClick={onPreview} />
+        <div className="mt-1 text-[11px] text-muted-foreground">Shadow เท่านั้น · ยังไม่สร้างเอกสาร</div>
       </td>
       <td className="px-3 py-2 align-top text-xs text-muted-foreground">
         <div>สินค้า {formatTikTokMoney(row.product_subtotal_amount, row.currency)}</div>

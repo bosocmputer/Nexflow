@@ -57,3 +57,21 @@ export function normalizeTikTokStatusGroup(value: string | null | undefined): Ti
 export function tiktokStatusGroupCount(counts: TikTokStatusCounts, group: TikTokStatusGroup): number {
   return group === 'all' ? counts.total : counts[group]
 }
+
+export function tiktokBillShadowReadinessLabel(ready: boolean, blockerCount: number): string {
+  if (ready) return 'ข้อมูลพร้อมสำหรับขั้นตรวจทาน'
+  return `ต้องแก้ไข ${Math.max(0, blockerCount).toLocaleString('th-TH')} จุดก่อนสร้าง Bill`
+}
+
+export function tiktokBillShadowMappingLabel(status: string): string {
+  if (status === 'ready') return 'พร้อมใช้'
+  if (status === 'missing') return 'ยังไม่ได้จับคู่'
+  if (status === 'legacy_unscoped') return 'ต้องยืนยันร้าน'
+  return 'ยังไม่พร้อม'
+}
+
+export function tiktokBillShadowRouteLabel(route: string): string {
+  if (route === 'sale_invoice') return 'ขายสินค้าและบริการ / SI'
+  if (route === 'sale_order') return 'ใบสั่งขาย'
+  return 'ยังไม่ได้ตั้งค่า'
+}
