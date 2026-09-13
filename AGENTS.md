@@ -879,6 +879,34 @@ Current AOY UAT scope:
     backup is `.env.post-tiktok-reviewed-bill-20260913-044632`. Both Reviewed
     Bill creation and TikTok SML send flags are now false. Do not send this Bill
     to SML without a separate explicit first-SML-canary authorization.
+51. AOY-only TikTok Reviewed Bill review UX and audit alignment is deployed at
+    `70c964c` (feature commit `5c23380`) as of 2026-09-13. Bill Detail now uses
+    the same information architecture as a Shopee API Bill: semantic channel,
+    shop/order/status fields, destination badge, item readiness, Bill timeline,
+    and an ordered SML summary. Because TikTok SML send remains gated off, the
+    page explicitly shows `รอตรวจ UAT ก่อนส่ง SML`, disables every send entry
+    point, labels mapped rows `ข้อมูลสินค้าครบ` rather than `พร้อมส่ง`, and
+    presents the document number only as an unreserved preview. The pre-send
+    summary shows route, order reference, format, SML customer,
+    warehouse/location, VAT, item count, total, and the TikTok buyer-platform
+    charge that is intentionally excluded from SML. `/logs` and the Bill
+    timeline now classify both new and historical Reviewed Bill events as
+    `TikTok Shop API`, summarize the order and item count without exposing the
+    raw flow key, and provide a virtual source filter that keeps TikTok Excel
+    separate. Future blocked central-send attempts produce one correlated
+    warning/audit milestone without buyer PII; ordinary page views are not
+    logged as business events. Production QA passed on desktop and 390px mobile
+    with no horizontal overflow, no console warning/error, and no recent backend
+    error/fatal/5xx. Controlled Bill
+    `03ee1216-acb4-4a88-842c-7edc6eb44292` remains `pending / unattempted`, with
+    no SML document/current attempt; SML attempts remain 27, LINE deliveries
+    remain 254, and blocked-send audits remain zero. Reviewed Bill creation is
+    false and the absent TikTok SML-send env keeps its default false. Go tests,
+    race tests, vet, frontend regression tests, lint with zero errors, production
+    build, and the sales-only runtime guard passed. The final AOY backup is
+    `pre-deploy-20260913-051643.sql.gz`; Demo, Lanboon, Ploy, and both Central
+    Gateways were not deployed. A first TikTok SML write still requires separate
+    explicit canary authorization.
 
 Known deferred or incomplete validation:
 
