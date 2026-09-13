@@ -856,6 +856,26 @@ Current AOY UAT scope:
     false pending separate explicit one-Bill canary authorization. The AOY
     backup is `pre-deploy-20260913-040230.sql.gz`; Demo, Lanboon, Ploy, and
     both Central Gateways were not deployed.
+50. AOY's first TikTok Shop Reviewed Bill canary completed on 2026-09-13 for
+    controlled order `586030483469993439`. After explicit user confirmation,
+    Nexflow created exactly one pending local Bill
+    `03ee1216-acb4-4a88-842c-7edc6eb44292` using route version 2, sale-invoice
+    destination, account `shop:7494619203789490654`, mapping
+    `AH-0002 / กล่อง / 1`, and total 300.00 THB. It has one Marketplace
+    reservation, no SML document/current attempt, and the durable counts remain
+    reviewed Bills 1, controlled-order Bills 1, SML attempts 27, and LINE
+    deliveries 254. Restarting with the create flag exposed historical channel
+    constraint migrations that replayed stale allowlists before migration 101;
+    `dd5c402` repairs migrations 030/051/059/064/067 and restored replay-safe
+    startup. AOY-only `440eb9f` adds default-off
+    `TIKTOK_SHOP_SML_SEND_ENABLED` enforcement at the central SML boundary for
+    direct, bulk, and automation sends, and distinguishes `TikTok Shop API`
+    from `TikTok Excel` in the Bill UI/filter. Production health, all three
+    backend networks, browser UI/console, and severe-log checks passed. The
+    deploy backup is `pre-deploy-20260913-044459.sql.gz`; the post-canary env
+    backup is `.env.post-tiktok-reviewed-bill-20260913-044632`. Both Reviewed
+    Bill creation and TikTok SML send flags are now false. Do not send this Bill
+    to SML without a separate explicit first-SML-canary authorization.
 
 Known deferred or incomplete validation:
 

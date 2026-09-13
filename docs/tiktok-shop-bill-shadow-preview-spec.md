@@ -125,6 +125,13 @@ The preview is ready for a future reviewed Bill only when all rules pass:
   notification, TikTok/Shopee fulfillment or stock write, cancellation, or
   return. Sending the reviewed Bill to SML is a later, separately authorized
   phase.
+- `TIKTOK_SHOP_SML_SEND_ENABLED` is a separate default-off gate checked at the
+  central Bill-to-SML boundary before readiness checks, document-number
+  allocation, attempt persistence, or external calls. It therefore covers
+  direct retry, bulk send, and future automation paths even while reviewed
+  Bill creation is enabled.
+- Reviewed API Bills are labelled and filterable as `TikTok Shop API`; they
+  must not be presented as legacy `TikTok Excel` imports.
 
 ## Amount semantics
 
