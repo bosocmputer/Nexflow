@@ -347,6 +347,16 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - ก่อน canary write ต้องมี absolute target, single-warehouse evidence, fresh
   snapshot/mapping, durable result, partial-error handling และ exact Inventory
   Search read-back. ห้ามเปิด schedule หรือร้านอื่นจากผล UAT ของ AOY
+- commit `10f03a6` deploy ไป Central TikTok Gateway และ AOY แล้วแบบ dormant;
+  AOY backup คือ `pre-deploy-20260913-092248.sql.gz`. Health/edge isolation,
+  counts `Catalog 65 / aliases 75 / verified mappings 43`, recent error scan
+  และ production UI smoke ผ่าน โดยสอง Catalog/stock gates ยังปิด
+- Partner Center มี active scopes เพียง `seller.order.info` และ
+  `seller.authorization.info`. หลังผู้ใช้ยืนยันเพิ่ม Product Basic/Modify แล้ว
+  สวิตช์ทั้งสองยังย้อนกลับเป็นปิดและหน้าระบุ `แอปอยู่ระหว่างการตรวจสอบแอป`;
+  pending scope ยังเป็นศูนย์ จึงไม่ถือว่าคำขอถูกส่ง ห้ามถอน/แก้ App Review เดิม
+  เพื่อบังคับเปิด scope โดยไม่มีคำสั่งแยก รอให้ TikTok ปลดล็อกแล้วจึงเพิ่ม,
+  publish และ reauthorize AOY
 
 เอกสารอ้างอิง: [Products API overview](https://partner.tiktokshop.com/docv2/page/products-api-overview), [Methods and endpoints](https://partner.tiktokshop.com/docv2/page/methods-and-endpoints), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope)
 

@@ -953,9 +953,9 @@ Current AOY UAT scope:
     The AOY backup is `pre-deploy-20260913-080643.sql.gz`; Demo, Lanboon, and
     Ploy were not deployed.
 
-54. TikTok Shop Product Catalog/stock foundation is implemented locally on
-    `codex/tiktok-bill-shadow` at `ac6ed3b`, `a6d62bb`, `74aefac`, and
-    `29ea7c9`; it is not deployed or enabled on any tenant yet. Product Master
+54. TikTok Shop Product Catalog/stock foundation is implemented at `ac6ed3b`,
+    `a6d62bb`, `74aefac`, and `29ea7c9`, documented at `10f03a6`, and deployed
+    dormant to the Central TikTok Gateway and AOY on 2026-09-13. Product Master
     and SML Catalog now distinguish exact shop-scoped TikTok Shop API mappings
     from TikTok Excel and show the connected shop name. The Central Gateway has
     typed, signed Product Search/Detail, Inventory Search, and Inventory Update
@@ -967,15 +967,23 @@ Current AOY UAT scope:
     shop/scope readiness, refresh, search/filter, warehouse quantities, mobile
     layout, breadcrumbs, and operator audit descriptions. Both
     `TIKTOK_SHOP_PRODUCT_CATALOG_ENABLED` and
-    `VITE_ENABLE_TIKTOK_SHOP_STOCK` default false. Full Go tests/vet, frontend
-    production build, all 78 frontend regression tests, lint with zero errors,
-    skill validation, and local desktop browser visual QA passed. Next inspect
-    Product Basic/Product Modify in Partner Center without changing scopes,
-    obtain explicit confirmation immediately before a scope change, reauthorize
-    AOY, and verify `granted_scopes`. Only then deploy AOY with Catalog read-only
-    gates, refresh/compare against Seller Center, and design dry-run. Do not
-    expose a stock-write control, run an inventory update, or enable another
-    tenant/shop before a separately confirmed one-SKU canary and exact read-back.
+    `VITE_ENABLE_TIKTOK_SHOP_STOCK` remain false on AOY. Full Go tests/vet,
+    frontend production build, all 78 frontend regression tests, lint with zero
+    errors, skill validation, local browser visual QA, deploy backup/health,
+    Gateway edge isolation, sales-only counts, and production UI smoke passed.
+    The AOY backup is `pre-deploy-20260913-092248.sql.gz`; Catalog/aliases/
+    verified mappings stayed `65/75/43` and the recent backend error scan was
+    clean. Partner Center currently has only `seller.order.info` and
+    `seller.authorization.info` active. The user explicitly authorized adding
+    Product Basic and Product Modify, but both controls reverted to off and the
+    UI reported `แอปอยู่ระหว่างการตรวจสอบแอป`; pending-scope count remained zero.
+    Do not withdraw or edit the existing App Review to force the change. Wait
+    until TikTok unlocks the app, add both scopes under a fresh immediate
+    confirmation if needed, publish, reauthorize AOY, and verify
+    `granted_scopes`. Only then enable Catalog read-only gates and refresh/
+    compare against Seller Center. Do not expose a stock-write control, run an
+    inventory update, or enable another tenant/shop before a separately
+    confirmed one-SKU canary and exact read-back.
 
 Known deferred or incomplete validation:
 
