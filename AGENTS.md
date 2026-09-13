@@ -805,6 +805,28 @@ Current AOY UAT scope:
     Gateways were not deployed. Bill/SML creation remains disabled and is a
     separate future canary. The next safe slice is an explicitly reviewed,
     idempotent one-Bill canary that keeps SML writes separately gated.
+48. AOY-only TikTok Reviewed Bill capability is deployed at `c4f6ea4`
+    (backend boundary `8b620d8`) as of 2026-09-13, but the tenant feature flag
+    remains absent/off. The admin-only create contract requires exact
+    `CREATE_REVIEWED_BILL` confirmation and a lowercase SHA-256 digest binding
+    the current snapshot/source hash, amounts, route, item identity, mapping
+    revision, Catalog generation, and conversion evidence. The backend rebuilds
+    that evidence before writing and conflicts on any change. One transaction
+    creates a pending local Bill, items, existing Marketplace reservations, and
+    audit; the unique TikTok Order guard makes same-shop/same-flow retry
+    idempotent and rejects an Excel/default-scope or other-flow collision. The
+    boundary cannot create SML attempts/documents, notifications/LINE,
+    fulfillment, stock, cancellation, or return writes. Production flag-off QA
+    for order `586030483469993439` still showed no blocker and exact mapping
+    `AH-0002 / กล่อง / SML qty 1`, while the dialog remained `Shadow` with no
+    create button and a clean console. Post-deploy counts are Bills 323,
+    reviewed TikTok Bills 0, Bills for this order 0, SML attempts 27,
+    notifications 540, and LINE deliveries 254. AOY app/edge/TikTok Gateway
+    checks and SML tenant `aoy` readiness passed. The backup is
+    `pre-deploy-20260913-033608.sql.gz`. Do not enable
+    `TIKTOK_SHOP_REVIEWED_BILL_ENABLED` or create the first Bill without the
+    user's explicit controlled-canary authorization; that authorization does
+    not include an SML send.
 
 Known deferred or incomplete validation:
 
@@ -955,11 +977,13 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
 
 15. **Shopee direct mode is rollback only** — do not create a new Shopee Open Platform App for each customer. The old per-customer cutover helper and direct Partner credentials are retained only for an explicit rollback while gateway rollout is incomplete.
 
-16. **TikTok order reconciliation remains snapshot-only** — AOY is the only
+16. **TikTok order reconciliation remains snapshot-first** — AOY is the only
     enabled tenant. Its global and exact per-shop gates control bounded Order
     List polling; watermark advances only after full Detail + Price Detail
-    success. Do not treat these snapshots as authority to create Bill/SML,
-    notification, fulfillment, cancellation, return, or stock writes.
+    success. A separately gated Reviewed Bill endpoint may use an explicitly
+    confirmed digest to create one local pending Bill, but it is currently off
+    and never authorizes SML, notification, fulfillment, cancellation, return,
+    or stock writes.
 
 ---
 
@@ -1055,6 +1079,7 @@ GET  /api/tiktok-shop-api/orders
 GET  /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview
 POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview
 POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm
+POST /api/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
 

@@ -242,6 +242,17 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - snapshot/webhook/Bill/SML attempt คงที่ `9/5/323/27`; alias เพิ่มเป็น 75 ส่วน notification/LINE เพิ่มเป็น `540/254` จาก Shopee realtime order อื่น (`3/2` recipient deliveries) ไม่ใช่ผลข้างเคียงจาก TikTok; health 200, console และ severe-log scan สะอาด
 - ขั้นถัดไปคือ Reviewed Bill canary ที่สร้าง Bill แบบ idempotent หนึ่งใบจาก conversion evidence ที่ผู้ใช้ตรวจแล้ว โดย SML write ยังต้องปิดและแยกอนุมัติ
 
+### Reviewed Bill capability deployed with flag off — 2026-09-13
+
+- AOY deploy commit `c4f6ea4` (backend boundary `8b620d8`); database backup `pre-deploy-20260913-033608.sql.gz`
+- `TIKTOK_SHOP_REVIEWED_BILL_ENABLED` defaults false and is currently absent/off on AOY; production returns `can_create_bill=false` and shows no create action
+- admin-only `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill` requires exact `CREATE_REVIEWED_BILL` plus the latest lowercase SHA-256 review digest; backend rebuilds local evidence and fails with conflict if snapshot, amount, route, mapping, Catalog generation, or conversion changed
+- creation is one transaction for pending Bill/items/reservations/audit and reuses only the same `shop:<shop_id>` reviewed flow under the existing unique TikTok Order guard
+- the endpoint intentionally has no SML attempt/document, notification/LINE, fulfillment, stock, cancellation, or return write
+- production read-only QA still showed order `586030483469993439` ready at `AH-0002 / กล่อง / SML qty 1`, proposed Bill 300.00 THB, and no console error
+- after deploy/preview: Bills 323, reviewed TikTok Bills 0, this-order Bills 0, SML attempts 27, notifications 540, LINE deliveries 254; health, edge, TikTok Gateway network, and SML tenant `aoy` readiness passed
+- do not set the AOY flag true or create the first Bill until the operator explicitly authorizes the controlled canary; do not enable SML as part of that authorization
+
 ## Rollback
 
 - ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่

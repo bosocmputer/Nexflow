@@ -2,7 +2,7 @@
 
 Status: implementation specification  
 Scope: AOY controlled UAT, reusable for multiple TikTok Shop connections  
-Safety mode: read-only shadow
+Safety mode: reviewed local Bill capability behind an AOY-off feature flag; SML remains disabled
 
 ## Outcome
 
@@ -25,8 +25,9 @@ Shop resource.
 - An internal source-integrity failure returns a generic safe `500` response.
 - The response excludes buyer data, raw snapshot JSON, line IDs, upstream
   request IDs, source hashes, tokens, signatures, and application secrets.
-- `can_create_bill` is always `false` in this phase. A future reviewed create
-  endpoint requires a separate specification and activation decision.
+- `can_create_bill` is `true` only when every blocker is clear and the tenant
+  explicitly enables `TIKTOK_SHOP_REVIEWED_BILL_ENABLED`. Deployments default
+  this flag to `false`.
 
 ### Reviewed Product Master mapping
 
@@ -55,8 +56,11 @@ fulfillment, TikTok stock write, or order-status change.
 The response includes:
 
 - shop and order identity, current TikTok status, currency, and snapshot time;
-- `shadow_mode: true`, `can_create_bill: false`, and
+- `shadow_mode: true`, tenant-gated `can_create_bill`, and
   `ready_for_reviewed_bill`;
+- a lowercase SHA-256 `review_digest` binding the source hash, snapshot time,
+  status, amounts, route, item identity, mapping revision, Catalog generation,
+  and exact unit-conversion evidence;
 - proposed product, shipping, document, buyer-payment, and excluded
   buyer/platform-only charge totals;
 - one grouped product/SKU row with Marketplace quantity, line amount, exact
@@ -99,6 +103,28 @@ The preview is ready for a future reviewed Bill only when all rules pass:
 8. No active TikTok Bill already uses the same Order ID. Duplicate detection is
    intentionally broader than the shop scope so an earlier TikTok Excel import
    cannot be recreated through the API path.
+9. The saved snapshot has valid immutable source-hash evidence.
+
+## Reviewed Bill create contract
+
+`POST /api/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill`
+
+- Role: `admin` only.
+- Requires exact `confirm=CREATE_REVIEWED_BILL` and the lowercase SHA-256
+  `review_digest` from the latest preview.
+- The backend rebuilds the preview from local persisted evidence and compares
+  the digest in constant time. Any snapshot, amount, route, Catalog, mapping,
+  or conversion change returns a conflict and requires a fresh review.
+- One database transaction creates the pending Bill, all Bill items, exact
+  mapping/conversion snapshots, Marketplace reservations, and creation audit.
+- The existing unique TikTok Order ID guard makes retries idempotent. A retry
+  reuses only a Bill owned by the same shop and
+  `flow=tiktok_shop_api_reviewed`; an Excel/default-scope or other-flow Bill is
+  a conflict rather than an automatic reuse.
+- This endpoint does not create an SML attempt/document, LINE or in-app
+  notification, TikTok/Shopee fulfillment or stock write, cancellation, or
+  return. Sending the reviewed Bill to SML is a later, separately authorized
+  phase.
 
 ## Amount semantics
 
@@ -174,3 +200,24 @@ notification, and LINE-delivery counts are unchanged after preview use.
   deduplicated Shopee realtime order (`3/2` recipient deliveries), not from the
   TikTok mapping or shadow preview. AOY health returned HTTP 200 and the browser
   console plus recent severe-log scan were clean.
+
+## Reviewed Bill capability deployment — 2026-09-13
+
+- Backend commit `8b620d8` and UI commit `c4f6ea4` were deployed to AOY only.
+  The tenant flag remains absent/off, so production preview returns
+  `can_create_bill=false`, the dialog remains labelled `Shadow`, and no create
+  button or POST path is reachable from the UI.
+- Production QA for order `586030483469993439` still shows no blocker,
+  `AH-0002 / กล่อง / SML quantity 1`, proposed Bill `300.00 THB`, buyer
+  payment `307.49 THB`, and excluded insurance `7.49 THB`. The console had no
+  warning/error.
+- Counts after deploy and preview are Bills `323`, reviewed TikTok Bills `0`,
+  Bills for this Order ID `0`, SML attempts `27`, notifications `540`, and LINE
+  deliveries `254`. No migration or external write ran.
+- AOY app health, Central TikTok Gateway health/network, edge checks, and SML
+  tenant `aoy` readiness returned healthy. The database backup is
+  `pre-deploy-20260913-033608.sql.gz`.
+- Next activation requires explicit operator authorization to set the AOY flag
+  true. The first click must create exactly one pending local Bill, a repeat
+  must reuse it, and the SML-attempt/notification/LINE counts must remain
+  unchanged before any later SML phase is designed.
