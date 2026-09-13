@@ -235,7 +235,12 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 - browser QA เปิด `จับคู่สินค้า SML` ของ order `586030483469993439`, ตรวจ dialog และ Catalog drawer บน desktop/390px แล้วกดยกเลิกโดยไม่เลือก SML item; การปิด drawer และกลับ Bill Shadow Preview ทำงานถูกต้อง ไม่มี overflow หรือ console warning/error
 - ไม่ได้เรียก impact-preview/confirm เพราะ SML item/unit เป็น business mapping ที่ต้องให้ผู้ใช้เลือก; exact scoped mapping ของ product `1729429119195974110` / SKU `1729429118580984286` ยังคง 0
 - ก่อน/หลัง QA ค่า snapshot/webhook/Bill/SML attempt/in-app notification/LINE delivery คงที่ `9/5/323/27/537/252`, Product Master alias คงที่ 74 และ severe log เป็น 0
-- ขั้นถัดไปคือให้ผู้ใช้เลือก SML item + unit + quantity rule ที่ถูกต้อง ดู impact โดยเฉพาะ Shopee dry-run warning แล้วจึงยืนยัน จากนั้นเปิด Bill Shadow Preview ซ้ำเพื่อพิสูจน์ว่า blocker หายโดยยังไม่สร้าง Bill/SML
+- ต่อมาผู้ใช้ยืนยัน exact mapping เป็น `AH-0002 / กล่อง / multiplier 1`; alias revision 1 อยู่สถานะ `ready`, `scope_confirmed=true`, `sales_enabled=true` และ mapping reconciliation job สำเร็จครั้งแรกโดยไม่มี failed item
+- Bill Shadow Preview เดิมแสดง `ข้อมูลพร้อมสำหรับขั้นตรวจทาน`, mapping พร้อมใช้, SML quantity 1 และไม่มี blocker โดยยังคง `shadow_mode=true`, `can_create_bill=false` และไม่สร้าง Bill/SML
+- เนื่องจาก `AH-0002` กระทบ Shopee stock mapping ระบบจึงปิด automatic sync ร้าน `264993963` และบังคับตรวจใหม่ตาม fail-closed policy; manual preview `6c1b8635-7049-4d38-869b-a2ebfa5859d3` ผ่าน 44 รายการ (เปลี่ยน 8, ไม่เปลี่ยน 36, blocked/error 0) โดยไม่มี Shopee write และสวิตช์ยังปิด
+- preview แสดง negative balance ที่ถูก exclude ใน `AB-2 / 002`: `AH-0001 = -3 กล่อง`, `AH-0003 = -4 กล่อง`; ไม่ถูกนำไปคำนวณ scope `AB-1 / 001`
+- snapshot/webhook/Bill/SML attempt คงที่ `9/5/323/27`; alias เพิ่มเป็น 75 ส่วน notification/LINE เพิ่มเป็น `540/254` จาก Shopee realtime order อื่น (`3/2` recipient deliveries) ไม่ใช่ผลข้างเคียงจาก TikTok; health 200, console และ severe-log scan สะอาด
+- ขั้นถัดไปคือ Reviewed Bill canary ที่สร้าง Bill แบบ idempotent หนึ่งใบจาก conversion evidence ที่ผู้ใช้ตรวจแล้ว โดย SML write ยังต้องปิดและแยกอนุมัติ
 
 ## Rollback
 

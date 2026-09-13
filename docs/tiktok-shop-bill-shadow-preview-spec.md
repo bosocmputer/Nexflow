@@ -114,9 +114,11 @@ The preview is ready for a future reviewed Bill only when all rules pass:
   totals differ from the stored subtotal, the preview fails closed with an
   amount blocker.
 
-Controlled order `586030483469993439` is expected to show product/document
-total `300.00 THB`, buyer payment `307.49 THB`, excluded item insurance
-`7.49 THB`, and a missing shop-scoped Product Master mapping blocker.
+Before Product Master confirmation, controlled order `586030483469993439`
+showed product/document total `300.00 THB`, buyer payment `307.49 THB`,
+excluded item insurance `7.49 THB`, and one missing shop-scoped mapping
+blocker. After the operator confirmed the exact SML mapping, the same preview
+showed the mapping ready with no blocker while remaining shadow-only.
 
 ## Observability and acceptance
 
@@ -146,3 +148,29 @@ notification, and LINE-delivery counts are unchanged after preview use.
 - Before and after QA, snapshot/webhook/Bill/SML-attempt/notification/LINE-
   delivery counts remained `9/5/323/27/537/252`; total Product Master aliases
   remained 74 and recent severe logs remained zero.
+
+## Product Master mapping completion — 2026-09-13
+
+- The operator confirmed the exact AOY shop/product/SKU mapping to SML item
+  `AH-0002`, unit `กล่อง`, Marketplace quantity multiplier `1`. The persisted
+  alias is scope-confirmed, sales-enabled, conversion `ready`, active, and at
+  mapping revision 1. Its reconciliation job completed on the first attempt
+  with zero processed failures.
+- Reopening Bill Shadow Preview for order `586030483469993439` showed
+  `ข้อมูลพร้อมสำหรับขั้นตรวจทาน`, mapping `พร้อมใช้`, SML quantity `1`, the
+  unchanged `300.00 THB` proposed Bill, and no blocker. The UI still exposes no
+  Bill or SML write action.
+- Because `AH-0002` participates in the existing Shopee stock model, mapping
+  confirmation disabled and paused automatic stock sync for shop `264993963`
+  until a fresh preview. The subsequent manual preview run
+  `6c1b8635-7049-4d38-869b-a2ebfa5859d3` succeeded for all 44 listings: 8
+  changed targets, 36 unchanged, 0 blocked, and 0 errors. This was a dry-run;
+  the automatic switch remains off and no Shopee stock write was sent.
+- The preview also reported excluded negative balances for `AH-0001` and
+  `AH-0003` in warehouse/location `AB-2 / 002`; those quantities were displayed
+  as evidence and were not included in the selected `AB-1 / 001` calculation.
+- Final snapshot/webhook/Bill/SML-attempt counts remain `9/5/323/27` and aliases
+  are now 75. In-app/LINE counts increased to `540/254` solely from a concurrent
+  deduplicated Shopee realtime order (`3/2` recipient deliveries), not from the
+  TikTok mapping or shadow preview. AOY health returned HTTP 200 and the browser
+  console plus recent severe-log scan were clean.

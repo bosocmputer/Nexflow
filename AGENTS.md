@@ -783,17 +783,28 @@ Current AOY UAT scope:
     selected SML item affects Shopee stock, the UI discloses that confirmation
     will pause the affected shops until a new dry-run succeeds. Desktop and
     390px production QA for order `586030483469993439` opened the mapping dialog
-    and nested Catalog drawer, then cancelled without selecting any SML item;
-    focus, close/reopen behavior, overflow, and console checks passed. Exact
-    scoped mapping for product `1729429119195974110` / SKU
-    `1729429118580984286` remains zero. Snapshot/webhook-job/Bill/SML-attempt/
-    in-app-notification/LINE-delivery counts remained
-    `9/5/323/27/537/252`, Product Master aliases remained 74, and recent severe
-    logs were zero. The AOY backup is
+    and nested Catalog drawer; focus, close/reopen behavior, overflow, and
+    console checks passed. The user then confirmed exact shop-scoped product
+    `1729429119195974110` / SKU `1729429118580984286` to `AH-0002 / กล่อง`
+    with multiplier 1. Alias revision 1 is active, scope-confirmed,
+    sales-enabled, and conversion-ready; reconciliation completed first try
+    with no failure. The same Bill Shadow Preview now has no blocker and shows
+    SML quantity 1 while Bill/SML creation remains disabled. Because `AH-0002`
+    affects Shopee stock, confirmation disabled and paused automatic sync for
+    shop `264993963` until a fresh dry-run. Manual preview
+    `6c1b8635-7049-4d38-869b-a2ebfa5859d3` then passed all 44 listings: 8
+    changed targets, 36 unchanged, 0 blocked, and 0 errors. It performed no
+    Shopee write and automatic sync remains off. Excluded `AB-2 / 002` balances
+    were `AH-0001 = -3 กล่อง` and `AH-0003 = -4 กล่อง`; they were not included
+    in the selected `AB-1 / 001` calculation. Snapshot/webhook-job/Bill/SML-
+    attempt counts remain `9/5/323/27` and aliases are 75. In-app/LINE counts
+    are `540/254`; the `+3/+2` rows are a separate Shopee realtime order, not a
+    TikTok side effect. AOY health, browser console, and recent severe logs are
+    clean. The AOY backup is
     `pre-deploy-20260913-025422.sql.gz`; Demo, Lanboon, Ploy, and the Central
-    Gateways were not deployed. The next action requires the user to choose the
-    correct SML item/unit and review the impact; Bill/SML creation remains
-    disabled and is a separate future canary.
+    Gateways were not deployed. Bill/SML creation remains disabled and is a
+    separate future canary. The next safe slice is an explicitly reviewed,
+    idempotent one-Bill canary that keeps SML writes separately gated.
 
 Known deferred or incomplete validation:
 
