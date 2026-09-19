@@ -1055,10 +1055,23 @@ Current AOY UAT scope:
     disabled control and a clean console. Go tests/race/vet, frontend
     lint/build, sales-only guard, migration, health, both Gateway checks, and
     recent error scan passed. The AOY database backup is
-    `pre-deploy-20260919-115517.sql.gz`. Rotate the previously disclosed TikTok
-    Gateway internal secret, clear mapping readiness for one new controlled
-    order, then explicitly approve a single AOY canary before changing either
-    Auto SML gate.
+    `pre-deploy-20260919-115517.sql.gz`.
+
+58. The previously disclosed TikTok Gateway internal master key and AOY tenant
+    identity were rotated in production on 2026-09-19. Mode-0600 runtime
+    backups use the `pre-internal-secret-rotate-20260919-120411` suffix in the
+    Central TikTok Gateway and AOY runtime folders. The Gateway and AOY backend
+    were force-recreated, both health checks returned HTTP 200, Docker network
+    connectivity passed, and the derived AOY identity matched without printing
+    either secret. A production browser refresh and the signed readiness check
+    then passed for API/Gateway, order sync, webhook, and the SML route with a
+    clean console and no recent severe server log. Webhook queues remained
+    empty. Auto SML remains deliberately dormant: the global flag is false, the
+    shop control is disabled, and its durable job table has zero rows. Mapping
+    remains the only blocker at 10/20 sampled product identities. The next safe
+    action is for an AOY operator to choose the correct SML item/unit for the
+    remaining TikTok identities, then explicitly approve one new controlled
+    canary before changing either Auto SML gate.
 
 Known deferred or incomplete validation:
 
