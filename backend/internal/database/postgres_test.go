@@ -483,6 +483,32 @@ func TestMigration103PreparesTikTokStockMenuForExistingAdminsOnly(t *testing.T) 
 	}
 }
 
+func TestMigration104AddsDormantDurableTikTokAutoSMLWithoutOrderBackfill(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/104_tiktok_shop_auto_sml.sql")
+	if err != nil {
+		t.Fatalf("read migration 104: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists tiktok_shop_auto_sml_settings",
+		"enabled                     boolean not null default false",
+		"trigger_status = 'awaiting_collection'",
+		"create table if not exists tiktok_shop_auto_sml_jobs",
+		"unique (shop_id, order_id)",
+		"where status in ('queued','retry_wait')",
+		"on conflict (shop_id) do nothing",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 104 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column", "insert into tiktok_shop_auto_sml_jobs", "enabled = true"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 104 contains destructive or activating statement %q", forbidden)
+		}
+	}
+}
+
 func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {

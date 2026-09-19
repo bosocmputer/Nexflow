@@ -42,6 +42,7 @@ type TikTokOrderSnapshotSummary struct {
 	SourceHash           string      `json:"source_hash"`
 	DetailRequestID      string      `json:"detail_request_id"`
 	PriceDetailRequestID string      `json:"price_detail_request_id"`
+	LastOrderUpdateAt    *time.Time  `json:"last_order_update_at,omitempty"`
 }
 
 type TikTokOrderSnapshotResult struct {
@@ -110,23 +111,31 @@ type TikTokOrderSnapshotStatusCounts struct {
 }
 
 type TikTokOrderSnapshotListItem struct {
-	ShopID                 string      `json:"shop_id"`
-	ShopName               string      `json:"shop_name"`
-	OrderID                string      `json:"order_id"`
-	OrderStatus            OrderStatus `json:"order_status"`
-	Currency               string      `json:"currency"`
-	PaymentTotalAmount     string      `json:"payment_total_amount"`
-	ProductSubtotalAmount  string      `json:"product_subtotal_amount"`
-	ShippingFeeAmount      string      `json:"shipping_fee_amount"`
-	ItemInsuranceFeeAmount string      `json:"item_insurance_fee_amount"`
-	ItemCount              int         `json:"item_count"`
-	SKUCount               int         `json:"sku_count"`
-	LastOrderUpdateAt      *time.Time  `json:"last_order_update_at,omitempty"`
-	LastSyncedAt           time.Time   `json:"last_synced_at"`
-	BillID                 string      `json:"bill_id,omitempty"`
-	BillStatus             string      `json:"bill_status,omitempty"`
-	SMLDocNo               string      `json:"sml_doc_no,omitempty"`
-	DocumentPath           string      `json:"document_path,omitempty"`
+	ShopID                 string                `json:"shop_id"`
+	ShopName               string                `json:"shop_name"`
+	OrderID                string                `json:"order_id"`
+	OrderStatus            OrderStatus           `json:"order_status"`
+	Currency               string                `json:"currency"`
+	PaymentTotalAmount     string                `json:"payment_total_amount"`
+	ProductSubtotalAmount  string                `json:"product_subtotal_amount"`
+	ShippingFeeAmount      string                `json:"shipping_fee_amount"`
+	ItemInsuranceFeeAmount string                `json:"item_insurance_fee_amount"`
+	ItemCount              int                   `json:"item_count"`
+	SKUCount               int                   `json:"sku_count"`
+	LastOrderUpdateAt      *time.Time            `json:"last_order_update_at,omitempty"`
+	LastSyncedAt           time.Time             `json:"last_synced_at"`
+	BillID                 string                `json:"bill_id,omitempty"`
+	BillStatus             string                `json:"bill_status,omitempty"`
+	SMLDocNo               string                `json:"sml_doc_no,omitempty"`
+	DocumentPath           string                `json:"document_path,omitempty"`
+	AutoSML                *TikTokAutoSMLJobView `json:"auto_sml,omitempty"`
+}
+
+type TikTokAutoSMLJobView struct {
+	Status       string    `json:"status"`
+	ErrorCode    string    `json:"error_code,omitempty"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type TikTokOrderSnapshotListResult struct {
@@ -158,12 +167,24 @@ type orderSnapshotBatchStore interface {
 }
 
 type OrderSnapshotService struct {
-	gateway orderSnapshotGateway
-	store   orderSnapshotBatchStore
+	gateway  orderSnapshotGateway
+	store    orderSnapshotBatchStore
+	observer TikTokOrderSnapshotObserver
+}
+
+type TikTokOrderSnapshotObserver interface {
+	ObserveTikTokOrderSnapshot(context.Context, string, TikTokOrderSnapshotRecord) error
 }
 
 func NewOrderSnapshotService(gateway orderSnapshotGateway, store orderSnapshotBatchStore) *OrderSnapshotService {
 	return &OrderSnapshotService{gateway: gateway, store: store}
+}
+
+func (s *OrderSnapshotService) WithObserver(observer TikTokOrderSnapshotObserver) *OrderSnapshotService {
+	if s != nil {
+		s.observer = observer
+	}
+	return s
 }
 
 func (s *OrderSnapshotService) Sync(ctx context.Context, input TikTokOrderSnapshotRequest) (*TikTokOrderSnapshotResult, error) {
@@ -211,12 +232,20 @@ func (s *OrderSnapshotService) Sync(ctx context.Context, input TikTokOrderSnapsh
 	if err := s.store.UpsertBatch(ctx, shopID, records); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSnapshotPersistenceFailed, err)
 	}
+	if s.observer != nil {
+		for _, record := range records {
+			if err := s.observer.ObserveTikTokOrderSnapshot(ctx, shopID, record); err != nil {
+				return nil, fmt.Errorf("%w: observe Auto SML eligibility: %v", ErrSnapshotPersistenceFailed, err)
+			}
+		}
+	}
 	result := &TikTokOrderSnapshotResult{ShopID: shopID, SyncedCount: len(records), Snapshots: make([]TikTokOrderSnapshotSummary, 0, len(records))}
 	for _, record := range records {
 		result.Snapshots = append(result.Snapshots, TikTokOrderSnapshotSummary{
 			OrderID: record.OrderID, OrderStatus: record.OrderStatus, ItemCount: record.ItemCount,
 			SKUCount: record.SKUCount, SourceHash: record.SourceHash,
 			DetailRequestID: record.DetailRequestID, PriceDetailRequestID: record.PriceDetailRequestID,
+			LastOrderUpdateAt: record.LastOrderUpdateAt,
 		})
 	}
 	return result, nil
@@ -535,7 +564,9 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 		        s.shipping_fee_amount::text, s.item_insurance_fee_amount::text,
 		        s.item_count, s.sku_count, s.last_order_update_at, s.last_synced_at,
 		        COALESCE(b.bill_id, ''), COALESCE(b.bill_status, ''),
-		        COALESCE(b.sml_doc_no, ''), COALESCE(b.document_path, '')
+		        COALESCE(b.sml_doc_no, ''), COALESCE(b.document_path, ''),
+		        COALESCE(j.status, ''), COALESCE(j.last_error_code, ''),
+		        COALESCE(j.last_error_message, ''), j.updated_at
 		   FROM tiktok_shop_order_snapshots s
 		   JOIN tiktok_shop_connections c ON c.shop_id = s.shop_id AND c.disabled_at IS NULL
 		   LEFT JOIN LATERAL (
@@ -555,6 +586,12 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 		      ORDER BY bill.created_at DESC, bill.id DESC
 		      LIMIT 1
 		   ) b ON TRUE
+		   LEFT JOIN LATERAL (
+		     SELECT status,last_error_code,last_error_message,updated_at
+		       FROM tiktok_shop_auto_sml_jobs
+		      WHERE shop_id=s.shop_id AND order_id=s.order_id
+		      LIMIT 1
+		   ) j ON TRUE
 		  WHERE ($1 = '' OR s.shop_id = $1)
 		    AND ($2 = '' OR s.order_status = $2)
 		    AND ($3 = ''
@@ -575,11 +612,14 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 	for rows.Next() {
 		var item TikTokOrderSnapshotListItem
 		var lastUpdate sql.NullTime
+		var autoStatus, autoErrorCode, autoErrorMessage string
+		var autoUpdatedAt sql.NullTime
 		if err := rows.Scan(
 			&item.ShopID, &item.ShopName, &item.OrderID, &item.OrderStatus, &item.Currency,
 			&item.PaymentTotalAmount, &item.ProductSubtotalAmount, &item.ShippingFeeAmount, &item.ItemInsuranceFeeAmount,
 			&item.ItemCount, &item.SKUCount, &lastUpdate, &item.LastSyncedAt,
 			&item.BillID, &item.BillStatus, &item.SMLDocNo, &item.DocumentPath,
+			&autoStatus, &autoErrorCode, &autoErrorMessage, &autoUpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -588,6 +628,9 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 			item.LastOrderUpdateAt = &value
 		}
 		item.LastSyncedAt = item.LastSyncedAt.UTC()
+		if autoStatus != "" && autoUpdatedAt.Valid {
+			item.AutoSML = &TikTokAutoSMLJobView{Status: autoStatus, ErrorCode: autoErrorCode, ErrorMessage: autoErrorMessage, UpdatedAt: autoUpdatedAt.Time.UTC()}
+		}
 		result.Data = append(result.Data, item)
 	}
 	if err := rows.Err(); err != nil {

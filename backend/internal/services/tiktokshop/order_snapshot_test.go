@@ -39,6 +39,16 @@ type snapshotStoreFake struct {
 	calls   int
 }
 
+type snapshotObserverFake struct {
+	records []TikTokOrderSnapshotRecord
+	err     error
+}
+
+func (f *snapshotObserverFake) ObserveTikTokOrderSnapshot(_ context.Context, _ string, record TikTokOrderSnapshotRecord) error {
+	f.records = append(f.records, record)
+	return f.err
+}
+
 func (f *snapshotStoreFake) UpsertBatch(_ context.Context, shopID string, records []TikTokOrderSnapshotRecord) error {
 	f.calls++
 	f.records = append([]TikTokOrderSnapshotRecord(nil), records...)
@@ -182,6 +192,35 @@ func TestTikTokOrderSnapshotServicePersistsOneAtomicBatch(t *testing.T) {
 	}
 }
 
+func TestTikTokOrderSnapshotServiceNotifiesObserverAfterPersistence(t *testing.T) {
+	gateway := &snapshotGatewayFake{
+		details: &GatewayOrderDetailsResponse{UpstreamRequestID: "detail", Orders: []Order{validSnapshotOrder("1001")}},
+		prices:  map[string]*GatewayOrderPriceDetailResponse{"1001": {UpstreamRequestID: "price-1", PriceDetail: ptrPrice(validSnapshotPrice("307.49"))}},
+	}
+	store := &snapshotStoreFake{}
+	observer := &snapshotObserverFake{}
+	service := NewOrderSnapshotService(gateway, store).WithObserver(observer)
+
+	result, err := service.Sync(t.Context(), TikTokOrderSnapshotRequest{ShopID: "7000714532876273420", OrderIDs: []string{"1001"}})
+	if err != nil || store.calls != 1 || len(observer.records) != 1 || observer.records[0].OrderID != "1001" || result.Snapshots[0].LastOrderUpdateAt == nil {
+		t.Fatalf("result=%+v err=%v store=%d observed=%+v", result, err, store.calls, observer.records)
+	}
+}
+
+func TestTikTokOrderSnapshotServiceSurfacesObserverFailureForSafeRetry(t *testing.T) {
+	gateway := &snapshotGatewayFake{
+		details: &GatewayOrderDetailsResponse{UpstreamRequestID: "detail", Orders: []Order{validSnapshotOrder("1001")}},
+		prices:  map[string]*GatewayOrderPriceDetailResponse{"1001": {UpstreamRequestID: "price-1", PriceDetail: ptrPrice(validSnapshotPrice("307.49"))}},
+	}
+	store := &snapshotStoreFake{}
+	service := NewOrderSnapshotService(gateway, store).WithObserver(&snapshotObserverFake{err: errors.New("queue unavailable")})
+
+	_, err := service.Sync(t.Context(), TikTokOrderSnapshotRequest{ShopID: "7000714532876273420", OrderIDs: []string{"1001"}})
+	if !errors.Is(err, ErrSnapshotPersistenceFailed) || store.calls != 1 {
+		t.Fatalf("err=%v store=%d", err, store.calls)
+	}
+}
+
 func TestTikTokOrderSnapshotStoreUpsertsBatchInOneTransaction(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	if err != nil {
@@ -258,10 +297,12 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 			"payment_total_amount", "product_subtotal_amount", "shipping_fee_amount", "item_insurance_fee_amount",
 			"item_count", "sku_count", "last_order_update_at", "last_synced_at",
 			"bill_id", "bill_status", "sml_doc_no", "document_path",
+			"auto_status", "auto_error_code", "auto_error_message", "auto_updated_at",
 		}).AddRow(
 			"7494619203789490654", "henna_milkford", "585684843131602849", "COMPLETED", "THB",
 			"307.49", "300", "0", "7.49", 1, 1, updatedAt, syncedAt,
 			"03ee1216-acb4-4a88-842c-7edc6eb44292", "pending", "", "/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292",
+			"needs_review", "mapping_missing", "ยังไม่ได้จับคู่สินค้า", syncedAt,
 		))
 
 	result, err := NewTikTokOrderSnapshotStore(database).List(t.Context(), TikTokOrderSnapshotListFilter{
@@ -281,6 +322,9 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 		row.BillID != "03ee1216-acb4-4a88-842c-7edc6eb44292" || row.BillStatus != "pending" || row.SMLDocNo != "" ||
 		row.DocumentPath != "/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292" {
 		t.Fatalf("List() row = %+v", row)
+	}
+	if row.AutoSML == nil || row.AutoSML.Status != "needs_review" || row.AutoSML.ErrorCode != "mapping_missing" {
+		t.Fatalf("List() Auto SML = %+v", row.AutoSML)
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {

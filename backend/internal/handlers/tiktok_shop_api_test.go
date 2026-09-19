@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -110,6 +112,38 @@ type tenantTikTokReviewedBillCreatorFake struct {
 	result *tiktokshop.TikTokReviewedBillResult
 	err    error
 	calls  int
+}
+
+type tenantTikTokAutoSMLSettingsFake struct {
+	settings []models.TikTokAutoSMLSetting
+	updated  repository.TikTokAutoSMLSettingUpdate
+	err      error
+}
+
+func (f *tenantTikTokAutoSMLSettingsFake) ListSettings(context.Context) ([]models.TikTokAutoSMLSetting, error) {
+	return append([]models.TikTokAutoSMLSetting(nil), f.settings...), f.err
+}
+
+func (f *tenantTikTokAutoSMLSettingsFake) GetSetting(_ context.Context, shopID string) (*models.TikTokAutoSMLSetting, error) {
+	for i := range f.settings {
+		if f.settings[i].ShopID == shopID {
+			value := f.settings[i]
+			return &value, f.err
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (f *tenantTikTokAutoSMLSettingsFake) UpdateSetting(_ context.Context, input repository.TikTokAutoSMLSettingUpdate) (*models.TikTokAutoSMLSetting, error) {
+	f.updated = input
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &models.TikTokAutoSMLSetting{ShopID: input.ShopID, Enabled: input.Enabled, ConfigVersion: input.ExpectedConfigVersion + 1}, nil
+}
+
+func (f *tenantTikTokAutoSMLSettingsFake) RetryJob(context.Context, string, string, string, string) error {
+	return f.err
 }
 
 func (f *tenantTikTokReviewedBillCreatorFake) Create(_ context.Context, input tiktokshop.TikTokReviewedBillInput) (*tiktokshop.TikTokReviewedBillResult, error) {
@@ -681,5 +715,183 @@ func TestTikTokShopAPIHandlerUpdatesOneShopOnlyWhenGlobalWorkerEnabled(t *testin
 	)))
 	if disabledResponse.Code != http.StatusConflict || disabledStore.updateShop != "" {
 		t.Fatalf("disabled status=%d shop=%q body=%s", disabledResponse.Code, disabledStore.updateShop, disabledResponse.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerDiagnosticsUsesSafeOperationalEvidence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &tenantTikTokGatewayFake{configured: true, connections: []tiktokshop.GatewayConnection{{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", GrantedScopes: []string{"seller.order.info"},
+	}}}
+	settings := &tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", Enabled: true, IntervalSeconds: 300,
+	}}}
+	reader := &tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{
+		Data: []tiktokshop.TikTokOrderSnapshotListItem{{
+			ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586030483469993439",
+			OrderStatus: tiktokshop.OrderStatusAwaitingCollection,
+		}},
+		Page: 1, PageSize: 20, TotalItems: 1, TotalPages: 1,
+	}}
+	previewer := &tenantTikTokBillShadowPreviewerFake{result: &tiktokshop.TikTokBillShadowPreview{
+		ShopID: "7494619203789490654", OrderID: "586030483469993439",
+		OrderStatus: tiktokshop.OrderStatusAwaitingCollection, ReadyForReviewedBill: true,
+		Route: tiktokshop.TikTokBillShadowRoute{Ready: true, SemanticRoute: "sale_invoice", DocFormatCode: "SI", ShippingReady: true},
+		Items: []tiktokshop.TikTokBillShadowItem{{Mapping: tiktokshop.TikTokBillShadowItemMapping{Status: tiktokshop.TikTokBillShadowMappingReady}}},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+		TikTokShopReviewedBillEnabled: true, TikTokShopSMLSendEnabled: true,
+	}, gateway, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(settings).
+		WithOrderReader(reader).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.GET("/diagnostics", handler.Diagnostics)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/diagnostics?shop_id=7494619203789490654", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Overall string `json:"overall"`
+		API     struct {
+			ConnectedShops int `json:"connected_shops"`
+		} `json:"api"`
+		Coverage struct {
+			SampledOrders int `json:"sampled_orders"`
+			ReadyOrders   int `json:"ready_orders"`
+			BlockedOrders int `json:"blocked_orders"`
+		} `json:"coverage"`
+		AutoSML struct {
+			GlobalEnabled bool `json:"global_enabled"`
+			CanEnable     bool `json:"can_enable"`
+		} `json:"auto_sml"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode diagnostics: %v body=%s", err, response.Body.String())
+	}
+	if body.Overall != "ready_for_controlled_enablement" || body.API.ConnectedShops != 1 ||
+		body.Coverage.SampledOrders != 1 || body.Coverage.ReadyOrders != 1 || body.Coverage.BlockedOrders != 0 ||
+		body.AutoSML.GlobalEnabled || body.AutoSML.CanEnable {
+		t.Fatalf("unexpected diagnostics: %+v body=%s", body, response.Body.String())
+	}
+	for _, forbidden := range []string{"buyer", "recipient", "phone", "address", "token", "secret", "signature"} {
+		if strings.Contains(strings.ToLower(response.Body.String()), forbidden) {
+			t.Fatalf("diagnostics leaked %q: %s", forbidden, response.Body.String())
+		}
+	}
+}
+
+func TestTikTokShopAPIHandlerDiagnosticsFailsClosedWhenEvidenceIsBlocked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reader := &tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{
+		Data: []tiktokshop.TikTokOrderSnapshotListItem{{
+			ShopID: "7494619203789490654", OrderID: "586030483469993439",
+			OrderStatus: tiktokshop.OrderStatusAwaitingCollection,
+		}}, Page: 1, PageSize: 20, TotalItems: 1, TotalPages: 1,
+	}}
+	previewer := &tenantTikTokBillShadowPreviewerFake{result: &tiktokshop.TikTokBillShadowPreview{
+		ShopID: "7494619203789490654", OrderID: "586030483469993439",
+		Blockers: []tiktokshop.TikTokBillShadowBlocker{{Code: tiktokshop.TikTokBillShadowBlockerMappingMissing, Message: "ยังไม่ได้จับคู่สินค้า"}},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+		TikTokShopReviewedBillEnabled: true, TikTokShopSMLSendEnabled: true, TikTokShopAutoSMLEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true, connections: []tiktokshop.GatewayConnection{{ShopID: "7494619203789490654"}}}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: "7494619203789490654", Enabled: true}}}).
+		WithOrderReader(reader).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.GET("/diagnostics", handler.Diagnostics)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/diagnostics", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"overall":"needs_attention"`) ||
+		!strings.Contains(response.Body.String(), `"mapping_missing":1`) ||
+		!strings.Contains(response.Body.String(), `"can_enable":false`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerListsDormantAutoSMLSettings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", TriggerStatus: models.TikTokAutoSMLTriggerAwaitingCollection, ConfigVersion: 1,
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithAutoSML(store)
+	router := gin.New()
+	router.GET("/auto-sml/settings", handler.AutoSMLSettings)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/auto-sml/settings", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"global_enabled":false`) ||
+		!strings.Contains(response.Body.String(), `"historical_backfill":false`) ||
+		!strings.Contains(response.Body.String(), `"trigger_status":"AWAITING_COLLECTION"`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerCannotEnableAutoSMLWhileGlobalGateIsOff(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &tenantTikTokAutoSMLSettingsFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: false}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
+		`{"enabled":true,"expected_config_version":1,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+	)))
+
+	if response.Code != http.StatusConflict || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "auto_sml_global_disabled") {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
+	}
+}
+
+func TestTikTokAutoSMLRouteSignatureChangesWithRouteEvidence(t *testing.T) {
+	base := tiktokshop.TikTokBillShadowRoute{
+		Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: "SI",
+		ConfigVersion: 3, ShippingItemCode: "AH-0061", ShippingItemUnitCode: "ชิ้น",
+	}
+	first := tikTokAutoSMLRouteSignature(base)
+	if len(first) != 64 {
+		t.Fatalf("signature=%q", first)
+	}
+	base.ConfigVersion++
+	if next := tikTokAutoSMLRouteSignature(base); next == first {
+		t.Fatal("route config version change must invalidate the signature")
+	}
+	base.Ready = false
+	if next := tikTokAutoSMLRouteSignature(base); next != "" {
+		t.Fatalf("not-ready route signature=%q, want empty", next)
+	}
+}
+
+func TestTikTokAutoSMLBillFingerprintIgnoresForwardStatusButDetectsBillChanges(t *testing.T) {
+	preview := &tiktokshop.TikTokBillShadowPreview{
+		ShopID: "7494619203789490654", OrderID: "586030483469993439", Currency: "THB",
+		OrderStatus: tiktokshop.OrderStatusAwaitingCollection,
+		Amounts:     tiktokshop.TikTokBillShadowAmounts{ProductSubtotal: "100.00", Shipping: "15.00", ProposedDocumentTotal: "115.00"},
+		Items: []tiktokshop.TikTokBillShadowItem{{
+			ProductID: "product-1", SKUID: "sku-1", Quantity: 1, UnitSalePrice: "100.00", LineTotal: "100.00",
+			Mapping: tiktokshop.TikTokBillShadowItemMapping{Status: tiktokshop.TikTokBillShadowMappingReady, ItemCode: "AH-0001", UnitCode: "ชิ้น", SMLQuantity: "1", MappingRevision: 2},
+		}},
+	}
+	first, err := tikTokAutoSMLBillFingerprint(preview)
+	if err != nil || len(first) != 64 {
+		t.Fatalf("fingerprint=%q err=%v", first, err)
+	}
+	preview.OrderStatus = tiktokshop.OrderStatusInTransit
+	second, err := tikTokAutoSMLBillFingerprint(preview)
+	if err != nil || second != first {
+		t.Fatalf("forward status changed fingerprint: first=%s second=%s err=%v", first, second, err)
+	}
+	preview.Items[0].Mapping.MappingRevision++
+	third, err := tikTokAutoSMLBillFingerprint(preview)
+	if err != nil || third == first {
+		t.Fatalf("mapping change did not invalidate fingerprint: first=%s third=%s err=%v", first, third, err)
 	}
 }

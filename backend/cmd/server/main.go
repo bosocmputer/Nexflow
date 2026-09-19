@@ -365,6 +365,9 @@ func main() {
 	tiktokBillShadowService := tiktokshop.NewTikTokBillShadowService(tiktokBillShadowStore)
 	tiktokBillShadowMappingService := tiktokshop.NewTikTokBillShadowMappingService(tiktokBillShadowStore, aliasRepo)
 	tiktokReviewedBillService := tiktokshop.NewTikTokReviewedBillService(tiktokBillShadowStore, billRepo)
+	tiktokAutoSMLRepo := repository.NewTikTokAutoSMLRepo(db)
+	tiktokAutoSMLController := handlers.NewTikTokAutoSMLController(cfg, tiktokAutoSMLRepo, tiktokBillShadowService, tiktokReviewedBillService, billH, auditLogRepo, logger)
+	tiktokSnapshotService.WithObserver(tiktokAutoSMLController)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
 	tiktokReconcileService := tiktokshop.NewTikTokOrderReconciler(tiktokGatewayClient, tiktokSnapshotService, tiktokReconcileStore)
 	tiktokProductCatalogStore := tiktokshop.NewProductCatalogStore(db)
@@ -379,9 +382,11 @@ func main() {
 		WithBillShadowMapper(tiktokBillShadowMappingService).
 		WithReviewedBillCreator(tiktokReviewedBillService).
 		WithProductCatalog(tiktokProductCatalogService, tiktokProductCatalogStore).
+		WithAutoSML(tiktokAutoSMLRepo).
 		WithAuditLogger(auditLogRepo)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
 	tiktokshop.NewTikTokWebhookWorker(cfg.TikTokShopWebhookEnabled, tiktokWebhookStore, tiktokSnapshotService, logger).Start(appCtx)
+	tiktokAutoSMLController.Start(appCtx)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
@@ -609,6 +614,10 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm", middleware.RequireRole("admin"), tiktokAPIH.ConfirmBillShadowMapping)
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill", middleware.RequireRole("admin"), tiktokAPIH.CreateReviewedBill)
 		api.GET("/tiktok-shop-api/order-sync-settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrderSyncSettings)
+		api.GET("/tiktok-shop-api/diagnostics", middleware.RequireRole("admin", "staff"), tiktokAPIH.Diagnostics)
+		api.GET("/tiktok-shop-api/auto-sml/settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.AutoSMLSettings)
+		api.PUT("/tiktok-shop-api/auto-sml/settings/:shop_id", middleware.RequireRole("admin"), tiktokAPIH.UpdateAutoSMLSetting)
+		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/auto-sml/retry", middleware.RequireRole("admin"), tiktokAPIH.RetryAutoSML)
 		api.PUT("/tiktok-shop-api/order-sync-settings/:shop_id", middleware.RequireRole("admin"), tiktokAPIH.UpdateOrderSyncSetting)
 		api.GET("/tiktok-shop-api/products", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListProductCatalog)
 		api.POST("/tiktok-shop-api/products/catalog-sync", middleware.RequireRole("admin"), tiktokAPIH.SyncProductCatalog)

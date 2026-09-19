@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -102,6 +103,7 @@ type TikTokShopAPIHandler struct {
 	reviewedBill   TikTokShopReviewedBillCreator
 	productCatalog TikTokShopProductCatalogSyncer
 	productReader  TikTokShopProductCatalogReader
+	autoSML        TikTokAutoSMLSettingsStore
 	audit          TikTokShopAuditLogger
 	logger         *zap.Logger
 }
@@ -144,6 +146,13 @@ func (h *TikTokShopAPIHandler) WithProductCatalog(syncer TikTokShopProductCatalo
 func (h *TikTokShopAPIHandler) WithAuditLogger(audit TikTokShopAuditLogger) *TikTokShopAPIHandler {
 	if h != nil {
 		h.audit = audit
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithAutoSML(settings TikTokAutoSMLSettingsStore) *TikTokShopAPIHandler {
+	if h != nil {
+		h.autoSML = settings
 	}
 	return h
 }
@@ -412,6 +421,166 @@ func (h *TikTokShopAPIHandler) ListOrderSyncSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"worker_enabled": h.config.TikTokShopOrderSyncEnabled, "data": settings})
+}
+
+// Diagnostics reports bounded, PII-safe operational evidence. It never
+// returns raw TikTok payloads, credentials, or customer fields.
+func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
+	enabled, gatewayConfigured := h.readiness()
+	shopID := strings.TrimSpace(c.Query("shop_id"))
+	if shopID != "" && !tiktokshop.ValidTikTokShopID(shopID) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "Shop ID ของ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	type diagnosticsAPI struct {
+		Enabled           bool `json:"enabled"`
+		GatewayConfigured bool `json:"gateway_configured"`
+		ConnectedShops    int  `json:"connected_shops"`
+	}
+	type diagnosticsSync struct {
+		WorkerEnabled bool `json:"worker_enabled"`
+		Configured    bool `json:"configured"`
+		EnabledShops  int  `json:"enabled_shops"`
+		ErrorShops    int  `json:"error_shops"`
+	}
+	type diagnosticsCoverage struct {
+		SampledOrders int            `json:"sampled_orders"`
+		ReadyOrders   int            `json:"ready_orders"`
+		BlockedOrders int            `json:"blocked_orders"`
+		MappedItems   int            `json:"mapped_items"`
+		TotalItems    int            `json:"total_items"`
+		Blockers      map[string]int `json:"blockers"`
+	}
+
+	api := diagnosticsAPI{Enabled: enabled, GatewayConfigured: gatewayConfigured}
+	syncState := diagnosticsSync{WorkerEnabled: h != nil && h.config != nil && h.config.TikTokShopOrderSyncEnabled, Configured: h != nil && h.syncSettings != nil}
+	coverage := diagnosticsCoverage{Blockers: map[string]int{}}
+	issues := make([]string, 0, 8)
+	if !enabled {
+		issues = append(issues, "open_api_disabled")
+	}
+	if !gatewayConfigured || h.gateway == nil {
+		issues = append(issues, "gateway_not_configured")
+	} else if connections, err := h.gateway.ListConnections(c.Request.Context()); err != nil {
+		issues = append(issues, "gateway_unavailable")
+	} else {
+		for _, connection := range connections {
+			if !connection.Disabled && (shopID == "" || strings.TrimSpace(connection.ShopID) == shopID) {
+				api.ConnectedShops++
+			}
+		}
+		if api.ConnectedShops == 0 {
+			issues = append(issues, "shop_not_connected")
+		}
+	}
+
+	if h == nil || h.syncSettings == nil {
+		issues = append(issues, "order_sync_not_configured")
+	} else if settings, err := h.syncSettings.ListSettings(c.Request.Context()); err != nil {
+		issues = append(issues, "order_sync_unavailable")
+	} else {
+		for _, setting := range settings {
+			if shopID != "" && strings.TrimSpace(setting.ShopID) != shopID {
+				continue
+			}
+			if setting.Enabled {
+				syncState.EnabledShops++
+			}
+			if strings.TrimSpace(setting.LastErrorCode) != "" {
+				syncState.ErrorShops++
+			}
+		}
+		if !syncState.WorkerEnabled || syncState.EnabledShops == 0 {
+			issues = append(issues, "order_sync_disabled")
+		}
+		if syncState.ErrorShops > 0 {
+			issues = append(issues, "order_sync_error")
+		}
+	}
+
+	routeReady := false
+	if h == nil || h.orderReader == nil || h.billShadow == nil {
+		issues = append(issues, "review_pipeline_not_configured")
+	} else if orders, err := h.orderReader.List(c.Request.Context(), tiktokshop.TikTokOrderSnapshotListFilter{ShopID: shopID, Page: 1, PageSize: 20}); err != nil {
+		issues = append(issues, "order_evidence_unavailable")
+	} else {
+		for _, order := range orders.Data {
+			if strings.TrimSpace(order.BillID) != "" {
+				continue
+			}
+			coverage.SampledOrders++
+			preview, previewErr := h.billShadow.Preview(c.Request.Context(), order.ShopID, order.OrderID)
+			if previewErr != nil || preview == nil {
+				coverage.BlockedOrders++
+				coverage.Blockers["preview_unavailable"]++
+				continue
+			}
+			if preview.Route.Ready && preview.Route.ShippingReady {
+				routeReady = true
+			}
+			for _, item := range preview.Items {
+				coverage.TotalItems++
+				if item.Mapping.Status == tiktokshop.TikTokBillShadowMappingReady {
+					coverage.MappedItems++
+				}
+			}
+			if preview.ReadyForReviewedBill && len(preview.Blockers) == 0 {
+				coverage.ReadyOrders++
+				continue
+			}
+			coverage.BlockedOrders++
+			if len(preview.Blockers) == 0 {
+				coverage.Blockers["not_ready"]++
+			}
+			for _, blocker := range preview.Blockers {
+				code := strings.TrimSpace(blocker.Code)
+				if code == "" {
+					code = "not_ready"
+				}
+				coverage.Blockers[code]++
+			}
+		}
+		if coverage.SampledOrders == 0 {
+			issues = append(issues, "no_unsent_order_sample")
+		} else if coverage.BlockedOrders > 0 {
+			issues = append(issues, "order_review_blocked")
+		}
+		if !routeReady {
+			issues = append(issues, "sale_route_not_ready")
+		}
+	}
+
+	webhookEnabled := h != nil && h.config != nil && h.config.TikTokShopWebhookEnabled
+	smlSendEnabled := h != nil && h.config != nil && h.config.TikTokShopSMLSendEnabled
+	if !webhookEnabled {
+		issues = append(issues, "webhook_disabled")
+	}
+	if !smlSendEnabled {
+		issues = append(issues, "sml_send_disabled")
+	}
+	baselineReady := len(issues) == 0
+	globalAutoEnabled := h != nil && h.config != nil && h.config.TikTokShopAutoSMLEnabled
+	overall := "needs_attention"
+	if baselineReady {
+		overall = "ready_for_controlled_enablement"
+	}
+	autoMessage := "Auto SML ยังปิดในระดับเซิร์ฟเวอร์"
+	if globalAutoEnabled && !baselineReady {
+		autoMessage = "Auto SML เปิดในระดับเซิร์ฟเวอร์ แต่หลักฐานความพร้อมยังไม่ครบ"
+	} else if globalAutoEnabled {
+		autoMessage = "ผ่านการตรวจพื้นฐาน รอการตั้งค่าร้านและ canary ออเดอร์ใหม่"
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"overall": overall, "api": api, "sync": syncState,
+		"webhook": gin.H{"enabled": webhookEnabled},
+		"document": gin.H{
+			"reviewed_bill_enabled": h != nil && h.config != nil && h.config.TikTokShopReviewedBillEnabled,
+			"sml_send_enabled":      smlSendEnabled, "route_ready": routeReady,
+		},
+		"coverage": coverage,
+		"auto_sml": gin.H{"global_enabled": globalAutoEnabled, "can_enable": globalAutoEnabled && baselineReady, "message": autoMessage},
+		"issues":   issues, "checked_at": time.Now().UTC(),
+	})
 }
 
 func (h *TikTokShopAPIHandler) ListOrders(c *gin.Context) {

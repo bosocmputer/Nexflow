@@ -15,6 +15,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   TikTokBillShadowButton,
   TikTokBillShadowDialog,
@@ -60,6 +61,12 @@ interface TikTokOrderRow {
   bill_status?: string
   sml_doc_no?: string
   document_path?: string
+  auto_sml?: {
+    status: string
+    error_code?: string
+    error_message?: string
+    updated_at: string
+  }
 }
 
 interface TikTokOrderPage {
@@ -84,6 +91,45 @@ interface TikTokOrderSyncSetting {
 interface TikTokOrderSyncResponse {
   worker_enabled: boolean
   data: TikTokOrderSyncSetting[]
+}
+
+interface TikTokDiagnostics {
+  overall: 'ready_for_controlled_enablement' | 'needs_attention'
+  api: { enabled: boolean; gateway_configured: boolean; connected_shops: number }
+  sync: { worker_enabled: boolean; configured: boolean; enabled_shops: number; error_shops: number }
+  webhook: { enabled: boolean }
+  document: { reviewed_bill_enabled: boolean; sml_send_enabled: boolean; route_ready: boolean }
+  coverage: {
+    sampled_orders: number
+    ready_orders: number
+    blocked_orders: number
+    mapped_items: number
+    total_items: number
+    blockers: Record<string, number>
+  }
+  auto_sml: { global_enabled: boolean; can_enable: boolean; message: string }
+  issues: string[]
+  checked_at: string
+}
+
+interface TikTokAutoSMLSetting {
+  shop_id: string
+  shop_name: string
+  enabled: boolean
+  trigger_status: 'AWAITING_COLLECTION'
+  config_version: number
+  eligible_after?: string
+  paused_reason?: string
+  queued_count: number
+  needs_review_count: number
+  failed_count: number
+}
+
+interface TikTokAutoSMLSettingsResponse {
+  global_enabled: boolean
+  trigger_status: 'AWAITING_COLLECTION'
+  historical_backfill: false
+  settings: TikTokAutoSMLSetting[]
 }
 
 interface TikTokReviewedBillResponse {
@@ -136,6 +182,13 @@ export default function TikTokShopOperations() {
   const [params, setParams] = useSearchParams()
   const [orders, setOrders] = useState<TikTokOrderPage | null>(null)
   const [sync, setSync] = useState<TikTokOrderSyncResponse | null>(null)
+  const [diagnostics, setDiagnostics] = useState<TikTokDiagnostics | null>(null)
+  const [autoSML, setAutoSML] = useState<TikTokAutoSMLSettingsResponse | null>(null)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
+  const [autoSMLSaving, setAutoSMLSaving] = useState(false)
+  const [autoSMLConfirmSetting, setAutoSMLConfirmSetting] = useState<TikTokAutoSMLSetting | null>(null)
+  const [autoSMLRetryingOrder, setAutoSMLRetryingOrder] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshTick, setRefreshTick] = useState(0)
@@ -224,6 +277,63 @@ export default function TikTokShopOperations() {
   }, [shopID, sync?.data])
   const syncState = selectedSetting ? tiktokSyncState(Boolean(sync?.worker_enabled), selectedSetting.enabled, selectedSetting.last_error_code) : 'shop_disabled'
 
+  const loadDiagnostics = useCallback(async () => {
+    setDiagnosticsLoading(true)
+    try {
+      const [diagnosticResponse, autoSMLResponse] = await Promise.all([
+        client.get<TikTokDiagnostics>('/api/tiktok-shop-api/diagnostics', {
+          params: { shop_id: shopID === ALL ? undefined : shopID },
+        }),
+        client.get<TikTokAutoSMLSettingsResponse>('/api/tiktok-shop-api/auto-sml/settings'),
+      ])
+      setDiagnostics(diagnosticResponse.data)
+      setAutoSML(autoSMLResponse.data)
+    } catch (cause: unknown) {
+      toast.error(apiErrorMessage(cause, 'ตรวจสอบระบบ TikTok Shop ไม่สำเร็จ'))
+    } finally {
+      setDiagnosticsLoading(false)
+    }
+  }, [shopID])
+
+  const updateAutoSML = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
+    setAutoSMLSaving(true)
+    try {
+      await client.put(`/api/tiktok-shop-api/auto-sml/settings/${encodeURIComponent(setting.shop_id)}`, {
+        enabled,
+        expected_config_version: setting.config_version,
+        confirm: enabled ? 'ENABLE_TIKTOK_AUTO_SML' : '',
+      })
+      toast.success(enabled ? 'เปิด Auto SML สำหรับออเดอร์ใหม่แล้ว' : 'ปิด Auto SML แล้ว')
+      await loadDiagnostics()
+    } catch (cause: unknown) {
+      toast.error(apiErrorMessage(cause, 'บันทึก Auto SML ไม่สำเร็จ'))
+    } finally {
+      setAutoSMLSaving(false)
+    }
+  }, [loadDiagnostics])
+
+  const requestAutoSMLUpdate = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
+    if (enabled) {
+      setAutoSMLConfirmSetting(setting)
+      return
+    }
+    await updateAutoSML(setting, false)
+  }, [updateAutoSML])
+
+  const retryAutoSML = useCallback(async (row: TikTokOrderRow) => {
+    setAutoSMLRetryingOrder(row.order_id)
+    try {
+      await client.post(`/api/tiktok-shop-api/orders/${encodeURIComponent(row.shop_id)}/${encodeURIComponent(row.order_id)}/auto-sml/retry`)
+      toast.success('นำออเดอร์กลับเข้าคิว Auto SML แล้ว')
+      setRefreshTick((value) => value + 1)
+      if (diagnosticsOpen) await loadDiagnostics()
+    } catch (cause: unknown) {
+      toast.error(apiErrorMessage(cause, 'นำงาน Auto SML กลับเข้าคิวไม่สำเร็จ'))
+    } finally {
+      setAutoSMLRetryingOrder('')
+    }
+  }, [diagnosticsOpen, loadDiagnostics])
+
   const setStatusGroup = (value: string) => setQuery({ status_group: normalizeTikTokStatusGroup(value), status: null, page: null })
   const setPage = (nextPage: number) => setQuery({ page: nextPage <= 1 ? null : nextPage })
   const handleSearch = (value: string) => {
@@ -303,7 +413,7 @@ export default function TikTokShopOperations() {
             <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
               ติดตามข้อมูลคำสั่งซื้อล่าสุดที่ Nexflow ซิงก์จาก TikTok Shop สำหรับตรวจสอบสถานะและยอดชำระ
             </p>
-            <TikTokOperationsHealthLine state={syncState} setting={selectedSetting} />
+            <TikTokOperationsHealthLine state={syncState} setting={selectedSetting} diagnostics={diagnostics} />
           </div>
           <div className="flex flex-col gap-2 sm:flex-row xl:shrink-0">
             <Select value={shopID} onValueChange={(value) => setQuery({ shop_id: value, page: null })}>
@@ -321,9 +431,35 @@ export default function TikTokShopOperations() {
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
               รีเฟรชรายการ
             </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 gap-2 bg-background"
+              disabled={diagnosticsLoading}
+              onClick={() => {
+                setDiagnosticsOpen((value) => !value)
+                if (!diagnosticsOpen) void loadDiagnostics()
+              }}
+            >
+              {diagnosticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadioTower className="h-4 w-4" />}
+              ตรวจสอบระบบ
+            </Button>
           </div>
         </div>
       </section>
+
+      {diagnosticsOpen && (
+        <TikTokDiagnosticsPanel
+          diagnostics={diagnostics}
+          autoSML={autoSML}
+          selectedShopID={shopID}
+          loading={diagnosticsLoading}
+          saving={autoSMLSaving}
+          onRefresh={loadDiagnostics}
+          onUpdateAutoSML={requestAutoSMLUpdate}
+        />
+      )}
 
       {error && (
         <Alert variant="destructive">
@@ -406,6 +542,9 @@ export default function TikTokShopOperations() {
                   row={row}
                   previewLoading={billPreviewLoading && previewOrder?.shop_id === row.shop_id && previewOrder?.order_id === row.order_id}
                   onPreview={() => openBillPreview(row)}
+                  retryingAutoSML={autoSMLRetryingOrder === row.order_id}
+                  canRetryAutoSML={Boolean(canManage && autoSML?.global_enabled)}
+                  onRetryAutoSML={() => void retryAutoSML(row)}
                 />
               ))}
             </tbody>
@@ -456,11 +595,31 @@ export default function TikTokShopOperations() {
         item={mappingItem}
         onOpenChange={setProductMappingOpen}
       />
+      <ConfirmDialog
+        open={Boolean(autoSMLConfirmSetting)}
+        onOpenChange={(open) => {
+          if (!open) setAutoSMLConfirmSetting(null)
+        }}
+        title="เปิดส่ง SML อัตโนมัติสำหรับร้านนี้?"
+        description={`ร้าน ${autoSMLConfirmSetting?.shop_name || autoSMLConfirmSetting?.shop_id || 'TikTok Shop'} จะส่งเฉพาะออเดอร์ใหม่ที่เปลี่ยนเข้า AWAITING_COLLECTION หลังเวลาที่เปิดใช้งาน\n\nระบบจะไม่ประมวลผลออเดอร์ย้อนหลัง และจะหยุดอัตโนมัติเมื่อเส้นทาง SML เปลี่ยนหรือพบข้อผิดพลาดต่อเนื่อง`}
+        confirmLabel="เปิด Auto SML"
+        onConfirm={async () => {
+          if (autoSMLConfirmSetting) await updateAutoSML(autoSMLConfirmSetting, true)
+        }}
+      />
     </div>
   )
 }
 
-function TikTokOperationsHealthLine({ state, setting }: { state: ReturnType<typeof tiktokSyncState>; setting?: TikTokOrderSyncSetting }) {
+function TikTokOperationsHealthLine({
+  state,
+  setting,
+  diagnostics,
+}: {
+  state: ReturnType<typeof tiktokSyncState>
+  setting?: TikTokOrderSyncSetting
+  diagnostics: TikTokDiagnostics | null
+}) {
   const Icon = state === 'active' ? CheckCircle2 : Clock3
   return (
     <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-1 text-xs', state === 'active' ? 'text-accentStrong' : state === 'error' ? 'text-destructive' : 'text-warning')}>
@@ -474,11 +633,141 @@ function TikTokOperationsHealthLine({ state, setting }: { state: ReturnType<type
         </span>
       )}
       {setting?.last_error_message && <span className="text-destructive">{setting.last_error_message}</span>}
+      {diagnostics && (
+        <span className={diagnostics.overall === 'ready_for_controlled_enablement' ? 'text-accentStrong' : 'text-warning'}>
+          · {diagnostics.overall === 'ready_for_controlled_enablement' ? 'พื้นฐานพร้อมสำหรับ canary' : `ต้องตรวจ ${diagnostics.issues.length} จุด`}
+        </span>
+      )}
     </div>
   )
 }
 
-function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; previewLoading: boolean; onPreview: () => void }) {
+function TikTokDiagnosticsPanel({
+  diagnostics,
+  autoSML,
+  selectedShopID,
+  loading,
+  saving,
+  onRefresh,
+  onUpdateAutoSML,
+}: {
+  diagnostics: TikTokDiagnostics | null
+  autoSML: TikTokAutoSMLSettingsResponse | null
+  selectedShopID: string
+  loading: boolean
+  saving: boolean
+  onRefresh: () => Promise<void>
+  onUpdateAutoSML: (setting: TikTokAutoSMLSetting, enabled: boolean) => Promise<void>
+}) {
+  if (!diagnostics) {
+    return (
+      <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+        <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />กำลังตรวจสอบระบบ TikTok Shop...</span>
+      </div>
+    )
+  }
+  const checks = [
+    { label: 'Open API / Gateway', ok: diagnostics.api.enabled && diagnostics.api.gateway_configured && diagnostics.api.connected_shops > 0 },
+    { label: 'ซิงก์ออเดอร์', ok: diagnostics.sync.worker_enabled && diagnostics.sync.enabled_shops > 0 && diagnostics.sync.error_shops === 0 },
+    { label: 'Webhook', ok: diagnostics.webhook.enabled },
+    { label: 'เส้นทาง SML', ok: diagnostics.document.route_ready && diagnostics.document.sml_send_enabled },
+    { label: `Mapping ${diagnostics.coverage.mapped_items}/${diagnostics.coverage.total_items}`, ok: diagnostics.coverage.blocked_orders === 0 && diagnostics.coverage.sampled_orders > 0 },
+  ]
+  const selectedAutoSML = selectedShopID === ALL ? undefined : autoSML?.settings.find((setting) => setting.shop_id === selectedShopID)
+  const autoSMLRunning = Boolean(selectedAutoSML?.enabled && !selectedAutoSML.paused_reason)
+  return (
+    <section className="rounded-lg border border-border bg-card px-4 py-3" aria-label="ผลตรวจสอบระบบ TikTok Shop">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold">ความพร้อม TikTok Shop → Nexflow → SML</h2>
+            <Badge variant="outline" className={diagnostics.overall === 'ready_for_controlled_enablement' ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : 'border-warning/40 bg-warning/10 text-warning'}>
+              {diagnostics.overall === 'ready_for_controlled_enablement' ? 'พื้นฐานพร้อม' : 'ต้องตรวจสอบ'}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">ตรวจจากร้านที่เชื่อมอยู่ งานซิงก์ route และตัวอย่างออเดอร์ล่าสุด โดยไม่อ่านข้อมูลผู้รับ</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" className="h-8 gap-2" disabled={loading} onClick={() => void onRefresh()}>
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />รีเฟรชผลตรวจ
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {checks.map((check) => (
+          <span key={check.label} className={cn('inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-xs', check.ok ? 'bg-primary/10 text-accentStrong' : 'bg-warning/10 text-warning')}>
+            {check.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+            {check.label}
+          </span>
+        ))}
+      </div>
+      <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="font-medium">ส่ง SML อัตโนมัติ</div>
+            <div className="mt-1 text-muted-foreground">{diagnostics.auto_sml.message}</div>
+            <div className="mt-1 text-muted-foreground">Trigger: AWAITING_COLLECTION · เฉพาะออเดอร์ใหม่ · ไม่ย้อนหลัง</div>
+            {selectedAutoSML?.eligible_after && <div className="mt-1 text-muted-foreground">Cutoff: {formatDateTime(selectedAutoSML.eligible_after)}</div>}
+            {selectedAutoSML?.paused_reason && <div className="mt-1 text-warning">หยุดชั่วคราว: {selectedAutoSML.paused_reason === 'route_changed' ? 'เส้นทาง SML เปลี่ยน' : 'ระบบเชื่อมต่อล้มเหลวต่อเนื่อง'}</div>}
+          </div>
+          {selectedAutoSML ? (
+            <Button
+              type="button"
+              size="sm"
+              variant={autoSMLRunning ? 'outline' : 'default'}
+              disabled={saving || (!autoSMLRunning && (!autoSML?.global_enabled || !diagnostics.auto_sml.can_enable))}
+              onClick={() => void onUpdateAutoSML(selectedAutoSML, !autoSMLRunning)}
+            >
+              {saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+              {autoSMLRunning ? 'ปิด Auto SML' : selectedAutoSML.paused_reason ? 'ตรวจแล้วเปิดต่อ' : 'เปิด Auto SML'}
+            </Button>
+          ) : (
+            <span className="text-muted-foreground">เลือกร้านเพื่อจัดการ</span>
+          )}
+        </div>
+        {!diagnostics.auto_sml.global_enabled && <div className="mt-2 text-warning">ยังไม่มีการส่งอัตโนมัติ และจะไม่ประมวลผลออเดอร์ย้อนหลัง</div>}
+      </div>
+      {diagnostics.issues.length > 0 && (
+        <div className="mt-3 text-xs text-muted-foreground">จุดที่ต้องตรวจ: {diagnostics.issues.map(tikTokDiagnosticIssueLabel).join(' · ')}</div>
+      )}
+    </section>
+  )
+}
+
+function tikTokDiagnosticIssueLabel(code: string) {
+  const labels: Record<string, string> = {
+    open_api_disabled: 'Open API ยังปิด',
+    gateway_not_configured: 'Gateway ยังไม่พร้อม',
+    gateway_unavailable: 'ติดต่อ Gateway ไม่สำเร็จ',
+    shop_not_connected: 'ไม่พบร้านที่เชื่อมต่อ',
+    order_sync_not_configured: 'ยังไม่มีระบบซิงก์ออเดอร์',
+    order_sync_unavailable: 'อ่านสถานะซิงก์ไม่สำเร็จ',
+    order_sync_disabled: 'ซิงก์ออเดอร์ยังปิด',
+    order_sync_error: 'ซิงก์ออเดอร์มีข้อผิดพลาด',
+    review_pipeline_not_configured: 'ระบบตรวจบิลยังไม่พร้อม',
+    order_evidence_unavailable: 'อ่านตัวอย่างออเดอร์ไม่ได้',
+    no_unsent_order_sample: 'ยังไม่มีออเดอร์ที่ยังไม่สร้างบิลสำหรับตรวจ',
+    order_review_blocked: 'มีออเดอร์ที่ mapping หรือยอดยังไม่พร้อม',
+    sale_route_not_ready: 'เส้นทางขาย SML ยังไม่พร้อม',
+    webhook_disabled: 'Webhook ยังปิด',
+    sml_send_disabled: 'การส่ง SML ยังปิด',
+  }
+  return labels[code] ?? code
+}
+
+function DesktopRow({
+  row,
+  previewLoading,
+  retryingAutoSML,
+  canRetryAutoSML,
+  onPreview,
+  onRetryAutoSML,
+}: {
+  row: TikTokOrderRow
+  previewLoading: boolean
+  retryingAutoSML: boolean
+  canRetryAutoSML: boolean
+  onPreview: () => void
+  onRetryAutoSML: () => void
+}) {
   const document = tiktokDocumentState({
     billID: row.bill_id,
     billStatus: row.bill_status,
@@ -506,6 +795,7 @@ function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; p
         <div className="flex max-w-[300px] flex-col items-start gap-1.5">
           <Badge variant="outline" className={documentBadgeClass(document.tone)}>{document.label}</Badge>
           <div className="text-[11px] text-muted-foreground">{document.detail}</div>
+          {row.auto_sml && <TikTokAutoSMLBadge state={row.auto_sml} retrying={retryingAutoSML} canRetry={canRetryAutoSML} onRetry={onRetryAutoSML} />}
           <div className="flex flex-wrap gap-1.5">
             {document.path && (
               <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
@@ -531,6 +821,49 @@ function DesktopRow({ row, previewLoading, onPreview }: { row: TikTokOrderRow; p
       </td>
       <td className="px-3 py-2 align-top text-xs text-muted-foreground">{formatDateTime(row.last_synced_at)}</td>
     </tr>
+  )
+}
+
+function TikTokAutoSMLBadge({
+  state,
+  retrying,
+  canRetry,
+  onRetry,
+}: {
+  state: NonNullable<TikTokOrderRow['auto_sml']>
+  retrying: boolean
+  canRetry: boolean
+  onRetry: () => void
+}) {
+  const labels: Record<string, string> = {
+    queued: 'Auto SML: รอคิว',
+    running: 'Auto SML: กำลังส่ง',
+    retry_wait: 'Auto SML: รอลองใหม่',
+    needs_review: 'Auto SML: ต้องตรวจสอบ',
+    succeeded: 'ส่ง SML แล้ว (AUTO)',
+    failed: 'Auto SML: ไม่สำเร็จ',
+    cancelled: 'Auto SML: ยกเลิกงาน',
+  }
+  const success = state.status === 'succeeded'
+  const danger = state.status === 'failed'
+  const warning = ['retry_wait', 'needs_review'].includes(state.status)
+  return (
+    <div className="max-w-full">
+      <Badge variant="outline" className={cn(
+        success && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+        danger && 'border-destructive/30 bg-destructive/10 text-destructive',
+        warning && 'border-warning/40 bg-warning/10 text-warning',
+      )}>
+        {labels[state.status] ?? `Auto SML: ${state.status}`}
+      </Badge>
+      {state.error_message && <div className="mt-1 text-[11px] text-warning">{state.error_message}</div>}
+      {canRetry && ['needs_review', 'failed'].includes(state.status) && (
+        <Button type="button" variant="outline" size="sm" className="mt-1 h-7" disabled={retrying} onClick={onRetry}>
+          {retrying && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+          ลอง Auto SML ใหม่
+        </Button>
+      )}
+    </div>
   )
 }
 
