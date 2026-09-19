@@ -1040,6 +1040,26 @@ Current AOY UAT scope:
     deployment health, browser UAT, database evidence, and the recent severe-log
     scan passed. The AOY backup is `pre-deploy-20260919-102118.sql.gz`.
 
+57. AOY-only TikTok readiness diagnostics and dormant Auto SML controls are
+    deployed at `c6510d0` with additive migration 104. TikTok Operations now
+    checks the connected Gateway, per-shop order sync, webhook, semantic SML
+    route, and a bounded PII-free mapping sample. Production QA for
+    `henna_milkford` showed API/Gateway, sync, webhook, and route ready, but only
+    10/20 sampled items mapped, so readiness correctly remains blocked. The
+    durable Auto SML design uses exact `AWAITING_COLLECTION`, a server cutoff
+    with no historical backfill, unique shop/order jobs, immutable bill/route
+    evidence, bounded retry, route-change/circuit pause, operator retry, and
+    Thai audit history. It is intentionally dormant: AOY global flag is false,
+    shop `7494619203789490654` is disabled at config version 1, and the job table
+    has zero rows. No Bill or SML write occurred. Desktop browser QA showed the
+    disabled control and a clean console. Go tests/race/vet, frontend
+    lint/build, sales-only guard, migration, health, both Gateway checks, and
+    recent error scan passed. The AOY database backup is
+    `pre-deploy-20260919-115517.sql.gz`. Rotate the previously disclosed TikTok
+    Gateway internal secret, clear mapping readiness for one new controlled
+    order, then explicitly approve a single AOY canary before changing either
+    Auto SML gate.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
@@ -1120,7 +1140,7 @@ shopee_stock_mappings          -- Shopee model -> SML item/unit conversion
 shopee_stock_runs/attempts     -- dry-run/sync history and changed/error/unknown writes
 ```
 
-Migrations: **001–100** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
+Migrations: **001–104** (all idempotent/re-runnable). Full schema in `docs/current-state.md`.
 
 ---
 
@@ -1195,7 +1215,11 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
     success. A separately gated Reviewed Bill endpoint may use an explicitly
     confirmed digest to create one local pending Bill, but it is currently off
     and never authorizes SML, notification, fulfillment, cancellation, return,
-    or stock writes.
+    or stock writes. TikTok Auto SML has an additional tenant/global gate and
+    versioned per-shop gate; both AOY gates are currently off. Do not enable
+    either one or backfill historical orders without an explicitly approved
+    controlled canary and the checklist in
+    `docs/tiktok-shop-auto-sml-runbook.md`.
 
 ---
 
@@ -1294,6 +1318,10 @@ POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm
 POST /api/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
+GET  /api/tiktok-shop-api/diagnostics
+GET  /api/tiktok-shop-api/auto-sml/settings
+PUT  /api/tiktok-shop-api/auto-sml/settings/:shop_id
+POST /api/tiktok-shop-api/orders/:shop_id/:order_id/auto-sml/retry
 GET  /api/tiktok-shop-api/products
 POST /api/tiktok-shop-api/products/catalog-sync
 
