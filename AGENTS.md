@@ -985,6 +985,33 @@ Current AOY UAT scope:
     inventory update, or enable another tenant/shop before a separately
     confirmed one-SKU canary and exact read-back.
 
+55. AOY Marketplace-to-SML shipment PII is optional as of 2026-09-19. Nexflow
+    `ebb82f3` now treats Marketplace sale invoices/orders as stock-focused,
+    sends `shipment_applicability=not_applicable`, and neither fetches nor sends
+    recipient name, address, or telephone. The shared Central SML Gateway is on
+    `f33b34c` and accepts Marketplace physical-goods profiles without a shipment
+    only when the caller explicitly declares `not_applicable`; callers that
+    declare `required` still fail closed unless all three shipment fields are
+    complete. The existing wire/profile revision is unchanged because this is a
+    backward-compatible relaxation and the shared Gateway must continue serving
+    tenants on their existing application baselines. Full Go tests and vet
+    passed in both repositories. AOY production health, the runtime
+    `http://172.17.0.1:8200` Gateway path, and all four Gateway tenant readiness
+    checks passed after deploy; `lbk63` timed out during the first post-restart
+    connection and then returned HTTP 200 on repeat. AOY's
+    `TIKTOK_SHOP_REVIEWED_BILL_ENABLED` and `TIKTOK_SHOP_SML_SEND_ENABLED`
+    remain false. No send was triggered: `bill_sml_attempts` remained at 32
+    with its latest external request at `2026-09-19 03:53:38 UTC`, before the
+    deployment, and bulk job `f9498335-cc4c-4258-b0e5-1cacbeba53d9` remains
+    the historical `0 sent / 0 failed / 20 skipped` result. The AOY database
+    backup is `pre-deploy-20260919-100109.sql.gz`; the Gateway source/runtime
+    backup and rollback image use the
+    `sml-api-optional-shipment-20260919-095911` and
+    `pre-optional-shipment-20260919-095911` prefixes. A fresh user confirmation
+    is still required before retrying the 20-bill batch because that action can
+    create up to 19 SML documents; one bill separately remains subject to its
+    amount-review guard.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
