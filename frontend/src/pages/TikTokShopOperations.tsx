@@ -207,6 +207,7 @@ export default function TikTokShopOperations() {
   const shopID = params.get('shop_id') ?? ALL
   const status = params.get('status') ?? ALL
   const orderID = params.get('order_id') ?? ''
+  const reviewOrderID = params.get('review_order_id') ?? ''
   const [pageJumpInput, setPageJumpInput] = useState(String(page))
   const total = orders?.total_items ?? 0
   const totalPages = Math.max(1, orders?.total_pages ?? 1)
@@ -252,6 +253,16 @@ export default function TikTokShopOperations() {
     })
     return () => { active = false }
   }, [orderID, page, perPage, refreshTick, shopID, status, statusGroup])
+
+  useEffect(() => {
+    if (!reviewOrderID || loading || previewOpen) return
+    const row = orders?.data.find((item) => item.order_id === reviewOrderID)
+    if (!row) return
+    setPreviewOrder(row)
+    setBillCreateError('')
+    setPreviewOpen(true)
+    setQuery({ review_order_id: null })
+  }, [loading, orders?.data, previewOpen, reviewOrderID, setQuery])
 
   useEffect(() => {
     if (!previewOpen || !previewOrder) return
@@ -671,7 +682,11 @@ function TikTokDiagnosticsPanel({
     { label: 'ซิงก์ออเดอร์', ok: diagnostics.sync.worker_enabled && diagnostics.sync.enabled_shops > 0 && diagnostics.sync.error_shops === 0 },
     { label: 'Webhook', ok: diagnostics.webhook.enabled },
     { label: 'เส้นทาง SML', ok: diagnostics.document.route_ready && diagnostics.document.sml_send_enabled },
-    { label: `Mapping ${diagnostics.coverage.mapped_items}/${diagnostics.coverage.total_items}`, ok: diagnostics.coverage.blocked_orders === 0 && diagnostics.coverage.sampled_orders > 0 },
+    {
+      label: `Mapping ${diagnostics.coverage.mapped_items}/${diagnostics.coverage.total_items}`,
+      ok: diagnostics.coverage.blocked_orders === 0 && diagnostics.coverage.sampled_orders > 0,
+      href: `/marketplace-aliases?tab=pending&source=tiktok`,
+    },
   ]
   const selectedAutoSML = selectedShopID === ALL ? undefined : autoSML?.settings.find((setting) => setting.shop_id === selectedShopID)
   const autoSMLRunning = Boolean(selectedAutoSML?.enabled && !selectedAutoSML.paused_reason)
@@ -692,12 +707,15 @@ function TikTokDiagnosticsPanel({
         </Button>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        {checks.map((check) => (
-          <span key={check.label} className={cn('inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-xs', check.ok ? 'bg-primary/10 text-accentStrong' : 'bg-warning/10 text-warning')}>
-            {check.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-            {check.label}
-          </span>
-        ))}
+        {checks.map((check) => {
+          const className = cn('inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-xs', check.ok ? 'bg-primary/10 text-accentStrong' : 'bg-warning/10 text-warning', check.href && 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')
+          const content = <>{check.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}{check.label}</>
+          return check.href ? (
+            <Link key={check.label} to={check.href} className={className} title="เปิดรายการสินค้าที่ต้องจับคู่">{content}</Link>
+          ) : (
+            <span key={check.label} className={className}>{content}</span>
+          )
+        })}
       </div>
       <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

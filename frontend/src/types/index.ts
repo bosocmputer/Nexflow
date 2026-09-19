@@ -381,6 +381,9 @@ export interface MarketplaceAliasReviewGroup {
   bill_count: number
   item_count: number
   catalog_product: boolean
+  discovery_source?: 'product_catalog' | 'tiktok_order_snapshot'
+  source_reference_id?: string
+  order_count?: number
   input_channels?: string[]
 }
 

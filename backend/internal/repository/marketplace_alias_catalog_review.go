@@ -134,7 +134,7 @@ func (r *MarketplaceAliasRepo) listShopeeCatalogReviewGroups(filter models.Marke
 			Source:   "shopee", AccountKey: accountKey, AccountName: accountName,
 			ExternalItemID: externalItemID, ExternalVariantID: externalVariantID, BillType: "sale",
 			SourceSKU: sourceSKU, RawName: rawName, NormalizedKey: marketplace.NormalizeKey(rawName, sourceSKU),
-			CatalogProduct: true, InputChannels: []string{"shopee"},
+			CatalogProduct: true, DiscoverySource: "product_catalog", InputChannels: []string{"shopee"},
 		})
 	}
 	return groups, rows.Err()

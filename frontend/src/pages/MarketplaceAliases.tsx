@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Boxes, ChevronDown, ChevronLeft, ChevronRight, Loader2, Pencil, RefreshCw, Search, Tags, Unlink, X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -21,7 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
 import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceConversionReadiness, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
-import { marketplacePendingSummary } from '@/lib/marketplace-review'
+import { buildTikTokOrderMappingReviewPath, marketplacePendingSummary } from '@/lib/marketplace-review'
 import { marketplaceDisplayInputChannels } from '@/lib/billInputChannel'
 import { cn } from '@/lib/utils'
 import { notifyWorkQueueChanged } from '@/lib/work-queue-events'
@@ -63,7 +63,11 @@ export default function MarketplaceAliases() {
   const canManage = useAuthStore((state) => state.user?.role === 'admin')
   const [searchParams] = useSearchParams()
   const initialQuery = searchParams.get('q')?.trim() ?? ''
-  const [tab, setTab] = useState<TabKey>(initialQuery ? 'saved' : 'pending')
+  const requestedTab = searchParams.get('tab')
+  const initialTab: TabKey = requestedTab === 'saved' || requestedTab === 'pending' ? requestedTab : initialQuery ? 'saved' : 'pending'
+  const requestedSource = searchParams.get('source')
+  const initialSource: SourceFilter = requestedSource === 'shopee' || requestedSource === 'lazada' || requestedSource === 'tiktok' ? requestedSource : 'all'
+  const [tab, setTab] = useState<TabKey>(initialTab)
   const [pending, setPending] = useState<MarketplaceAliasReviewGroup[]>([])
   const [saved, setSaved] = useState<MarketplaceItemAlias[]>([])
 	const [savedGroups, setSavedGroups] = useState<MarketplaceProductGroup[]>([])
@@ -74,7 +78,7 @@ export default function MarketplaceAliases() {
 	const [status, setStatus] = useState<StatusFilter>('all')
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [source, setSource] = useState<SourceFilter>('all')
+  const [source, setSource] = useState<SourceFilter>(initialSource)
   const [draft, setDraft] = useState(initialQuery)
   const [query, setQuery] = useState(initialQuery)
   const [loading, setLoading] = useState(true)
@@ -96,7 +100,8 @@ export default function MarketplaceAliases() {
   const pages = groupedSaved ? groupCursorHistory.length + 1 + (nextGroupCursor ? 1 : 0) : Math.max(1, Math.ceil(total / PER_PAGE))
 	const currentPage = groupedSaved ? groupCursorHistory.length + 1 : page
   const pendingItems = useMemo(() => pending.reduce((sum, item) => sum + item.item_count, 0), [pending])
-  const catalogOnlyItems = useMemo(() => pending.filter((item) => item.catalog_product && item.bill_count === 0).length, [pending])
+  const shopeeCatalogItems = useMemo(() => pending.filter((item) => item.discovery_source === 'product_catalog').length, [pending])
+  const tiktokSnapshotItems = useMemo(() => pending.filter((item) => item.discovery_source === 'tiktok_order_snapshot').length, [pending])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -479,7 +484,7 @@ export default function MarketplaceAliases() {
     <div className="space-y-4 p-4 sm:p-6">
       <PageHeader
         title="จับคู่สินค้า Marketplace"
-        description="จับคู่สินค้าที่อัปเดตจาก Shopee หรือพบในออเดอร์ และแก้ไขสินค้าที่ระบบจดจำไว้สำหรับครั้งถัดไป"
+        description="จับคู่สินค้าที่อัปเดตจาก Shopee หรือพบในออเดอร์ Shopee, Lazada และ TikTok Shop แล้วใช้ Product Master เดียวกันในครั้งถัดไป"
         actions={(
           <>
             {canManage && shopeeConnections.length > 0 && (
@@ -582,7 +587,7 @@ export default function MarketplaceAliases() {
           </TabsContent>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่${pendingItems > 0 ? ` · ${pendingItems.toLocaleString()} รายการจากออเดอร์ในหน้านี้` : ''}${catalogOnlyItems > 0 ? ` · ${catalogOnlyItems.toLocaleString()} ตัวเลือกจาก Shopee ในหน้านี้` : ''}` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า ${currentPage}/${pages}</span>
+			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่${pendingItems > 0 ? ` · ${pendingItems.toLocaleString()} รายการจากบิลในหน้านี้` : ''}${tiktokSnapshotItems > 0 ? ` · ${tiktokSnapshotItems.toLocaleString()} ตัวเลือกจากออเดอร์ TikTok ในหน้านี้` : ''}${shopeeCatalogItems > 0 ? ` · ${shopeeCatalogItems.toLocaleString()} ตัวเลือกจาก Shopee ในหน้านี้` : ''}` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า ${currentPage}/${pages}</span>
             <div className="flex gap-1">
 			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? groupCursorHistory.length === 0 : page <= 1) || loading} onClick={goPrevious} aria-label="หน้าก่อน"><ChevronLeft className="h-4 w-4" /></Button>
 			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? !nextGroupCursor : page >= pages) || loading} onClick={goNext} aria-label="หน้าถัดไป"><ChevronRight className="h-4 w-4" /></Button>
@@ -758,7 +763,7 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
 }
 
 function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; rows: MarketplaceAliasReviewGroup[]; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
-  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="หลังอัปเดตรายการจาก Shopee หรือมีออเดอร์ใหม่ สินค้าที่ยังไม่พบคู่ใน SML จะมาแสดงที่นี่" />
+  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="หลังอัปเดตรายการจาก Shopee หรือมีออเดอร์ Marketplace ใหม่ สินค้าที่ยังไม่พบคู่ใน SML จะมาแสดงที่นี่" />
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -771,7 +776,15 @@ function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; 
                 <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} inputChannels={row.input_channels} catalogProduct={row.catalog_product} /></TableCell>
                 <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono">{row.source_sku}</span></div>}</TableCell>
                 <TableCell className="text-right tabular-nums"><div>{summary.primary}</div><div className="text-xs text-muted-foreground">{summary.secondary}</div></TableCell>
-                <TableCell className="text-right">{canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button> : <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>}</TableCell>
+                <TableCell className="text-right">
+                  {canManage && row.discovery_source === 'tiktok_order_snapshot' && row.source_reference_id ? (
+                    <Button size="sm" asChild><Link to={buildTikTokOrderMappingReviewPath(row.account_key, row.source_reference_id)}>ตรวจและจับคู่</Link></Button>
+                  ) : canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? (
+                    <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>
+                  )}
+                </TableCell>
               </TableRow>
             )
           })}

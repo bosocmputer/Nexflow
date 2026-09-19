@@ -819,11 +819,15 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 		out = append(out, g.MarketplaceAliasReviewGroup)
 	}
 	sortMarketplaceReviewGroups(out, sortKey)
+	tiktokSnapshotTotal, err := r.countTikTokOrderSnapshotReviewGroups(filter)
+	if err != nil {
+		return models.MarketplaceAliasReviewResult{}, err
+	}
 	catalogTotal, err := r.countShopeeCatalogReviewGroups(filter)
 	if err != nil {
 		return models.MarketplaceAliasReviewResult{}, err
 	}
-	total := len(out) + catalogTotal
+	total := len(out) + tiktokSnapshotTotal + catalogTotal
 	start := (page - 1) * perPage
 	if start > total {
 		start = total
@@ -836,11 +840,16 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 	// Alternate sort modes are retained for API compatibility. Load only the
 	// catalog prefix that can affect the requested page, then merge it with the
 	// already-grouped open-document rows.
-	if sortKey != "impact" && catalogTotal > 0 && end > 0 {
+	if sortKey != "impact" && (tiktokSnapshotTotal > 0 || catalogTotal > 0) && end > 0 {
+		tiktokGroups, err := r.listTikTokOrderSnapshotReviewGroups(filter, end, 0)
+		if err != nil {
+			return models.MarketplaceAliasReviewResult{}, err
+		}
 		catalogGroups, err := r.listShopeeCatalogReviewGroups(filter, end, 0)
 		if err != nil {
 			return models.MarketplaceAliasReviewResult{}, err
 		}
+		out = append(out, tiktokGroups...)
 		out = append(out, catalogGroups...)
 		sortMarketplaceReviewGroups(out, sortKey)
 		if end > len(out) {
@@ -863,7 +872,19 @@ func (r *MarketplaceAliasRepo) ReviewGroupsPaged(filter models.MarketplaceAliasR
 		pageGroups = append(pageGroups, out[start:billEnd]...)
 	}
 	remaining := perPage - len(pageGroups)
-	catalogOffset := start - len(out)
+	tiktokOffset := start - len(out)
+	if tiktokOffset < 0 {
+		tiktokOffset = 0
+	}
+	if remaining > 0 && tiktokOffset < tiktokSnapshotTotal {
+		tiktokGroups, err := r.listTikTokOrderSnapshotReviewGroups(filter, remaining, tiktokOffset)
+		if err != nil {
+			return models.MarketplaceAliasReviewResult{}, err
+		}
+		pageGroups = append(pageGroups, tiktokGroups...)
+		remaining = perPage - len(pageGroups)
+	}
+	catalogOffset := start - len(out) - tiktokSnapshotTotal
 	if catalogOffset < 0 {
 		catalogOffset = 0
 	}

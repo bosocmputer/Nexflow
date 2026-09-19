@@ -62,11 +62,14 @@ type MarketplaceAliasReviewGroup struct {
 	NormalizedKey     string `json:"normalized_key"`
 	ItemCount         int    `json:"item_count"`
 	BillCount         int    `json:"bill_count"`
-	// CatalogProduct is true when the row came from a connected Shopee shop's
-	// local product snapshot. Catalog-only rows deliberately keep bill/item
-	// counts at zero so the UI never presents them as pending orders.
-	CatalogProduct bool     `json:"catalog_product"`
-	InputChannels  []string `json:"input_channels,omitempty"`
+	// CatalogProduct is retained for API compatibility and is true when the row
+	// came from a read-only Marketplace snapshot rather than a local Bill.
+	// Snapshot-only rows deliberately keep bill/item counts at zero.
+	CatalogProduct    bool     `json:"catalog_product"`
+	DiscoverySource   string   `json:"discovery_source,omitempty"`
+	SourceReferenceID string   `json:"source_reference_id,omitempty"`
+	OrderCount        int      `json:"order_count,omitempty"`
+	InputChannels     []string `json:"input_channels,omitempty"`
 }
 
 type MarketplaceAliasIdentity struct {

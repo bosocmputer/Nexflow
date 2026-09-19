@@ -203,6 +203,9 @@ func TestMarketplaceAliasReviewGroupsIncludesUnmappedShopeeCatalogProducts(t *te
 	if !group.CatalogProduct || group.Source != "shopee" || group.AccountKey != "shop:66610219" {
 		t.Fatalf("group=%+v, want a Shopee catalog product scoped to the connected shop", group)
 	}
+	if group.DiscoverySource != "product_catalog" {
+		t.Fatalf("discovery_source=%q, want product_catalog", group.DiscoverySource)
+	}
 	if len(group.InputChannels) != 1 || group.InputChannels[0] != "shopee" {
 		t.Fatalf("input channels=%v, want Shopee API only", group.InputChannels)
 	}
@@ -233,6 +236,8 @@ func TestMarketplaceAliasReviewGroupsKeepsOrderIssuesAheadOfCatalogOnlyProducts(
 			"bill_id", "source", "account_key", "account_name", "bill_type", "item_id", "raw_name",
 			"source_sku", "external_item_id", "external_variant_id",
 		}).AddRow("bill-1", "lazada", "default", "", "sale", "item-1", "สินค้าในออเดอร์", "SKU-1", "", ""))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_order_snapshots s.*jsonb_array_elements\(s\.normalized_items\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM shopee_stock_products p.*NOT EXISTS.*COALESCE\(NULLIF\(btrim\(p\.model_sku\),''\),p\.item_sku,''\).*marketplace_item_aliases`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))
 
