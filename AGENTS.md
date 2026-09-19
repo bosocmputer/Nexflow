@@ -1007,10 +1007,16 @@ Current AOY UAT scope:
     backup is `pre-deploy-20260919-100109.sql.gz`; the Gateway source/runtime
     backup and rollback image use the
     `sml-api-optional-shipment-20260919-095911` and
-    `pre-optional-shipment-20260919-095911` prefixes. A fresh user confirmation
-    is still required before retrying the 20-bill batch because that action can
-    create up to 19 SML documents; one bill separately remains subject to its
-    amount-review guard.
+    `pre-optional-shipment-20260919-095911` prefixes. The user then started a
+    fresh batch `b74447d1-d436-4418-a7f6-fdf09b1a6939`: it completed `19 sent /
+    0 failed / 1 skipped`. All 19 sent items have distinct bills, document
+    numbers, and immutable attempts with `core_status=created`,
+    `profile_status=complete`, and 19 distinct completed stock-recalculation
+    jobs. Direct SML verification found 19 TRANS_FLAG 44 headers, 19 VAT rows,
+    and zero `ic_trans_shipment` rows, proving the stock-focused no-PII policy.
+    The only skipped order is TikTok Excel `585957342804083773`; it remains
+    pending because `amount_review_required=true`, independently of shipment
+    data. Do not bypass that amount-review guard.
 
 Known deferred or incomplete validation:
 
