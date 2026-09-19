@@ -1185,11 +1185,21 @@ func billItemIdentityWhere(identity models.MarketplaceAliasIdentity, start int) 
 	sourceParam, accountParam := start, start+1
 	if identity.ExternalItemID != "" {
 		args = append(args, identity.ExternalItemID, identity.ExternalVariantID)
-		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND bi.source_item_id=$%d AND bi.source_variant_id=$%d", sourceParam, accountParam, start+2, start+3), args
+		identityClause := fmt.Sprintf("bi.source_item_id=$%d AND bi.source_variant_id=$%d", start+2, start+3)
+		if identity.SourceSKU != "" {
+			args = append(args, identity.SourceSKU)
+			identityClause = fmt.Sprintf("((%s) OR btrim(replace(COALESCE(bi.source_sku,''),chr(65279),''))=$%d)", identityClause, start+4)
+		}
+		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND %s", sourceParam, accountParam, identityClause), args
 	}
 	if identity.Source == "tiktok" && identity.ExternalVariantID != "" {
 		args = append(args, identity.ExternalVariantID)
-		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND bi.source_item_id='' AND bi.source_variant_id=$%d", sourceParam, accountParam, start+2), args
+		identityClause := fmt.Sprintf("bi.source_item_id='' AND bi.source_variant_id=$%d", start+2)
+		if identity.SourceSKU != "" {
+			args = append(args, identity.SourceSKU)
+			identityClause = fmt.Sprintf("((%s) OR btrim(replace(COALESCE(bi.source_sku,''),chr(65279),''))=$%d)", identityClause, start+3)
+		}
+		return fmt.Sprintf("b.source=$%d AND b.source_account_key=$%d AND %s", sourceParam, accountParam, identityClause), args
 	}
 	if identity.SourceSKU != "" {
 		args = append(args, identity.SourceSKU)

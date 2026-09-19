@@ -68,6 +68,10 @@ type MarketplaceAliasProposal struct {
 	ExpectedRevision           int64
 	ExpectedImpactDigest       string
 	Deactivate                 bool
+	// resolvedFromIdentity is internal transaction state. It distinguishes an
+	// alias located from the submitted marketplace identity from an explicit
+	// alias edit, so reconciliation can retain a newly observed external ID.
+	resolvedFromIdentity bool
 }
 
 type MarketplaceAliasCommitResult struct {
@@ -233,6 +237,8 @@ func previewMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 
 func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer, proposal MarketplaceAliasProposal) (MarketplaceAliasProposal, marketplaceAliasCurrent, marketplaceMutationTarget, error) {
 	proposal.Identity = normalizeAliasIdentity(proposal.Identity)
+	requestedIdentity := proposal.Identity
+	resolvedFromIdentity := proposal.resolvedFromIdentity || proposal.AliasID == ""
 	proposal.AliasID = strings.TrimSpace(proposal.AliasID)
 	proposal.ItemCode = strings.TrimSpace(proposal.ItemCode)
 	proposal.UnitCode = strings.TrimSpace(proposal.UnitCode)
@@ -274,7 +280,17 @@ func resolveMarketplaceMutation(ctx context.Context, q marketplaceImpactQueryer,
 			return proposal, current, marketplaceMutationTarget{}, err
 		}
 		current.StandValue, current.DivideValue, current.CatalogGeneration = stand.String, divide.String, generation.String
-		proposal.Identity = current.Identity
+		// An operator may confirm a newly observed marketplace identity that
+		// resolves to an existing Product Master through its scoped seller SKU.
+		// Keep that observed identity for impact/reconciliation so the pending
+		// bill and reservation are updated, while the alias row retains its
+		// original canonical identity. Explicit alias edits continue to use the
+		// persisted identity and cannot widen their scope through request data.
+		if resolvedFromIdentity && requestedIdentity.Source != "" {
+			proposal.Identity = requestedIdentity
+		} else {
+			proposal.Identity = current.Identity
+		}
 		if proposal.ItemCode == "" {
 			proposal.ItemCode = current.ItemCode
 		}
@@ -368,6 +384,26 @@ func findActiveMarketplaceAliasID(ctx context.Context, q marketplaceImpactQuerye
 	where, args := aliasIdentityWhere(identity)
 	var id string
 	err := q.QueryRowContext(ctx, `SELECT id::text FROM marketplace_item_aliases a WHERE `+where+` AND a.is_active=true LIMIT 1`, args...).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	// Marketplace exports can change their external item identifier while the
+	// seller SKU remains stable (observed with Lazada Excel). The database's
+	// scoped-SKU unique index already defines that SKU as one Product Master per
+	// source/account, so reuse it after an exact identity miss instead of
+	// attempting an insert that can only conflict.
+	primaryUsesSKU := identity.ExternalItemID == "" &&
+		!(identity.Source == "tiktok" && identity.ExternalVariantID != "") &&
+		identity.SourceSKU != ""
+	if identity.SourceSKU == "" || primaryUsesSKU {
+		return "", nil
+	}
+	err = q.QueryRowContext(ctx, `SELECT id::text FROM marketplace_item_aliases a
+		WHERE a.source=$1 AND a.account_key=$2 AND a.source_sku=$3 AND a.is_active=true LIMIT 1`,
+		identity.Source, identity.AccountKey, identity.SourceSKU).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -412,6 +448,7 @@ func (r *MarketplaceAliasRepo) CommitMutation(ctx context.Context, proposal Mark
 		}
 	}
 	if proposal.AliasID == "" {
+		proposal.resolvedFromIdentity = true
 		existingID, findErr := findActiveMarketplaceAliasID(ctx, tx, proposal.Identity)
 		if findErr != nil {
 			return nil, findErr

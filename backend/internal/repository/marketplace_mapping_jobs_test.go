@@ -106,6 +106,80 @@ func TestResolveMarketplaceMutationReusesExistingTikTokVariant(t *testing.T) {
 	}
 }
 
+func TestResolveMarketplaceMutationReusesExistingLazadaScopedSKU(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	aliasID := "00000000-0000-0000-0000-000000000001"
+	requestedIdentity := models.MarketplaceAliasIdentity{
+		Source: "lazada", AccountKey: "default", ExternalItemID: "1116057280378051",
+		ExternalVariantID: "1950376759_TH-7399366403", SourceSKU: "1950376759-1614414836870-4",
+		RawName: "สินค้าใหม่", NormalizedKey: "สินค้าใหม่",
+	}
+	mock.ExpectQuery(`(?s)SELECT id::text FROM marketplace_item_aliases a.*a.external_item_id=\$3.*a.external_variant_id=\$4.*a.is_active=true`).
+		WithArgs("lazada", "default", requestedIdentity.ExternalItemID, requestedIdentity.ExternalVariantID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`(?s)SELECT id::text FROM marketplace_item_aliases a.*a.source=\$1.*a.account_key=\$2.*a.source_sku=\$3.*a.is_active=true`).
+		WithArgs("lazada", "default", requestedIdentity.SourceSKU).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(aliasID))
+	mock.ExpectQuery(`(?s)SELECT id::text,source,account_key.*FROM marketplace_item_aliases WHERE id=\$1::uuid`).
+		WithArgs(aliasID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "source", "account_key", "external_item_id", "external_variant_id", "source_sku", "raw_name", "normalized_key",
+			"item_code", "unit_code", "quantity_multiplier", "stand", "divide", "generation", "conversion_status",
+			"sales_enabled", "stock_policy", "scope_confirmed", "mapping_revision", "is_active",
+		}).AddRow(aliasID, "lazada", "default", "1116287028047680", requestedIdentity.ExternalVariantID,
+			requestedIdentity.SourceSKU, "สินค้าเดิม", "สินค้าเดิม", "AH-0030", "แผ่น", 1, "1", "1",
+			"00000000-0000-0000-0000-000000000099", "ready", true, "blocked", true, 1, true))
+	mock.ExpectQuery(`SELECT is_active,unit_code,item_type,set_document_valid,set_definition_hash`).
+		WithArgs("AH-0030").
+		WillReturnRows(sqlmock.NewRows([]string{"is_active", "unit_code", "item_type", "set_document_valid", "set_definition_hash"}).
+			AddRow(true, "แผ่น", 0, true, ""))
+	mock.ExpectQuery(`(?s)SELECT r.id::text,u.stand_value::text,u.divide_value::text.*u.item_code=\$1.*u.unit_code=\$2`).
+		WithArgs("AH-0030", "แผ่น").
+		WillReturnRows(sqlmock.NewRows([]string{"generation", "stand", "divide"}).
+			AddRow("00000000-0000-0000-0000-000000000099", "1", "1"))
+
+	proposal, current, target, err := resolveMarketplaceMutation(context.Background(), db, MarketplaceAliasProposal{
+		Identity: requestedIdentity, BillType: "sale", ItemCode: "AH-0030", UnitCode: "แผ่น",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.AliasID != aliasID || current.ID != aliasID || current.MappingRevision != 1 {
+		t.Fatalf("existing scoped-SKU alias was not reused: proposal=%+v current=%+v", proposal, current)
+	}
+	if target.Identity.ExternalItemID != requestedIdentity.ExternalItemID || target.Identity.SourceSKU != requestedIdentity.SourceSKU {
+		t.Fatalf("reconciliation must retain the newly observed Lazada identity: target=%+v", target.Identity)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBillItemIdentityWhereFallsBackToScopedSKU(t *testing.T) {
+	where, args := billItemIdentityWhere(models.MarketplaceAliasIdentity{
+		Source: "lazada", AccountKey: "default", ExternalItemID: "new-item", ExternalVariantID: "variant", SourceSKU: "seller-sku",
+	}, 1)
+	if !strings.Contains(where, "bi.source_item_id=$3 AND bi.source_variant_id=$4") ||
+		!strings.Contains(where, "btrim(replace(COALESCE(bi.source_sku,''),chr(65279),''))=$5") ||
+		!strings.Contains(where, " OR ") {
+		t.Fatalf("external identity must include scoped-SKU fallback: %s", where)
+	}
+	expected := []any{"lazada", "default", "new-item", "variant", "seller-sku"}
+	if len(args) != len(expected) {
+		t.Fatalf("args=%v expected=%v", args, expected)
+	}
+	for i := range expected {
+		if args[i] != expected[i] {
+			t.Fatalf("args=%v expected=%v", args, expected)
+		}
+	}
+}
+
 func TestMarketplaceImpactDigestIsStableButIncludesPolicy(t *testing.T) {
 	impact := models.MarketplaceAliasImpact{
 		CurrentMappingRevision: 7,
