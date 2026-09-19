@@ -2,19 +2,12 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	"nexflow/internal/models"
 	"nexflow/internal/services/sml"
 	"nexflow/internal/services/smlprofile"
-	"nexflow/internal/services/tiktokshop"
 )
-
-type TikTokShipmentGateway interface {
-	GetShipmentRecipient(context.Context, tiktokshop.GatewayShipmentRecipientRequest) (*tiktokshop.GatewayShipmentRecipientResponse, error)
-}
 
 type resolvedInvoiceDocumentProfile struct {
 	Mode    string
@@ -87,78 +80,8 @@ func (h *BillHandler) resolveSalesDocumentProfile(ctx context.Context, bill *mod
 		profile.Options.ShipmentApplicability = "not_applicable"
 		return profile, nil
 	}
-	profile.Options.ShipmentApplicability = "required"
-	shipment, err := h.resolveMarketplaceInvoiceShipment(ctx, bill)
-	profile.Options.Shipment = shipment
-	if err != nil {
-		return profile, err
-	}
+	// Nexflow is stock-focused. Marketplace recipient PII is not required for
+	// the SML stock document and must not block or widen the outbound payload.
+	profile.Options.ShipmentApplicability = "not_applicable"
 	return profile, nil
-}
-
-func (h *BillHandler) resolveMarketplaceInvoiceShipment(ctx context.Context, bill *models.Bill) (*sml.InvoiceShipment, error) {
-	if bill == nil {
-		return nil, fmt.Errorf("shipment source is missing")
-	}
-	if shipment := invoiceShipmentFromJSON(bill.RawData); shipment != nil {
-		return shipment, nil
-	}
-	if shopID, orderSN, ok := shopeeRealtimeBillIdentity(bill); ok && h != nil && h.shopeeRealtimeRepo != nil {
-		snapshot, err := h.shopeeRealtimeRepo.FindSnapshot(ctx, shopID, orderSN)
-		if err != nil {
-			return nil, fmt.Errorf("load shipment snapshot failed")
-		}
-		if shipment := invoiceShipmentFromJSON(snapshot.RawDetail); shipment != nil {
-			return shipment, nil
-		}
-	}
-	if shopID, orderID := tikTokShopBillAuditIdentity(bill); shopID != "" && orderID != "" && h != nil && h.tiktokShipmentGateway != nil {
-		result, err := h.tiktokShipmentGateway.GetShipmentRecipient(ctx, tiktokshop.GatewayShipmentRecipientRequest{ShopID: shopID, OrderID: orderID})
-		if err != nil || result == nil || result.Recipient == nil || strings.TrimSpace(result.Recipient.OrderID) != orderID {
-			return nil, fmt.Errorf("load TikTok Shop shipment recipient failed")
-		}
-		shipment := &sml.InvoiceShipment{
-			TransportName:      strings.TrimSpace(result.Recipient.Name),
-			TransportAddress:   strings.TrimSpace(result.Recipient.Address),
-			TransportTelephone: strings.TrimSpace(result.Recipient.Telephone),
-		}
-		if shipment.TransportName == "" || shipment.TransportAddress == "" || shipment.TransportTelephone == "" {
-			return nil, fmt.Errorf("TikTok Shop shipment recipient is incomplete")
-		}
-		return shipment, nil
-	}
-	return nil, fmt.Errorf("shipment recipient name, address, and telephone are required")
-}
-
-func invoiceShipmentFromJSON(raw json.RawMessage) *sml.InvoiceShipment {
-	if len(raw) == 0 {
-		return nil
-	}
-	var source struct {
-		RecipientAddress struct {
-			Name        string `json:"name"`
-			Phone       string `json:"phone"`
-			FullAddress string `json:"full_address"`
-		} `json:"recipient_address"`
-		ShippingAddress struct {
-			RecipientName string `json:"recipientName"`
-			PhoneNumber   string `json:"phoneNumber"`
-			Address       string `json:"address"`
-		} `json:"shippingAddress"`
-		TransportName      string `json:"transport_name"`
-		TransportAddress   string `json:"transport_address"`
-		TransportTelephone string `json:"transport_telephone"`
-	}
-	if err := json.Unmarshal(raw, &source); err != nil {
-		return nil
-	}
-	shipment := &sml.InvoiceShipment{
-		TransportName:      firstNonEmpty(source.TransportName, source.RecipientAddress.Name, source.ShippingAddress.RecipientName),
-		TransportAddress:   firstNonEmpty(source.TransportAddress, source.RecipientAddress.FullAddress, source.ShippingAddress.Address),
-		TransportTelephone: firstNonEmpty(source.TransportTelephone, source.RecipientAddress.Phone, source.ShippingAddress.PhoneNumber),
-	}
-	if strings.TrimSpace(shipment.TransportName) == "" || strings.TrimSpace(shipment.TransportAddress) == "" || strings.TrimSpace(shipment.TransportTelephone) == "" {
-		return nil
-	}
-	return shipment
 }

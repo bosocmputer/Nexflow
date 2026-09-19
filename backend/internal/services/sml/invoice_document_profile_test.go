@@ -63,6 +63,20 @@ func TestApplyInvoiceDocumentProfileFailsClosedForIncompleteMarketplaceShipment(
 	}
 }
 
+func TestApplyInvoiceDocumentProfileAllowsMarketplaceGoodsWhenShipmentIsNotApplicable(t *testing.T) {
+	payload := profileInvoiceForTest()
+	err := ApplyInvoiceDocumentProfile(&payload, InvoiceDocumentProfileOptions{
+		Mode: "active", Remark5: "NEXFLOW|tiktok|ORDER-1", MarketplacePhysicalGoods: true,
+		ShipmentApplicability: "not_applicable",
+	})
+	if err != nil {
+		t.Fatalf("stock-focused marketplace document must not require shipment: %v", err)
+	}
+	if payload.Shipment != nil || payload.ShipmentApplicability != "not_applicable" {
+		t.Fatalf("shipment fields must stay omitted: %+v", payload)
+	}
+}
+
 func TestInvoiceResponseTreatsMissingActiveProfileResultAsReconciliation(t *testing.T) {
 	response := &InvoiceResponse{Success: true}
 	response.Data.DocNo = "BF-1"

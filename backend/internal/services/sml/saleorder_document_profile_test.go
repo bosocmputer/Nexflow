@@ -52,6 +52,20 @@ func TestApplySaleOrderDocumentProfileShadowKeepsLegacyWireOptOut(t *testing.T) 
 	}
 }
 
+func TestApplySaleOrderDocumentProfileAllowsMarketplaceGoodsWhenShipmentIsNotApplicable(t *testing.T) {
+	payload := profileSaleOrderForTest()
+	err := ApplySaleOrderDocumentProfile(&payload, InvoiceDocumentProfileOptions{
+		Mode: "active", Remark5: "NEXFLOW|tiktok|ORDER-1", MarketplacePhysicalGoods: true,
+		ShipmentApplicability: "not_applicable",
+	})
+	if err != nil {
+		t.Fatalf("stock-focused marketplace document must not require shipment: %v", err)
+	}
+	if payload.Shipment != nil || payload.ShipmentApplicability != "not_applicable" {
+		t.Fatalf("shipment fields must stay omitted: %+v", payload)
+	}
+}
+
 func TestSaleOrderResponseUsesUniformDocumentProfileResult(t *testing.T) {
 	response := &SaleOrderResponse{Success: true}
 	response.Data.DocNo = "BF-SO1"

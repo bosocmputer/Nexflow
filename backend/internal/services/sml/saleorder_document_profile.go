@@ -81,9 +81,6 @@ func ApplySaleOrderDocumentProfile(payload *SaleOrderPayload, opts InvoiceDocume
 	if delta := int64(math.Round(payload.TotalValue*100)) - detailTotal; delta < -1 || delta > 1 {
 		return fmt.Errorf("document total does not match item sum within 0.01")
 	}
-	if opts.MarketplacePhysicalGoods && applicability != "required" {
-		return fmt.Errorf("marketplace physical-goods document requires shipment")
-	}
 	switch applicability {
 	case "required":
 		if opts.Shipment == nil {
@@ -105,8 +102,8 @@ func ApplySaleOrderDocumentProfile(payload *SaleOrderPayload, opts InvoiceDocume
 			}
 		}
 	case "not_applicable":
-		if opts.MarketplacePhysicalGoods || opts.Shipment != nil {
-			return fmt.Errorf("shipment must be required for marketplace goods and omitted when not applicable")
+		if opts.Shipment != nil {
+			return fmt.Errorf("shipment must be omitted when not applicable")
 		}
 	default:
 		return fmt.Errorf("shipment_applicability must be required or not_applicable")

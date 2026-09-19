@@ -19,6 +19,12 @@ backend at startup. Preview and Enable must first load
 Never delete an SML document as recovery. Once Core is `created` or
 `already_exists`, operators may retry only the profile reconciliation job.
 
+Nexflow is stock-focused and sends Marketplace sales documents with
+`shipment_applicability=not_applicable`. Recipient name, address, and telephone
+must not be fetched, persisted, logged, or treated as readiness requirements for
+these sends. `required` remains available only for a separately approved flow
+that genuinely needs an SML shipment relation.
+
 For VAT sale invoices, verify the register row before daily processing:
 `gl_journal_vat_sale.vat_effective_period` must equal the month of `vat_date`,
 `vat_effective_year` must equal the Gregorian year plus 543, and the verified

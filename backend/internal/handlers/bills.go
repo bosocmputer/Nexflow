@@ -31,28 +31,27 @@ import (
 )
 
 type BillHandler struct {
-	billRepo              *repository.BillRepo
-	mapperSvc             *mapper.Service
-	invoiceClient         *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
-	saleOrderClient       *sml.SaleOrderClient     // SML 248 saleorder REST (default)
-	poClient              *sml.PurchaseOrderClient // SML 248 purchaseorder REST
-	docNoClient           *sml.DocNoClient         // SML authoritative doc_no running
-	cfg                   *config.Config
-	lineSvc               *lineservice.Service
-	auditRepo             *repository.AuditLogRepo
-	catalogRepo           *repository.SMLCatalogRepo     // for unit_code defaults on item edit
-	channelDefaults       *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
-	docCounters           *repository.DocCounterRepo     // atomic doc_no generator
-	bulkJobRepo           *repository.SMLBulkJobRepo     // async SML bulk send jobs
-	artifactSvc           *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
-	warehouseCache        *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
-	smlReadiness          *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
-	appSettingsRepo       *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
-	shopeeRealtimeRepo    *repository.ShopeeRealtimeRepo
-	tiktokShipmentGateway TikTokShipmentGateway
-	marketplaceAliasRepo  *repository.MarketplaceAliasRepo
-	eventBroker           *events.Broker
-	log                   *zap.Logger
+	billRepo             *repository.BillRepo
+	mapperSvc            *mapper.Service
+	invoiceClient        *sml.InvoiceClient       // SML 248 saleinvoice REST (legacy)
+	saleOrderClient      *sml.SaleOrderClient     // SML 248 saleorder REST (default)
+	poClient             *sml.PurchaseOrderClient // SML 248 purchaseorder REST
+	docNoClient          *sml.DocNoClient         // SML authoritative doc_no running
+	cfg                  *config.Config
+	lineSvc              *lineservice.Service
+	auditRepo            *repository.AuditLogRepo
+	catalogRepo          *repository.SMLCatalogRepo     // for unit_code defaults on item edit
+	channelDefaults      *repository.ChannelDefaultRepo // per-(channel,bill_type) party config
+	docCounters          *repository.DocCounterRepo     // atomic doc_no generator
+	bulkJobRepo          *repository.SMLBulkJobRepo     // async SML bulk send jobs
+	artifactSvc          *artifact.Service              // source-artifact storage (PDF/HTML/etc.)
+	warehouseCache       *sml.WarehouseCache            // optional validation for wh/shelf chosen in dialog
+	smlReadiness         *sml.ReadinessChecker          // fail-closed guard for tenant DB availability
+	appSettingsRepo      *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
+	shopeeRealtimeRepo   *repository.ShopeeRealtimeRepo
+	marketplaceAliasRepo *repository.MarketplaceAliasRepo
+	eventBroker          *events.Broker
+	log                  *zap.Logger
 }
 
 func NewBillHandler(
@@ -103,12 +102,6 @@ func (h *BillHandler) SetShopeeRealtimeSync(repo *repository.ShopeeRealtimeRepo,
 	}
 	h.shopeeRealtimeRepo = repo
 	h.eventBroker = broker
-}
-
-func (h *BillHandler) SetTikTokShipmentGateway(gateway TikTokShipmentGateway) {
-	if h != nil {
-		h.tiktokShipmentGateway = gateway
-	}
 }
 
 func (h *BillHandler) SetMarketplaceAliasRepo(repo *repository.MarketplaceAliasRepo) {

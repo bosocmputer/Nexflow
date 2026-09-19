@@ -266,6 +266,11 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
 
 ### First AOY SML recipient preflight — 2026-09-13
 
+Historical note: this preflight recorded the original shipping-focused policy.
+As of 2026-09-19, Nexflow's Marketplace-to-SML flow is stock-focused and no
+longer requires or fetches recipient name, address, or telephone. These results
+remain useful as audit evidence but are not a current SML-send blocker.
+
 - Commit `d21f676` added a one-time, no-store shipment-recipient read at the SML
   Document Profile boundary. It does not widen the normal TikTok snapshot or
   persist/log recipient values.
@@ -295,7 +300,7 @@ UAT รอบนี้ถือว่าผ่านเมื่อ OAuth สำ
   expected review time of 10–12 business days and automatic publishing after
   both the app and listing reviews pass. Protected Data access may additionally
   require Data Security and Privacy Review. Treat pending review/protected-data
-  approval as the current external blocker; do not weaken recipient validation
+  approval as the current external blocker; under the historical policy, do not weaken recipient validation
   or invent SML transport data.
 - `TIKTOK_SHOP_SML_SEND_ENABLED=false` remains enforced. Complete the required
   TikTok review, reauthorize AOY if prompted, and rerun the structural preflight.

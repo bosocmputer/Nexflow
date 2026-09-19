@@ -569,11 +569,8 @@ func (h *ImportHandler) buildImportPayload(bill *models.Bill) (sml.SaleOrderPayl
 	payload.Remark = strings.TrimSpace(firstNonEmpty(def.Remark, bill.Remark))
 	if isMarketplaceSource(bill.Source) {
 		opts.MarketplacePhysicalGoods = true
-		opts.ShipmentApplicability = "required"
-		opts.Shipment = invoiceShipmentFromJSON(bill.RawData)
-	} else {
-		opts.ShipmentApplicability = "not_applicable"
 	}
+	opts.ShipmentApplicability = "not_applicable"
 	if err := sml.ApplySaleOrderDocumentProfile(&payload, opts); err != nil {
 		if mode == smlprofile.ModeActive {
 			return sml.SaleOrderPayload{}, "", fmt.Errorf("Document Profile ไม่พร้อม: %w", err)

@@ -14,7 +14,7 @@ The manual invoice has these relations:
 | `ic_trans` | 1 | `(doc_no, trans_flag)` primary key | required, transactional |
 | `ic_trans_detail` | 1 current row | semantic `(doc_no, trans_flag, line_number)` | required, transactional |
 | `gl_journal_vat_sale` | 1 | semantic `(doc_no, trans_flag, line_number)` | required when VAT applies |
-| `ic_trans_shipment` | 1 | `(doc_no, trans_flag)` primary key | required for Marketplace physical-goods profile |
+| `ic_trans_shipment` | 1 | `(doc_no, trans_flag)` primary key | optional; written only when the caller explicitly marks shipment `required` |
 | `logs` | 1 | generated GUID primary key; document identity in row | required, transactional |
 | `${tenant}_logs.erp_logs` | 1 create row | semantic `(doc_no, trans_flag, function_code, menu)` | required, reconciled cross-database |
 | `ic_trans_detail_lot` | 1 | SML stock-processing output | verified after stock recalculation, not written by profile writer |
@@ -70,10 +70,12 @@ when operationally required, stays inside the SML document/audit domain.
   invoice, the route-controlled header VAT mode remains unchanged while the
   sale-register row uses `vat_type=0` and a non-zero derived effective month and
   Buddhist year.
-- Shipment is required for Marketplace physical-goods sale invoices. If the
-  selected source snapshot lacks the required shipment identity, active mode
-  fails before creating the SML core document. Non-shipping/manual/service routes
-  mark shipment `not_applicable` instead of inventing data.
+- Nexflow's Marketplace sales documents are stock-focused, so recipient name,
+  address, and telephone are not required. Nexflow marks shipment
+  `not_applicable`, omits the shipment payload, and does not block the SML core
+  document when those values are absent. The Gateway still supports
+  `shipment_applicability=required` for an explicitly shipping-focused caller;
+  that mode remains fail-closed unless all three fields are complete.
 - GL accounting rows are not inserted directly by Profile V1. Their account and
   cost values must come from a separately verified SML posting authority; hard-
   coding accounts from one sample would corrupt other tenants.
@@ -122,8 +124,9 @@ The canonical hash input is UTF-8 JSON produced from a versioned typed object:
 
 The request body limit is 2 MiB and detail limit is 500. `remark` and `remark_2`
 are each limited to 255 Unicode code points. Invalid UTF-8, control characters,
-unknown template tokens, oversize bodies/items/text, and incomplete required
-shipment evidence are rejected before the core transaction begins.
+unknown template tokens, oversize bodies/items/text, and incomplete shipment
+evidence when the caller explicitly selects `required` are rejected before the
+core transaction begins.
 
 Profile checks use stable names: `core`, `vat`, `shipment`, `main_log`, and
 `erp_log`. VAT or shipment may be explicitly `not_applicable` under the rules

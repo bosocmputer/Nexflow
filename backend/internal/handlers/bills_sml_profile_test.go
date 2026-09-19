@@ -3,27 +3,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"nexflow/internal/config"
 	"nexflow/internal/models"
 	"nexflow/internal/services/smlprofile"
-	"nexflow/internal/services/tiktokshop"
 )
 
-type tikTokShipmentGatewayFake struct {
-	input  tiktokshop.GatewayShipmentRecipientRequest
-	result *tiktokshop.GatewayShipmentRecipientResponse
-	err    error
-}
-
-func (f *tikTokShipmentGatewayFake) GetShipmentRecipient(_ context.Context, input tiktokshop.GatewayShipmentRecipientRequest) (*tiktokshop.GatewayShipmentRecipientResponse, error) {
-	f.input = input
-	return f.result, f.err
-}
-
-func TestResolveInvoiceDocumentProfileUsesDocumentPrecedenceAndShipment(t *testing.T) {
+func TestResolveInvoiceDocumentProfileUsesDocumentPrecedenceAndOmitsShipment(t *testing.T) {
 	h := &BillHandler{cfg: &config.Config{SMLDocumentProfileMode: smlprofile.ModeActive}}
 	bill := &models.Bill{
 		ID: "bill-1", BillType: "sale", Source: "shopee", Remark: "bill fallback",
@@ -46,8 +33,8 @@ func TestResolveInvoiceDocumentProfileUsesDocumentPrecedenceAndShipment(t *testi
 	if got.Options.Remark5 != "NEXFLOW|shopee_realtime|ORDER-1" || got.Options.ConfigVersion != 7 || got.Options.RouteSignature == "" {
 		t.Fatalf("profile authority=%+v", got.Options)
 	}
-	if got.Options.Shipment == nil || got.Options.Shipment.TransportAddress != "Synthetic address" {
-		t.Fatalf("shipment=%+v", got.Options.Shipment)
+	if !got.Options.MarketplacePhysicalGoods || got.Options.ShipmentApplicability != "not_applicable" || got.Options.Shipment != nil {
+		t.Fatalf("shipment policy=%+v", got.Options)
 	}
 
 	got, err = h.resolveInvoiceDocumentProfile(context.Background(), bill, def, RetryRequest{Remark: "explicit", Remark2: "explicit-2"}, "BF-INV1")
@@ -56,41 +43,19 @@ func TestResolveInvoiceDocumentProfileUsesDocumentPrecedenceAndShipment(t *testi
 	}
 }
 
-func TestResolveInvoiceDocumentProfileDoesNotReturnBuyerValuesInMissingError(t *testing.T) {
+func TestResolveInvoiceDocumentProfileDoesNotRequireMarketplaceShipmentForStockFocusedDocuments(t *testing.T) {
 	h := &BillHandler{cfg: &config.Config{SMLDocumentProfileMode: smlprofile.ModeActive}}
-	bill := &models.Bill{BillType: "sale", Source: "shopee", RawData: json.RawMessage(`{
-		"flow":"shopee_excel","shopee_order_id":"ORDER-SECRET","customer_name":"BUYER-SECRET"
-	}`)}
-	got, err := h.resolveInvoiceDocumentProfile(context.Background(), bill, &models.ChannelDefault{Channel: "shopee", BillType: "sale"}, RetryRequest{}, "BF-1")
-	if got.Mode != smlprofile.ModeActive || err == nil {
-		t.Fatalf("mode/error=%q/%v", got.Mode, err)
-	}
-	for _, forbidden := range []string{"ORDER-SECRET", "BUYER-SECRET"} {
-		if strings.Contains(err.Error(), forbidden) {
-			t.Fatalf("missing-shipment error leaked %s: %v", forbidden, err)
-		}
-	}
-}
-
-func TestResolveInvoiceDocumentProfileFetchesTikTokShipmentWithoutPersistingItInBill(t *testing.T) {
-	gateway := &tikTokShipmentGatewayFake{result: &tiktokshop.GatewayShipmentRecipientResponse{
-		UpstreamRequestID: "tts-request-recipient",
-		Recipient:         &tiktokshop.ShipmentRecipient{OrderID: "order-1", Name: "Recipient", Address: "Bangkok", Telephone: "0900000000"},
-	}}
-	h := &BillHandler{cfg: &config.Config{SMLDocumentProfileMode: smlprofile.ModeActive}, tiktokShipmentGateway: gateway}
 	bill := &models.Bill{BillType: "sale", Source: "tiktok", RawData: json.RawMessage(`{
-		"flow":"tiktok_shop_api_reviewed","tiktok_shop_id":"shop-1","tiktok_order_id":"order-1"
+		"flow":"tiktok_excel","tiktok_order_id":"ORDER-1","customer_name":"BUYER"
 	}`)}
-	originalRaw := append([]byte(nil), bill.RawData...)
-	got, err := h.resolveInvoiceDocumentProfile(context.Background(), bill, &models.ChannelDefault{Channel: "tiktok_shop", BillType: "sale"}, RetryRequest{}, "BF-1")
-	if err != nil || got.Options.Shipment == nil || got.Options.Shipment.TransportTelephone != "0900000000" {
-		t.Fatalf("profile=%+v err=%v", got, err)
+
+	got, err := h.resolveInvoiceDocumentProfile(context.Background(), bill,
+		&models.ChannelDefault{Channel: "tiktok", BillType: "sale"}, RetryRequest{}, "BF-1")
+	if err != nil {
+		t.Fatalf("marketplace document without shipment must remain sendable: %v", err)
 	}
-	if gateway.input.ShopID != "shop-1" || gateway.input.OrderID != "order-1" {
-		t.Fatalf("gateway input=%+v", gateway.input)
-	}
-	if string(bill.RawData) != string(originalRaw) || strings.Contains(string(bill.RawData), "Recipient") || strings.Contains(string(bill.RawData), "0900000000") {
-		t.Fatalf("bill raw_data was widened with recipient PII: %s", bill.RawData)
+	if !got.Options.MarketplacePhysicalGoods || got.Options.ShipmentApplicability != "not_applicable" || got.Options.Shipment != nil {
+		t.Fatalf("shipment policy=%+v", got.Options)
 	}
 }
 

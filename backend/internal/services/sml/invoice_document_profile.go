@@ -112,9 +112,6 @@ func ApplyInvoiceDocumentProfile(payload *InvoicePayload, opts InvoiceDocumentPr
 	if delta := headerTotal - detailTotal; delta < -1 || delta > 1 {
 		return fmt.Errorf("document total does not match detail sum within 0.01")
 	}
-	if opts.MarketplacePhysicalGoods && applicability != "required" {
-		return fmt.Errorf("marketplace physical-goods document requires shipment")
-	}
 	switch applicability {
 	case "required":
 		if opts.Shipment == nil {
@@ -136,7 +133,7 @@ func ApplyInvoiceDocumentProfile(payload *InvoicePayload, opts InvoiceDocumentPr
 			}
 		}
 	case "not_applicable":
-		if opts.MarketplacePhysicalGoods || opts.Shipment != nil {
+		if opts.Shipment != nil {
 			return fmt.Errorf("shipment not_applicable is invalid for this document")
 		}
 	default:
