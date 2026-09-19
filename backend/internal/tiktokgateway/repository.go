@@ -452,7 +452,7 @@ func (r *Repository) LockAuthorizationRefresh(ctx context.Context, tenantID, ope
 	if err != nil {
 		return nil, err
 	}
-	lockKey := strings.TrimSpace(tenantID) + "\x00" + strings.TrimSpace(openID)
+	lockKey := authorizationLockKey(tenantID, openID)
 	var locked bool
 	if err := connection.QueryRowContext(ctx, `SELECT TRUE FROM pg_advisory_lock(hashtextextended($1, 0))`, lockKey).Scan(&locked); err != nil || !locked {
 		_ = connection.Close()
@@ -471,6 +471,13 @@ func (r *Repository) LockAuthorizationRefresh(ctx context.Context, tenantID, ope
 			_ = connection.Close()
 		})
 	}, nil
+}
+
+// authorizationLockKey is safe to pass as PostgreSQL TEXT. tenantID is a UUID,
+// so ':' cannot collide with its fixed boundary while keeping the seller grant
+// in the same advisory-lock namespace across authorization and token refresh.
+func authorizationLockKey(tenantID, openID string) string {
+	return strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(openID)
 }
 
 // RotateAuthorizationTokens replaces the duplicated encrypted token material
@@ -644,9 +651,7 @@ func (r *Repository) UpsertConnections(ctx context.Context, connections []Encryp
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	// tenantID is a UUID, so ':' cannot collide with its fixed boundary. Unlike
-	// NUL, the separator is valid PostgreSQL TEXT and can safely reach hashtextextended.
-	lockKey := tenantID + ":" + openID
+	lockKey := authorizationLockKey(tenantID, openID)
 	var locked bool
 	if err := tx.QueryRowContext(ctx, `SELECT TRUE FROM pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey).Scan(&locked); err != nil || !locked {
 		if err != nil {

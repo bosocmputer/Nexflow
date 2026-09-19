@@ -306,7 +306,9 @@ func TestRepositoryAuthorizationRefreshLockUsesDatabaseAdvisoryLock(t *testing.T
 		t.Fatal(err)
 	}
 	defer db.Close()
-	lockKey := "11111111-1111-1111-1111-111111111111\x00seller-open-id"
+	// PostgreSQL TEXT rejects NUL bytes before hashtextextended can run. Keep
+	// the lock namespace deterministic while using a database-safe separator.
+	lockKey := "11111111-1111-1111-1111-111111111111:seller-open-id"
 	mock.ExpectQuery("SELECT TRUE FROM pg_advisory_lock").WithArgs(lockKey).
 		WillReturnRows(sqlmock.NewRows([]string{"locked"}).AddRow(true))
 	mock.ExpectQuery("SELECT pg_advisory_unlock").WithArgs(lockKey).
