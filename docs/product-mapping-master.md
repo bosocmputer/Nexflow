@@ -14,6 +14,14 @@
 
 Shopee scope is `shop:<shop_id>`. An unscoped Shopee Excel import may be corrected on its bill but cannot create a reusable Master.
 
+When an export supplies both a marketplace item/variant identity and a seller
+SKU, resolution always tries the exact item/variant first and then falls back to
+the seller SKU within the same source and account. This is required for Lazada
+Excel rows whose external item ID can change while their seller SKU remains
+stable. The fallback reuses the existing Master and reconciles the newly
+observed bill identity; it must not create a duplicate alias or cross a source
+or account boundary.
+
 ## Runtime mode
 
 - `PRODUCT_MAPPING_MASTER_MODE=shadow` keeps the legacy verified-name result while logging `shadow_mismatch` counts. Use only during rollout comparison.

@@ -1018,6 +1018,28 @@ Current AOY UAT scope:
     pending because `amount_review_required=true`, independently of shipment
     data. Do not bypass that amount-review guard.
 
+56. AOY scoped-SKU Product Master reuse is fixed and deployed at `5a3b242`.
+    Lazada Excel row `1116057280378051 / 1950376759_TH-7399366403` could not be
+    confirmed because its exact external item ID was new while seller SKU
+    `1950376759-1614414836870-4` already belonged to active alias
+    `0d5ea040-4b28-4931-bb3c-8febc9131b06`. The insert correctly hit the
+    source/account/SKU unique index, but the old conflict path then looked up
+    only the new exact identity and returned a permanent 409. Exact identity
+    now remains first priority, followed by a same-source/account seller-SKU
+    fallback; reconciliation retains the newly observed identity and also
+    matches its open bill items by scoped SKU. The real confirmation reused
+    `AH-0030 / แผ่น`, completed job
+    `b24c3bcc-4112-4b4f-8a27-5922a4f63f33` with one processed item and no
+    failure, moved bill `f8f51f30-dbdc-49ae-bc2f-ffd626cba03e` from
+    `needs_review` to `pending`, and updated its active reservation to mapping
+    revision 2. The pending Product Master queue is now empty. No duplicate
+    alias, migration, SML send, or Marketplace stock write occurred. Shopee
+    shop `264993963` was already disabled/dry-run-required before this action;
+    the safety reconciliation advanced its config version from 218 to 219 and
+    left it disabled. Full Go tests, repository/handler race tests, vet,
+    deployment health, browser UAT, database evidence, and the recent severe-log
+    scan passed. The AOY backup is `pre-deploy-20260919-102118.sql.gz`.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
