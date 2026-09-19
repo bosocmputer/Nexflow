@@ -1096,6 +1096,24 @@ Current AOY UAT scope:
     controlled canary is explicitly approved. The AOY database backup is
     `pre-deploy-20260919-123253.sql.gz`.
 
+60. AOY completed all six outstanding TikTok Order Snapshot Product Master
+    mappings on 2026-09-19. Read-only production verification found zero
+    remaining TikTok snapshot review groups and seven active exact
+    shop-scoped TikTok aliases in total, including the previously existing
+    alias. `/marketplace-aliases` now shows an empty pending queue and TikTok
+    Operations reports Mapping `20/20`. The overall diagnostics card still
+    shows `ต้องตรวจสอบ` because sampled order amount/readiness checks are
+    separate from mapping completeness; do not interpret that status as an
+    unmapped SKU. This final mapping step created no new reviewed TikTok Bill,
+    SML attempt, Auto SML job, or stock write. TikTok Auto SML remains disabled
+    globally and for the AOY shop, and its durable job table remains empty.
+    Partner Center still shows Product Basic and Product Modify as inactive
+    with zero API scopes pending review. Wait for the current App Review to
+    finish; after it passes, request Product Basic separately, publish the new
+    package, wait until that scope is active, and reauthorize AOY before a
+    read-only Product Catalog UAT. Keep Product Modify, TikTok stock writes, and
+    Auto SML disabled until their separate controlled UAT gates are approved.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
