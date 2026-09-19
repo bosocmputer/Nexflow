@@ -1073,6 +1073,29 @@ Current AOY UAT scope:
     remaining TikTok identities, then explicitly approve one new controlled
     canary before changing either Auto SML gate.
 
+59. AOY-only TikTok order-snapshot Product Master discovery is deployed at
+    `d29295b`. The shared `/marketplace-aliases` review queue now includes exact
+    shop/product/SKU identities found in durable PII-free TikTok Order
+    Snapshots even while Product Basic is still under review. AOY currently has
+    six distinct unmapped identities; the diagnostics sample still reports
+    10/20 mapped because the same identities occur across multiple sampled
+    order lines. Each snapshot row opens the existing shop/order-scoped Bill
+    Shadow Preview and uses its server-validated mapping confirmation instead
+    of the generic alias-confirm endpoint. The TikTok diagnostics Mapping badge
+    links directly to the TikTok-filtered pending queue. Production browser QA
+    passed for all six rows, the exact Shadow Preview deep link, diagnostics
+    navigation, and the 390px mobile layout; no Bill, SML attempt, alias, or
+    stock write was created during QA. The only console entry was the previously
+    disclosed injected `reportAllChanges/startTime` performance-observer error,
+    not an application bundle error. Health and recent severe-log checks passed.
+    `TIKTOK_SHOP_PRODUCT_CATALOG_ENABLED`,
+    `VITE_ENABLE_TIKTOK_SHOP_STOCK`, and `TIKTOK_SHOP_AUTO_SML_ENABLED` remain
+    false; the per-shop Auto SML setting remains disabled and its job table has
+    zero rows. Do not enable Product Catalog/stock until Product Basic approval
+    and seller reauthorization, and do not enable Auto SML until the separate
+    controlled canary is explicitly approved. The AOY database backup is
+    `pre-deploy-20260919-123253.sql.gz`.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
