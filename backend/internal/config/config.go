@@ -75,42 +75,43 @@ type Config struct {
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
-	ShopeeOpenAPIEnabled               bool
-	ShopeeOpenAPIEnv                   string
-	ShopeeOpenAPIBaseURL               string
-	ShopeeOpenAPIPartnerID             int64
-	ShopeeOpenAPIPartnerKey            string
-	ShopeeOpenAPIRedirect              string
-	ShopeeOpenAPIMode                  string
-	ShopeeGatewayBaseURL               string
-	ShopeeGatewayPublicURL             string
-	ShopeeGatewayTenant                string
-	ShopeeGatewayInternalSecret        string
-	TikTokShopOpenAPIEnabled           bool
-	TikTokShopGatewayBaseURL           string
-	TikTokShopGatewayPublicURL         string
-	TikTokShopGatewayTenant            string
-	TikTokShopGatewayInternalSecret    string
-	TikTokShopOrderSyncEnabled         bool
-	TikTokShopWebhookEnabled           bool
-	TikTokShopProductCatalogEnabled    bool
-	TikTokShopReviewedBillEnabled      bool
-	TikTokShopSMLSendEnabled           bool
-	TikTokShopAutoSMLEnabled           bool
-	ShopeeRealtimeOpsEnabled           bool
-	ShopeeAdvancedDropoffEnabled       bool
-	ShopeeShippingActionsEnabled       bool
-	ShopeeCancelAfterSMLAlertsEnabled  bool
-	ShopeeSMLCancelDocumentsEnabled    bool
-	ShopeeRichLineFlexEnabled          bool
-	ShopeeSettlementLineAlertsEnabled  bool
-	ShopeeOrderEscrowEnrichmentEnabled bool
-	ShopeeRealtimeWebhookSecret        string
-	ShopeeRealtimeSyncIntervalSeconds  int
-	ShopeeAutoSMLEnabled               bool
-	ShopeeAutoSMLCancelEnabled         bool
-	LineMyShopEnabled                  bool
-	PurchaseFlowEnabled                bool
+	ShopeeOpenAPIEnabled                bool
+	ShopeeOpenAPIEnv                    string
+	ShopeeOpenAPIBaseURL                string
+	ShopeeOpenAPIPartnerID              int64
+	ShopeeOpenAPIPartnerKey             string
+	ShopeeOpenAPIRedirect               string
+	ShopeeOpenAPIMode                   string
+	ShopeeGatewayBaseURL                string
+	ShopeeGatewayPublicURL              string
+	ShopeeGatewayTenant                 string
+	ShopeeGatewayInternalSecret         string
+	TikTokShopOpenAPIEnabled            bool
+	TikTokShopGatewayBaseURL            string
+	TikTokShopGatewayPublicURL          string
+	TikTokShopGatewayTenant             string
+	TikTokShopGatewayInternalSecret     string
+	TikTokShopOrderSyncEnabled          bool
+	TikTokShopWebhookEnabled            bool
+	TikTokShopProductCatalogEnabled     bool
+	TikTokShopReviewedBillEnabled       bool
+	TikTokShopSMLSendEnabled            bool
+	TikTokShopAutoSMLEnabled            bool
+	TikTokShopSMLCancelDocumentsEnabled bool
+	ShopeeRealtimeOpsEnabled            bool
+	ShopeeAdvancedDropoffEnabled        bool
+	ShopeeShippingActionsEnabled        bool
+	ShopeeCancelAfterSMLAlertsEnabled   bool
+	ShopeeSMLCancelDocumentsEnabled     bool
+	ShopeeRichLineFlexEnabled           bool
+	ShopeeSettlementLineAlertsEnabled   bool
+	ShopeeOrderEscrowEnrichmentEnabled  bool
+	ShopeeRealtimeWebhookSecret         string
+	ShopeeRealtimeSyncIntervalSeconds   int
+	ShopeeAutoSMLEnabled                bool
+	ShopeeAutoSMLCancelEnabled          bool
+	LineMyShopEnabled                   bool
+	PurchaseFlowEnabled                 bool
 
 	// Cron
 	BackupCronHour        int
@@ -208,6 +209,7 @@ func Load() *Config {
 		TikTokShopReviewedBillEnabled:       getEnvBool("TIKTOK_SHOP_REVIEWED_BILL_ENABLED", false),
 		TikTokShopSMLSendEnabled:            getEnvBool("TIKTOK_SHOP_SML_SEND_ENABLED", false),
 		TikTokShopAutoSMLEnabled:            getEnvBool("TIKTOK_SHOP_AUTO_SML_ENABLED", false),
+		TikTokShopSMLCancelDocumentsEnabled: getEnvBool("TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED", false),
 		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),

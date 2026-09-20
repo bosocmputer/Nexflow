@@ -561,6 +561,34 @@ func TestMigration105AddsDedicatedTikTokCancellationRouteWithoutBackfill(t *test
 	}
 }
 
+func TestMigration106AddsDormantDurableTikTokReviewedCancellation(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/106_tiktok_shop_reviewed_cancellation.sql")
+	if err != nil {
+		t.Fatalf("read migration 106: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"create table if not exists tiktok_shop_sml_cancellations",
+		"sml_attempt_id uuid not null references bill_sml_attempts",
+		"review_digest text not null",
+		"route_config_version bigint not null",
+		"stock_recalc_status text not null default 'not_required'",
+		"unique (shop_id, order_id, sml_attempt_id)",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 106 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"insert into tiktok_shop_sml_cancellations", "update tiktok_shop_sml_cancellations", "enabled = true",
+		"delete from", "truncate", "drop table", "drop column",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 106 contains destructive or activating statement %q", forbidden)
+		}
+	}
+}
+
 func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {
