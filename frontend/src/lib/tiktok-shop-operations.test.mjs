@@ -11,6 +11,7 @@ const vite = await createServer({
 
 const {
   buildTikTokReviewedBillRequest,
+  buildTikTokCancellationRequest,
   buildTikTokShadowMappingPayload,
   canCreateTikTokReviewedBill,
   formatTikTokMoney,
@@ -204,6 +205,36 @@ test('marks only a sent TikTok sale with an SML document for cancellation review
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
     canReviewCancellation: true,
   })
+})
+
+test('shows durable TikTok cancellation and stock recalculation states', () => {
+  assert.deepEqual(tiktokCancellationState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    billStatus: 'sent',
+    smlDocNo: 'BF-INV26090001',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+    cancellation: { status: 'created', cancelSMLDocNo: 'SIC26090001', stockRecalcStatus: 'succeeded' },
+  }), {
+    status: 'completed',
+    label: 'ยกเลิกใน SML แล้ว',
+    detail: 'BF-INV26090001 → SIC26090001 · คำนวณสต๊อกแล้ว',
+    tone: 'success',
+    path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+    canReviewCancellation: true,
+  })
+  assert.equal(tiktokCancellationState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292', billStatus: 'sent', smlDocNo: 'BF-INV26090001',
+    cancellation: { status: 'unknown', cancelSMLDocNo: 'SIC26090001', stockRecalcStatus: 'not_required' },
+  }).status, 'reconciliation_required')
+})
+
+test('builds explicit TikTok cancellation confirmation bound to reviewed evidence', () => {
+  const digest = 'b'.repeat(64)
+  assert.deepEqual(buildTikTokCancellationRequest(digest), {
+    confirm: 'CREATE_TIKTOK_SML_CANCEL_DOCUMENT',
+    review_digest: digest,
+  })
+  assert.throws(() => buildTikTokCancellationRequest('B'.repeat(64)), /review digest/i)
 })
 
 test('allows admin and staff operators to create reviewed TikTok documents like Shopee', () => {

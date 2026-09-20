@@ -377,10 +377,23 @@ remain useful as audit evidence but are not a current SML-send blocker.
   จึงพักเป็น `รอตรวจเอกสารยกเลิก`; ถ้าสถานะส่งแล้วแต่ไม่มีเลข SML ให้ fail closed
 - AOY มี snapshot ยกเลิกปัจจุบันหนึ่งรายการ (`586061286932514286`) ซึ่งไม่มี
   Bill/SML เดิม จึงต้องไม่มี external write จากรายการนี้
-- ระยะนี้ยังไม่เปิดการสร้าง cancellation document. ก่อน canary ต้องรับและ
-  reconcile `CANCELLATION_STATUS_CHANGE`, เพิ่มเส้นทาง SML สำหรับ TikTok
-  cancellation โดยเฉพาะ, ใช้ durable idempotent attempt/stock recalculation
-  และมีออเดอร์ควบคุมที่ใบขายเดิมถูกส่ง SML จริง
+- โค้ด Reviewed Cancellation เตรียมไว้แล้วแบบ dormant: migration 106,
+  exact evidence ของ snapshot/Bill/SML attempt, read-only SML preview, review digest,
+  durable idempotent create attempt, unknown-result reconciliation และคิวคำนวณ
+  สต๊อกหลังสร้าง SIC สำเร็จ ใช้ endpoint
+  `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/cancellation/preview` และ
+  `POST /api/tiktok-shop-api/orders/:shop_id/:order_id/cancellation`
+- การเขียนเอกสารจริงต้องผ่านสอง gate พร้อมกัน และค่าเริ่มต้นเป็น
+  `false` ทั้งคู่:
+  `TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED` และ
+  `TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED`. ห้ามเปิดแค่ gate เดียว
+- ก่อน AOY canary ต้อง: App Review ผ่าน, เปิดและพิสูจน์
+  `CANCELLATION_STATUS_CHANGE` (type 11) ว่า signature/dedup/reconciliation
+  ทำงาน, ตรวจ route `/api/v1/ic/sale-invoices/:doc_no/void` และ format
+  `SIC`, และมีออเดอร์ควบคุมที่ใบขายเดิมถูกส่ง SML จริง
+- รอบ canary ให้ผู้ดูแลกด Preview ก่อน แล้วยืนยันสร้างทีละหนึ่งใบ;
+  ตรวจ SIC ใน SML, audit log, stock recalculation และว่าไม่มีเอกสารซ้ำ
+  ก่อนขยายร้านอื่น. ฟลวนี้ไม่ใช่ Return/Refund และไม่สร้างใบลดหนี้
 
 เอกสารอ้างอิง: [Cancellation status change](https://partner.tiktokshop.com/docv2/page/11-cancellation-status-change), [SEA cancellation lifecycle](https://partner.tiktokshop.com/docv2/page/jsqxpibu), [Return status change](https://partner.tiktokshop.com/docv2/page/12-return-status-change)
 

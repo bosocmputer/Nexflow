@@ -52,6 +52,10 @@ export const ACTION_META: Record<string, ActionMeta> = {
   bill_doc_no_preview_failed: { label: 'ดึงเลขล่าสุดไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_shop_sml_send_blocked: { label: 'ยังไม่เปิดการส่ง TikTok เข้า SML', emoji: '⏸️', tone: 'warning' },
   tiktok_shop_sml_profile_blocked: { label: 'ข้อมูลผู้รับ TikTok สำหรับ SML ยังไม่พร้อม', emoji: '⚠️', tone: 'warning' },
+  tiktok_shop_sml_cancel_blocked: { label: 'ยังสร้างเอกสารยกเลิก TikTok Shop ไม่ได้', emoji: '⚠️', tone: 'warning' },
+  tiktok_shop_sml_cancel_created: { label: 'สร้างเอกสารยกเลิก TikTok Shop แล้ว', emoji: '↩️', tone: 'success' },
+  tiktok_shop_sml_cancel_stock_recalc_ok: { label: 'คำนวณสต๊อกหลังยกเลิก TikTok สำเร็จ', emoji: '📊', tone: 'success' },
+  tiktok_shop_sml_cancel_stock_recalc_failed: { label: 'คำนวณสต๊อกหลังยกเลิก TikTok ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_shop_product_catalog_synced: { label: 'อัปเดตรายการสินค้า TikTok Shop แล้ว', emoji: '✅', tone: 'success' },
   tiktok_shop_product_catalog_sync_failed: { label: 'อัปเดตรายการสินค้า TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่า Auto SML TikTok Shop', emoji: '⚙️', tone: 'info' },
@@ -372,6 +376,29 @@ export function summarize(log: AuditLog): string {
         d.order_id ? `ออเดอร์ ${d.order_id}` : '',
         d.via ? auditViaLabel(d.via) : '',
         'ยังไม่ได้สร้างเอกสาร SML',
+      ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_sml_cancel_blocked':
+      return [
+        d.order_id ? `ออเดอร์ ${d.order_id}` : '',
+        d.code === 'feature_flag_disabled' ? 'ยังปิดระหว่างรอ App Review และ Webhook ยกเลิก' : humanizeAuditError(d.code),
+      ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_sml_cancel_created':
+      return [
+        d.order_id ? `ออเดอร์ ${d.order_id}` : '',
+        d.sale_sml_doc_no && d.cancel_sml_doc_no ? `${d.sale_sml_doc_no} → ${d.cancel_sml_doc_no}` : d.cancel_sml_doc_no || d.sale_sml_doc_no || '',
+        'ผู้ดูแลยืนยัน',
+      ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_sml_cancel_stock_recalc_ok':
+      return [
+        d.cancel_sml_doc_no,
+        d.item_count != null ? `${Number(d.item_count).toLocaleString('th-TH')} รหัสสินค้า` : '',
+        d.order_id ? `ออเดอร์ ${d.order_id}` : '',
+      ].filter(Boolean).join(' · ')
+    case 'tiktok_shop_sml_cancel_stock_recalc_failed':
+      return [
+        d.cancel_sml_doc_no,
+        d.order_id ? `ออเดอร์ ${d.order_id}` : '',
+        humanizeAuditError(d.error),
       ].filter(Boolean).join(' · ')
     case 'tiktok_shop_product_catalog_synced':
       return [

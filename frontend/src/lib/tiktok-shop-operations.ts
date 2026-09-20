@@ -15,6 +15,16 @@ export interface TikTokDocumentStateInput {
   billStatus?: string
   smlDocNo?: string
   documentPath?: string
+  cancellation?: TikTokCancellationRecord
+}
+
+export interface TikTokCancellationRecord {
+  status: string
+  cancelSMLDocNo?: string
+  errorCode?: string
+  errorMessage?: string
+  stockRecalcStatus?: string
+  stockRecalcError?: string
 }
 
 export interface TikTokDocumentState {
@@ -25,7 +35,7 @@ export interface TikTokDocumentState {
 }
 
 export interface TikTokCancellationState extends TikTokDocumentState {
-  status: 'not_required' | 'evidence_missing' | 'review_required'
+  status: 'not_required' | 'evidence_missing' | 'review_required' | 'previewed' | 'creating' | 'completed' | 'failed' | 'reconciliation_required'
   canReviewCancellation: boolean
 }
 
@@ -122,6 +132,7 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
   const smlDocNo = input.smlDocNo?.trim() ?? ''
   const documentPath = input.documentPath?.trim() ?? ''
   const path = billID && documentPath ? documentPath : undefined
+  const cancellation = input.cancellation
 
   if (!billID) {
     return {
@@ -150,6 +161,31 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
       tone: 'danger',
       ...(path ? { path } : {}),
       canReviewCancellation: false,
+    }
+  }
+  if (cancellation) {
+    const status = cancellation.status?.trim().toLowerCase()
+    const cancelDocNo = cancellation.cancelSMLDocNo?.trim() ?? ''
+    const transition = cancelDocNo ? `${smlDocNo} → ${cancelDocNo}` : `ใบขาย ${smlDocNo}`
+    if (status === 'created' || status === 'already_exists') {
+      const stock = cancellation.stockRecalcStatus === 'succeeded'
+        ? 'คำนวณสต๊อกแล้ว'
+        : cancellation.stockRecalcStatus === 'manual_reconciliation'
+          ? 'ต้องตรวจสต๊อก'
+          : 'รอคำนวณสต๊อก'
+      return { status: 'completed', label: 'ยกเลิกใน SML แล้ว', detail: `${transition} · ${stock}`, tone: 'success', ...(path ? { path } : {}), canReviewCancellation: true }
+    }
+    if (status === 'unknown') {
+      return { status: 'reconciliation_required', label: 'ต้องตรวจผลใน SML', detail: `${transition} · ห้ามออกเลขใหม่`, tone: 'danger', ...(path ? { path } : {}), canReviewCancellation: true }
+    }
+    if (status === 'creating') {
+      return { status: 'creating', label: 'กำลังสร้างเอกสารยกเลิก', detail: transition, tone: 'warning', ...(path ? { path } : {}), canReviewCancellation: true }
+    }
+    if (status === 'previewed') {
+      return { status: 'previewed', label: 'ตรวจ Preview แล้ว', detail: `ใบขาย ${smlDocNo} · รอยืนยันสร้าง`, tone: 'warning', ...(path ? { path } : {}), canReviewCancellation: true }
+    }
+    if (status === 'failed' || status === 'blocked') {
+      return { status: 'failed', label: 'สร้างเอกสารยกเลิกไม่สำเร็จ', detail: cancellation.errorMessage?.trim() || transition, tone: 'danger', ...(path ? { path } : {}), canReviewCancellation: true }
     }
   }
   return {
@@ -238,4 +274,17 @@ export function buildTikTokReviewedBillRequest(reviewDigest: string): TikTokRevi
     confirm: 'CREATE_REVIEWED_BILL',
     review_digest: digest,
   }
+}
+
+export interface TikTokCancellationRequest {
+  confirm: 'CREATE_TIKTOK_SML_CANCEL_DOCUMENT'
+  review_digest: string
+}
+
+export function buildTikTokCancellationRequest(reviewDigest: string): TikTokCancellationRequest {
+  const digest = reviewDigest.trim()
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error('invalid review digest')
+  }
+  return { confirm: 'CREATE_TIKTOK_SML_CANCEL_DOCUMENT', review_digest: digest }
 }

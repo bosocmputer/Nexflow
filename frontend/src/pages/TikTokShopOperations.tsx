@@ -11,6 +11,7 @@ import {
   Loader2,
   RadioTower,
   RefreshCw,
+  RotateCcw,
   Search,
 } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
@@ -25,6 +26,7 @@ import {
   type TikTokBillShadowPreview,
 } from '@/components/tiktok/TikTokBillShadowDialog'
 import { TikTokProductMappingDialog } from '@/components/tiktok/TikTokProductMappingDialog'
+import { TikTokCancellationDialog, type TikTokCancellationPreview } from '@/components/tiktok/TikTokCancellationDialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,6 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   buildTikTokReviewedBillRequest,
+  buildTikTokCancellationRequest,
   canCreateTikTokReviewedBill,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
@@ -73,6 +76,15 @@ interface TikTokOrderRow {
     error_message?: string
     updated_at: string
   }
+  cancellation?: {
+    status: string
+    cancel_sml_doc_no?: string
+    error_code?: string
+    error_message?: string
+    stock_recalc_status?: string
+    stock_recalc_error?: string
+    updated_at: string
+  }
 }
 
 interface TikTokOrderPage {
@@ -105,6 +117,7 @@ interface TikTokDiagnostics {
   sync: { worker_enabled: boolean; configured: boolean; enabled_shops: number; error_shops: number }
   webhook: { enabled: boolean }
   document: { reviewed_bill_enabled: boolean; sml_send_enabled: boolean; route_ready: boolean }
+  cancellation?: { document_create_enabled: boolean; webhook_enabled: boolean }
   coverage: {
     sampled_orders: number
     ready_orders: number
@@ -232,6 +245,13 @@ export default function TikTokShopOperations() {
   const [billCreateError, setBillCreateError] = useState('')
   const [mappingItem, setMappingItem] = useState<TikTokBillShadowItem | null>(null)
   const [mappingOpen, setMappingOpen] = useState(false)
+  const [cancellationOrder, setCancellationOrder] = useState<TikTokOrderRow | null>(null)
+  const [cancellationOpen, setCancellationOpen] = useState(false)
+  const [cancellationPreview, setCancellationPreview] = useState<TikTokCancellationPreview | null>(null)
+  const [cancellationLoading, setCancellationLoading] = useState(false)
+  const [cancellationCreating, setCancellationCreating] = useState(false)
+  const [cancellationConfirmed, setCancellationConfirmed] = useState(false)
+  const [cancellationError, setCancellationError] = useState('')
   const page = readPage(params)
   const perPage = readPerPage(params)
   const statusGroup = normalizeTikTokStatusGroup(params.get('status_group'))
@@ -425,6 +445,45 @@ export default function TikTokShopOperations() {
       setBillCreateError(apiErrorMessage(cause, 'สร้างเอกสาร TikTok Shop ไม่สำเร็จ กรุณาเปิดรายละเอียดใหม่แล้วตรวจอีกครั้ง'))
     } finally {
       setBillCreating(false)
+    }
+  }
+  const openCancellationPreview = async (row: TikTokOrderRow) => {
+    setCancellationOrder(row)
+    setCancellationOpen(true)
+    setCancellationPreview(null)
+    setCancellationConfirmed(false)
+    setCancellationError('')
+    setCancellationLoading(true)
+    try {
+      const response = await client.post<TikTokCancellationPreview>(
+        `/api/tiktok-shop-api/orders/${encodeURIComponent(row.shop_id)}/${encodeURIComponent(row.order_id)}/cancellation/preview`,
+      )
+      setCancellationPreview(response.data)
+    } catch (cause: unknown) {
+      setCancellationError(apiErrorMessage(cause, 'ตรวจ Preview เอกสารยกเลิก TikTok Shop ไม่สำเร็จ'))
+    } finally {
+      setCancellationLoading(false)
+    }
+  }
+  const createCancellation = async () => {
+    if (!cancellationOrder || !cancellationPreview?.create_enabled || !cancellationConfirmed) return
+    setCancellationCreating(true)
+    setCancellationError('')
+    try {
+      await client.post(
+        `/api/tiktok-shop-api/orders/${encodeURIComponent(cancellationOrder.shop_id)}/${encodeURIComponent(cancellationOrder.order_id)}/cancellation`,
+        buildTikTokCancellationRequest(cancellationPreview.review_digest),
+      )
+      toast.success('สร้างเอกสารยกเลิก TikTok Shop ใน SML แล้ว', {
+        description: 'ระบบจัดคิวคำนวณสต๊อก SML ต่อโดยไม่ส่งเอกสารซ้ำ',
+      })
+      setCancellationOpen(false)
+      setCancellationConfirmed(false)
+      setRefreshTick((value) => value + 1)
+    } catch (cause: unknown) {
+      setCancellationError(apiErrorMessage(cause, 'สร้างเอกสารยกเลิก TikTok Shop ไม่สำเร็จ'))
+    } finally {
+      setCancellationCreating(false)
     }
   }
   const openProductMapping = (item: TikTokBillShadowItem) => {
@@ -628,6 +687,8 @@ export default function TikTokShopOperations() {
                   canRetryAutoSML={Boolean(canManageMapping && autoSML?.global_enabled)}
                   onRetryAutoSML={() => void retryAutoSML(row)}
                   cancellationQueue={cancellationQueue}
+                  cancellationLoading={cancellationLoading && cancellationOrder?.shop_id === row.shop_id && cancellationOrder?.order_id === row.order_id}
+                  onReviewCancellation={() => void openCancellationPreview(row)}
                 />
               ))}
             </tbody>
@@ -655,6 +716,24 @@ export default function TikTokShopOperations() {
           </div>
         </div>
       </div>
+
+      <TikTokCancellationDialog
+        open={cancellationOpen}
+        loading={cancellationLoading}
+        error={cancellationError}
+        preview={cancellationPreview}
+        confirmed={cancellationConfirmed}
+        creating={cancellationCreating}
+        onOpenChange={(open) => {
+          setCancellationOpen(open)
+          if (!open) {
+            setCancellationConfirmed(false)
+            setCancellationError('')
+          }
+        }}
+        onConfirmedChange={setCancellationConfirmed}
+        onCreate={() => void createCancellation()}
+      />
 
       <TikTokBillShadowDialog
         open={previewOpen}
@@ -755,6 +834,8 @@ function TikTokDiagnosticsPanel({
     { label: 'ซิงก์ออเดอร์', ok: diagnostics.sync.worker_enabled && diagnostics.sync.enabled_shops > 0 && diagnostics.sync.error_shops === 0 },
     { label: 'Webhook', ok: diagnostics.webhook.enabled },
     { label: 'เส้นทาง SML', ok: diagnostics.document.route_ready && diagnostics.document.sml_send_enabled },
+    { label: 'Webhook ยกเลิก', ok: diagnostics.cancellation?.webhook_enabled === true },
+    { label: 'เอกสารยกเลิก (Canary)', ok: diagnostics.cancellation?.document_create_enabled === true },
     {
       label: `Mapping ${diagnostics.coverage.mapped_items}/${diagnostics.coverage.total_items}`,
       ok: diagnostics.coverage.blocked_orders === 0 && diagnostics.coverage.sampled_orders > 0,
@@ -852,6 +933,8 @@ function DesktopRow({
   onPreview,
   onRetryAutoSML,
   cancellationQueue,
+  cancellationLoading,
+  onReviewCancellation,
 }: {
   row: TikTokOrderRow
   previewLoading: boolean
@@ -860,14 +943,25 @@ function DesktopRow({
   onPreview: () => void
   onRetryAutoSML: () => void
   cancellationQueue: boolean
+  cancellationLoading: boolean
+  onReviewCancellation: () => void
 }) {
   const documentInput = {
     billID: row.bill_id,
     billStatus: row.bill_status,
     smlDocNo: row.sml_doc_no,
     documentPath: row.document_path,
+    cancellation: row.cancellation ? {
+      status: row.cancellation.status,
+      cancelSMLDocNo: row.cancellation.cancel_sml_doc_no,
+      errorCode: row.cancellation.error_code,
+      errorMessage: row.cancellation.error_message,
+      stockRecalcStatus: row.cancellation.stock_recalc_status,
+      stockRecalcError: row.cancellation.stock_recalc_error,
+    } : undefined,
   }
-  const document = cancellationQueue ? tiktokCancellationState(documentInput) : tiktokDocumentState(documentInput)
+  const cancellationDocument = cancellationQueue ? tiktokCancellationState(documentInput) : null
+  const document = cancellationDocument ?? tiktokDocumentState(documentInput)
   const actions = tiktokRowActions({ billID: row.bill_id, documentPath: row.document_path })
   return (
     <tr className="border-t border-border hover:bg-muted/30">
@@ -906,14 +1000,17 @@ function DesktopRow({
       </td>
       <td className="px-3 py-2 align-top">
         <div className="flex flex-wrap justify-end gap-1.5">
+          {cancellationDocument?.canReviewCancellation && (
+            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={cancellationLoading} onClick={onReviewCancellation}>
+              {cancellationLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              ตรวจเอกสารยกเลิก
+            </Button>
+          )}
           {cancellationQueue && document.path ? (
             <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
-              <Link to={document.path}>
-                <Eye className="h-3.5 w-3.5" />
-                ใบขายเดิม
-              </Link>
+              <Link to={document.path}><Eye className="h-3.5 w-3.5" />ใบขายเดิม</Link>
             </Button>
-          ) : cancellationQueue ? (
+          ) : cancellationQueue && !cancellationDocument?.canReviewCancellation ? (
             <Badge variant="outline" className="h-8 border-border bg-muted/40 px-2 text-muted-foreground">
               ไม่ต้องดำเนินการ
             </Badge>

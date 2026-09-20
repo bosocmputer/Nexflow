@@ -88,6 +88,34 @@ test('includes Shopee cancellation lifecycle events in the SML quick view', () =
   assert.equal(isSMLAuditLog(audit('bill_created')), false)
 })
 
+test('presents reviewed TikTok cancellation milestones in Thai without buyer PII', () => {
+  assert.equal(ACTION_META.tiktok_shop_sml_cancel_blocked.label, 'ยังสร้างเอกสารยกเลิก TikTok Shop ไม่ได้')
+  assert.equal(ACTION_META.tiktok_shop_sml_cancel_created.label, 'สร้างเอกสารยกเลิก TikTok Shop แล้ว')
+  assert.equal(ACTION_META.tiktok_shop_sml_cancel_stock_recalc_ok.label, 'คำนวณสต๊อกหลังยกเลิก TikTok สำเร็จ')
+  assert.equal(ACTION_META.tiktok_shop_sml_cancel_stock_recalc_failed.label, 'คำนวณสต๊อกหลังยกเลิก TikTok ไม่สำเร็จ')
+
+  const created = audit('tiktok_shop_sml_cancel_created', {
+    order_id: '586030483469993439',
+    sale_sml_doc_no: 'BF-INV26090001',
+    cancel_sml_doc_no: 'SIC26090001',
+    status: 'created',
+  }, 'tiktok_shop_api')
+  assert.equal(summarize(created), 'ออเดอร์ 586030483469993439 · BF-INV26090001 → SIC26090001 · ผู้ดูแลยืนยัน')
+  assert.equal(isSMLAuditLog(created), true)
+  assert.doesNotMatch(JSON.stringify(created), /address|telephone|phone|buyer/i)
+
+  assert.equal(summarize(audit('tiktok_shop_sml_cancel_stock_recalc_ok', {
+    order_id: '586030483469993439',
+    cancel_sml_doc_no: 'SIC26090001',
+    item_count: 2,
+  }, 'sml')), 'SIC26090001 · 2 รหัสสินค้า · ออเดอร์ 586030483469993439')
+
+  assert.equal(summarize(audit('tiktok_shop_sml_cancel_blocked', {
+    order_id: '586030483469993439',
+    code: 'feature_flag_disabled',
+  }, 'tiktok_shop_api')), 'ออเดอร์ 586030483469993439 · ยังปิดระหว่างรอ App Review และ Webhook ยกเลิก')
+})
+
 test('recognizes Shopee realtime bill creation details', () => {
   assert.equal(summarize(audit('bill_created', {
     via: 'shopee_realtime',
