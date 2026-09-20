@@ -25,6 +25,10 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { validateProfileText } from '@/lib/smlDocumentProfile.js'
+import {
+  marketplaceSMLRouteBundleConfig,
+  type MarketplaceSMLRouteBundleKind,
+} from '@/lib/marketplace-sml-route-bundle'
 import type { CatalogMatch } from '@/types'
 import { MapItemModal } from '../BillDetail/components/MapItemModal'
 import { SMLMasterCodePicker } from '../BillDetail/components/SMLMasterCodePicker'
@@ -144,13 +148,22 @@ function runningFormat(format: string) {
   return format.replace(/^@/, '')
 }
 
-export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Props) {
+export function ShopeeSMLRouteBundleDialog(props: Props) {
+  return <MarketplaceSMLRouteBundleDialog {...props} kind="shopee" />
+}
+
+export function TikTokSMLRouteBundleDialog(props: Props) {
+  return <MarketplaceSMLRouteBundleDialog {...props} kind="tiktok_shop" />
+}
+
+function MarketplaceSMLRouteBundleDialog({ open, onOpenChange, onSaved, kind }: Props & { kind: MarketplaceSMLRouteBundleKind }) {
+  const routeConfig = marketplaceSMLRouteBundleConfig(kind)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [loadedRevision, setLoadedRevision] = useState(0)
   const [bundle, setBundle] = useState<BundleResponse | null>(null)
   const [mainRoute, setMainRoute] = useState<MainRoute>('saleinvoice')
-  const [cancellationRoute, setCancellationRoute] = useState<CancellationRoute>('creditnote')
+  const [cancellationRoute, setCancellationRoute] = useState<CancellationRoute>(routeConfig.saleInvoiceCancellationRoutes[0])
   const [main, setMain] = useState<ChannelDefaultRow | null>(null)
   const [cancellation, setCancellation] = useState<ChannelDefaultRow | null>(null)
   const [party, setParty] = useState<Party | null>(null)
@@ -177,18 +190,18 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
     setLoadError('')
     setPreview(null)
     try {
-      const response = await client.get<BundleResponse>('/api/settings/shopee-sml-route-bundle')
+      const response = await client.get<BundleResponse>(routeConfig.apiBase)
       const data = response.data
       const nextMainRoute: MainRoute = data.main_route === 'saleorder' ? 'saleorder' : 'saleinvoice'
       const compatibleCancel: CancellationRoute = nextMainRoute === 'saleorder'
         ? 'saleordercancel'
-        : data.cancellation_route === 'saleinvoicecancel'
-          ? 'saleinvoicecancel'
-          : 'creditnote'
+        : routeConfig.saleInvoiceCancellationRoutes.includes(data.cancellation_route as CancellationRoute)
+          ? data.cancellation_route as CancellationRoute
+          : routeConfig.saleInvoiceCancellationRoutes[0]
       const mainOption = routeOption(nextMainRoute)
       const cancelOption = routeOption(compatibleCancel)
-      const nextMain = data.main ?? emptyRoute(mainOption, 'shopee_realtime')
-      const nextCancel = data.cancellation ?? emptyRoute(cancelOption, 'shopee_realtime_cancel')
+      const nextMain = data.main ?? emptyRoute(mainOption, routeConfig.mainChannel)
+      const nextCancel = data.cancellation ?? emptyRoute(cancelOption, routeConfig.cancelChannel)
       setBundle(data)
       setMainRoute(nextMainRoute)
       setCancellationRoute(compatibleCancel)
@@ -202,7 +215,7 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [routeConfig])
 
   useEffect(() => {
     if (open) void loadBundle()
@@ -291,7 +304,7 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
 
   const cancelOptions = useMemo(() => mainRoute === 'saleorder'
     ? [routeOption('saleordercancel')]
-    : [routeOption('creditnote'), routeOption('saleinvoicecancel')], [mainRoute])
+    : routeConfig.saleInvoiceCancellationRoutes.map(routeOption), [mainRoute, routeConfig])
 
   const remarkError = validateProfileText(main?.remark ?? '')
   const remark2Error = validateProfileText(main?.remark_2 ?? '')
@@ -329,7 +342,7 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
     setPreviewing(true)
     setPreview(null)
     try {
-      const response = await client.post<BundlePreview>('/api/settings/shopee-sml-route-bundle/preview', body)
+      const response = await client.post<BundlePreview>(`${routeConfig.apiBase}/preview`, body)
       setPreview(response.data)
     } catch (error: any) {
       const code = error?.response?.data?.code
@@ -348,11 +361,11 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
     if (!body || !preview || saving) return
     setSaving(true)
     try {
-      await client.put('/api/settings/shopee-sml-route-bundle', {
+      await client.put(routeConfig.apiBase, {
         ...body,
         preview_token: preview.preview_token,
       })
-      toast.success('บันทึกเส้นทาง Shopee แล้ว ระบบอัตโนมัติที่เปิดอยู่ถูกพักเพื่อให้ตรวจสอบก่อนเปิดใหม่')
+      toast.success(routeConfig.saveSuccess)
       setDirty(false)
       onSaved()
       onOpenChange(false)
@@ -372,20 +385,22 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
 
   const changeMainRoute = (value: MainRoute) => {
     const option = routeOption(value)
-    const nextCancellation: CancellationRoute = value === 'saleorder' ? 'saleordercancel' : 'creditnote'
+    const nextCancellation: CancellationRoute = value === 'saleorder'
+      ? 'saleordercancel'
+      : routeConfig.saleInvoiceCancellationRoutes[0]
     const cancelOption = routeOption(nextCancellation)
     markDirty()
     setMainRoute(value)
     setCancellationRoute(nextCancellation)
     setMain((current) => ({
-      ...(current ?? emptyRoute(option, 'shopee_realtime')),
+      ...(current ?? emptyRoute(option, routeConfig.mainChannel)),
       endpoint: option.apiPath,
       doc_format_code: '',
       doc_prefix: option.docPrefix,
       doc_running_format: option.docRunningFormat,
     }))
     setCancellation((current) => ({
-      ...(current ?? emptyRoute(cancelOption, 'shopee_realtime_cancel')),
+      ...(current ?? emptyRoute(cancelOption, routeConfig.cancelChannel)),
       endpoint: cancelOption.apiPath,
       doc_format_code: '',
       doc_prefix: cancelOption.docPrefix,
@@ -398,7 +413,7 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
     markDirty()
     setCancellationRoute(value)
     setCancellation((current) => ({
-      ...(current ?? emptyRoute(option, 'shopee_realtime_cancel')),
+      ...(current ?? emptyRoute(option, routeConfig.cancelChannel)),
       endpoint: option.apiPath,
       doc_format_code: '',
       doc_prefix: option.docPrefix,
@@ -417,9 +432,9 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
       <Dialog open={open} onOpenChange={requestOpenChange}>
         <DialogContent className="grid max-h-[92vh] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle>ตั้งค่าเอกสาร SML สำหรับคำสั่งซื้อ Shopee</DialogTitle>
+            <DialogTitle>{routeConfig.title}</DialogTitle>
             <DialogDescription>
-              ตั้งค่าเอกสารหลักและเอกสารเมื่อยกเลิกพร้อมกัน เพื่อให้ทั้งสองเส้นทางอ้างอิงกันถูกต้อง
+              {routeConfig.description}
             </DialogDescription>
           </DialogHeader>
 
@@ -456,7 +471,7 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
 
                 <section className="space-y-4 rounded-lg border border-border p-3 sm:p-4" aria-labelledby="main-route-heading">
                   <div>
-                    <div id="main-route-heading" className="font-semibold text-foreground">1. เมื่อคำสั่งซื้อพร้อมส่ง</div>
+                    <div id="main-route-heading" className="font-semibold text-foreground">{routeConfig.mainHeading}</div>
                     <p className="mt-1 text-xs text-muted-foreground">เลือกเอกสารหลักที่ต้องการสร้างใน SML</p>
                   </div>
                   <div className="space-y-1.5">
@@ -593,7 +608,7 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
 
                 <section className="space-y-4 rounded-lg border border-border p-3 sm:p-4" aria-labelledby="cancel-route-heading">
                   <div>
-                    <div id="cancel-route-heading" className="font-semibold text-foreground">2. เมื่อ Shopee ยกเลิกคำสั่งซื้อ</div>
+                    <div id="cancel-route-heading" className="font-semibold text-foreground">{routeConfig.cancelHeading}</div>
                     <p className="mt-1 text-xs text-muted-foreground">ลูกค้า สินค้า สาขา คลัง ภาษี และยอดเงินจะอ้างอิงจากเอกสารต้นทาง ระบบไม่ให้กรอกซ้ำ</p>
                   </div>
                   <div className="space-y-1.5">
@@ -667,11 +682,11 @@ export function ShopeeSMLRouteBundleDialog({ open, onOpenChange, onSaved }: Prop
       {main && (
         <MapItemModal
           open={open && shippingPickerOpen}
-          rawName="ค่าจัดส่ง Shopee"
+          rawName={`ค่าจัดส่ง ${routeConfig.platformLabel}`}
           currentCode={main.shipping_item_code ?? ''}
           currentUnit={main.shipping_item_unit_code ?? ''}
           currentPrice={0}
-          rawNameLabel="รายการค่าจัดส่งจาก Shopee"
+          rawNameLabel={`รายการค่าจัดส่งจาก ${routeConfig.platformLabel}`}
           onPick={(code, unitCode, picked?: CatalogMatch) => {
             updateMain('shipping_item_code', code)
             updateMain('shipping_item_unit_code', unitCode || '')

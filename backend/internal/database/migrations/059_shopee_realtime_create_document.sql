@@ -18,6 +18,7 @@ ALTER TABLE channel_defaults
     'lazada',
     'tiktok',
     'tiktok_shop',
+    'tiktok_shop_cancel',
     'manual',
     'shopee_settlement',
     'line_myshop'

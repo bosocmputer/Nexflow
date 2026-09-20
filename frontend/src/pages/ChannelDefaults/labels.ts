@@ -13,6 +13,7 @@ export type ChannelKey =
   | 'lazada'
   | 'tiktok'
   | 'tiktok_shop'
+  | 'tiktok_shop_cancel'
   | 'manual'
   | 'shopee_settlement'
   | 'line_myshop'
@@ -229,7 +230,8 @@ export function destinationOptionsFor(
     option.phase1Enabled &&
     (!billType || option.billType === billType) &&
     (channel !== 'shopee_realtime_cancel' || option.value === 'saleordercancel' || option.value === 'saleinvoicecancel' || option.value === 'creditnote') &&
-    (channel !== 'tiktok_shop' || option.value === 'saleorder' || option.value === 'saleinvoice')
+    (channel !== 'tiktok_shop' || option.value === 'saleorder' || option.value === 'saleinvoice') &&
+    (channel !== 'tiktok_shop_cancel' || option.value === 'saleordercancel' || option.value === 'saleinvoicecancel')
   ))
 }
 
@@ -269,6 +271,7 @@ export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   lazada: 'Lazada Excel',
   tiktok: 'TikTok Excel',
   tiktok_shop: 'คำสั่งซื้อ TikTok Shop',
+  tiktok_shop_cancel: 'คำสั่งซื้อ TikTok Shop ที่ยกเลิก',
   manual: 'Manual',
   shopee_settlement: 'Shopee รับชำระหนี้',
   line_myshop: 'LINE MyShop',

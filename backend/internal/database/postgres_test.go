@@ -541,6 +541,26 @@ func TestMigration104AddsDormantDurableTikTokAutoSMLWithoutOrderBackfill(t *test
 	}
 }
 
+func TestMigration105AddsDedicatedTikTokCancellationRouteWithoutBackfill(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/105_tiktok_shop_cancel_channel_default.sql")
+	if err != nil {
+		t.Fatalf("read migration 105: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{"channel_defaults_channel_check", "tiktok_shop_cancel"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 105 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"insert into channel_defaults", "update channel_defaults", "delete from", "truncate", "drop table", "drop column",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 105 must not copy or mutate a tenant route: found %q", forbidden)
+		}
+	}
+}
+
 func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {

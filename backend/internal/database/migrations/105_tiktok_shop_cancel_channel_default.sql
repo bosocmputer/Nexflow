@@ -1,6 +1,6 @@
--- Dedicated SML document route for TikTok Shop Open API orders.
--- Intentionally does not seed or copy the existing TikTok Excel route: each
--- tenant must select its own SML customer, warehouse, VAT, and shipping item.
+-- Dedicated cancellation route for TikTok Shop Open API orders. This route is
+-- intentionally not seeded: each tenant must explicitly select a verified SML
+-- cancellation document format before cancellation automation can be enabled.
 
 ALTER TABLE channel_defaults
   DROP CONSTRAINT IF EXISTS channel_defaults_channel_check;

@@ -16,18 +16,22 @@ type ChannelDefaultRepo struct {
 
 var ErrConfigVersionConflict = errors.New("channel default config version conflict")
 
-type ShopeeSMLRouteBundleUpdate struct {
+type SMLRouteBundleUpdate struct {
 	Main, Cancellation                         *models.ChannelDefault
 	ExpectedMainVersion, ExpectedCancelVersion int64
+	AutomationChannel                          string
 	UpdatedBy                                  string
 	TraceID                                    string
 	AuditDetail                                map[string]interface{}
 }
 
-type ShopeeSMLRouteBundleUpdateResult struct {
+type SMLRouteBundleUpdateResult struct {
 	Main, Cancellation *models.ChannelDefault
 	PausedShops        int64
 }
+
+type ShopeeSMLRouteBundleUpdate = SMLRouteBundleUpdate
+type ShopeeSMLRouteBundleUpdateResult = SMLRouteBundleUpdateResult
 
 func NewChannelDefaultRepo(db *sql.DB) *ChannelDefaultRepo {
 	return &ChannelDefaultRepo{db: db}
@@ -110,13 +114,25 @@ func (r *ChannelDefaultRepo) Get(channel, billType string) (*models.ChannelDefau
 // A caller can therefore never observe a mixed route pair after a partial
 // settings write.
 func (r *ChannelDefaultRepo) UpdateShopeeSMLRouteBundle(ctx context.Context, in ShopeeSMLRouteBundleUpdate) (*ShopeeSMLRouteBundleUpdateResult, error) {
+	in.AutomationChannel = "shopee"
+	return r.UpdateSMLRouteBundle(ctx, in)
+}
+
+// UpdateSMLRouteBundle persists the main and cancellation route pair, pauses
+// only the matching channel automation, and records redacted audit evidence in
+// one serializable transaction.
+func (r *ChannelDefaultRepo) UpdateSMLRouteBundle(ctx context.Context, in SMLRouteBundleUpdate) (*SMLRouteBundleUpdateResult, error) {
 	if r == nil || r.db == nil || in.Main == nil || in.Cancellation == nil ||
 		in.ExpectedMainVersion < 0 || in.ExpectedCancelVersion < 0 {
 		return nil, ErrConfigVersionConflict
 	}
+	pauseSQL, auditAction, ok := routeBundlePersistence(in.AutomationChannel)
+	if !ok {
+		return nil, fmt.Errorf("unsupported SML route bundle automation channel %q", in.AutomationChannel)
+	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		return nil, fmt.Errorf("begin Shopee SML route bundle: %w", err)
+		return nil, fmt.Errorf("begin SML route bundle: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -135,10 +151,7 @@ func (r *ChannelDefaultRepo) UpdateShopeeSMLRouteBundle(ctx context.Context, in 
 		return nil, fmt.Errorf("write Shopee SML cancellation route: %w", err)
 	}
 
-	pauseResult, err := tx.ExecContext(ctx, `UPDATE shopee_auto_sml_settings
-		SET paused_reason='route_changed', paused_at=NOW(),
-		    config_version=config_version+1, updated_at=NOW()
-		WHERE enabled=true`)
+	pauseResult, err := tx.ExecContext(ctx, pauseSQL)
 	if err != nil {
 		return nil, fmt.Errorf("pause Auto SML after route bundle change: %w", err)
 	}
@@ -146,7 +159,7 @@ func (r *ChannelDefaultRepo) UpdateShopeeSMLRouteBundle(ctx context.Context, in 
 
 	auditJSON, err := json.Marshal(in.AuditDetail)
 	if err != nil {
-		return nil, fmt.Errorf("marshal Shopee SML route bundle audit: %w", err)
+		return nil, fmt.Errorf("marshal SML route bundle audit: %w", err)
 	}
 	var userID, traceID sql.NullString
 	if in.UpdatedBy != "" {
@@ -155,16 +168,33 @@ func (r *ChannelDefaultRepo) UpdateShopeeSMLRouteBundle(ctx context.Context, in 
 	if in.TraceID != "" {
 		traceID = sql.NullString{String: in.TraceID, Valid: true}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs
+	auditSQL := fmt.Sprintf(`INSERT INTO audit_logs
 		(action,user_id,source,level,trace_id,detail)
-		VALUES ('shopee_sml_route_bundle_updated',$1,'channel_defaults','info',$2,$3)`,
-		userID, traceID, auditJSON); err != nil {
-		return nil, fmt.Errorf("write Shopee SML route bundle audit: %w", err)
+		VALUES ('%s',$1,'channel_defaults','info',$2,$3)`, auditAction)
+	if _, err := tx.ExecContext(ctx, auditSQL, userID, traceID, auditJSON); err != nil {
+		return nil, fmt.Errorf("write SML route bundle audit: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit Shopee SML route bundle: %w", err)
+		return nil, fmt.Errorf("commit SML route bundle: %w", err)
 	}
-	return &ShopeeSMLRouteBundleUpdateResult{Main: main, Cancellation: cancelRoute, PausedShops: paused}, nil
+	return &SMLRouteBundleUpdateResult{Main: main, Cancellation: cancelRoute, PausedShops: paused}, nil
+}
+
+func routeBundlePersistence(channel string) (pauseSQL, auditAction string, ok bool) {
+	switch channel {
+	case "shopee":
+		return `UPDATE shopee_auto_sml_settings
+			SET paused_reason='route_changed', paused_at=NOW(),
+			    config_version=config_version+1, updated_at=NOW()
+			WHERE enabled=true`, "shopee_sml_route_bundle_updated", true
+	case "tiktok_shop":
+		return `UPDATE tiktok_shop_auto_sml_settings
+			SET paused_reason='route_changed', paused_at=NOW(),
+			    config_version=config_version+1, updated_at=NOW()
+			WHERE enabled=true`, "tiktok_shop_sml_route_bundle_updated", true
+	default:
+		return "", "", false
+	}
 }
 
 func upsertChannelDefaultExpectedTx(ctx context.Context, tx *sql.Tx, d *models.ChannelDefault, updatedBy string, expectedVersion int64) (*models.ChannelDefault, error) {

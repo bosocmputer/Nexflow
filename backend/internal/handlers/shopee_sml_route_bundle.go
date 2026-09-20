@@ -36,6 +36,22 @@ var shopeeSMLRouteSpecs = map[string]shopeeSMLRouteSpec{
 	"saleordercancel":   {Name: "saleordercancel", Endpoint: "/api/v1/ic/sale-orders/:doc_no/void"},
 }
 
+type smlRouteBundleConfig struct {
+	MainChannel, CancellationChannel string
+	AutomationChannel, PlatformLabel string
+	AllowCreditNote                  bool
+}
+
+var shopeeRouteBundleConfig = smlRouteBundleConfig{
+	MainChannel: "shopee_realtime", CancellationChannel: "shopee_realtime_cancel",
+	AutomationChannel: "shopee", PlatformLabel: "Shopee", AllowCreditNote: true,
+}
+
+var tiktokShopRouteBundleConfig = smlRouteBundleConfig{
+	MainChannel: "tiktok_shop", CancellationChannel: "tiktok_shop_cancel",
+	AutomationChannel: "tiktok_shop", PlatformLabel: "TikTok Shop", AllowCreditNote: false,
+}
+
 type shopeeSMLRouteBundleRequest struct {
 	MainRoute                   string                `json:"main_route"`
 	CancellationRoute           string                `json:"cancellation_route"`
@@ -67,12 +83,20 @@ type shopeeSMLRouteBundlePreviewClaims struct {
 }
 
 func (h *ChannelDefaultsHandler) GetShopeeSMLRouteBundle(c *gin.Context) {
-	main, err := h.repo.Get("shopee_realtime", "sale")
+	h.getSMLRouteBundle(c, shopeeRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) GetTikTokShopSMLRouteBundle(c *gin.Context) {
+	h.getSMLRouteBundle(c, tiktokShopRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) getSMLRouteBundle(c *gin.Context, config smlRouteBundleConfig) {
+	main, err := h.repo.Get(config.MainChannel, "sale")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดเส้นทางเอกสารหลักไม่สำเร็จ"})
 		return
 	}
-	cancelRoute, err := h.repo.Get("shopee_realtime_cancel", "sale")
+	cancelRoute, err := h.repo.Get(config.CancellationChannel, "sale")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดเส้นทางเอกสารยกเลิกไม่สำเร็จ"})
 		return
@@ -93,7 +117,15 @@ func (h *ChannelDefaultsHandler) GetShopeeSMLRouteBundle(c *gin.Context) {
 }
 
 func (h *ChannelDefaultsHandler) PreviewShopeeSMLRouteBundle(c *gin.Context) {
-	request, normalized, ok := h.bindAndNormalizeShopeeSMLRouteBundle(c)
+	h.previewSMLRouteBundle(c, shopeeRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) PreviewTikTokShopSMLRouteBundle(c *gin.Context) {
+	h.previewSMLRouteBundle(c, tiktokShopRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) previewSMLRouteBundle(c *gin.Context, config smlRouteBundleConfig) {
+	request, normalized, ok := h.bindAndNormalizeSMLRouteBundle(c, config)
 	if !ok {
 		return
 	}
@@ -130,13 +162,21 @@ func (h *ChannelDefaultsHandler) PreviewShopeeSMLRouteBundle(c *gin.Context) {
 		"readiness":           h.bundleReadiness(normalized.Main, normalized.Cancellation, normalized.MainRoute, normalized.CancellationRoute, capability, nil),
 		"warnings": []string{
 			"การเปลี่ยนแปลงมีผลเฉพาะเอกสารใหม่",
-			"เมื่อบันทึก ระบบจะหยุด Auto SML ทุก Shopee shop ที่เปิดอยู่เพื่อให้ตรวจสอบและยืนยันใหม่",
+			fmt.Sprintf("เมื่อบันทึก ระบบจะหยุด Auto SML ของ %s ที่เปิดอยู่เพื่อให้ตรวจสอบและยืนยันใหม่", config.PlatformLabel),
 		},
 	})
 }
 
 func (h *ChannelDefaultsHandler) UpdateShopeeSMLRouteBundle(c *gin.Context) {
-	request, normalized, ok := h.bindAndNormalizeShopeeSMLRouteBundle(c)
+	h.updateSMLRouteBundle(c, shopeeRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) UpdateTikTokShopSMLRouteBundle(c *gin.Context) {
+	h.updateSMLRouteBundle(c, tiktokShopRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) updateSMLRouteBundle(c *gin.Context, config smlRouteBundleConfig) {
+	request, normalized, ok := h.bindAndNormalizeSMLRouteBundle(c, config)
 	if !ok {
 		return
 	}
@@ -165,12 +205,12 @@ func (h *ChannelDefaultsHandler) UpdateShopeeSMLRouteBundle(c *gin.Context) {
 		return
 	}
 
-	beforeMain, err := h.repo.Get("shopee_realtime", "sale")
+	beforeMain, err := h.repo.Get(config.MainChannel, "sale")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจรุ่นการตั้งค่าเอกสารหลักไม่สำเร็จ"})
 		return
 	}
-	beforeCancel, err := h.repo.Get("shopee_realtime_cancel", "sale")
+	beforeCancel, err := h.repo.Get(config.CancellationChannel, "sale")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ตรวจรุ่นการตั้งค่าเอกสารยกเลิกไม่สำเร็จ"})
 		return
@@ -194,17 +234,18 @@ func (h *ChannelDefaultsHandler) UpdateShopeeSMLRouteBundle(c *gin.Context) {
 		"capability_revision":                capability.ContractRevision,
 		"auto_sml_paused_for_reconfirmation": true,
 	}
-	result, err := h.repo.UpdateShopeeSMLRouteBundle(c.Request.Context(), repository.ShopeeSMLRouteBundleUpdate{
+	result, err := h.repo.UpdateSMLRouteBundle(c.Request.Context(), repository.SMLRouteBundleUpdate{
 		Main: normalized.Main, Cancellation: normalized.Cancellation,
 		ExpectedMainVersion: normalized.MainVersion, ExpectedCancelVersion: normalized.CancelVersion,
-		UpdatedBy: c.GetString("user_id"), TraceID: c.GetString("trace_id"), AuditDetail: auditDetail,
+		AutomationChannel: config.AutomationChannel,
+		UpdatedBy:         c.GetString("user_id"), TraceID: c.GetString("trace_id"), AuditDetail: auditDetail,
 	})
 	if errors.Is(err, repository.ErrConfigVersionConflict) {
 		c.JSON(http.StatusConflict, gin.H{"code": "preview_stale", "error": "การตั้งค่าถูกแก้ไขแล้ว กรุณาโหลดและ Preview ใหม่"})
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกชุดเส้นทาง Shopee ไม่สำเร็จ"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("บันทึกชุดเส้นทาง %s ไม่สำเร็จ", config.PlatformLabel)})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -216,13 +257,17 @@ func (h *ChannelDefaultsHandler) UpdateShopeeSMLRouteBundle(c *gin.Context) {
 }
 
 func (h *ChannelDefaultsHandler) bindAndNormalizeShopeeSMLRouteBundle(c *gin.Context) (*shopeeSMLRouteBundleRequest, *normalizedShopeeSMLRouteBundle, bool) {
+	return h.bindAndNormalizeSMLRouteBundle(c, shopeeRouteBundleConfig)
+}
+
+func (h *ChannelDefaultsHandler) bindAndNormalizeSMLRouteBundle(c *gin.Context, config smlRouteBundleConfig) (*shopeeSMLRouteBundleRequest, *normalizedShopeeSMLRouteBundle, bool) {
 	var request shopeeSMLRouteBundleRequest
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelDefaultRequestLimit)
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลชุดเส้นทางไม่ถูกต้อง"})
 		return nil, nil, false
 	}
-	normalized, err := normalizeShopeeSMLRouteBundle(request)
+	normalized, err := normalizeSMLRouteBundle(request, config)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return nil, nil, false
@@ -231,6 +276,14 @@ func (h *ChannelDefaultsHandler) bindAndNormalizeShopeeSMLRouteBundle(c *gin.Con
 }
 
 func normalizeShopeeSMLRouteBundle(request shopeeSMLRouteBundleRequest) (*normalizedShopeeSMLRouteBundle, error) {
+	return normalizeSMLRouteBundle(request, shopeeRouteBundleConfig)
+}
+
+func normalizeTikTokSMLRouteBundle(request shopeeSMLRouteBundleRequest) (*normalizedShopeeSMLRouteBundle, error) {
+	return normalizeSMLRouteBundle(request, tiktokShopRouteBundleConfig)
+}
+
+func normalizeSMLRouteBundle(request shopeeSMLRouteBundleRequest, config smlRouteBundleConfig) (*normalizedShopeeSMLRouteBundle, error) {
 	mainRoute := strings.ToLower(strings.TrimSpace(request.MainRoute))
 	cancelRoute := strings.ToLower(strings.TrimSpace(request.CancellationRoute))
 	mainSpec, mainOK := shopeeSMLRouteSpecs[mainRoute]
@@ -240,6 +293,9 @@ func normalizeShopeeSMLRouteBundle(request shopeeSMLRouteBundleRequest) (*normal
 	}
 	if !cancelOK || cancelSpec.Main {
 		return nil, fmt.Errorf("เอกสารเมื่อยกเลิกไม่อยู่ในรายการที่ระบบรองรับ")
+	}
+	if !config.AllowCreditNote && cancelRoute == "creditnote" {
+		return nil, fmt.Errorf("TikTok Shop แยกงานคืนสินค้า/รับคืนออกจากการยกเลิกคำสั่งซื้อ จึงยังไม่รองรับเอกสารรับคืน/ลดหนี้ในชุดนี้")
 	}
 	if (mainRoute == "saleorder" && cancelRoute != "saleordercancel") ||
 		(mainRoute == "saleinvoice" && cancelRoute != "saleinvoicecancel" && cancelRoute != "creditnote") {
@@ -255,9 +311,9 @@ func normalizeShopeeSMLRouteBundle(request shopeeSMLRouteBundleRequest) (*normal
 		return nil, fmt.Errorf("ปลายทางเอกสารเมื่อยกเลิกไม่ถูกต้อง กรุณาเลือกจากรายการที่ระบบรองรับ")
 	}
 	main := request.Main
-	main.Channel, main.BillType, main.Endpoint = "shopee_realtime", "sale", mainSpec.Endpoint
+	main.Channel, main.BillType, main.Endpoint = config.MainChannel, "sale", mainSpec.Endpoint
 	cancel := request.Cancellation
-	cancel.Channel, cancel.BillType, cancel.Endpoint = "shopee_realtime_cancel", "sale", cancelSpec.Endpoint
+	cancel.Channel, cancel.BillType, cancel.Endpoint = config.CancellationChannel, "sale", cancelSpec.Endpoint
 	// Cancellation authority comes from the immutable source SML document. Only
 	// destination and document numbering are configurable, so stale UI fields
 	// can never override customer, branch, VAT, warehouse, or remarks.

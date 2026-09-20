@@ -147,6 +147,51 @@ func TestNormalizeShopeeSMLRouteBundleRejectsIncompatiblePairAndEndpointInjectio
 	}
 }
 
+func TestNormalizeTikTokSMLRouteBundleUsesDedicatedCancellationChannel(t *testing.T) {
+	req := validShopeeSMLBundleRequest()
+	req.CancellationRoute = "saleinvoicecancel"
+	req.Cancellation.Endpoint = "/api/v1/ic/sale-invoices/:doc_no/void"
+	req.Cancellation.DocFormatCode = "SIC"
+	req.Cancellation.DocPrefix = "SIC"
+
+	normalized, err := normalizeTikTokSMLRouteBundle(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Main.Channel != "tiktok_shop" || normalized.Cancellation.Channel != "tiktok_shop_cancel" {
+		t.Fatalf("channels=%q/%q", normalized.Main.Channel, normalized.Cancellation.Channel)
+	}
+
+	req.CancellationRoute = "creditnote"
+	req.Cancellation.Endpoint = "/api/v1/ic/sale-invoices/:doc_no/cancel"
+	if _, err := normalizeTikTokSMLRouteBundle(req); err == nil || !strings.Contains(err.Error(), "รับคืน") {
+		t.Fatalf("TikTok cancellation-only route must reject credit note, error=%v", err)
+	}
+}
+
+func TestConfiguredServerRejectsSingleTikTokRouteWrite(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h := NewChannelDefaultsHandler(repository.NewChannelDefaultRepo(db), nil, false, "active", zap.NewNop()).
+		WithShopeeSMLRouteBundle(&staticGatewayCapabilityFetcher{}, map[string]string{}, strings.Repeat("k", 32), "aoy")
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/settings/channel-defaults", bytes.NewReader(validChannelDefaultJSON(map[string]any{
+		"channel": "tiktok_shop",
+	})))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	h.Upsert(ctx)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "route_bundle_required") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestShopeeSMLRouteBundlePreviewTokenBindsTenantPayloadVersionsCapabilityAndModes(t *testing.T) {
 	req := validShopeeSMLBundleRequest()
 	normalized, err := normalizeShopeeSMLRouteBundle(req)

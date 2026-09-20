@@ -122,6 +122,43 @@ func TestUpdateShopeeSMLRouteBundleRollsBackBothRoutesOnVersionRace(t *testing.T
 	}
 }
 
+func TestUpdateTikTokSMLRouteBundleIsAtomicAndPausesOnlyTikTokAutomation(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	main := &models.ChannelDefault{Channel: "tiktok_shop", BillType: "sale", VATType: 1, VATRate: 7, InquiryType: 0}
+	cancelRoute := &models.ChannelDefault{Channel: "tiktok_shop_cancel", BillType: "sale", VATType: -1, VATRate: -1, InquiryType: -1}
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)INSERT INTO channel_defaults.*RETURNING`).WillReturnRows(sqlmock.NewRows(channelDefaultColumnNames()).AddRow(
+		"tiktok_shop", "sale", "", "", "", "", "", "SI", "/api/v1/ic/sale-invoices", "SI", "YYMM####", "", "", "", "",
+		false, "", "", "", "", "", "", "", "", "", "", 1, float64(7), 0, "", "", int64(2), nil, now,
+	))
+	mock.ExpectQuery(`(?s)INSERT INTO channel_defaults.*RETURNING`).WillReturnRows(sqlmock.NewRows(channelDefaultColumnNames()).AddRow(
+		"tiktok_shop_cancel", "sale", "", "", "", "", "", "SIC", "/api/v1/ic/sale-invoices/:doc_no/void", "SIC", "YYMM####", "", "", "", "",
+		false, "", "", "", "", "", "", "", "", "", "", -1, float64(-1), -1, "", "", int64(1), nil, now,
+	))
+	mock.ExpectExec(`UPDATE tiktok_shop_auto_sml_settings.*paused_reason='route_changed'`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO audit_logs.*tiktok_shop_sml_route_bundle_updated`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	result, err := NewChannelDefaultRepo(db).UpdateSMLRouteBundle(context.Background(), SMLRouteBundleUpdate{
+		Main: main, Cancellation: cancelRoute, ExpectedMainVersion: 1, ExpectedCancelVersion: 0,
+		AutomationChannel: "tiktok_shop", AuditDetail: map[string]interface{}{"safe": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PausedShops != 1 || result.Main.Channel != "tiktok_shop" || result.Cancellation.Channel != "tiktok_shop_cancel" {
+		t.Fatalf("result=%+v", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func channelDefaultColumnNames() []string {
 	return []string{
 		"channel", "bill_type", "party_code", "party_name", "party_phone",

@@ -102,10 +102,12 @@ func (h *ChannelDefaultsHandler) Upsert(c *gin.Context) {
 		})
 		return
 	}
-	if h.capabilityClient != nil && in.BillType == "sale" && (in.Channel == "shopee_realtime" || in.Channel == "shopee_realtime_cancel") {
+	if h.capabilityClient != nil && in.BillType == "sale" &&
+		(in.Channel == "shopee_realtime" || in.Channel == "shopee_realtime_cancel" ||
+			in.Channel == "tiktok_shop" || in.Channel == "tiktok_shop_cancel") {
 		c.JSON(http.StatusConflict, gin.H{
 			"code":  "route_bundle_required",
-			"error": "กรุณาบันทึกเส้นทางคำสั่งซื้อและเส้นทางยกเลิก Shopee พร้อมกัน",
+			"error": "กรุณาบันทึกเส้นทางคำสั่งซื้อและเส้นทางยกเลิก Marketplace พร้อมกัน",
 		})
 		return
 	}
@@ -452,16 +454,24 @@ func isManagedMarketplaceSaleRoute(channel, billType string) bool {
 }
 
 func validateShopeeRealtimeCancelDefaults(in models.ChannelDefaultUpsert) error {
-	if in.Channel != "shopee_realtime_cancel" || in.BillType != "sale" {
+	if (in.Channel != "shopee_realtime_cancel" && in.Channel != "tiktok_shop_cancel") || in.BillType != "sale" {
 		return nil
 	}
 	endpoint := strings.TrimSpace(in.Endpoint)
-	switch endpoint {
-	case "/api/v1/ic/sale-orders/:doc_no/void",
-		"/api/v1/ic/sale-invoices/:doc_no/void",
-		"/api/v1/ic/sale-invoices/:doc_no/cancel":
-	default:
-		return fmt.Errorf("กรุณาเลือกปลายทางยกเลิก SML ที่ระบบรองรับ")
+	if in.Channel == "tiktok_shop_cancel" {
+		switch endpoint {
+		case "/api/v1/ic/sale-orders/:doc_no/void", "/api/v1/ic/sale-invoices/:doc_no/void":
+		default:
+			return fmt.Errorf("TikTok Shop รองรับเฉพาะเอกสารยกเลิก SML ในชุดนี้ ไม่รวมรับคืนสินค้า/ลดหนี้")
+		}
+	} else {
+		switch endpoint {
+		case "/api/v1/ic/sale-orders/:doc_no/void",
+			"/api/v1/ic/sale-invoices/:doc_no/void",
+			"/api/v1/ic/sale-invoices/:doc_no/cancel":
+		default:
+			return fmt.Errorf("กรุณาเลือกปลายทางยกเลิก SML ที่ระบบรองรับ")
+		}
 	}
 	required := []struct {
 		value string
@@ -473,7 +483,7 @@ func validateShopeeRealtimeCancelDefaults(in models.ChannelDefaultUpsert) error 
 	}
 	for _, field := range required {
 		if strings.TrimSpace(field.value) == "" {
-			return fmt.Errorf("กรุณาเลือก%sสำหรับเส้นทาง Shopee ยกเลิกหลังส่ง SML", field.label)
+			return fmt.Errorf("กรุณาเลือก%sสำหรับเส้นทาง Marketplace ยกเลิกหลังส่ง SML", field.label)
 		}
 	}
 	if !strings.Contains(in.DocRunningFormat, "#") {
@@ -503,7 +513,7 @@ func validChannelBillTypeCombo(channel, billType string) bool {
 		return billType == "purchase"
 	case "email":
 		return billType == "sale" || billType == "purchase"
-	case "shopee", "shopee_realtime", "shopee_realtime_cancel", "shopee_email", "tiktok_shop", "line", "manual", "line_myshop":
+	case "shopee", "shopee_realtime", "shopee_realtime_cancel", "shopee_email", "tiktok_shop", "tiktok_shop_cancel", "line", "manual", "line_myshop":
 		return billType == "sale"
 	case "lazada":
 		return billType == "sale" || billType == "purchase"

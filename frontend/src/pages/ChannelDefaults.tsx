@@ -25,7 +25,10 @@ import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SH
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
-import { ShopeeSMLRouteBundleDialog } from './ChannelDefaults/ShopeeSMLRouteBundleDialog'
+import {
+  ShopeeSMLRouteBundleDialog,
+  TikTokSMLRouteBundleDialog,
+} from './ChannelDefaults/ShopeeSMLRouteBundleDialog'
 import {
   CHANNEL_LABELS,
   destinationFor,
@@ -100,7 +103,7 @@ function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
     return 'ตั้งค่าเอกสารหลักและเอกสารเมื่อยกเลิก Shopee เป็นชุดเดียวกัน'
   }
   if (row.channel === 'tiktok_shop' && row.bill_type === 'sale') {
-    return 'เส้นทางงานหลักสำหรับ Bill ที่สร้างจากคำสั่งซื้อ TikTok Shop API แยกจาก TikTok Excel'
+    return 'ตั้งค่าเอกสารหลักและเอกสารเมื่อ TikTok Shop ยกเลิกเป็นชุดเดียวกัน'
   }
   if (row.channel === 'shopee_realtime_cancel' && row.bill_type === 'sale') {
     return 'งานยกเลิกหลังส่ง SML: เลือกได้ว่าจะยกเลิกใบขายทั้งฉบับ หรือสร้างรับคืนสินค้า/ลดหนี้'
@@ -236,6 +239,7 @@ export default function ChannelDefaults() {
   const [editing, setEditing] = useState<ChannelDefaultRow | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [shopeeBundleOpen, setShopeeBundleOpen] = useState(false)
+  const [tiktokBundleOpen, setTikTokBundleOpen] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -310,7 +314,11 @@ export default function ChannelDefaults() {
     const baseUnset = !r.endpoint || !r.doc_format_code || !r.doc_prefix || !r.doc_running_format
     if (baseUnset) return true
     if ((r.channel === 'shopee_realtime' || r.channel === 'tiktok_shop') && r.bill_type === 'sale') {
-      return !r.party_code || !r.wh_code || !r.shelf_code || (r.vat_type ?? -1) < 0 || (r.vat_rate ?? -1) < 0 ||
+      const cancellationChannel = r.channel === 'shopee_realtime' ? 'shopee_realtime_cancel' : 'tiktok_shop_cancel'
+      const cancellation = rows.find((candidate) => candidate.channel === cancellationChannel && candidate.bill_type === 'sale')
+      const cancellationUnset = !cancellation?.endpoint || !cancellation.doc_format_code ||
+        !cancellation.doc_prefix || !cancellation.doc_running_format
+      return cancellationUnset || !r.party_code || !r.wh_code || !r.shelf_code || (r.vat_type ?? -1) < 0 || (r.vat_rate ?? -1) < 0 ||
         (Boolean(r.shipping_item_enabled) && (!r.shipping_item_code || !r.shipping_item_unit_code))
     }
     return false
@@ -546,6 +554,8 @@ export default function ChannelDefaults() {
                     e.stopPropagation()
                     if (r.channel === 'shopee_realtime' && r.bill_type === 'sale') {
                       setShopeeBundleOpen(true)
+                    } else if (r.channel === 'tiktok_shop' && r.bill_type === 'sale') {
+                      setTikTokBundleOpen(true)
                     } else {
                       setEditing(r)
                       setEditOpen(true)
@@ -571,6 +581,11 @@ export default function ChannelDefaults() {
       <ShopeeSMLRouteBundleDialog
         open={shopeeBundleOpen}
         onOpenChange={setShopeeBundleOpen}
+        onSaved={load}
+      />
+      <TikTokSMLRouteBundleDialog
+        open={tiktokBundleOpen}
+        onOpenChange={setTikTokBundleOpen}
         onSaved={load}
       />
     </div>

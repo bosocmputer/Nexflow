@@ -699,6 +699,9 @@ func main() {
 		api.GET("/settings/shopee-sml-route-bundle", middleware.RequireRole("admin"), channelDefaultsH.GetShopeeSMLRouteBundle)
 		api.POST("/settings/shopee-sml-route-bundle/preview", middleware.RequireRole("admin"), channelDefaultsH.PreviewShopeeSMLRouteBundle)
 		api.PUT("/settings/shopee-sml-route-bundle", middleware.RequireRole("admin"), channelDefaultsH.UpdateShopeeSMLRouteBundle)
+		api.GET("/settings/tiktok-shop-sml-route-bundle", middleware.RequireRole("admin"), channelDefaultsH.GetTikTokShopSMLRouteBundle)
+		api.POST("/settings/tiktok-shop-sml-route-bundle/preview", middleware.RequireRole("admin"), channelDefaultsH.PreviewTikTokShopSMLRouteBundle)
+		api.PUT("/settings/tiktok-shop-sml-route-bundle", middleware.RequireRole("admin"), channelDefaultsH.UpdateTikTokShopSMLRouteBundle)
 
 		// SML party master proxy — search customers/suppliers from cache
 		api.GET("/sml/customers", middleware.RequireRole("admin", "staff"), smlPartyH.SearchCustomers)
