@@ -1142,6 +1142,28 @@ Current AOY UAT scope:
     `pre-deploy-20260920-012319.sql.gz`, and
     `.env.pre-tiktok-reviewed-20260920-012027`.
 
+62. AOY-only Reviewed TikTok Cancellation is deployed dormant at application
+    `201c136` with additive migration 106 (foundation `01e852b`, backend
+    workflow `e48b9b1`). The cancelled queue now preserves the Shopee-style
+    document/status layout and exposes reviewed cancellation only when an exact
+    TikTok API-reviewed Bill has a successful owned SML sale attempt. Preview
+    and create use authenticated POST endpoints, bind the review digest to the
+    snapshot hash/time, exact SML attempt, and cancellation route, and persist
+    immutable request bytes/doc number before any external write. Unknown or
+    stale in-progress results fail closed for reconciliation; stock
+    recalculation queues only after a durable created/already-existing SIC.
+    Creation requires both default-off gates
+    `TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED` and
+    `TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED`. Production verification found
+    both false, zero cancellation rows, no recent severe backend log, and the
+    existing cancelled order `586061286932514286` correctly marked as requiring
+    no document because it has no original Bill/SML sale. Browser QA showed the
+    two disabled readiness badges and a clean console. No SIC, webhook change,
+    stock recalculation, return/refund, or Partner Center mutation occurred.
+    Before a one-document AOY canary, App Review must pass and webhook type 11
+    `CANCELLATION_STATUS_CHANGE` must be enabled and reconciled separately.
+    The AOY pre-deploy backup is `pre-deploy-20260920-031019.sql.gz`.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
