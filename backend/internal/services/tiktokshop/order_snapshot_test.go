@@ -290,7 +290,11 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 		WithArgs("7494619203789490654", "5856%").
 		WillReturnRows(sqlmock.NewRows([]string{"total", "unpaid", "to_ship", "shipping", "completed", "cancelled"}).
 			AddRow(int64(4), int64(0), int64(1), int64(2), int64(1), int64(0)))
-	mock.ExpectQuery("SELECT s.shop_id, c.shop_name.*LEFT JOIN LATERAL").
+	// Operations must surface any active TikTok bill for the same Order ID,
+	// including a bill imported from TikTok Excel before the API rollout. This
+	// keeps the row from offering a misleading create action that the duplicate
+	// guard would reject.
+	mock.ExpectQuery("SELECT s.shop_id, c.shop_name.*LEFT JOIN LATERAL.*WHERE bill.source = 'tiktok'\\s+AND bill.sml_order_id = s.order_id\\s+AND bill.archived_at IS NULL").
 		WithArgs("7494619203789490654", "", "completed", "5856%", 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"shop_id", "shop_name", "order_id", "order_status", "currency",

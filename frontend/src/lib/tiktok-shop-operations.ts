@@ -122,7 +122,7 @@ export function tiktokRowActions(input: TikTokRowActionsInput): TikTokRowActions
 
 export function tiktokBillShadowReadinessLabel(ready: boolean, blockerCount: number): string {
   if (ready) return 'ข้อมูลพร้อมสำหรับตรวจและสร้างเอกสาร'
-  return `ต้องแก้ไข ${Math.max(0, blockerCount).toLocaleString('th-TH')} จุดก่อนสร้าง Bill`
+  return `ต้องแก้ไข ${Math.max(0, blockerCount).toLocaleString('th-TH')} จุดก่อนสร้างเอกสาร`
 }
 
 export function tiktokBillShadowMappingLabel(status: string): string {

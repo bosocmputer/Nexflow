@@ -59,7 +59,7 @@ test('normalizes operations status tabs and reads their server counts', () => {
 })
 
 test('presents bill shadow state in operator language without exposing route internals', () => {
-  assert.equal(tiktokBillShadowReadinessLabel(false, 1), 'ต้องแก้ไข 1 จุดก่อนสร้าง Bill')
+  assert.equal(tiktokBillShadowReadinessLabel(false, 1), 'ต้องแก้ไข 1 จุดก่อนสร้างเอกสาร')
   assert.equal(tiktokBillShadowReadinessLabel(true, 0), 'ข้อมูลพร้อมสำหรับตรวจและสร้างเอกสาร')
   assert.equal(tiktokBillShadowMappingLabel('ready'), 'พร้อมใช้')
   assert.equal(tiktokBillShadowMappingLabel('legacy_unscoped'), 'ต้องยืนยันร้าน')

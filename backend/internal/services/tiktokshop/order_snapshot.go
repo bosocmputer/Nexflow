@@ -579,9 +579,7 @@ func (s *TikTokOrderSnapshotStore) List(ctx context.Context, filter TikTokOrderS
 		            END AS document_path
 		       FROM bills bill
 		      WHERE bill.source = 'tiktok'
-		        AND bill.source_account_key = 'shop:' || s.shop_id
 		        AND bill.sml_order_id = s.order_id
-		        AND COALESCE(bill.raw_data->>'flow', '') = 'tiktok_shop_api_reviewed'
 		        AND bill.archived_at IS NULL
 		      ORDER BY bill.created_at DESC, bill.id DESC
 		      LIMIT 1
