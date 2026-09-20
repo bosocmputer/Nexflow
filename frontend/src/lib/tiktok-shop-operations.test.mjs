@@ -12,6 +12,7 @@ const vite = await createServer({
 const {
   buildTikTokReviewedBillRequest,
   buildTikTokShadowMappingPayload,
+  canCreateTikTokReviewedBill,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokStatusGroupCount,
@@ -20,6 +21,7 @@ const {
   tiktokBillShadowRouteLabel,
   tiktokBillShadowReadinessLabel,
   tiktokDocumentState,
+  tiktokRowActions,
   tiktokShadowMappingValidation,
   tiktokSyncState,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
@@ -58,7 +60,7 @@ test('normalizes operations status tabs and reads their server counts', () => {
 
 test('presents bill shadow state in operator language without exposing route internals', () => {
   assert.equal(tiktokBillShadowReadinessLabel(false, 1), 'ต้องแก้ไข 1 จุดก่อนสร้าง Bill')
-  assert.equal(tiktokBillShadowReadinessLabel(true, 0), 'ข้อมูลพร้อมสำหรับขั้นตรวจทาน')
+  assert.equal(tiktokBillShadowReadinessLabel(true, 0), 'ข้อมูลพร้อมสำหรับตรวจและสร้างเอกสาร')
   assert.equal(tiktokBillShadowMappingLabel('ready'), 'พร้อมใช้')
   assert.equal(tiktokBillShadowMappingLabel('legacy_unscoped'), 'ต้องยืนยันร้าน')
   assert.equal(tiktokBillShadowMappingLabel('future_state'), 'ยังไม่พร้อม')
@@ -108,7 +110,7 @@ test('builds an explicit reviewed Bill confirmation and rejects stale-shaped evi
 test('presents TikTok Nexflow and SML document states with the same operational vocabulary as Shopee', () => {
   assert.deepEqual(tiktokDocumentState({}), {
     label: 'รอสร้างเอกสาร',
-    detail: 'ตรวจตัวอย่าง Bill ก่อนสร้าง',
+    detail: 'ยังไม่มีเอกสารขายใน Nexflow',
     tone: 'muted',
   })
   assert.deepEqual(tiktokDocumentState({
@@ -132,4 +134,27 @@ test('presents TikTok Nexflow and SML document states with the same operational 
     tone: 'success',
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
   })
+})
+
+test('keeps TikTok row actions in the same create, document, and detail pattern as Shopee', () => {
+  assert.deepEqual(tiktokRowActions({}), {
+    primary: 'create_document',
+    primaryLabel: 'สร้างเอกสาร',
+    detailsLabel: 'รายละเอียด',
+  })
+  assert.deepEqual(tiktokRowActions({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  }), {
+    primary: 'open_document',
+    primaryLabel: 'เอกสาร',
+    detailsLabel: 'รายละเอียด',
+  })
+})
+
+test('allows admin and staff operators to create reviewed TikTok documents like Shopee', () => {
+  assert.equal(canCreateTikTokReviewedBill('admin'), true)
+  assert.equal(canCreateTikTokReviewedBill('staff'), true)
+  assert.equal(canCreateTikTokReviewedBill('user'), false)
+  assert.equal(canCreateTikTokReviewedBill(undefined), false)
 })

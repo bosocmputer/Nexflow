@@ -612,7 +612,7 @@ func main() {
 		api.GET("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetBillShadowPreview)
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview", middleware.RequireRole("admin"), tiktokAPIH.PreviewBillShadowMapping)
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm", middleware.RequireRole("admin"), tiktokAPIH.ConfirmBillShadowMapping)
-		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill", middleware.RequireRole("admin"), tiktokAPIH.CreateReviewedBill)
+		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill", middleware.RequireRole("admin", "staff"), tiktokAPIH.CreateReviewedBill)
 		api.GET("/tiktok-shop-api/order-sync-settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrderSyncSettings)
 		api.GET("/tiktok-shop-api/diagnostics", middleware.RequireRole("admin", "staff"), tiktokAPIH.Diagnostics)
 		api.GET("/tiktok-shop-api/auto-sml/settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.AutoSMLSettings)

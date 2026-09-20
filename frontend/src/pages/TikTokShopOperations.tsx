@@ -6,6 +6,8 @@ import {
   ChevronRight,
   Clock3,
   Eye,
+  FilePlus2,
+  Info,
   Loader2,
   RadioTower,
   RefreshCw,
@@ -27,14 +29,17 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   buildTikTokReviewedBillRequest,
+  canCreateTikTokReviewedBill,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokOrderStatusLabel,
   tiktokDocumentState,
+  tiktokRowActions,
   tiktokStatusGroupCount,
   tiktokSyncState,
   type TikTokStatusCounts,
@@ -175,10 +180,30 @@ const EMPTY_COUNTS: TikTokStatusCounts = {
   completed: 0,
   cancelled: 0,
 }
+const TIKTOK_ORDER_STATUS_HELP = [
+  { value: 'รอจัดส่ง', detail: 'TikTok Shop รับออเดอร์แล้ว แต่ยังไม่พร้อมสร้างเอกสารขายใน Nexflow' },
+  { value: 'รอรับพัสดุ', detail: 'เตรียมการจัดส่งแล้ว สามารถตรวจข้อมูลและสร้างเอกสารได้' },
+  { value: 'กำลังขนส่ง', detail: 'ขนส่งรับพัสดุแล้ว และยังสร้างเอกสารแบบตรวจทีละใบได้' },
+  { value: 'สำเร็จ', detail: 'ออเดอร์เสร็จสมบูรณ์แล้ว และยังตรวจหรือสร้างเอกสารย้อนหลังได้' },
+  { value: 'ยกเลิก', detail: 'ไม่สร้างเอกสารขายใหม่จากออเดอร์นี้' },
+] as const
+const TIKTOK_DOCUMENT_STATUS_HELP = [
+  { value: 'รอสร้างเอกสาร', detail: 'ยังไม่มีเอกสารขายใน Nexflow กดสร้างเอกสารเพื่อตรวจข้อมูลก่อนยืนยัน' },
+  { value: 'สร้างเอกสารแล้ว', detail: 'มีเอกสารใน Nexflow แล้ว แต่ยังไม่ได้ส่งเข้า SML' },
+  { value: 'ส่ง SML แล้ว', detail: 'เอกสารถูกบันทึกเข้า SML สำเร็จ' },
+  { value: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจสาเหตุและลองส่งใหม่' },
+] as const
+const TIKTOK_PAYMENT_DETAIL_HELP = [
+  { value: 'สินค้า', detail: 'ยอดสินค้าที่ใช้สร้างเอกสารขาย' },
+  { value: 'จัดส่ง', detail: 'ค่าจัดส่งที่รองรับและนำเข้าเอกสารตามเส้นทาง SML' },
+  { value: 'คุ้มครอง', detail: 'ค่าใช้จ่ายฝั่งผู้ซื้อหรือแพลตฟอร์ม ใช้ตรวจยอดแต่ไม่นำเข้าเอกสารขาย' },
+] as const
 
 export default function TikTokShopOperations() {
   const navigate = useNavigate()
-  const canManage = useAuthStore((state) => state.user?.role === 'admin')
+  const userRole = useAuthStore((state) => state.user?.role)
+  const canManageMapping = userRole === 'admin'
+  const canCreateDocument = canCreateTikTokReviewedBill(userRole)
   const [params, setParams] = useSearchParams()
   const [orders, setOrders] = useState<TikTokOrderPage | null>(null)
   const [sync, setSync] = useState<TikTokOrderSyncResponse | null>(null)
@@ -275,7 +300,7 @@ export default function TikTokShopOperations() {
     ).then((response) => {
       if (active) setBillPreview(response.data)
     }).catch((cause: unknown) => {
-      if (active) setBillPreviewError(apiErrorMessage(cause, 'ตรวจตัวอย่าง Bill TikTok Shop ไม่สำเร็จ'))
+      if (active) setBillPreviewError(apiErrorMessage(cause, 'ตรวจข้อมูลเอกสาร TikTok Shop ไม่สำเร็จ'))
     }).finally(() => {
       if (active) setBillPreviewLoading(false)
     })
@@ -383,14 +408,14 @@ export default function TikTokShopOperations() {
         buildTikTokReviewedBillRequest(billPreview.review_digest),
       )
       const result = response.data.data
-      toast.success(result.reused ? 'พบ Bill ที่สร้างจาก Order นี้แล้ว' : 'สร้าง Bill TikTok Shop ใน Nexflow แล้ว', {
+      toast.success(result.reused ? 'พบเอกสารที่สร้างจาก Order นี้แล้ว' : 'สร้างเอกสาร TikTok Shop ใน Nexflow แล้ว', {
         description: 'ยังไม่ได้ส่งเข้า SML, แจ้ง LINE หรือเขียนสต๊อก',
       })
       setPreviewOpen(false)
       setRefreshTick((value) => value + 1)
       navigate(result.review_path)
     } catch (cause: unknown) {
-      setBillCreateError(apiErrorMessage(cause, 'สร้าง Bill TikTok Shop ไม่สำเร็จ กรุณาเปิดตัวอย่างใหม่แล้วตรวจอีกครั้ง'))
+      setBillCreateError(apiErrorMessage(cause, 'สร้างเอกสาร TikTok Shop ไม่สำเร็จ กรุณาเปิดรายละเอียดใหม่แล้วตรวจอีกครั้ง'))
     } finally {
       setBillCreating(false)
     }
@@ -418,11 +443,11 @@ export default function TikTokShopOperations() {
               <h1 id="tiktok-operations-title" className="text-lg font-semibold tracking-normal">คำสั่งซื้อ TikTok Shop</h1>
               <Badge className="h-6 border-foreground bg-foreground px-2 text-[11px] text-background hover:bg-foreground">Snapshot</Badge>
               <span className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground">
-                ตรวจทานก่อนสร้าง · ยังไม่ส่ง SML
+                ตรวจทานก่อนสร้าง · ส่ง SML ทีละใบ
               </span>
             </div>
             <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-              ติดตามข้อมูลคำสั่งซื้อล่าสุดที่ Nexflow ซิงก์จาก TikTok Shop สำหรับตรวจสอบสถานะและยอดชำระ
+              ติดตาม order จาก TikTok Shop ตรวจข้อมูลก่อนสร้างเอกสารใน Nexflow แล้วเปิดเอกสารเพื่อส่ง SML ทีละใบ
             </p>
             <TikTokOperationsHealthLine state={syncState} setting={selectedSetting} diagnostics={diagnostics} />
           </div>
@@ -531,10 +556,31 @@ export default function TikTokShopOperations() {
               <tr>
                 <th className="px-3 py-2 text-left">คำสั่งซื้อ / ร้าน</th>
                 <th className="px-3 py-2 text-right">ยอดเงิน</th>
-                <th className="px-3 py-2 text-left">สถานะ TikTok Shop</th>
-                <th className="px-3 py-2 text-left">เอกสาร Nexflow / SML</th>
-                <th className="px-3 py-2 text-left">รายละเอียดยอด</th>
-                <th className="px-3 py-2 text-left">ซิงก์ล่าสุด</th>
+                <th className="px-3 py-2 text-left">
+                  <StatusColumnHelp
+                    label="สถานะ TikTok Shop"
+                    title="ความหมายสถานะคำสั่งซื้อ TikTok Shop"
+                    description="สถานะการชำระเงินและจัดส่งล่าสุดที่ Nexflow อ่านจาก TikTok Shop"
+                    items={TIKTOK_ORDER_STATUS_HELP}
+                  />
+                </th>
+                <th className="px-3 py-2 text-left">
+                  <StatusColumnHelp
+                    label="เอกสาร Nexflow / SML"
+                    title="ความหมายสถานะเอกสาร"
+                    description="เป็นสถานะการสร้างเอกสารใน Nexflow และการบันทึกเข้า SML ไม่ใช่สถานะจัดส่งของ TikTok Shop"
+                    items={TIKTOK_DOCUMENT_STATUS_HELP}
+                  />
+                </th>
+                <th className="px-3 py-2 text-left">
+                  <StatusColumnHelp
+                    label="รายละเอียดยอด"
+                    title="ยอดที่ใช้สร้างเอกสาร"
+                    description="แยกยอดสินค้า ค่าจัดส่ง และค่าใช้จ่ายฝั่งผู้ซื้อ เพื่อไม่บันทึกยอดที่ไม่ใช่รายได้เข้า SML"
+                    items={TIKTOK_PAYMENT_DETAIL_HELP}
+                  />
+                </th>
+                <th className="px-3 py-2 text-right">จัดการ</th>
               </tr>
             </thead>
             <tbody>
@@ -554,7 +600,7 @@ export default function TikTokShopOperations() {
                   previewLoading={billPreviewLoading && previewOrder?.shop_id === row.shop_id && previewOrder?.order_id === row.order_id}
                   onPreview={() => openBillPreview(row)}
                   retryingAutoSML={autoSMLRetryingOrder === row.order_id}
-                  canRetryAutoSML={Boolean(canManage && autoSML?.global_enabled)}
+                  canRetryAutoSML={Boolean(canManageMapping && autoSML?.global_enabled)}
                   onRetryAutoSML={() => void retryAutoSML(row)}
                 />
               ))}
@@ -591,7 +637,8 @@ export default function TikTokShopOperations() {
         loading={billPreviewLoading}
         error={billPreviewError}
         preview={billPreview}
-        canManage={canManage}
+        canCreateDocument={canCreateDocument}
+        canManageMapping={canManageMapping}
         creatingBill={billCreating}
         createError={billCreateError}
         onMapItem={openProductMapping}
@@ -792,6 +839,7 @@ function DesktopRow({
     smlDocNo: row.sml_doc_no,
     documentPath: row.document_path,
   })
+  const actions = tiktokRowActions({ billID: row.bill_id, documentPath: row.document_path })
   return (
     <tr className="border-t border-border hover:bg-muted/30">
       <td className="px-3 py-2 align-top">
@@ -801,6 +849,7 @@ function DesktopRow({
           <span aria-hidden="true">·</span>
           <span>{formatDateTime(row.last_order_update_at)}</span>
         </div>
+        <div className="mt-0.5 text-[11px] text-muted-foreground">ซิงก์ล่าสุด {formatDateTime(row.last_synced_at)}</div>
       </td>
       <td className="px-3 py-2 text-right align-top tabular-nums">
         <div className="font-medium">{formatTikTokMoney(row.payment_total_amount, row.currency)}</div>
@@ -810,34 +859,46 @@ function DesktopRow({
       </td>
       <td className="px-3 py-2 align-top"><OrderStatusBadge status={row.order_status} /></td>
       <td className="px-3 py-2 align-top">
-        <div className="flex max-w-[300px] flex-col items-start gap-1.5">
+        <div className="flex max-w-[300px] flex-col items-start gap-1">
           <Badge variant="outline" className={documentBadgeClass(document.tone)}>{document.label}</Badge>
           <div className="text-[11px] text-muted-foreground">{document.detail}</div>
           {row.auto_sml && <TikTokAutoSMLBadge state={row.auto_sml} retrying={retryingAutoSML} canRetry={canRetryAutoSML} onRetry={onRetryAutoSML} />}
-          <div className="flex flex-wrap gap-1.5">
-            {document.path && (
-              <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
-                <Link to={document.path}>
-                  <Eye className="h-3.5 w-3.5" />
-                  เอกสาร
-                </Link>
-              </Button>
-            )}
-            <TikTokBillShadowButton
-              loading={previewLoading}
-              label={document.path ? 'ตรวจข้อมูลต้นทาง' : undefined}
-              onClick={onPreview}
-            />
-          </div>
         </div>
       </td>
       <td className="px-3 py-2 align-top text-xs text-muted-foreground">
-        <div>สินค้า {formatTikTokMoney(row.product_subtotal_amount, row.currency)}</div>
+        <div className="inline-flex items-center gap-1.5 font-medium text-accentStrong">
+          <span className="h-1.5 w-1.5 rounded-full bg-info" aria-hidden="true" />
+          ข้อมูลพร้อม
+        </div>
+        <div className="mt-1">สินค้า {formatTikTokMoney(row.product_subtotal_amount, row.currency)}</div>
         <div className="mt-0.5">
           จัดส่ง {formatTikTokMoney(row.shipping_fee_amount, row.currency)} · คุ้มครอง {formatTikTokMoney(row.item_insurance_fee_amount, row.currency)}
         </div>
       </td>
-      <td className="px-3 py-2 align-top text-xs text-muted-foreground">{formatDateTime(row.last_synced_at)}</td>
+      <td className="px-3 py-2 align-top">
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {actions.primary === 'open_document' && document.path ? (
+            <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
+              <Link to={document.path}>
+                <Eye className="h-3.5 w-3.5" />
+                {actions.primaryLabel}
+              </Link>
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={previewLoading} onClick={onPreview}>
+              {previewLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FilePlus2 className="h-3.5 w-3.5" />}
+              {actions.primaryLabel}
+            </Button>
+          )}
+          {document.path && (
+            <TikTokBillShadowButton
+              loading={previewLoading}
+              label={actions.detailsLabel}
+              onClick={onPreview}
+            />
+          )}
+        </div>
+      </td>
     </tr>
   )
 }
@@ -906,6 +967,47 @@ function OrderStatusBadge({ status }: { status: string }) {
     >
       {tiktokOrderStatusLabel(status)}
     </Badge>
+  )
+}
+
+function StatusColumnHelp({
+  label,
+  title,
+  description,
+  items,
+}: {
+  label: string
+  title: string
+  description: string
+  items: ReadonlyArray<{ value: string; detail: string }>
+}) {
+  return (
+    <div className="flex items-center gap-1 whitespace-nowrap">
+      <span>{label}</span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`ดูคำอธิบาย ${label}`}
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="max-h-[min(360px,calc(100vh-2rem))] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-3 text-left">
+          <div className="text-sm font-semibold text-foreground">{title}</div>
+          <p className="mt-1 text-xs font-normal leading-5 text-muted-foreground">{description}</p>
+          <div className="mt-3 space-y-2 border-t border-border pt-3">
+            {items.map((item) => (
+              <div key={item.value} className="grid grid-cols-[minmax(92px,auto)_minmax(0,1fr)] gap-2 text-xs font-normal leading-5">
+                <div className="font-medium text-foreground">{item.value}</div>
+                <div className="text-muted-foreground">{item.detail}</div>
+              </div>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
   )
 }
 

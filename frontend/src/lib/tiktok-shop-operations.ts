@@ -24,6 +24,17 @@ export interface TikTokDocumentState {
   path?: string
 }
 
+export interface TikTokRowActionsInput {
+  billID?: string
+  documentPath?: string
+}
+
+export interface TikTokRowActions {
+  primary: 'create_document' | 'open_document'
+  primaryLabel: 'สร้างเอกสาร' | 'เอกสาร'
+  detailsLabel: 'รายละเอียด'
+}
+
 const TIKTOK_STATUS_GROUPS: TikTokStatusGroup[] = ['all', 'unpaid', 'to_ship', 'shipping', 'completed', 'cancelled']
 
 const STATUS_LABELS: Record<string, string> = {
@@ -36,6 +47,10 @@ const STATUS_LABELS: Record<string, string> = {
   DELIVERED: 'จัดส่งแล้ว',
   COMPLETED: 'สำเร็จ',
   CANCELLED: 'ยกเลิก',
+}
+
+export function canCreateTikTokReviewedBill(role?: string): boolean {
+  return role === 'admin' || role === 'staff'
 }
 
 export function tiktokOrderStatusLabel(value: string): string {
@@ -80,7 +95,7 @@ export function tiktokDocumentState(input: TikTokDocumentStateInput): TikTokDocu
   const path = billID && documentPath ? documentPath : undefined
 
   if (!billID) {
-    return { label: 'รอสร้างเอกสาร', detail: 'ตรวจตัวอย่าง Bill ก่อนสร้าง', tone: 'muted' }
+    return { label: 'รอสร้างเอกสาร', detail: 'ยังไม่มีเอกสารขายใน Nexflow', tone: 'muted' }
   }
   if (smlDocNo || billStatus === 'sent') {
     return { label: 'ส่ง SML แล้ว', detail: smlDocNo || 'บันทึกเข้า SML แล้ว', tone: 'success', ...(path ? { path } : {}) }
@@ -96,8 +111,17 @@ export function tiktokDocumentState(input: TikTokDocumentStateInput): TikTokDocu
   }
 }
 
+export function tiktokRowActions(input: TikTokRowActionsInput): TikTokRowActions {
+  const hasDocument = Boolean(input.billID?.trim() && input.documentPath?.trim())
+  return {
+    primary: hasDocument ? 'open_document' : 'create_document',
+    primaryLabel: hasDocument ? 'เอกสาร' : 'สร้างเอกสาร',
+    detailsLabel: 'รายละเอียด',
+  }
+}
+
 export function tiktokBillShadowReadinessLabel(ready: boolean, blockerCount: number): string {
-  if (ready) return 'ข้อมูลพร้อมสำหรับขั้นตรวจทาน'
+  if (ready) return 'ข้อมูลพร้อมสำหรับตรวจและสร้างเอกสาร'
   return `ต้องแก้ไข ${Math.max(0, blockerCount).toLocaleString('th-TH')} จุดก่อนสร้าง Bill`
 }
 

@@ -89,7 +89,8 @@ interface Props {
   loading: boolean
   error: string
   preview: TikTokBillShadowPreview | null
-  canManage: boolean
+  canCreateDocument: boolean
+  canManageMapping: boolean
   creatingBill: boolean
   createError: string
   onMapItem: (item: TikTokBillShadowItem) => void
@@ -104,7 +105,8 @@ export function TikTokBillShadowDialog({
   loading,
   error,
   preview,
-  canManage,
+  canCreateDocument,
+  canManageMapping,
   creatingBill,
   createError,
   onMapItem,
@@ -124,9 +126,9 @@ export function TikTokBillShadowDialog({
       <DialogContent className="grid max-h-[92dvh] max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b border-border px-4 py-4 pr-12 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle>ตรวจตัวอย่าง Bill TikTok Shop</DialogTitle>
+            <DialogTitle>ตรวจและสร้างเอกสาร TikTok Shop</DialogTitle>
             <Badge variant="outline" className="border-info/30 bg-info/10 text-info">
-              {preview?.can_create_bill ? 'Reviewed Bill' : 'Shadow'}
+              {preview?.can_create_bill ? 'พร้อมสร้าง' : 'ตรวจสอบเท่านั้น'}
             </Badge>
           </div>
           <DialogDescription>
@@ -162,8 +164,8 @@ export function TikTokBillShadowDialog({
                 <AlertTitle>{tiktokBillShadowReadinessLabel(preview.ready_for_reviewed_bill, preview.blockers.length)}</AlertTitle>
                 <AlertDescription>
                   {preview.can_create_bill
-                    ? 'ตรวจข้อมูลให้ครบก่อนยืนยัน ระบบจะสร้าง Bill ใน Nexflow เท่านั้น โดยยังไม่ส่ง SML, LINE หรือแก้สต๊อก'
-                    : 'หน้านี้ใช้ตรวจข้อมูลเท่านั้น ยังไม่สร้าง Bill ไม่ส่ง SML และไม่เปลี่ยนข้อมูลสินค้า'}
+                    ? 'ตรวจข้อมูลให้ครบก่อนยืนยัน ระบบจะสร้างเอกสารใน Nexflow เท่านั้น โดยยังไม่ส่ง SML, LINE หรือแก้สต๊อก'
+                    : 'หน้านี้ใช้ตรวจข้อมูลเท่านั้น ยังไม่สร้างเอกสาร ไม่ส่ง SML และไม่เปลี่ยนข้อมูลสินค้า'}
                 </AlertDescription>
               </Alert>
 
@@ -175,12 +177,12 @@ export function TikTokBillShadowDialog({
                 <dl className="grid overflow-hidden rounded-lg border border-border bg-card sm:grid-cols-2 lg:grid-cols-4">
                   <AmountCell label="ยอดสินค้า" value={formatTikTokMoney(preview.amounts.product_subtotal, preview.currency)} />
                   <AmountCell label="ค่าจัดส่งเข้าเอกสาร" value={formatTikTokMoney(preview.amounts.shipping, preview.currency)} />
-                  <AmountCell label="ยอด Bill ที่เสนอ" value={formatTikTokMoney(preview.amounts.proposed_document_total, preview.currency)} emphasized />
+                  <AmountCell label="ยอดเอกสารที่เสนอ" value={formatTikTokMoney(preview.amounts.proposed_document_total, preview.currency)} emphasized />
                   <AmountCell label="ผู้ซื้อชำระ" value={formatTikTokMoney(preview.amounts.buyer_payment, preview.currency)} />
                 </dl>
                 {Number(preview.amounts.excluded_buyer_platform_charges) > 0 && (
                   <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    ไม่รวมใน Bill: ค่าคุ้มครองสินค้า {formatTikTokMoney(preview.amounts.item_insurance, preview.currency)} ซึ่งเป็นยอดผู้ซื้อ/แพลตฟอร์ม
+                    ไม่รวมในเอกสาร: ค่าคุ้มครองสินค้า {formatTikTokMoney(preview.amounts.item_insurance, preview.currency)} ซึ่งเป็นยอดผู้ซื้อ/แพลตฟอร์ม
                   </p>
                 )}
               </section>
@@ -219,9 +221,9 @@ export function TikTokBillShadowDialog({
                       {item.mapping.status !== 'ready' && (
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
                           <span className="text-xs text-muted-foreground">
-                            {canManage ? 'เลือกสินค้าและหน่วย SML ที่ใช้กับ SKU นี้' : 'ให้ผู้ดูแลระบบยืนยัน Product Master ของ SKU นี้'}
+                            {canManageMapping ? 'เลือกสินค้าและหน่วย SML ที่ใช้กับ SKU นี้' : 'ให้ผู้ดูแลระบบยืนยัน Product Master ของ SKU นี้'}
                           </span>
-                          {canManage && (
+                          {canManageMapping && (
                             <Button type="button" size="sm" onClick={() => onMapItem(item)}>
                               {item.mapping.status === 'missing' ? 'จับคู่สินค้า SML' : 'ตรวจและแก้การจับคู่'}
                             </Button>
@@ -250,7 +252,7 @@ export function TikTokBillShadowDialog({
               {createError && (
                 <Alert variant="destructive">
                   <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>สร้าง Bill ไม่สำเร็จ</AlertTitle>
+                  <AlertTitle>สร้างเอกสารไม่สำเร็จ</AlertTitle>
                   <AlertDescription>{createError}</AlertDescription>
                 </Alert>
               )}
@@ -267,17 +269,17 @@ export function TikTokBillShadowDialog({
         </div>
 
         <DialogFooter className="border-t border-border bg-muted/30 px-4 py-3 sm:px-6">
-          {confirming && preview?.can_create_bill && canManage ? (
+          {confirming && preview?.can_create_bill && canCreateDocument ? (
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs leading-5 text-muted-foreground">
-                <strong className="block text-sm text-foreground">ยืนยันสร้าง Bill สำหรับ Order {preview.order_id}</strong>
-                สร้าง 1 Bill ใน Nexflow · ไม่ส่ง SML · ไม่แจ้ง LINE · ไม่เขียนสต๊อก
+                <strong className="block text-sm text-foreground">ยืนยันสร้างเอกสารสำหรับ Order {preview.order_id}</strong>
+                สร้าง 1 เอกสารใน Nexflow · ไม่ส่ง SML · ไม่แจ้ง LINE · ไม่เขียนสต๊อก
               </div>
               <div className="flex shrink-0 justify-end gap-2">
                 <Button type="button" variant="outline" disabled={creatingBill} onClick={() => setConfirming(false)}>ย้อนกลับ</Button>
                 <Button type="button" disabled={creatingBill} className="gap-2" onClick={onCreateBill}>
                   {creatingBill ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}
-                  ยืนยันสร้าง Bill
+                  ยืนยันสร้างเอกสาร
                 </Button>
               </div>
             </div>
@@ -286,10 +288,10 @@ export function TikTokBillShadowDialog({
               <DialogClose asChild>
                 <Button type="button" variant="outline" disabled={creatingBill}>ปิดตัวอย่าง</Button>
               </DialogClose>
-              {preview?.can_create_bill && canManage && (
+              {preview?.can_create_bill && canCreateDocument && (
                 <Button type="button" className="gap-2" disabled={creatingBill} onClick={() => setConfirming(true)}>
                   <FileCheck2 className="h-4 w-4" />
-                  สร้าง Bill ที่ตรวจแล้ว
+                  สร้างเอกสาร
                 </Button>
               )}
             </>
