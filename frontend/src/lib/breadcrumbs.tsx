@@ -160,6 +160,13 @@ export function useCrumbs(): Crumb[] {
         ) {
           return { label: 'เอกสารยกเลิก/รับคืน Shopee' }
         }
+        if (
+          r.pattern === '/tiktok-shop-operations'
+          && c.label === 'คำสั่งซื้อ TikTok Shop'
+          && new URLSearchParams(search).get('status_group') === 'cancelled'
+        ) {
+          return { label: 'เอกสารยกเลิก TikTok Shop' }
+        }
         if (!c.dynamic) return { label: c.label, href: c.href }
         const key = c.label.replace(':', '')
         const dynLabel =

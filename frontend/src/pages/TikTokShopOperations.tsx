@@ -37,6 +37,7 @@ import {
   canCreateTikTokReviewedBill,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
+  tiktokCancellationState,
   tiktokOrderStatusLabel,
   tiktokDocumentState,
   tiktokRowActions,
@@ -193,6 +194,11 @@ const TIKTOK_DOCUMENT_STATUS_HELP = [
   { value: 'ส่ง SML แล้ว', detail: 'เอกสารถูกบันทึกเข้า SML สำเร็จ' },
   { value: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจสาเหตุและลองส่งใหม่' },
 ] as const
+const TIKTOK_CANCELLATION_STATUS_HELP = [
+  { value: 'ไม่ต้องสร้าง', detail: 'ออเดอร์ไม่มีใบขายใน Nexflow หรือใบขายยังไม่เคยส่งเข้า SML' },
+  { value: 'รอตรวจเอกสารยกเลิก', detail: 'พบใบขายเดิมใน SML ต้องตรวจหลักฐานก่อนเปิดการสร้างเอกสารยกเลิกแบบ canary' },
+  { value: 'ต้องตรวจเอกสารเดิม', detail: 'สถานะเอกสารไม่ครบหรือขัดกัน ระบบจึงหยุดไว้ก่อนเพื่อป้องกันเอกสารซ้ำ' },
+] as const
 const TIKTOK_PAYMENT_DETAIL_HELP = [
   { value: 'สินค้า', detail: 'ยอดสินค้าที่ใช้สร้างเอกสารขาย' },
   { value: 'จัดส่ง', detail: 'ค่าจัดส่งที่รองรับและนำเข้าเอกสารตามเส้นทาง SML' },
@@ -229,6 +235,7 @@ export default function TikTokShopOperations() {
   const page = readPage(params)
   const perPage = readPerPage(params)
   const statusGroup = normalizeTikTokStatusGroup(params.get('status_group'))
+  const cancellationQueue = statusGroup === 'cancelled'
   const shopID = params.get('shop_id') ?? ALL
   const status = params.get('status') ?? ALL
   const orderID = params.get('order_id') ?? ''
@@ -440,14 +447,20 @@ export default function TikTokShopOperations() {
         <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <h1 id="tiktok-operations-title" className="text-lg font-semibold tracking-normal">คำสั่งซื้อ TikTok Shop</h1>
-              <Badge className="h-6 border-foreground bg-foreground px-2 text-[11px] text-background hover:bg-foreground">Snapshot</Badge>
+              <h1 id="tiktok-operations-title" className="text-lg font-semibold tracking-normal">
+                {cancellationQueue ? 'เอกสารยกเลิก TikTok Shop' : 'คำสั่งซื้อ TikTok Shop'}
+              </h1>
+              <Badge className="h-6 border-foreground bg-foreground px-2 text-[11px] text-background hover:bg-foreground">
+                {cancellationQueue ? 'Cancellation Review' : 'Snapshot'}
+              </Badge>
               <span className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground">
-                ตรวจทานก่อนสร้าง · ส่ง SML ทีละใบ
+                {cancellationQueue ? 'ตรวจหลักฐานใบขายเดิม · ไม่สร้างเอกสารซ้ำ' : 'ตรวจทานก่อนสร้าง · ส่ง SML ทีละใบ'}
               </span>
             </div>
             <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-              ติดตาม order จาก TikTok Shop ตรวจข้อมูลก่อนสร้างเอกสารใน Nexflow แล้วเปิดเอกสารเพื่อส่ง SML ทีละใบ
+              {cancellationQueue
+                ? 'แสดงออเดอร์ที่ TikTok ยืนยันว่ายกเลิกแล้ว พร้อมตรวจว่าใบขายเดิมเคยส่งเข้า SML หรือไม่'
+                : 'ติดตาม order จาก TikTok Shop ตรวจข้อมูลก่อนสร้างเอกสารใน Nexflow แล้วเปิดเอกสารเพื่อส่ง SML ทีละใบ'}
             </p>
             <TikTokOperationsHealthLine state={syncState} setting={selectedSetting} diagnostics={diagnostics} />
           </div>
@@ -502,6 +515,16 @@ export default function TikTokShopOperations() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>โหลดข้อมูลไม่สำเร็จ</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {cancellationQueue && (
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertTitle>คิวยกเลิก TikTok แยกจากงานคืนสินค้า/คืนเงิน</AlertTitle>
+          <AlertDescription>
+            รายการที่ไม่มีใบขาย SML ไม่ต้องออกเอกสารยกเลิก ส่วนรายการที่เคยส่ง SML จะถูกพักไว้เพื่อตรวจทานก่อนเปิดการสร้างเอกสารยกเลิกแบบ canary
+          </AlertDescription>
         </Alert>
       )}
 
@@ -566,10 +589,12 @@ export default function TikTokShopOperations() {
                 </th>
                 <th className="px-3 py-2 text-left">
                   <StatusColumnHelp
-                    label="เอกสาร Nexflow / SML"
-                    title="ความหมายสถานะเอกสาร"
-                    description="เป็นสถานะการสร้างเอกสารใน Nexflow และการบันทึกเข้า SML ไม่ใช่สถานะจัดส่งของ TikTok Shop"
-                    items={TIKTOK_DOCUMENT_STATUS_HELP}
+                    label={cancellationQueue ? 'ใบขายเดิม / หลังยกเลิก' : 'เอกสาร Nexflow / SML'}
+                    title={cancellationQueue ? 'หลักฐานเอกสารก่อนยกเลิก' : 'ความหมายสถานะเอกสาร'}
+                    description={cancellationQueue
+                      ? 'ระบบจะสร้างเอกสารยกเลิกได้เฉพาะเมื่อพบใบขายเดิมที่ส่งเข้า SML สำเร็จแล้ว'
+                      : 'เป็นสถานะการสร้างเอกสารใน Nexflow และการบันทึกเข้า SML ไม่ใช่สถานะจัดส่งของ TikTok Shop'}
+                    items={cancellationQueue ? TIKTOK_CANCELLATION_STATUS_HELP : TIKTOK_DOCUMENT_STATUS_HELP}
                   />
                 </th>
                 <th className="px-3 py-2 text-left">
@@ -592,7 +617,7 @@ export default function TikTokShopOperations() {
                   </td>
                 </tr>
               )}
-              {!loading && (orders?.data ?? []).length === 0 && <EmptyRow />}
+              {!loading && (orders?.data ?? []).length === 0 && <EmptyRow cancellationQueue={cancellationQueue} />}
               {!loading && orders?.data.map((row) => (
                 <DesktopRow
                   key={`${row.shop_id}:${row.order_id}`}
@@ -602,6 +627,7 @@ export default function TikTokShopOperations() {
                   retryingAutoSML={autoSMLRetryingOrder === row.order_id}
                   canRetryAutoSML={Boolean(canManageMapping && autoSML?.global_enabled)}
                   onRetryAutoSML={() => void retryAutoSML(row)}
+                  cancellationQueue={cancellationQueue}
                 />
               ))}
             </tbody>
@@ -825,6 +851,7 @@ function DesktopRow({
   canRetryAutoSML,
   onPreview,
   onRetryAutoSML,
+  cancellationQueue,
 }: {
   row: TikTokOrderRow
   previewLoading: boolean
@@ -832,13 +859,15 @@ function DesktopRow({
   canRetryAutoSML: boolean
   onPreview: () => void
   onRetryAutoSML: () => void
+  cancellationQueue: boolean
 }) {
-  const document = tiktokDocumentState({
+  const documentInput = {
     billID: row.bill_id,
     billStatus: row.bill_status,
     smlDocNo: row.sml_doc_no,
     documentPath: row.document_path,
-  })
+  }
+  const document = cancellationQueue ? tiktokCancellationState(documentInput) : tiktokDocumentState(documentInput)
   const actions = tiktokRowActions({ billID: row.bill_id, documentPath: row.document_path })
   return (
     <tr className="border-t border-border hover:bg-muted/30">
@@ -862,7 +891,7 @@ function DesktopRow({
         <div className="flex max-w-[300px] flex-col items-start gap-1">
           <Badge variant="outline" className={documentBadgeClass(document.tone)}>{document.label}</Badge>
           <div className="text-[11px] text-muted-foreground">{document.detail}</div>
-          {row.auto_sml && <TikTokAutoSMLBadge state={row.auto_sml} retrying={retryingAutoSML} canRetry={canRetryAutoSML} onRetry={onRetryAutoSML} />}
+          {!cancellationQueue && row.auto_sml && <TikTokAutoSMLBadge state={row.auto_sml} retrying={retryingAutoSML} canRetry={canRetryAutoSML} onRetry={onRetryAutoSML} />}
         </div>
       </td>
       <td className="px-3 py-2 align-top text-xs text-muted-foreground">
@@ -877,7 +906,18 @@ function DesktopRow({
       </td>
       <td className="px-3 py-2 align-top">
         <div className="flex flex-wrap justify-end gap-1.5">
-          {actions.primary === 'open_document' && document.path ? (
+          {cancellationQueue && document.path ? (
+            <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
+              <Link to={document.path}>
+                <Eye className="h-3.5 w-3.5" />
+                ใบขายเดิม
+              </Link>
+            </Button>
+          ) : cancellationQueue ? (
+            <Badge variant="outline" className="h-8 border-border bg-muted/40 px-2 text-muted-foreground">
+              ไม่ต้องดำเนินการ
+            </Badge>
+          ) : actions.primary === 'open_document' && document.path ? (
             <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
               <Link to={document.path}>
                 <Eye className="h-3.5 w-3.5" />
@@ -890,7 +930,7 @@ function DesktopRow({
               {actions.primaryLabel}
             </Button>
           )}
-          {document.path && (
+          {!cancellationQueue && document.path && (
             <TikTokBillShadowButton
               loading={previewLoading}
               label={actions.detailsLabel}
@@ -1011,14 +1051,18 @@ function StatusColumnHelp({
   )
 }
 
-function EmptyRow() {
+function EmptyRow({ cancellationQueue }: { cancellationQueue: boolean }) {
   return (
     <tr>
       <td colSpan={6} className="px-3 py-8">
         <div className="mx-auto max-w-lg text-center">
           <RadioTower className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-          <div className="font-medium">ยังไม่มี order ในคิวนี้</div>
-          <div className="mt-1 text-sm text-muted-foreground">รอรอบซิงก์อัตโนมัติ หรือปรับตัวกรองเพื่อดู Snapshot ที่มีอยู่</div>
+          <div className="font-medium">{cancellationQueue ? 'ยังไม่มีออเดอร์ TikTok ที่ยกเลิก' : 'ยังไม่มี order ในคิวนี้'}</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {cancellationQueue
+              ? 'เมื่อ TikTok ยืนยันการยกเลิก ระบบจะแสดงรายการนี้พร้อมหลักฐานใบขายเดิม'
+              : 'รอรอบซิงก์อัตโนมัติ หรือปรับตัวกรองเพื่อดู Snapshot ที่มีอยู่'}
+          </div>
         </div>
       </td>
     </tr>

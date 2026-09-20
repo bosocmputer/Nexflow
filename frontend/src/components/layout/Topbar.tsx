@@ -27,6 +27,11 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
   const shopeeOperationsChip = isShopeeCancellationQueue
     ? 'เอกสารยกเลิก/รับคืน Shopee'
     : 'คำสั่งซื้อ Shopee'
+  const isTikTokCancellationQueue = location.pathname.startsWith('/tiktok-shop-operations')
+    && new URLSearchParams(location.search).get('status_group') === 'cancelled'
+  const tiktokOperationsChip = isTikTokCancellationQueue
+    ? 'เอกสารยกเลิก TikTok Shop'
+    : 'คำสั่งซื้อ TikTok Shop'
 
   const routeChip =
     location.pathname.startsWith('/sale-invoices')
@@ -42,7 +47,7 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
         : location.pathname.startsWith('/shopee-operations')
           ? shopeeOperationsChip
           : location.pathname.startsWith('/tiktok-shop-operations')
-            ? 'คำสั่งซื้อ TikTok Shop'
+            ? tiktokOperationsChip
           : location.pathname.startsWith('/dashboard')
             ? 'Operations Console'
             : location.pathname.startsWith('/setup')

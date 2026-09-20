@@ -45,6 +45,27 @@ test('places TikTok Shop read-only orders in orders and documents with its own p
   assert.match(orders.hint, /Snapshot/)
 })
 
+test('adds a TikTok cancellation shortcut that reuses the TikTok operations permission', () => {
+  const items = NAV_GROUPS.flatMap((group) => group.items)
+  const shortcut = items.find((item) => item.label === 'เอกสารยกเลิก TikTok Shop')
+
+  assert.ok(shortcut)
+  assert.equal(shortcut.menuKey, 'tiktok_shop_operations')
+  assert.equal(shortcut.to, '/tiktok-shop-operations?status_group=cancelled')
+  assert.doesNotMatch(shortcut.label, /รับคืน/)
+})
+
+test('activates only one TikTok sidebar entry for the cancelled filter', () => {
+  const items = NAV_GROUPS.flatMap((group) => group.items)
+  const orders = items.find((item) => item.label === 'คำสั่งซื้อ TikTok Shop')
+  const cancellations = items.find((item) => item.label === 'เอกสารยกเลิก TikTok Shop')
+
+  assert.equal(isNavItemActive(orders, '/tiktok-shop-operations', ''), true)
+  assert.equal(isNavItemActive(cancellations, '/tiktok-shop-operations', ''), false)
+  assert.equal(isNavItemActive(orders, '/tiktok-shop-operations', '?status_group=cancelled'), false)
+  assert.equal(isNavItemActive(cancellations, '/tiktok-shop-operations', '?status_group=cancelled'), true)
+})
+
 test('keeps TikTok Shop stock beside Shopee stock with its own permission and feature gate', () => {
   const group = NAV_GROUPS.find((item) => item.label === 'สินค้าและสต๊อก')
   const stock = group?.items.find((item) => item.label === 'ซิงก์สต๊อก TikTok Shop')

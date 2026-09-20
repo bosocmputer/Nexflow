@@ -105,6 +105,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
       { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'ดู Snapshot ออเดอร์จาก TikTok Shop แบบ read-only', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations?status_group=cancelled', label: 'เอกสารยกเลิก TikTok Shop', icon: RotateCcw, hint: 'ออเดอร์ TikTok ที่ยกเลิกและสถานะใบขายเดิมใน SML', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'bulk_send_jobs', to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },
@@ -194,7 +195,7 @@ export function isNavItemActive(item: NavItem | undefined, pathname: string, sea
   const itemStatusGroup = new URLSearchParams(itemSearch).get('status_group')
   const currentStatusGroup = new URLSearchParams(search).get('status_group')
   if (itemStatusGroup) return currentStatusGroup === itemStatusGroup
-  if (itemPath === '/shopee-operations') return currentStatusGroup !== 'cancelled'
+  if (itemPath === '/shopee-operations' || itemPath === '/tiktok-shop-operations') return currentStatusGroup !== 'cancelled'
   return true
 }
 

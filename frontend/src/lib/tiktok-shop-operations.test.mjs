@@ -20,6 +20,7 @@ const {
   tiktokBillShadowMappingLabel,
   tiktokBillShadowRouteLabel,
   tiktokBillShadowReadinessLabel,
+  tiktokCancellationState,
   tiktokDocumentState,
   tiktokRowActions,
   tiktokShadowMappingValidation,
@@ -149,6 +150,59 @@ test('keeps TikTok row actions in the same create, document, and detail pattern 
     primary: 'open_document',
     primaryLabel: 'เอกสาร',
     detailsLabel: 'รายละเอียด',
+  })
+})
+
+test('never offers a new sale document from the TikTok cancelled queue', () => {
+  assert.deepEqual(tiktokCancellationState({}), {
+    status: 'not_required',
+    label: 'ไม่ต้องสร้างเอกสารยกเลิก',
+    detail: 'ออเดอร์นี้ไม่มีใบขายใน Nexflow หรือ SML',
+    tone: 'muted',
+    canReviewCancellation: false,
+  })
+  assert.deepEqual(tiktokCancellationState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    billStatus: 'pending',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  }), {
+    status: 'not_required',
+    label: 'ไม่ต้องสร้างเอกสารยกเลิก SML',
+    detail: 'ใบขายเดิมยังไม่เคยส่งเข้า SML',
+    tone: 'muted',
+    path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+    canReviewCancellation: false,
+  })
+})
+
+test('fails closed when a cancelled TikTok order has incomplete SML evidence', () => {
+  assert.deepEqual(tiktokCancellationState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    billStatus: 'sent',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  }), {
+    status: 'evidence_missing',
+    label: 'ต้องตรวจเอกสารเดิม',
+    detail: 'สถานะบอกว่าส่ง SML แล้ว แต่ไม่พบเลขเอกสาร SML',
+    tone: 'danger',
+    path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+    canReviewCancellation: false,
+  })
+})
+
+test('marks only a sent TikTok sale with an SML document for cancellation review', () => {
+  assert.deepEqual(tiktokCancellationState({
+    billID: '03ee1216-acb4-4a88-842c-7edc6eb44292',
+    billStatus: 'sent',
+    smlDocNo: 'BF-INV26090001',
+    documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  }), {
+    status: 'review_required',
+    label: 'รอตรวจเอกสารยกเลิก',
+    detail: 'ใบขาย BF-INV26090001 ถูกส่งเข้า SML แล้ว',
+    tone: 'warning',
+    path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+    canReviewCancellation: true,
   })
 })
 

@@ -365,6 +365,25 @@ remain useful as audit evidence but are not a current SML-send blocker.
 
 เอกสารอ้างอิง: [Products API overview](https://partner.tiktokshop.com/docv2/page/products-api-overview), [Methods and endpoints](https://partner.tiktokshop.com/docv2/page/methods-and-endpoints), [Access scope](https://partner.tiktokshop.com/docv2/page/access-scope)
 
+### Cancellation review queue — 2026-09-20
+
+- เมนู `เอกสารยกเลิก TikTok Shop` ใช้คิวเดิม
+  `/tiktok-shop-operations?status_group=cancelled` และ permission
+  `tiktok_shop_operations`; ไม่สร้างฐานข้อมูลหรือ workflow คู่ขนาน
+- คิวนี้เป็น cancellation-only. ยังไม่เรียกว่า `รับคืน/คืนเงิน` เพราะ
+  `RETURN_STATUS_CHANGE` และสิทธิ์ Return & Refund เป็นอีก capability หนึ่ง
+- ห้ามเสนอสร้างใบขายใหม่จากออเดอร์ `CANCELLED`. ถ้าไม่มี Bill เดิมหรือ Bill
+  ยังไม่เคยส่ง SML ให้แสดงว่าไม่ต้องสร้างเอกสารยกเลิก; ถ้ามี SML sale document
+  จึงพักเป็น `รอตรวจเอกสารยกเลิก`; ถ้าสถานะส่งแล้วแต่ไม่มีเลข SML ให้ fail closed
+- AOY มี snapshot ยกเลิกปัจจุบันหนึ่งรายการ (`586061286932514286`) ซึ่งไม่มี
+  Bill/SML เดิม จึงต้องไม่มี external write จากรายการนี้
+- ระยะนี้ยังไม่เปิดการสร้าง cancellation document. ก่อน canary ต้องรับและ
+  reconcile `CANCELLATION_STATUS_CHANGE`, เพิ่มเส้นทาง SML สำหรับ TikTok
+  cancellation โดยเฉพาะ, ใช้ durable idempotent attempt/stock recalculation
+  และมีออเดอร์ควบคุมที่ใบขายเดิมถูกส่ง SML จริง
+
+เอกสารอ้างอิง: [Cancellation status change](https://partner.tiktokshop.com/docv2/page/11-cancellation-status-change), [SEA cancellation lifecycle](https://partner.tiktokshop.com/docv2/page/jsqxpibu), [Return status change](https://partner.tiktokshop.com/docv2/page/12-return-status-change)
+
 ## Rollback
 
 - ปิด webhook AOY ด้วย `python3 scripts/tiktok_gateway_tenant_mode.py --target aoy --webhook-enabled false`, ตั้ง Central Gateway `TIKTOK_SHOP_WEBHOOK_ENABLED=false`, แล้ว deploy ทั้งสอง service ใหม่

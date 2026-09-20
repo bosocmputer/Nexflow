@@ -24,6 +24,11 @@ export interface TikTokDocumentState {
   path?: string
 }
 
+export interface TikTokCancellationState extends TikTokDocumentState {
+  status: 'not_required' | 'evidence_missing' | 'review_required'
+  canReviewCancellation: boolean
+}
+
 export interface TikTokRowActionsInput {
   billID?: string
   documentPath?: string
@@ -108,6 +113,52 @@ export function tiktokDocumentState(input: TikTokDocumentStateInput): TikTokDocu
     detail: billStatus === 'needs_review' ? 'ต้องตรวจข้อมูลก่อนส่ง SML' : 'ยังไม่ส่ง SML',
     tone: 'warning',
     ...(path ? { path } : {}),
+  }
+}
+
+export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTokCancellationState {
+  const billID = input.billID?.trim() ?? ''
+  const billStatus = input.billStatus?.trim().toLowerCase() ?? ''
+  const smlDocNo = input.smlDocNo?.trim() ?? ''
+  const documentPath = input.documentPath?.trim() ?? ''
+  const path = billID && documentPath ? documentPath : undefined
+
+  if (!billID) {
+    return {
+      status: 'not_required',
+      label: 'ไม่ต้องสร้างเอกสารยกเลิก',
+      detail: 'ออเดอร์นี้ไม่มีใบขายใน Nexflow หรือ SML',
+      tone: 'muted',
+      canReviewCancellation: false,
+    }
+  }
+  if (!smlDocNo && billStatus !== 'sent') {
+    return {
+      status: 'not_required',
+      label: 'ไม่ต้องสร้างเอกสารยกเลิก SML',
+      detail: 'ใบขายเดิมยังไม่เคยส่งเข้า SML',
+      tone: 'muted',
+      ...(path ? { path } : {}),
+      canReviewCancellation: false,
+    }
+  }
+  if (!smlDocNo) {
+    return {
+      status: 'evidence_missing',
+      label: 'ต้องตรวจเอกสารเดิม',
+      detail: 'สถานะบอกว่าส่ง SML แล้ว แต่ไม่พบเลขเอกสาร SML',
+      tone: 'danger',
+      ...(path ? { path } : {}),
+      canReviewCancellation: false,
+    }
+  }
+  return {
+    status: 'review_required',
+    label: 'รอตรวจเอกสารยกเลิก',
+    detail: `ใบขาย ${smlDocNo} ถูกส่งเข้า SML แล้ว`,
+    tone: 'warning',
+    ...(path ? { path } : {}),
+    canReviewCancellation: true,
   }
 }
 
