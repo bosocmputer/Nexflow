@@ -1114,6 +1114,34 @@ Current AOY UAT scope:
     read-only Product Catalog UAT. Keep Product Modify, TikTok stock writes, and
     Auto SML disabled until their separate controlled UAT gates are approved.
 
+61. AOY-only TikTok Reviewed Bill is enabled for controlled manual operation as
+    of 2026-09-20 at `c2d17e5` (UI/permission commit `d9f4cfd`, migration
+    restart fix `6c4ff7c`). `/tiktok-shop-operations` now follows the Shopee
+    row contract with separate TikTok status, Nexflow/SML document, amount
+    detail, and action columns. Admin and Staff may inspect one order, confirm
+    its reviewed evidence, and create one Nexflow document; Product Master
+    mapping and Auto SML controls remain admin-only. Creation still has two
+    explicit steps, creates no SML/LINE/stock side effect, and staff must open
+    the resulting Bill to send SML one document at a time. Existing active
+    TikTok bills are surfaced by Order ID regardless of whether they came from
+    TikTok Excel or the reviewed API flow, preventing a misleading duplicate
+    create action. Production QA proved an unsent order preview reached
+    `พร้อมสร้าง` with the correct product, shipping, excluded buyer charge,
+    route, and mapping; the final create button was not pressed. Bills stayed
+    at 360, SML attempts at 64, reviewed API bills at one, and Auto SML jobs at
+    zero. The AOY shop Auto SML setting remains disabled, and Product Catalog/
+    stock flags remain off while App Review/Product Basic are pending. Desktop
+    and 390px QA passed without page overflow or console errors. During rollout
+    a pre-existing restart defect was found: migration 034 recreated obsolete
+    platform-wide alias indexes before migration 077 dropped them, blocking a
+    valid two-account TikTok dataset. `6c4ff7c` removes only those obsolete
+    bootstrap indexes, retains the account-scoped indexes from migration 077,
+    adds regression coverage, and changed no mapping data. AOY recovered and
+    passed repeated restart/health/error scans. Backups are
+    `pre-deploy-20260920-011852.sql.gz`,
+    `pre-deploy-20260920-012319.sql.gz`, and
+    `.env.pre-tiktok-reviewed-20260920-012027`.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
@@ -1267,12 +1295,13 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
     enabled tenant. Its global and exact per-shop gates control bounded Order
     List polling; watermark advances only after full Detail + Price Detail
     success. A separately gated Reviewed Bill endpoint may use an explicitly
-    confirmed digest to create one local pending Bill, but it is currently off
-    and never authorizes SML, notification, fulfillment, cancellation, return,
-    or stock writes. TikTok Auto SML has an additional tenant/global gate and
-    versioned per-shop gate; both AOY gates are currently off. Do not enable
-    either one or backfill historical orders without an explicitly approved
-    controlled canary and the checklist in
+    confirmed digest to create one local pending Bill. AOY now enables this
+    Reviewed Bill gate for Admin/Staff one document at a time; it never
+    authorizes SML, notification, fulfillment, cancellation, return, or stock
+    writes by itself. TikTok Auto SML has an additional tenant/global gate and
+    versioned per-shop gate; both AOY automation gates are still off. Do not
+    enable Auto SML or backfill historical orders without an explicitly
+    approved controlled canary and the checklist in
     `docs/tiktok-shop-auto-sml-runbook.md`.
 
 ---
