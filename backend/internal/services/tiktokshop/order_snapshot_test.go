@@ -302,11 +302,13 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 			"item_count", "sku_count", "last_order_update_at", "last_synced_at",
 			"bill_id", "bill_status", "sml_doc_no", "document_path",
 			"auto_status", "auto_error_code", "auto_error_message", "auto_updated_at",
+			"cancel_status", "cancel_doc_no", "cancel_error_code", "cancel_error_message", "cancel_stock_status", "cancel_stock_error", "cancel_updated_at",
 		}).AddRow(
 			"7494619203789490654", "henna_milkford", "585684843131602849", "COMPLETED", "THB",
 			"307.49", "300", "0", "7.49", 1, 1, updatedAt, syncedAt,
 			"03ee1216-acb4-4a88-842c-7edc6eb44292", "pending", "", "/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292",
 			"needs_review", "mapping_missing", "ยังไม่ได้จับคู่สินค้า", syncedAt,
+			"created", "SIC26090001", "", "", "succeeded", "", syncedAt,
 		))
 
 	result, err := NewTikTokOrderSnapshotStore(database).List(t.Context(), TikTokOrderSnapshotListFilter{
@@ -329,6 +331,9 @@ func TestTikTokOrderSnapshotStoreListsBoundedPIIMinimizedOperationsRows(t *testi
 	}
 	if row.AutoSML == nil || row.AutoSML.Status != "needs_review" || row.AutoSML.ErrorCode != "mapping_missing" {
 		t.Fatalf("List() Auto SML = %+v", row.AutoSML)
+	}
+	if row.Cancellation == nil || row.Cancellation.Status != "created" || row.Cancellation.CancelSMLDocNo != "SIC26090001" || row.Cancellation.StockRecalcStatus != "succeeded" {
+		t.Fatalf("List() cancellation = %+v", row.Cancellation)
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {

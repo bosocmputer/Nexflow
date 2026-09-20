@@ -55,7 +55,8 @@ func TestTikTokCancellationEligibilityRequiresOwnedSuccessfulSale(t *testing.T) 
 func TestTikTokCancellationReviewDigestBindsSourceSaleAndRouteEvidence(t *testing.T) {
 	base := TikTokCancellationReviewEvidence{
 		ShopID: "7494619203789490654", OrderID: "586030483469993439", SourceHash: "source-hash",
-		BillID: "03ee1216-acb4-4a88-842c-7edc6eb44292", SMLAttemptID: "11111111-1111-1111-1111-111111111111",
+		SnapshotSyncedAt: "2026-09-20T08:00:00Z",
+		BillID:           "03ee1216-acb4-4a88-842c-7edc6eb44292", SMLAttemptID: "11111111-1111-1111-1111-111111111111",
 		SaleSMLDocNo: "BF-INV26090001", RouteConfigVersion: 3, RouteSignature: "route-signature",
 	}
 	want := TikTokCancellationReviewDigest(base)
@@ -65,6 +66,7 @@ func TestTikTokCancellationReviewDigestBindsSourceSaleAndRouteEvidence(t *testin
 
 	changes := []func(*TikTokCancellationReviewEvidence){
 		func(e *TikTokCancellationReviewEvidence) { e.SourceHash = "changed" },
+		func(e *TikTokCancellationReviewEvidence) { e.SnapshotSyncedAt = "2026-09-20T08:01:00Z" },
 		func(e *TikTokCancellationReviewEvidence) { e.SMLAttemptID = "22222222-2222-2222-2222-222222222222" },
 		func(e *TikTokCancellationReviewEvidence) { e.SaleSMLDocNo = "BF-INV26090002" },
 		func(e *TikTokCancellationReviewEvidence) { e.RouteConfigVersion++ },

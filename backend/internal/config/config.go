@@ -98,6 +98,7 @@ type Config struct {
 	TikTokShopSMLSendEnabled            bool
 	TikTokShopAutoSMLEnabled            bool
 	TikTokShopSMLCancelDocumentsEnabled bool
+	TikTokShopCancelWebhookEnabled      bool
 	ShopeeRealtimeOpsEnabled            bool
 	ShopeeAdvancedDropoffEnabled        bool
 	ShopeeShippingActionsEnabled        bool
@@ -210,6 +211,7 @@ func Load() *Config {
 		TikTokShopSMLSendEnabled:            getEnvBool("TIKTOK_SHOP_SML_SEND_ENABLED", false),
 		TikTokShopAutoSMLEnabled:            getEnvBool("TIKTOK_SHOP_AUTO_SML_ENABLED", false),
 		TikTokShopSMLCancelDocumentsEnabled: getEnvBool("TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED", false),
+		TikTokShopCancelWebhookEnabled:      getEnvBool("TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED", false),
 		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),

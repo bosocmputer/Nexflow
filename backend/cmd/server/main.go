@@ -366,6 +366,8 @@ func main() {
 	tiktokBillShadowMappingService := tiktokshop.NewTikTokBillShadowMappingService(tiktokBillShadowStore, aliasRepo)
 	tiktokReviewedBillService := tiktokshop.NewTikTokReviewedBillService(tiktokBillShadowStore, billRepo)
 	tiktokAutoSMLRepo := repository.NewTikTokAutoSMLRepo(db)
+	tiktokCancellationRepo := repository.NewTikTokCancellationRepo(db)
+	tiktokCancellationCoordinator := handlers.NewTikTokCancellationCoordinator(cfg, tiktokCancellationRepo, channelDefaultRepo, saleInvoiceCancelClient, billH, logger)
 	tiktokAutoSMLController := handlers.NewTikTokAutoSMLController(cfg, tiktokAutoSMLRepo, tiktokBillShadowService, tiktokReviewedBillService, billH, auditLogRepo, logger)
 	tiktokSnapshotService.WithObserver(tiktokAutoSMLController)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
@@ -381,12 +383,14 @@ func main() {
 		WithBillShadowPreviewer(tiktokBillShadowService).
 		WithBillShadowMapper(tiktokBillShadowMappingService).
 		WithReviewedBillCreator(tiktokReviewedBillService).
+		WithCancellation(tiktokCancellationCoordinator).
 		WithProductCatalog(tiktokProductCatalogService, tiktokProductCatalogStore).
 		WithAutoSML(tiktokAutoSMLRepo).
 		WithAuditLogger(auditLogRepo)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
 	tiktokshop.NewTikTokWebhookWorker(cfg.TikTokShopWebhookEnabled, tiktokWebhookStore, tiktokSnapshotService, logger).Start(appCtx)
 	tiktokAutoSMLController.Start(appCtx)
+	tiktokCancellationCoordinator.Start(appCtx)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
@@ -613,6 +617,8 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/impact-preview", middleware.RequireRole("admin"), tiktokAPIH.PreviewBillShadowMapping)
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm", middleware.RequireRole("admin"), tiktokAPIH.ConfirmBillShadowMapping)
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill", middleware.RequireRole("admin", "staff"), tiktokAPIH.CreateReviewedBill)
+		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/cancellation/preview", middleware.RequireRole("admin", "staff"), tiktokAPIH.PreviewCancellation)
+		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/cancellation", middleware.RequireRole("admin", "staff"), tiktokAPIH.CreateCancellation)
 		api.GET("/tiktok-shop-api/order-sync-settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrderSyncSettings)
 		api.GET("/tiktok-shop-api/diagnostics", middleware.RequireRole("admin", "staff"), tiktokAPIH.Diagnostics)
 		api.GET("/tiktok-shop-api/auto-sml/settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.AutoSMLSettings)

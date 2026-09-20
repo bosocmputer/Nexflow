@@ -71,6 +71,7 @@ type TikTokCancellationReviewEvidence struct {
 	ShopID             string `json:"shop_id"`
 	OrderID            string `json:"order_id"`
 	SourceHash         string `json:"source_hash"`
+	SnapshotSyncedAt   string `json:"snapshot_synced_at"`
 	BillID             string `json:"bill_id"`
 	SMLAttemptID       string `json:"sml_attempt_id"`
 	SaleSMLDocNo       string `json:"sale_sml_doc_no"`

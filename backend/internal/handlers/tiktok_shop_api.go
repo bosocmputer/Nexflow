@@ -101,11 +101,19 @@ type TikTokShopAPIHandler struct {
 	billShadow     TikTokShopBillShadowPreviewer
 	billMapper     TikTokShopBillShadowMapper
 	reviewedBill   TikTokShopReviewedBillCreator
+	cancellation   *TikTokCancellationCoordinator
 	productCatalog TikTokShopProductCatalogSyncer
 	productReader  TikTokShopProductCatalogReader
 	autoSML        TikTokAutoSMLSettingsStore
 	audit          TikTokShopAuditLogger
 	logger         *zap.Logger
+}
+
+func (h *TikTokShopAPIHandler) WithCancellation(coordinator *TikTokCancellationCoordinator) *TikTokShopAPIHandler {
+	if h != nil {
+		h.cancellation = coordinator
+	}
+	return h
 }
 
 func (h *TikTokShopAPIHandler) WithOrderReader(reader TikTokShopOrderReader) *TikTokShopAPIHandler {
@@ -576,6 +584,10 @@ func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
 		"document": gin.H{
 			"reviewed_bill_enabled": h != nil && h.config != nil && h.config.TikTokShopReviewedBillEnabled,
 			"sml_send_enabled":      smlSendEnabled, "route_ready": routeReady,
+		},
+		"cancellation": gin.H{
+			"document_create_enabled": h != nil && h.config != nil && h.config.TikTokShopSMLCancelDocumentsEnabled && h.config.TikTokShopCancelWebhookEnabled,
+			"webhook_enabled":         h != nil && h.config != nil && h.config.TikTokShopCancelWebhookEnabled,
 		},
 		"coverage": coverage,
 		"auto_sml": gin.H{"global_enabled": globalAutoEnabled, "can_enable": globalAutoEnabled && baselineReady, "message": autoMessage},

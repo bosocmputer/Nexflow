@@ -552,6 +552,24 @@ func TestTikTokShopAPIHandlerReviewedBillFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTikTokShopAPIHandlerCancellationCreateIsDormantByDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithCancellation(&TikTokCancellationCoordinator{createEnabled: false})
+	router := gin.New()
+	router.POST("/orders/:shop_id/:order_id/cancellation", func(c *gin.Context) {
+		c.Set("user_id", "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef")
+		handler.CreateCancellation(c)
+	})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost,
+		"/orders/7494619203789490654/586030483469993439/cancellation",
+		strings.NewReader(`{"confirm":"CREATE_TIKTOK_SML_CANCEL_DOCUMENT","review_digest":"`+strings.Repeat("a", 64)+`"}`)))
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "feature_flag_disabled") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestTikTokShopAPIHandlerBillShadowPreviewValidatesPathAndMapsNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	previewer := &tenantTikTokBillShadowPreviewerFake{err: tiktokshop.ErrTikTokBillShadowNotFound}
@@ -768,13 +786,17 @@ func TestTikTokShopAPIHandlerDiagnosticsUsesSafeOperationalEvidence(t *testing.T
 			GlobalEnabled bool `json:"global_enabled"`
 			CanEnable     bool `json:"can_enable"`
 		} `json:"auto_sml"`
+		Cancellation struct {
+			DocumentCreateEnabled bool `json:"document_create_enabled"`
+			WebhookEnabled        bool `json:"webhook_enabled"`
+		} `json:"cancellation"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v body=%s", err, response.Body.String())
 	}
 	if body.Overall != "ready_for_controlled_enablement" || body.API.ConnectedShops != 1 ||
 		body.Coverage.SampledOrders != 1 || body.Coverage.ReadyOrders != 1 || body.Coverage.BlockedOrders != 0 ||
-		body.AutoSML.GlobalEnabled || body.AutoSML.CanEnable {
+		body.AutoSML.GlobalEnabled || body.AutoSML.CanEnable || body.Cancellation.DocumentCreateEnabled || body.Cancellation.WebhookEnabled {
 		t.Fatalf("unexpected diagnostics: %+v body=%s", body, response.Body.String())
 	}
 	for _, forbidden := range []string{"buyer", "recipient", "phone", "address", "token", "secret", "signature"} {
