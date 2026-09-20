@@ -19,13 +19,11 @@ CREATE TABLE IF NOT EXISTS marketplace_item_aliases (
   CHECK (source_sku <> '' OR normalized_key <> '')
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS marketplace_item_aliases_source_sku_idx
-  ON marketplace_item_aliases (source, source_sku)
-  WHERE source_sku <> '';
-
-CREATE UNIQUE INDEX IF NOT EXISTS marketplace_item_aliases_normalized_idx
-  ON marketplace_item_aliases (source, normalized_key)
-  WHERE source_sku = '' AND normalized_key <> '';
+-- Do not recreate the original platform-wide unique indexes here. Migration
+-- 077 replaces them with account-scoped identities and intentionally drops
+-- their legacy names. Because every migration is replayed on startup, trying
+-- to recreate these indexes before 077 would prevent a valid multi-account
+-- dataset from restarting when two accounts reuse the same SKU or name.
 
 CREATE INDEX IF NOT EXISTS marketplace_item_aliases_normalized_lookup_idx
   ON marketplace_item_aliases (source, normalized_key);

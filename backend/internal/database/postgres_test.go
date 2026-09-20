@@ -53,6 +53,38 @@ func TestWithMigrationLockUnlocksWhenMigrationFails(t *testing.T) {
 	}
 }
 
+func TestMarketplaceAliasBootstrapMigrationDoesNotRecreateLegacyGlobalUniqueness(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/034_marketplace_item_aliases.sql")
+	if err != nil {
+		t.Fatalf("read migration 034: %v", err)
+	}
+
+	sqlText := strings.ToLower(string(data))
+	for _, legacyIndex := range []string{
+		"create unique index if not exists marketplace_item_aliases_source_sku_idx",
+		"create unique index if not exists marketplace_item_aliases_normalized_idx",
+	} {
+		if strings.Contains(sqlText, legacyIndex) {
+			t.Errorf("migration 034 must not recreate obsolete global alias index %q", legacyIndex)
+		}
+	}
+
+	scoped, err := migrationFS.ReadFile("migrations/077_unified_marketplace_product_master.sql")
+	if err != nil {
+		t.Fatalf("read migration 077: %v", err)
+	}
+	scopedSQL := strings.ToLower(string(scoped))
+	for _, scopedIndex := range []string{
+		"marketplace_alias_identity_uidx",
+		"marketplace_alias_scoped_sku_uidx",
+		"marketplace_alias_scoped_name_uidx",
+	} {
+		if !strings.Contains(scopedSQL, scopedIndex) {
+			t.Errorf("migration 077 missing scoped alias index %q", scopedIndex)
+		}
+	}
+}
+
 func TestMigration085IsAdditiveAndSchemaOnly(t *testing.T) {
 	data, err := migrationFS.ReadFile("migrations/085_marketplace_units_conversion.sql")
 	if err != nil {
