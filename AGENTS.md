@@ -1245,6 +1245,34 @@ Current AOY UAT scope:
     Ploy's own dry-run/checklist passes. Demo, Lanboon, AOY, and the Central
     TikTok Gateway were not redeployed or reconfigured during this rollout.
 
+66. Ploy's TikTok Shop **manual** tenant capability was explicitly opened on
+    2026-09-21 after a clean tenant preflight. `TIKTOK_SHOP_OPEN_API_ENABLED`
+    and `VITE_ENABLE_TIKTOK_SHOP_API` are true, and Ploy has its own derived
+    Central TikTok Gateway identity on the TikTok Gateway Docker network; no
+    AOY credential, token, mapping, SML route, or notification recipient was
+    copied. The manual-only gates `TIKTOK_SHOP_ORDER_SYNC_ENABLED`,
+    `TIKTOK_SHOP_REVIEWED_BILL_ENABLED`, and
+    `TIKTOK_SHOP_SML_SEND_ENABLED` are true so that, after Ploy's own seller
+    OAuth, staff can reconcile orders, review/create one Bill, and send it to
+    SML manually. The tenant currently has zero TikTok connections, snapshots,
+    and Bills, and **no** `tiktok_shop` SML route: the Ploy operator must first
+    configure its own TikTok Shop sale route/customer, warehouse/location, VAT,
+    document format, and any shipping item in `/settings/channels`, then map
+    Ploy's own products before a Bill can pass its normal fail-closed preview.
+    Polling has no effect until the newly authorized Ploy shop is explicitly
+    enabled per-shop (start at 300 seconds with the normal overlap); webhook,
+    Topbar/LINE notifications, Product Catalog/stock, Auto SML, and all TikTok
+    write actions remain false/off. The Ploy backend started at
+    `2026-09-21T04:58:09Z`; direct/public health, the authenticated Gateway
+    network health, `/settings/tiktok-shop` HTTP 200, and a five-minute severe
+    log scan passed. Private rollback backups are
+    `.env.bak-tiktok-gateway-20260921-045356` and
+    `.env.pre-ploy-tiktok-manual-flow-20260921-045727Z`; associated database
+    backups are `pre-deploy-20260921-045433.sql.gz`,
+    `pre-deploy-20260921-045540.sql.gz`, and
+    `pre-deploy-20260921-045800.sql.gz`. This changes Ploy only; Demo,
+    Lanboon, AOY, and the Central TikTok Gateway were not reconfigured.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
