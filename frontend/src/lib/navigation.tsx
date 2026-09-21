@@ -103,7 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'ออเดอร์และเอกสาร',
     items: [
       { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
-      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'ดู Snapshot ออเดอร์จาก TikTok Shop แบบ read-only', enabled: ENABLE_TIKTOK_SHOP_API },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'คิวงานแบบเรียลไทม์จาก TikTok Webhook พร้อมซิงก์สำรอง', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
       { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations?status_group=cancelled', label: 'เอกสารยกเลิก TikTok Shop', icon: RotateCcw, hint: 'ออเดอร์ TikTok ที่ยกเลิกและสถานะใบขายเดิมใน SML', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },

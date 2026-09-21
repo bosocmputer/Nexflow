@@ -23,6 +23,7 @@ import {
 import { toast } from 'sonner'
 
 import client from '@/api/client'
+import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1409,39 +1410,28 @@ export default function ShopeeOperations() {
   return (
     <TooltipProvider>
       <div className="space-y-4">
-        <div className="rounded-lg border border-border bg-card px-3 py-2">
-          <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0 space-y-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <h1 className="text-lg font-semibold tracking-normal">
-                  {statusGroup === 'cancelled' ? 'เอกสารยกเลิก/รับคืน Shopee' : 'คำสั่งซื้อ Shopee'}
-                </h1>
-                <Badge className="h-6 border-[#EE4D2D] bg-[#EE4D2D] px-2 text-[11px] text-white hover:bg-[#EE4D2D]">เรียลไทม์</Badge>
-                <span
-                  className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground"
-                  title="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
-                >
-                  {statusGroup === 'cancelled'
-                    ? 'เอกสารหลังยกเลิก SML'
-                    : `${readiness?.sml.doc_format_code || 'route'} · ${readiness?.sml.route || 'ยังไม่ตั้งค่า'}`}
-                </span>
-              </div>
-              <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-                {statusGroup === 'cancelled' ? (
-                  'ติดตาม Order ที่ยกเลิก พร้อมประเภทเอกสาร เลขที่ SML วิธีสร้าง และผลคำนวณสต๊อกใหม่'
-                ) : (
-                  <>
-                    ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อถึงสถานะที่ร้านกำหนดและข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
-                    <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
-                      <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
-                    </Button>
-                  </>
-                )}
-              </p>
-              <OperationsHealthLine readiness={readiness} />
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row xl:shrink-0">
-              <Select value={shopID} onValueChange={(v) => setParam('shop_id', v)}>
+        <MarketplaceOperationsHeader
+          titleID="shopee-operations-title"
+          title={statusGroup === 'cancelled' ? 'เอกสารยกเลิก/รับคืน Shopee' : 'คำสั่งซื้อ Shopee'}
+          modeLabel="เรียลไทม์"
+          modeClassName="border-[#EE4D2D] bg-[#EE4D2D] hover:bg-[#EE4D2D]"
+          routeLabel={statusGroup === 'cancelled'
+            ? 'เอกสารหลังยกเลิก SML'
+            : `${readiness?.sml.doc_format_code || 'route'} · ${readiness?.sml.route || 'ยังไม่ตั้งค่า'}`}
+          routeTitle="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
+          description={statusGroup === 'cancelled' ? (
+            'ติดตาม Order ที่ยกเลิก พร้อมประเภทเอกสาร เลขที่ SML วิธีสร้าง และผลคำนวณสต๊อกใหม่'
+          ) : (
+            <>
+              ติดตาม order สดจาก Shopee; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อถึงสถานะที่ร้านกำหนดและข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
+              <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
+                <Link to="/import/shopee">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า Shopee</Link>
+              </Button>
+            </>
+          )}
+          health={<OperationsHealthLine readiness={readiness} />}
+          actions={<>
+            <Select value={shopID} onValueChange={(v) => setParam('shop_id', v)}>
                 <SelectTrigger className="h-8 min-w-[160px] bg-background">
                   <SelectValue placeholder="ร้าน Shopee" />
                 </SelectTrigger>
@@ -1504,8 +1494,7 @@ export default function ShopeeOperations() {
                 {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 ซิงก์
               </Button>
-            </div>
-          </div>
+          </>}>
 
           {shopID !== ALL && selectedAutoSMLSetting?.enabled && (
             <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
@@ -1597,7 +1586,7 @@ export default function ShopeeOperations() {
               </div>
             </div>
           )}
-        </div>
+        </MarketplaceOperationsHeader>
 
         <div className="rounded-lg border border-border bg-card px-3 pt-2">
           <Tabs value={statusGroup} onValueChange={setStatusGroup}>

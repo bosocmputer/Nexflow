@@ -13,12 +13,14 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Zap,
 } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
 import {
   TikTokBillShadowButton,
   TikTokBillShadowDialog,
@@ -41,8 +43,9 @@ import {
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokCancellationState,
-  tiktokOrderStatusLabel,
   tiktokDocumentState,
+  tiktokOperationsHeaderMeta,
+  tiktokOrderStatusLabel,
   tiktokRowActions,
   tiktokStatusGroupCount,
   tiktokSyncState,
@@ -342,7 +345,7 @@ export default function TikTokShopOperations() {
   }, [shopID, sync?.data])
   const syncState = selectedSetting ? tiktokSyncState(Boolean(sync?.worker_enabled), selectedSetting.enabled, selectedSetting.last_error_code) : 'shop_disabled'
 
-  const loadDiagnostics = useCallback(async () => {
+  const loadDiagnostics = useCallback(async (silent = false) => {
     setDiagnosticsLoading(true)
     try {
       const [diagnosticResponse, autoSMLResponse] = await Promise.all([
@@ -354,11 +357,15 @@ export default function TikTokShopOperations() {
       setDiagnostics(diagnosticResponse.data)
       setAutoSML(autoSMLResponse.data)
     } catch (cause: unknown) {
-      toast.error(apiErrorMessage(cause, 'ตรวจสอบระบบ TikTok Shop ไม่สำเร็จ'))
+      if (!silent) toast.error(apiErrorMessage(cause, 'ตรวจสอบระบบ TikTok Shop ไม่สำเร็จ'))
     } finally {
       setDiagnosticsLoading(false)
     }
   }, [shopID])
+
+  useEffect(() => {
+    void loadDiagnostics(true)
+  }, [loadDiagnostics])
 
   const updateAutoSML = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
     setAutoSMLSaving(true)
@@ -501,31 +508,41 @@ export default function TikTokShopOperations() {
       if (previewOrder) setPreviewOpen(true)
     }
   }
+  const headerMeta = tiktokOperationsHeaderMeta({
+    cancellationQueue,
+    routeReady: diagnostics?.document.route_ready === true,
+    webhookEnabled: diagnostics?.webhook.enabled === true,
+    autoSML: {
+      enabledShops: (autoSML?.settings ?? []).filter((setting) => setting.enabled && !setting.paused_reason).length,
+      configuredShops: autoSML?.settings.length ?? 0,
+    },
+  })
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-border bg-card px-3 py-2" aria-labelledby="tiktok-operations-title">
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <h1 id="tiktok-operations-title" className="text-lg font-semibold tracking-normal">
-                {cancellationQueue ? 'เอกสารยกเลิก TikTok Shop' : 'คำสั่งซื้อ TikTok Shop'}
-              </h1>
-              <Badge className="h-6 border-foreground bg-foreground px-2 text-[11px] text-background hover:bg-foreground">
-                {cancellationQueue ? 'Cancellation Review' : 'Snapshot'}
-              </Badge>
-              <span className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground">
-                {cancellationQueue ? 'ตรวจหลักฐานใบขายเดิม · ไม่สร้างเอกสารซ้ำ' : 'ตรวจทานก่อนสร้าง · ส่ง SML ทีละใบ'}
-              </span>
-            </div>
-            <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
-              {cancellationQueue
-                ? 'แสดงออเดอร์ที่ TikTok ยืนยันว่ายกเลิกแล้ว พร้อมตรวจว่าใบขายเดิมเคยส่งเข้า SML หรือไม่'
-                : 'ติดตาม order จาก TikTok Shop ตรวจข้อมูลก่อนสร้างเอกสารใน Nexflow แล้วเปิดเอกสารเพื่อส่ง SML ทีละใบ'}
-            </p>
-            <TikTokOperationsHealthLine state={syncState} setting={selectedSetting} diagnostics={diagnostics} />
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row xl:shrink-0">
+      <MarketplaceOperationsHeader
+        titleID="tiktok-operations-title"
+        title={cancellationQueue ? 'เอกสารยกเลิก TikTok Shop' : 'คำสั่งซื้อ TikTok Shop'}
+        modeLabel={headerMeta.modeLabel}
+        modeClassName="border-primary bg-primary hover:bg-primary"
+        routeLabel={headerMeta.routeLabel}
+        routeTitle={cancellationQueue ? 'ตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก' : 'ตรวจ route ที่ใช้งานจริงได้จาก ตรวจระบบ'}
+        description={cancellationQueue
+          ? 'ติดตามออเดอร์ที่ TikTok Shop ยืนยันการยกเลิกแล้ว พร้อมตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก'
+          : <>
+              ติดตาม order จาก TikTok Shop แบบเรียลไทม์ผ่าน Webhook พร้อมซิงก์สำรองทุก 5 นาที ร้านที่เปิด Auto SML จะส่งเมื่อถึงสถานะที่กำหนดและข้อมูลครบ ส่วนรายการที่ต้องตรวจยังสร้างเอกสารและส่งด้วยมือได้{' '}
+              <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
+                <Link to="/import/tiktok">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า TikTok</Link>
+              </Button>
+            </>}
+        health={<TikTokOperationsHealthLine
+          state={syncState}
+          setting={selectedSetting}
+          diagnostics={diagnostics}
+          webhookLabel={headerMeta.webhookLabel}
+          autoSMLLabel={headerMeta.autoSMLLabel}
+        />}
+        actions={<>
             <Select value={shopID} onValueChange={(value) => setQuery({ shop_id: value, page: null })}>
               <SelectTrigger className="h-8 min-w-[160px] bg-background">
                 <SelectValue placeholder="ร้าน TikTok Shop" />
@@ -537,10 +554,18 @@ export default function TikTokShopOperations() {
                 ))}
               </SelectContent>
             </Select>
-            <Button type="button" size="sm" className="h-8 gap-2" disabled={loading} onClick={() => setRefreshTick((value) => value + 1)}>
-              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-              รีเฟรชรายการ
-            </Button>
+            <div className="flex h-8 min-w-[168px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5" title="เปิดหรือปิด Auto SML ได้จาก ตรวจระบบ">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
+              </div>
+              <Badge variant="outline" className={cn(
+                'h-5 whitespace-nowrap bg-background px-1.5 text-[10px] font-medium',
+                headerMeta.autoSMLLabel.includes('เปิด') ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : 'border-border text-muted-foreground',
+              )}>
+                {headerMeta.autoSMLLabel.replace('Auto SML ', '')}
+              </Badge>
+            </div>
             <Button
               type="button"
               size="sm"
@@ -553,11 +578,14 @@ export default function TikTokShopOperations() {
               }}
             >
               {diagnosticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadioTower className="h-4 w-4" />}
-              ตรวจสอบระบบ
+              ตรวจระบบ
             </Button>
-          </div>
-        </div>
-      </section>
+            <Button type="button" size="sm" className="h-8 gap-2" disabled={loading} onClick={() => setRefreshTick((value) => value + 1)}>
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+              รีเฟรชรายการ
+            </Button>
+          </>}
+      />
 
       {diagnosticsOpen && (
         <TikTokDiagnosticsPanel
@@ -780,10 +808,14 @@ function TikTokOperationsHealthLine({
   state,
   setting,
   diagnostics,
+  webhookLabel,
+  autoSMLLabel,
 }: {
   state: ReturnType<typeof tiktokSyncState>
   setting?: TikTokOrderSyncSetting
   diagnostics: TikTokDiagnostics | null
+  webhookLabel: string
+  autoSMLLabel: string
 }) {
   const Icon = state === 'active' ? CheckCircle2 : Clock3
   return (
@@ -794,9 +826,11 @@ function TikTokOperationsHealthLine({
       </span>
       {setting && (
         <span className="text-muted-foreground">
-          {setting.shop_name || setting.shop_id} · ทุก {formatInterval(setting.interval_seconds)} · สำเร็จล่าสุด {formatDateTime(setting.last_success_at)}
+          {setting.shop_name || setting.shop_id} · ซิงก์สำรองทุก {formatInterval(setting.interval_seconds)} · ล่าสุด {formatDateTime(setting.last_success_at)}
         </span>
       )}
+      <span className="text-muted-foreground">· {webhookLabel}</span>
+      <span className="text-muted-foreground">· {autoSMLLabel}</span>
       {setting?.last_error_message && <span className="text-destructive">{setting.last_error_message}</span>}
       {diagnostics && (
         <span className={diagnostics.overall === 'ready_for_controlled_enablement' ? 'text-accentStrong' : 'text-warning'}>
@@ -1171,7 +1205,7 @@ function EmptyRow({ cancellationQueue }: { cancellationQueue: boolean }) {
           <div className="mt-1 text-sm text-muted-foreground">
             {cancellationQueue
               ? 'เมื่อ TikTok ยืนยันการยกเลิก ระบบจะแสดงรายการนี้พร้อมหลักฐานใบขายเดิม'
-              : 'รอรอบซิงก์อัตโนมัติ หรือปรับตัวกรองเพื่อดู Snapshot ที่มีอยู่'}
+              : 'รอ Webhook หรือรอบซิงก์สำรอง แล้วปรับตัวกรองเพื่อดูรายการที่มีอยู่'}
           </div>
         </div>
       </td>

@@ -18,6 +18,7 @@ const {
   normalizeTikTokStatusGroup,
   tiktokStatusGroupCount,
   tiktokOrderStatusLabel,
+  tiktokOperationsHeaderMeta,
   tiktokBillShadowMappingLabel,
   tiktokBillShadowRouteLabel,
   tiktokBillShadowReadinessLabel,
@@ -50,6 +51,31 @@ test('sync state remains fail-closed when either worker or shop is disabled', ()
   assert.equal(tiktokSyncState(true, false, ''), 'shop_disabled')
   assert.equal(tiktokSyncState(true, true, 'gateway_timeout'), 'error')
   assert.equal(tiktokSyncState(true, true, undefined), 'active')
+})
+
+test('presents TikTok operations as realtime with a truthful webhook and polling fallback summary', () => {
+  assert.deepEqual(tiktokOperationsHeaderMeta({
+    cancellationQueue: false,
+    routeReady: true,
+    webhookEnabled: true,
+    autoSML: { enabledShops: 1, configuredShops: 1 },
+  }), {
+    modeLabel: 'เรียลไทม์',
+    routeLabel: 'เส้นทาง SML พร้อมใช้งาน',
+    webhookLabel: 'Webhook พร้อมรับ',
+    autoSMLLabel: 'Auto SML เปิด',
+  })
+  assert.deepEqual(tiktokOperationsHeaderMeta({
+    cancellationQueue: true,
+    routeReady: false,
+    webhookEnabled: false,
+    autoSML: { enabledShops: 0, configuredShops: 1 },
+  }), {
+    modeLabel: 'เรียลไทม์',
+    routeLabel: 'เอกสารหลังยกเลิก SML',
+    webhookLabel: 'Webhook กำลังตรวจ',
+    autoSMLLabel: 'Auto SML ปิด',
+  })
 })
 
 test('normalizes operations status tabs and reads their server counts', () => {
