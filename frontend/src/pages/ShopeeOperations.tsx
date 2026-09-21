@@ -24,6 +24,7 @@ import { toast } from 'sonner'
 
 import client from '@/api/client'
 import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
+import { MarketplaceOperationsHelp } from '@/components/marketplace/MarketplaceOperationsHelp'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1442,6 +1443,7 @@ export default function ShopeeOperations() {
                   ))}
                 </SelectContent>
               </Select>
+              <MarketplaceOperationsHelp channel="Shopee" signalLabel="Push" />
               <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

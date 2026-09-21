@@ -21,6 +21,7 @@ import { toast } from 'sonner'
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
+import { MarketplaceOperationsHelp } from '@/components/marketplace/MarketplaceOperationsHelp'
 import {
   TikTokBillShadowButton,
   TikTokBillShadowDialog,
@@ -582,6 +583,7 @@ export default function TikTokShopOperations() {
               summaryLabel={headerMeta.autoSMLLabel.replace('Auto SML ', '')}
               onRequestChange={requestAutoSMLUpdate}
             />
+            <MarketplaceOperationsHelp channel="TikTok Shop" signalLabel="Webhook" />
             <Button
               type="button"
               size="sm"
