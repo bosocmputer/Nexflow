@@ -34,6 +34,20 @@ export interface TikTokDocumentState {
   path?: string
 }
 
+export interface TikTokAutoSMLRowState {
+  status: string
+}
+
+export interface TikTokAutoSMLControlStateInput {
+  role?: string
+  selectedShopID: string
+  globalEnabled: boolean
+}
+
+export type TikTokAutoSMLControlState =
+  | { mode: 'control' }
+  | { mode: 'summary' | 'readonly'; reason: string }
+
 export interface TikTokCancellationState extends TikTokDocumentState {
   status: 'not_required' | 'evidence_missing' | 'review_required' | 'previewed' | 'creating' | 'completed' | 'failed' | 'reconciliation_required'
   canReviewCancellation: boolean
@@ -160,6 +174,49 @@ export function tiktokDocumentState(input: TikTokDocumentStateInput): TikTokDocu
     tone: 'warning',
     ...(path ? { path } : {}),
   }
+}
+
+// The main Operations table intentionally has only one document status line and
+// one stable reference line.  More detailed queue/error evidence remains in the
+// document drawer so operators can scan a mixed marketplace queue safely.
+export function tiktokCompactDocumentState(
+  input: TikTokDocumentStateInput,
+  autoSML?: TikTokAutoSMLRowState,
+): TikTokDocumentState {
+  const document = tiktokDocumentState(input)
+  if (!autoSML) return document
+
+  const status = autoSML.status.trim().toLowerCase()
+  if (status === 'succeeded') {
+    return { ...document, label: 'ส่ง SML แล้ว (อัตโนมัติ)', tone: 'success' }
+  }
+  if (status === 'failed' || status === 'needs_review') {
+    return {
+      ...document,
+      label: status === 'failed' ? 'Auto SML ไม่สำเร็จ' : 'Auto SML ต้องตรวจ',
+      detail: status === 'failed' ? 'ตรวจสาเหตุแล้วลองใหม่' : 'เปิดเอกสารเพื่อตรวจข้อมูล',
+      tone: status === 'failed' ? 'danger' : 'warning',
+    }
+  }
+  if (status === 'queued' || status === 'retry_wait' || status === 'running') {
+    return {
+      ...document,
+      label: status === 'running' ? 'กำลังส่ง SML อัตโนมัติ' : 'รอส่ง SML อัตโนมัติ',
+      detail: status === 'retry_wait' ? 'ระบบจะลองส่งใหม่' : 'รอคิวตามลำดับ',
+      tone: 'warning',
+    }
+  }
+  if (status === 'cancelled') {
+    return { ...document, label: 'ยกเลิกงาน Auto SML', detail: 'เปิดเอกสารเพื่อตรวจต่อ', tone: 'muted' }
+  }
+  return document
+}
+
+export function tiktokAutoSMLControlState(input: TikTokAutoSMLControlStateInput): TikTokAutoSMLControlState {
+  if (input.selectedShopID === 'all') return { mode: 'summary', reason: 'เลือกร้านก่อนจัดการ' }
+  if (input.role !== 'admin') return { mode: 'readonly', reason: 'เฉพาะผู้ดูแลระบบเปลี่ยนการตั้งค่าได้' }
+  if (!input.globalEnabled) return { mode: 'readonly', reason: 'ระบบส่ง SML อัตโนมัติยังไม่พร้อมใช้งาน' }
+  return { mode: 'control' }
 }
 
 export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTokCancellationState {

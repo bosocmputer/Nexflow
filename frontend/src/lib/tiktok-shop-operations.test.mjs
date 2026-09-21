@@ -24,6 +24,8 @@ const {
   tiktokBillShadowReadinessLabel,
   tiktokCancellationState,
   tiktokDocumentState,
+  tiktokCompactDocumentState,
+  tiktokAutoSMLControlState,
   tiktokRowActions,
   tiktokShadowMappingValidation,
   tiktokSyncState,
@@ -161,6 +163,41 @@ test('presents TikTok Nexflow and SML document states with the same operational 
     detail: 'BF-INV26090001',
     tone: 'success',
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
+  })
+})
+
+test('keeps the TikTok document cell to a compact two-line operational summary', () => {
+  assert.deepEqual(tiktokCompactDocumentState({
+    billID: 'bill-1',
+    billStatus: 'sent',
+    smlDocNo: 'BF-INV26090001',
+  }, { status: 'succeeded' }), {
+    label: 'ส่ง SML แล้ว (อัตโนมัติ)',
+    detail: 'BF-INV26090001',
+    tone: 'success',
+  })
+  assert.deepEqual(tiktokCompactDocumentState({}, { status: 'failed' }), {
+    label: 'Auto SML ไม่สำเร็จ',
+    detail: 'ตรวจสาเหตุแล้วลองใหม่',
+    tone: 'danger',
+  })
+})
+
+test('only lets an admin control Auto SML after selecting exactly one shop', () => {
+  assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'all', globalEnabled: true }), {
+    mode: 'summary',
+    reason: 'เลือกร้านก่อนจัดการ',
+  })
+  assert.deepEqual(tiktokAutoSMLControlState({ role: 'staff', selectedShopID: 'shop-1', globalEnabled: true }), {
+    mode: 'readonly',
+    reason: 'เฉพาะผู้ดูแลระบบเปลี่ยนการตั้งค่าได้',
+  })
+  assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'shop-1', globalEnabled: true }), {
+    mode: 'control',
+  })
+  assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'shop-1', globalEnabled: false }), {
+    mode: 'readonly',
+    reason: 'ระบบส่ง SML อัตโนมัติยังไม่พร้อมใช้งาน',
   })
 })
 
