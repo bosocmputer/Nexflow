@@ -1280,17 +1280,18 @@ Current AOY UAT scope:
     blocking controlled enablement when another unsent order has a complete
     reviewed-Bill preview. Every future job still rebuilds that exact preview
     and fails closed on changed mapping, amount, route, or lifecycle evidence.
-    AOY now has `TIKTOK_SHOP_AUTO_SML_ENABLED=true`; its only TikTok shop
-    `7494619203789490654` (`henna_milkford`) remains disabled at config version
-    1, with zero durable Auto SML jobs, so the flag change created no Bill, SML
-    document, notification, or historical backfill. Production diagnostics show
+    AOY now has `TIKTOK_SHOP_AUTO_SML_ENABLED=true`. After explicit user
+    canary approval, its only TikTok shop `7494619203789490654`
+    (`henna_milkford`) was enabled at config version 2 with cutoff
+    `2026-09-21 13:39:15 Asia/Bangkok`. It has zero durable Auto SML jobs, so
+    enabling created no Bill, SML document, notification, or historical
+    backfill. Production diagnostics show
     baseline ready, 8 of 9 sampled unsent orders ready for Auto, full 10/10
     sampled mapping coverage, and one historical order requiring separate
     review. Health, full Go tests/vet, frontend lint/build, sales-only guard,
-    deployed asset, and browser accessibility QA passed. Before enabling the
-    shop, obtain explicit controlled-canary approval, record the newly displayed
-    cutoff, then prove exactly one new `AWAITING_COLLECTION` order creates one
-    Bill and one SML document with the reviewed SML values.
+    deployed asset, and browser accessibility QA passed. The next required
+    evidence is exactly one new `AWAITING_COLLECTION` order after the cutoff
+    creating one Bill and one SML document with the reviewed SML values.
 
 Known deferred or incomplete validation:
 
