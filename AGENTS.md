@@ -1463,14 +1463,29 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
     enabled tenant. Its global and exact per-shop gates control bounded Order
     List polling; watermark advances only after full Detail + Price Detail
     success. A separately gated Reviewed Bill endpoint may use an explicitly
-    confirmed digest to create one local pending Bill. AOY now enables this
-    Reviewed Bill gate for Admin/Staff one document at a time; it never
-    authorizes SML, notification, fulfillment, cancellation, return, or stock
-    writes by itself. TikTok Auto SML has an additional tenant/global gate and
-    versioned per-shop gate; both AOY automation gates are still off. Do not
-    enable Auto SML or backfill historical orders without an explicitly
-    approved controlled canary and the checklist in
-    `docs/tiktok-shop-auto-sml-runbook.md`.
+    confirmed digest to create one local pending Bill. TikTok Auto SML has an
+    additional tenant/global gate and versioned per-shop gate. It only applies
+    to new qualifying orders after the shop cutoff: never backfill history.
+    The Operations header is the only normal control surface: Admin must
+    explicitly confirm both enable and disable; disabling cancels queued and
+    retry jobs but an already-running SML send may finish. Staff can view but
+    cannot change the setting. `GET /auto-sml/settings` and
+    `/operations-summary` are read-only and must never create a setting row.
+    Do not change AOY's setting or backfill orders without explicit approval
+    and the checklist in `docs/tiktok-shop-auto-sml-runbook.md`.
+
+17. **TikTok Operations production UI (AOY-only, 2026-09-21)** — initial page
+    load uses `/api/tiktok-shop-api/orders` plus the lightweight
+    `/api/tiktok-shop-api/operations-summary`; never call diagnostics or Bill
+    preview automatically. Full diagnostics (mapping, route, sample order) run
+    only after the operator presses `ตรวจระบบ`, and request-sequence guards
+    prevent an older selected-shop response from overwriting a new one. The
+    compact table has five columns and no more than two visible lines per data
+    cell; keep payment component details in the document/detail view. A
+    `CANCELLED` order is never offered a sale-document action even from the
+    all-orders queue. Lazada remains Excel-only pending API approval: do not
+    add an OAuth flow, API/Gateway, connection table, or "ready" menu before
+    that approval and official documentation review.
 
 ---
 
@@ -1569,6 +1584,7 @@ POST /api/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-mapping/confirm
 POST /api/tiktok-shop-api/orders/:shop_id/:order_id/reviewed-bill
 GET  /api/tiktok-shop-api/order-sync-settings
 PUT  /api/tiktok-shop-api/order-sync-settings/:shop_id
+GET  /api/tiktok-shop-api/operations-summary  -- lightweight, read-only page summary
 GET  /api/tiktok-shop-api/diagnostics
 GET  /api/tiktok-shop-api/auto-sml/settings
 PUT  /api/tiktok-shop-api/auto-sml/settings/:shop_id
