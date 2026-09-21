@@ -1483,7 +1483,9 @@ ShopeeOpenAPI      OAuth2 multi-shop + settlement reconciliation
     compact table has five columns and no more than two visible lines per data
     cell; keep payment component details in the document/detail view. A
     `CANCELLED` order is never offered a sale-document action even from the
-    all-orders queue. Lazada remains Excel-only pending API approval: do not
+    all-orders queue. `MarketplaceOperationsHelp` supplies the shared Thai
+    explanation for Shopee and TikTok (and may be reused for Lazada later).
+    Lazada remains Excel-only pending API approval: do not
     add an OAuth flow, API/Gateway, connection table, or "ready" menu before
     that approval and official documentation review.
 
