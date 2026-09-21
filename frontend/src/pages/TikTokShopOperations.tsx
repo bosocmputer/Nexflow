@@ -841,8 +841,12 @@ function TikTokDiagnosticsPanel({
     { label: 'Webhook ยกเลิก', ok: diagnostics.cancellation?.webhook_enabled === true },
     { label: 'เอกสารยกเลิก (Canary)', ok: diagnostics.cancellation?.document_create_enabled === true },
     {
+      label: `ตัวอย่างพร้อม Auto ${diagnostics.coverage.ready_orders}/${diagnostics.coverage.sampled_orders}`,
+      ok: diagnostics.coverage.ready_orders > 0,
+    },
+    {
       label: `Mapping ${diagnostics.coverage.mapped_items}/${diagnostics.coverage.total_items}`,
-      ok: diagnostics.coverage.blocked_orders === 0 && diagnostics.coverage.sampled_orders > 0,
+      ok: diagnostics.coverage.total_items > 0 && diagnostics.coverage.mapped_items === diagnostics.coverage.total_items,
       href: `/marketplace-aliases?tab=pending&source=tiktok`,
     },
   ]
@@ -900,6 +904,11 @@ function TikTokDiagnosticsPanel({
           )}
         </div>
         {!diagnostics.auto_sml.global_enabled && <div className="mt-2 text-warning">ยังไม่มีการส่งอัตโนมัติ และจะไม่ประมวลผลออเดอร์ย้อนหลัง</div>}
+        {diagnostics.coverage.ready_orders > 0 && diagnostics.coverage.blocked_orders > 0 && (
+          <div className="mt-2 text-muted-foreground">
+            มีออเดอร์ในประวัติ {diagnostics.coverage.blocked_orders} รายการที่ต้องตรวจแยกต่างหาก ระบบจะไม่ส่งย้อนหลัง และออเดอร์ใหม่ทุกใบยังตรวจข้อมูลก่อนส่ง SML
+          </div>
+        )}
       </div>
       {diagnostics.issues.length > 0 && (
         <div className="mt-3 text-xs text-muted-foreground">จุดที่ต้องตรวจ: {diagnostics.issues.map(tikTokDiagnosticIssueLabel).join(' · ')}</div>

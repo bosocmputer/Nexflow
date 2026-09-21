@@ -93,6 +93,7 @@ type tenantTikTokBillShadowPreviewerFake struct {
 	shopID  string
 	orderID string
 	result  *tiktokshop.TikTokBillShadowPreview
+	results map[string]*tiktokshop.TikTokBillShadowPreview
 	err     error
 	calls   int
 }
@@ -170,6 +171,11 @@ func (f *tenantTikTokBillShadowPreviewerFake) Preview(_ context.Context, shopID,
 	f.calls++
 	f.shopID = shopID
 	f.orderID = orderID
+	if f.results != nil {
+		if result, ok := f.results[orderID]; ok {
+			return result, f.err
+		}
+	}
 	return f.result, f.err
 }
 
@@ -840,6 +846,49 @@ func TestTikTokShopAPIHandlerDiagnosticsFailsClosedWhenEvidenceIsBlocked(t *test
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"overall":"needs_attention"`) ||
 		!strings.Contains(response.Body.String(), `"mapping_missing":1`) ||
 		!strings.Contains(response.Body.String(), `"can_enable":false`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerDiagnosticsAllowsControlledEnablementWithReadySampleAndHistoricalBlocker(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	readyOrderID := "586174698013623377"
+	blockedOrderID := "585770512786294451"
+	reader := &tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{
+		Data: []tiktokshop.TikTokOrderSnapshotListItem{
+			{ShopID: shopID, OrderID: readyOrderID, OrderStatus: tiktokshop.OrderStatusAwaitingCollection},
+			{ShopID: shopID, OrderID: blockedOrderID, OrderStatus: tiktokshop.OrderStatusCompleted},
+		},
+		Page: 1, PageSize: 20, TotalItems: 2, TotalPages: 1,
+	}}
+	previewer := &tenantTikTokBillShadowPreviewerFake{results: map[string]*tiktokshop.TikTokBillShadowPreview{
+		readyOrderID: {
+			ShopID: shopID, OrderID: readyOrderID, OrderStatus: tiktokshop.OrderStatusAwaitingCollection,
+			ReadyForReviewedBill: true,
+			Route:                tiktokshop.TikTokBillShadowRoute{Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: "SI"},
+			Items:                []tiktokshop.TikTokBillShadowItem{{Mapping: tiktokshop.TikTokBillShadowItemMapping{Status: tiktokshop.TikTokBillShadowMappingReady}}},
+		},
+		blockedOrderID: {
+			ShopID: shopID, OrderID: blockedOrderID, OrderStatus: tiktokshop.OrderStatusCompleted,
+			Blockers: []tiktokshop.TikTokBillShadowBlocker{{Code: tiktokshop.TikTokBillShadowBlockerMappingMissing, Message: "ยังไม่ได้จับคู่สินค้า"}},
+		},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+		TikTokShopReviewedBillEnabled: true, TikTokShopSMLSendEnabled: true, TikTokShopAutoSMLEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true, connections: []tiktokshop.GatewayConnection{{ShopID: shopID}}}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, Enabled: true}}}).
+		WithOrderReader(reader).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.GET("/diagnostics", handler.Diagnostics)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/diagnostics?shop_id="+shopID, nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"overall":"ready_for_controlled_enablement"`) ||
+		!strings.Contains(response.Body.String(), `"ready_orders":1`) || !strings.Contains(response.Body.String(), `"blocked_orders":1`) ||
+		!strings.Contains(response.Body.String(), `"mapping_missing":1`) || !strings.Contains(response.Body.String(), `"can_enable":true`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

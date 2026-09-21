@@ -551,7 +551,13 @@ func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
 		}
 		if coverage.SampledOrders == 0 {
 			issues = append(issues, "no_unsent_order_sample")
-		} else if coverage.BlockedOrders > 0 {
+		} else if coverage.ReadyOrders == 0 {
+			// Historical snapshots may legitimately be incomplete after mappings or
+			// routes evolve. One blocked historical order must remain visible in
+			// coverage, but must not prevent a controlled enablement when another
+			// current sample has proven the exact reviewed-Bill route end-to-end.
+			// Every future Auto SML job rebuilds this preview and fails closed on
+			// its own mapping, amount, route, or lifecycle evidence.
 			issues = append(issues, "order_review_blocked")
 		}
 		if !routeReady {
