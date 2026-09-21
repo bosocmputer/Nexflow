@@ -1221,6 +1221,30 @@ Current AOY UAT scope:
     TikTok order is still required to prove one live bell row, one sound cycle,
     and click-through/read behavior in an authenticated browser.
 
+65. Ploy was upgraded to the current application baseline `6063aa6` on
+    2026-09-21, using its own isolated database and runtime configuration; no
+    AOY credentials, OAuth tokens, mappings, users, LINE recipients, or SML
+    routes were copied. The deployment applied the current TikTok Shop schema
+    (connections, snapshots, Auto SML settings/jobs, and cancellation tables)
+    and preserved Ploy's 11 Catalog products, 42 units, one Marketplace alias,
+    one Shopee connection, and zero Bills. Ploy's Catalog, mapping-backfill,
+    and reservation-ledger readiness were all true, so the user-authorized
+    `MARKETPLACE_CONVERSION_MODE` was changed from `shadow` to `active` after
+    a private runtime backup and a second successful deploy. The Ploy health
+    endpoint, public edge health, fresh database authentication, sales-only
+    guard, and recent severe-log scan passed; database backups are
+    `pre-deploy-20260921-042326.sql.gz` and
+    `pre-deploy-20260921-042913.sql.gz`, and the pre-activation runtime backup
+    is `.env.pre-ploy-conversion-active-20260921-042820`.
+    TikTok Shop Open API remains correctly disabled for Ploy: it has zero
+    TikTok connections, snapshots, and Auto SML jobs, and must use Ploy's own
+    seller OAuth/Partner Center preflight before enabling the gateway, polling,
+    webhook, Topbar, LINE, Reviewed Bill, or SML flow. Ploy's sole Shopee
+    Auto SML setting remains disabled and its stock setting remains paused with
+    `catalog_generation_reconcile`; do not enable those per-shop writes until
+    Ploy's own dry-run/checklist passes. Demo, Lanboon, AOY, and the Central
+    TikTok Gateway were not redeployed or reconfigured during this rollout.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
