@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MapItemModal } from '@/pages/BillDetail/components/MapItemModal'
 import type { CatalogMatch, MarketplaceAliasImpact, MarketplaceAliasReviewGroup, MarketplaceConversionReadiness, MarketplaceCursorPage, MarketplaceItemAlias, MarketplaceMappingJob, MarketplaceProductGroup, MarketplaceStockPolicyJob, UnitOption } from '@/types'
 import { marketplaceImpactFormulaLines } from '@/lib/marketplace-impact'
+import { marketplaceErrorMessage } from '@/lib/marketplace-error'
 import { buildTikTokOrderMappingReviewPath, marketplacePendingSummary } from '@/lib/marketplace-review'
 import { marketplaceDisplayInputChannels } from '@/lib/billInputChannel'
 import { cn } from '@/lib/utils'
@@ -64,11 +65,6 @@ type PendingAction =
   | { kind: 'confirm'; group: MarketplaceAliasReviewGroup; product: CatalogMatch; conversion: ConversionConfig; impact: MarketplaceAliasImpact }
   | { kind: 'update'; alias: MarketplaceItemAlias; product: CatalogMatch; conversion: ConversionConfig; impact: MarketplaceAliasImpact }
   | { kind: 'delete'; alias: MarketplaceItemAlias; impact: MarketplaceAliasImpact }
-
-function errorMessage(error: unknown, fallback: string) {
-  const candidate = error as { response?: { data?: { error?: string; message?: string } } }
-  return candidate.response?.data?.message ?? candidate.response?.data?.error ?? fallback
-}
 
 export default function MarketplaceAliases() {
   const canManage = useAuthStore((state) => state.user?.role === 'admin')
@@ -156,7 +152,7 @@ export default function MarketplaceAliases() {
 		setTotal(aliasResponse.data.total ?? 0)
       }
     } catch (error) {
-      toast.error(errorMessage(error, 'โหลดข้อมูลการจับคู่สินค้าไม่สำเร็จ'))
+      toast.error(marketplaceErrorMessage(error, 'โหลดข้อมูลการจับคู่สินค้าไม่สำเร็จ'))
     } finally {
       setLoading(false)
     }
@@ -247,7 +243,7 @@ export default function MarketplaceAliases() {
       })
       return response.data
     } catch (error) {
-      toast.error(errorMessage(error, 'ตรวจสอบผลกระทบไม่สำเร็จ กรุณาลองใหม่'))
+      toast.error(marketplaceErrorMessage(error, 'ตรวจสอบผลกระทบไม่สำเร็จ กรุณาลองใหม่'))
       return null
     } finally {
       setPreviewing(false)
@@ -297,7 +293,7 @@ export default function MarketplaceAliases() {
       } catch (error) {
         consecutivePollFailures += 1
         if (consecutivePollFailures >= 5) {
-          toast.error(errorMessage(error, 'ติดตามงาน Product Master ไม่สำเร็จ งานยังทำต่อในระบบและสามารถกดรีเฟรชเพื่อตรวจใหม่'))
+          toast.error(marketplaceErrorMessage(error, 'ติดตามงาน Product Master ไม่สำเร็จ งานยังทำต่อในระบบและสามารถกดรีเฟรชเพื่อตรวจใหม่'))
           return
         }
         await new Promise((resolve) => window.setTimeout(resolve, consecutivePollFailures * 1000))
@@ -327,7 +323,7 @@ export default function MarketplaceAliases() {
       toast.success('นำงานกลับเข้าคิวแล้ว เมื่อเสร็จให้ตรวจสอบสต๊อกอีกครั้ง')
       void monitorJob(response.data)
     } catch (error) {
-      toast.error(errorMessage(error, 'สั่งลองงานใหม่ไม่สำเร็จ'))
+      toast.error(marketplaceErrorMessage(error, 'สั่งลองงานใหม่ไม่สำเร็จ'))
     }
   }
 
@@ -345,7 +341,7 @@ export default function MarketplaceAliases() {
       } catch (error) {
         consecutivePollFailures += 1
         if (consecutivePollFailures >= 5) {
-          toast.error(errorMessage(error, 'ติดตามงานตั้ง stock 0 ไม่สำเร็จ งานยังทำต่อในระบบและสามารถกดรีเฟรชเพื่อตรวจใหม่'))
+          toast.error(marketplaceErrorMessage(error, 'ติดตามงานตั้ง stock 0 ไม่สำเร็จ งานยังทำต่อในระบบและสามารถกดรีเฟรชเพื่อตรวจใหม่'))
           return
         }
         await new Promise((resolve) => window.setTimeout(resolve, consecutivePollFailures * 1000))
@@ -374,7 +370,7 @@ export default function MarketplaceAliases() {
       const response = await client.post<MarketplaceStockPolicyJob>(`/api/marketplace-aliases/policy-jobs/${activePolicyJob.id}/retry`)
       void monitorPolicyJob(response.data)
     } catch (error) {
-      toast.error(errorMessage(error, 'สั่งลองตั้ง stock 0 ใหม่ไม่สำเร็จ'))
+      toast.error(marketplaceErrorMessage(error, 'สั่งลองตั้ง stock 0 ใหม่ไม่สำเร็จ'))
     }
   }
 
@@ -388,7 +384,7 @@ export default function MarketplaceAliases() {
       }
       void monitorPolicyJob(response.data)
     } catch (error) {
-      toast.error(errorMessage(error, 'ไม่พบสถานะงานตั้ง stock 0 กรุณาติดต่อผู้ดูแลระบบ'))
+      toast.error(marketplaceErrorMessage(error, 'ไม่พบสถานะงานตั้ง stock 0 กรุณาติดต่อผู้ดูแลระบบ'))
     }
   }
 
@@ -443,7 +439,7 @@ export default function MarketplaceAliases() {
       setAction(null)
       await load()
     } catch (error) {
-      toast.error(errorMessage(error, 'บันทึกการจับคู่ไม่สำเร็จ'))
+      toast.error(marketplaceErrorMessage(error, 'บันทึกการจับคู่ไม่สำเร็จ'))
       if ((error as { response?: { status?: number } }).response?.status === 409) await load()
     }
   }
@@ -503,7 +499,7 @@ export default function MarketplaceAliases() {
         await load()
       }
     } catch (error) {
-      toast.error(errorMessage(error, 'อัปเดตรายการสินค้าจาก Shopee ไม่สำเร็จ'))
+      toast.error(marketplaceErrorMessage(error, 'อัปเดตรายการสินค้าจาก Shopee ไม่สำเร็จ'))
     } finally {
       setCatalogSyncing(false)
     }
@@ -533,7 +529,7 @@ export default function MarketplaceAliases() {
         await load()
       }
     } catch (error) {
-      toast.error(errorMessage(error, 'อัปเดตรายการสินค้าจาก TikTok Shop ไม่สำเร็จ'))
+      toast.error(marketplaceErrorMessage(error, 'อัปเดตรายการสินค้าจาก TikTok Shop ไม่สำเร็จ'))
     } finally {
       setTikTokCatalogSyncing(false)
     }
@@ -935,7 +931,7 @@ function SavedGroupedTable({
 				},
 			}))
 		} catch (error) {
-			setVariants((value) => ({ ...value, [key]: { rows: current?.rows ?? [], nextCursor: current?.nextCursor ?? '', loading: false, error: errorMessage(error, 'โหลดตัวเลือกไม่สำเร็จ') } }))
+			setVariants((value) => ({ ...value, [key]: { rows: current?.rows ?? [], nextCursor: current?.nextCursor ?? '', loading: false, error: marketplaceErrorMessage(error, 'โหลดตัวเลือกไม่สำเร็จ') } }))
 		}
 	}
 
