@@ -1039,10 +1039,13 @@ function DesktopRow({
       stockRecalcError: row.cancellation.stock_recalc_error,
     } : undefined,
   }
-  const cancellationDocument = cancellationQueue ? tiktokCancellationState(documentInput) : null
+  // The all-orders view can include a cancelled order.  It must never expose a
+  // sale-document action merely because the operator has not switched tabs yet.
+  const isCancellationRow = cancellationQueue || row.order_status === 'CANCELLED'
+  const cancellationDocument = isCancellationRow ? tiktokCancellationState(documentInput) : null
   const document = cancellationDocument ?? tiktokCompactDocumentState(documentInput, row.auto_sml)
   const actions = tiktokRowActions({ billID: row.bill_id, documentPath: row.document_path })
-  const canRetry = !cancellationQueue && canRetryAutoSML && Boolean(row.auto_sml && ['needs_review', 'failed'].includes(row.auto_sml.status))
+  const canRetry = !isCancellationRow && canRetryAutoSML && Boolean(row.auto_sml && ['needs_review', 'failed'].includes(row.auto_sml.status))
   return (
     <tr className="border-t border-border hover:bg-muted/30">
       <td className="px-3 py-2 align-top">
@@ -1080,11 +1083,11 @@ function DesktopRow({
               ตรวจเอกสารยกเลิก
             </Button>
           )}
-          {cancellationQueue && document.path ? (
+          {isCancellationRow && document.path ? (
             <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
               <Link to={document.path}><Eye className="h-3.5 w-3.5" />ใบขายเดิม</Link>
             </Button>
-          ) : cancellationQueue && !cancellationDocument?.canReviewCancellation ? (
+          ) : isCancellationRow && !cancellationDocument?.canReviewCancellation ? (
             <Badge variant="outline" className="h-8 border-border bg-muted/40 px-2 text-muted-foreground">
               ไม่ต้องดำเนินการ
             </Badge>
@@ -1101,7 +1104,7 @@ function DesktopRow({
               {actions.primaryLabel}
             </Button>
           )}
-          {!cancellationQueue && document.path && (
+          {!isCancellationRow && document.path && (
             <TikTokBillShadowButton
               loading={previewLoading}
               label={actions.detailsLabel}
