@@ -46,6 +46,24 @@ func TestTenantConnectionStoreRejectsInvalidMetadataBeforeDatabase(t *testing.T)
 	}
 }
 
+func TestTenantConnectionStoreReturnsActiveShopLabel(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	mock.ExpectQuery("SELECT COALESCE").WithArgs("7494619203789490654").
+		WillReturnRows(sqlmock.NewRows([]string{"label"}).AddRow("henna_milkford"))
+
+	label, err := NewTenantConnectionStore(database).ActiveShopLabel(t.Context(), "7494619203789490654")
+	if err != nil || label != "henna_milkford" {
+		t.Fatalf("label=%q err=%v", label, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func validGatewayConnection(connectionID, shopID string) GatewayConnection {
 	return GatewayConnection{
 		GatewayConnectionID: connectionID, ShopID: shopID, ShopName: "AOY", ShopRegion: "TH", SellerType: "LOCAL", ShopCode: "THAOY1",

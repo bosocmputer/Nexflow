@@ -99,6 +99,8 @@ type Config struct {
 	TikTokShopAutoSMLEnabled            bool
 	TikTokShopSMLCancelDocumentsEnabled bool
 	TikTokShopCancelWebhookEnabled      bool
+	TikTokShopLineEnabled               bool
+	TikTokShopLineEligibleAfter         time.Time
 	ShopeeRealtimeOpsEnabled            bool
 	ShopeeAdvancedDropoffEnabled        bool
 	ShopeeShippingActionsEnabled        bool
@@ -146,6 +148,14 @@ func Load() *Config {
 		log.Fatal(err)
 	}
 	documentProfileRouteModes, err := parseSMLDocumentProfileRouteModes(getEnv("SML_DOCUMENT_PROFILE_ROUTE_MODES", ""), documentProfileMode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tikTokShopLineNotificationsEnabled := getEnvBool("TIKTOK_SHOP_LINE_NOTIFICATIONS_ENABLED", false)
+	tikTokShopLineNotificationsEligibleAfter, err := parseTikTokShopLineNotificationCutoff(
+		tikTokShopLineNotificationsEnabled,
+		getEnv("TIKTOK_SHOP_LINE_NOTIFICATIONS_ELIGIBLE_AFTER", ""),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -212,6 +222,8 @@ func Load() *Config {
 		TikTokShopAutoSMLEnabled:            getEnvBool("TIKTOK_SHOP_AUTO_SML_ENABLED", false),
 		TikTokShopSMLCancelDocumentsEnabled: getEnvBool("TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED", false),
 		TikTokShopCancelWebhookEnabled:      getEnvBool("TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED", false),
+		TikTokShopLineEnabled:               tikTokShopLineNotificationsEnabled,
+		TikTokShopLineEligibleAfter:         tikTokShopLineNotificationsEligibleAfter,
 		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
@@ -335,6 +347,21 @@ func parseSMLDocumentProfileRouteModes(raw, legacySaleInvoiceMode string) (map[s
 		modes[route] = mode
 	}
 	return modes, nil
+}
+
+func parseTikTokShopLineNotificationCutoff(enabled bool, raw string) (time.Time, error) {
+	if !enabled {
+		return time.Time{}, nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("TIKTOK_SHOP_LINE_NOTIFICATIONS_ELIGIBLE_AFTER must be set when TikTok Shop LINE notifications are enabled")
+	}
+	cutoff, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("TIKTOK_SHOP_LINE_NOTIFICATIONS_ELIGIBLE_AFTER must be RFC3339: %w", err)
+	}
+	return cutoff.UTC(), nil
 }
 
 func getEnv(key, fallback string) string {

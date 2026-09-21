@@ -175,7 +175,9 @@ func (s *TikTokOrderReconciler) execute(ctx context.Context, run TikTokOrderReco
 			orderIDs = append(orderIDs, orderID)
 		}
 		if len(orderIDs) > 0 {
-			snapshotResult, err := s.snapshots.Sync(runCtx, TikTokOrderSnapshotRequest{ShopID: run.ShopID, OrderIDs: orderIDs})
+			snapshotResult, err := s.snapshots.Sync(runCtx, TikTokOrderSnapshotRequest{
+				ShopID: run.ShopID, OrderIDs: orderIDs, ObservationSource: "polling",
+			})
 			if err != nil || snapshotResult == nil || snapshotResult.SyncedCount != len(orderIDs) {
 				return nil, s.fail(ctx, run.ID, "snapshot_failed", "TikTok Shop order detail snapshot failed")
 			}

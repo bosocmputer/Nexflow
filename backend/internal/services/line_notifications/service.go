@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,6 +89,48 @@ func (s *Service) EnqueueShopeeNewOrder(ctx context.Context, snap *models.Shopee
 		ActionURL:      ShopeeOrderActionURL(s.publicBaseURL, snap.OrderSN),
 		EntityType:     "shopee_order",
 		EntityID:       fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
+		DedupeKey:      dedupeKey,
+		MessageText:    message,
+		AltText:        altText,
+		FlexPayload:    flexPayload,
+		PayloadVersion: payloadVersion,
+	})
+}
+
+func (s *Service) EnqueueTikTokShopNewOrder(ctx context.Context, in models.TikTokShopNewOrderNotification, dedupeKey string) (int, error) {
+	if s == nil || s.repo == nil || strings.TrimSpace(in.ShopID) == "" || strings.TrimSpace(in.OrderID) == "" {
+		return 0, nil
+	}
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		dedupeKey = fmt.Sprintf("tiktok_shop:new_order:%s:%s", strings.TrimSpace(in.ShopID), strings.TrimSpace(in.OrderID))
+	}
+	message := BuildTikTokShopNewOrderLineText(in, s.publicBaseURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := BuildTikTokShopNewOrderLineFlex(in, s.publicBaseURL); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText, flexPayload, payloadVersion = alt, raw, 1
+			} else if s.logger != nil {
+				s.logger.Warn("line TikTok Shop new-order flex marshal failed",
+					zap.String("shop_id", in.ShopID),
+					zap.String("order_id", in.OrderID),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+	actionURL := TikTokShopOrderActionURL(s.publicBaseURL, in.OrderID)
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source:         "tiktok_shop",
+		Severity:       "info",
+		Title:          "มีออเดอร์ TikTok Shop ใหม่",
+		Body:           tikTokShopLineNotificationBody(in),
+		ActionURL:      actionURL,
+		EntityType:     "tiktok_shop_order",
+		EntityID:       strings.TrimSpace(in.ShopID) + ":" + strings.TrimSpace(in.OrderID),
 		DedupeKey:      dedupeKey,
 		MessageText:    message,
 		AltText:        altText,
@@ -576,6 +619,165 @@ func flexPayloadFromDelivery(job models.LineNotificationDeliveryJob) (string, ma
 
 func BuildShopeeNewOrderLineText(snap *models.ShopeeOrderSnapshot, publicBaseURL string) string {
 	return BuildShopeeNewOrderLineTextWithPayment(snap, nil, publicBaseURL)
+}
+
+const tikTokShopNotificationItemLimit = 5
+
+func BuildTikTokShopNewOrderLineText(in models.TikTokShopNewOrderNotification, publicBaseURL string) string {
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if currency == "" {
+		currency = "THB"
+	}
+	parts := []string{
+		"มีออเดอร์ TikTok Shop ใหม่",
+		"ร้าน: " + fallbackDash(strings.TrimSpace(in.ShopName)),
+		"Order ID: " + fallbackDash(strings.TrimSpace(in.OrderID)),
+		"สถานะ: " + tikTokShopOrderStatusLabel(in.OrderStatus),
+	}
+	if amount := tikTokShopLineMoney(in.ProductSubtotalAmount); amount != "" {
+		parts = append(parts, "ยอดสินค้า: "+amount+" "+currency)
+	}
+	if amount := tikTokShopLineMoney(in.ShippingFeeAmount); amount != "" && amount != "0.00" {
+		parts = append(parts, "ค่าจัดส่ง: "+amount+" "+currency)
+	}
+	if amount := tikTokShopLineMoney(in.PaymentTotalAmount); amount != "" {
+		parts = append(parts, "ยอดลูกค้าชำระ: "+amount+" "+currency)
+	}
+	if !in.CreatedAt.IsZero() {
+		parts = append(parts, "วันที่สั่ง: "+in.CreatedAt.In(shopeeLineTimeLocation).Format("02/01/2006 15:04"))
+	}
+	if items := tikTokShopProductLines(in.Items, tikTokShopNotificationItemLimit); len(items) > 0 {
+		parts = append(parts, "สินค้า:")
+		parts = append(parts, items...)
+	}
+	parts = append(parts, "เปิดใน Nexflow: "+TikTokShopOrderActionURL(publicBaseURL, in.OrderID))
+	return strings.Join(filterNonEmpty(parts), "\n")
+}
+
+func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _ string) (string, map[string]any) {
+	shop := strings.TrimSpace(in.ShopName)
+	if shop == "" {
+		shop = "shop_id " + strings.TrimSpace(in.ShopID)
+	}
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if currency == "" {
+		currency = "THB"
+	}
+	amount := tikTokShopLineMoney(in.PaymentTotalAmount)
+	title := "มีออเดอร์ TikTok Shop ใหม่"
+	alt := strings.Join(filterNonEmpty([]string{title, shop, amount}), " · ")
+	body := []map[string]any{
+		flexText(title, "lg", "bold", "#0F172A", "", true),
+		flexText(shop, "sm", "", "#64748B", "", true),
+	}
+	if amount != "" {
+		body = append(body, flexAmountRow("ยอดลูกค้าชำระ", amount+" "+currency, "#E11D48"))
+	}
+	createdAt := ""
+	if !in.CreatedAt.IsZero() {
+		createdAt = in.CreatedAt.In(shopeeLineTimeLocation).Format("02/01/2006 15:04")
+	}
+	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{
+		{Label: "Order ID", Value: strings.TrimSpace(in.OrderID)},
+		{Label: "สถานะ", Value: tikTokShopOrderStatusLabel(in.OrderStatus)},
+		{Label: "วันที่สั่ง", Value: createdAt},
+		{Label: "ยอดสินค้า", Value: tikTokShopLineMoneyWithCurrency(in.ProductSubtotalAmount, currency)},
+		{Label: "ค่าจัดส่ง", Value: tikTokShopLineMoneyWithCurrency(in.ShippingFeeAmount, currency)},
+	})
+	body = append(body,
+		map[string]any{"type": "separator", "margin": "md"},
+		flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+	)
+	for _, item := range tikTokShopProductLines(in.Items, tikTokShopNotificationItemLimit) {
+		body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
+	}
+	body = append(body, flexText("ไม่มีชื่อผู้รับ เบอร์โทร หรือที่อยู่ในข้อความแจ้งเตือน", "xs", "", "#94A3B8", "md", true))
+	return alt, map[string]any{
+		"type": "bubble", "size": "mega",
+		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
+	}
+}
+
+func TikTokShopOrderActionURL(publicBaseURL, orderID string) string {
+	path := "/tiktok-shop-operations?order_id=" + url.QueryEscape(strings.TrimSpace(orderID))
+	base := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+	if base == "" {
+		return path
+	}
+	return base + path
+}
+
+func tikTokShopLineNotificationBody(in models.TikTokShopNewOrderNotification) string {
+	return strings.Join(filterNonEmpty([]string{
+		strings.TrimSpace(in.ShopName),
+		"Order " + strings.TrimSpace(in.OrderID),
+		tikTokShopOrderStatusLabel(in.OrderStatus),
+	}), " · ")
+}
+
+func tikTokShopProductLines(items []models.TikTokShopNewOrderNotificationItem, limit int) []string {
+	if limit <= 0 {
+		limit = tikTokShopNotificationItemLimit
+	}
+	out := make([]string, 0, minInt(len(items), limit)+1)
+	for _, item := range items {
+		if len(out) >= limit {
+			break
+		}
+		name := compactWhitespace(item.ProductName)
+		if name == "" || item.Quantity < 1 {
+			continue
+		}
+		if variant := compactWhitespace(item.VariantName); variant != "" {
+			name += " (" + variant + ")"
+		}
+		out = append(out, truncateRunes(name, 160)+fmt.Sprintf(" x%d", item.Quantity))
+	}
+	if remaining := len(items) - len(out); remaining > 0 {
+		out = append(out, fmt.Sprintf("และอีก %d รายการ", remaining))
+	}
+	return out
+}
+
+func tikTokShopLineMoneyWithCurrency(raw, currency string) string {
+	amount := tikTokShopLineMoney(raw)
+	if amount == "" {
+		return ""
+	}
+	return amount + " " + currency
+}
+
+func tikTokShopLineMoney(raw string) string {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || value < 0 || math.IsInf(value, 0) || math.IsNaN(value) {
+		return ""
+	}
+	return formatLineMoneyValue(value)
+}
+
+func tikTokShopOrderStatusLabel(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "UNPAID":
+		return "ยังไม่ชำระ"
+	case "ON_HOLD":
+		return "พักคำสั่งซื้อ"
+	case "AWAITING_SHIPMENT":
+		return "รอจัดส่ง"
+	case "PARTIALLY_SHIPPING":
+		return "จัดส่งบางส่วน"
+	case "AWAITING_COLLECTION":
+		return "รอรับพัสดุ"
+	case "IN_TRANSIT":
+		return "กำลังขนส่ง"
+	case "DELIVERED":
+		return "ส่งถึงแล้ว"
+	case "COMPLETED":
+		return "สำเร็จ"
+	case "CANCELLED":
+		return "ยกเลิก"
+	default:
+		return fallbackDash(strings.TrimSpace(status))
+	}
 }
 
 func BuildShopeeNewOrderLineTextWithPayment(snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, publicBaseURL string) string {

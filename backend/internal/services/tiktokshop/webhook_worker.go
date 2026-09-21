@@ -64,7 +64,9 @@ func (w *TikTokWebhookWorker) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	runContext, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	result, syncErr := w.snapshots.Sync(runContext, TikTokOrderSnapshotRequest{ShopID: job.ShopID, OrderIDs: []string{job.OrderID}})
+	result, syncErr := w.snapshots.Sync(runContext, TikTokOrderSnapshotRequest{
+		ShopID: job.ShopID, OrderIDs: []string{job.OrderID}, ObservationSource: "webhook",
+	})
 	if syncErr == nil && result != nil && result.SyncedCount == 1 && len(result.Snapshots) == 1 && strings.TrimSpace(result.Snapshots[0].OrderID) == job.OrderID {
 		if err := w.store.MarkSucceeded(ctx, job.ID); err != nil {
 			return true, err

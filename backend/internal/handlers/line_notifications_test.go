@@ -116,6 +116,26 @@ func TestLineNotificationNextStepSampleMessage(t *testing.T) {
 	}
 }
 
+func TestLineNotificationTikTokShopSampleMessage(t *testing.T) {
+	h := &LineNotificationHandler{cfg: &config.Config{PublicBaseURL: "https://nexflow-aoy.nextstep-soft.com"}}
+
+	msg := h.sampleMessageForSource("tiktok_shop")
+	for _, want := range []string{
+		"มีออเดอร์ TikTok Shop ใหม่",
+		"henna_milkford",
+		"586030483469993439",
+		"ยอดลูกค้าชำระ: 307.49 THB",
+		"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order_id=586030483469993439",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("TikTok Shop sample missing %q:\n%s", want, msg)
+		}
+	}
+	if normalizeLineNotificationSampleSource("tiktok-shop") != "tiktok_shop" {
+		t.Fatal("TikTok Shop sample source must normalize consistently")
+	}
+}
+
 func TestLineNotificationDestinationFromWebhookSource(t *testing.T) {
 	tests := []struct {
 		name     string

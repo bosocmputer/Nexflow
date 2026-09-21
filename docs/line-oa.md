@@ -1,4 +1,4 @@
-# LINE OA — Chat Inbox And Shopee Notifications
+# LINE OA — Chat Inbox And Marketplace Notifications
 
 > อัพเดตล่าสุด: 2026-06-22
 > สถานะ: LINE chat inbox + multi-OA deployed แต่ production UI ซ่อนด้วย `VITE_ENABLE_CHAT=false`. LINE แจ้งเตือน Shopee สำหรับทีมงานเปิดใช้งานผ่าน `/settings/line-notifications`.
@@ -11,7 +11,13 @@ LINE OA ใน Nexflow ตอนนี้เป็นระบบแชท 2 ท
 
 ใน production ปัจจุบันส่วน chat ถูกซ่อนจาก sidebar แต่ backend และ route ยังอยู่
 เพื่อไม่ให้ shared UI/code พัง. ส่วนที่เปิดใช้งานจริงคือ LINE แจ้งเตือนภายใน
-สำหรับออเดอร์ Shopee, cancelled-after-SML, และ settlement.
+สำหรับออเดอร์ Shopee, TikTok Shop, cancelled-after-SML, และ settlement.
+
+การแจ้งออเดอร์ใหม่จาก TikTok Shop ใช้ผู้รับและ delivery worker ชุดเดียวกับ
+Shopee แต่เปิด/ปิดด้วย `TIKTOK_SHOP_LINE_NOTIFICATIONS_ENABLED` แยกกัน เมื่อเปิด
+ต้องกำหนด `TIKTOK_SHOP_LINE_NOTIFICATIONS_ELIGIBLE_AFTER` เป็น RFC3339 cutoff
+เพื่อไม่แจ้งย้อนหลัง Polling และ webhook enqueue ด้วย dedupe key เดียวกัน และ payload
+ไม่เก็บชื่อผู้รับ เบอร์โทร หรือที่อยู่
 
 ---
 

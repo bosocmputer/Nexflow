@@ -58,7 +58,7 @@ func (f *snapshotStoreFake) UpsertBatch(_ context.Context, shopID string, record
 func TestBuildTikTokOrderSnapshotGroupsRepeatedSKUAndKeepsOnlySafeFields(t *testing.T) {
 	var order Order
 	if err := json.Unmarshal([]byte(`{
-		"id":"585684843131602849","status":"COMPLETED","update_time":1789123000,
+		"id":"585684843131602849","status":"COMPLETED","create_time":1789000000,"update_time":1789123000,
 		"buyer_username":"must-not-persist","recipient_address":{"name":"Secret","phone_number":"0900000000"},
 		"payment":{"currency":"THB","sub_total":"300","shipping_fee":"0","item_insurance_fee":"7.49","total_amount":"307.49"},
 		"line_items":[
@@ -89,6 +89,9 @@ func TestBuildTikTokOrderSnapshotGroupsRepeatedSKUAndKeepsOnlySafeFields(t *test
 	}
 	if record.PaymentTotal != "307.49" || record.ProductSubtotal != "300" || record.ItemInsuranceFee != "7.49" || len(record.SourceHash) != 64 {
 		t.Fatalf("amount/hash evidence = %+v", record)
+	}
+	if record.OrderCreatedAt == nil || record.OrderCreatedAt.Unix() != 1789000000 {
+		t.Fatalf("order create-time evidence = %+v", record.OrderCreatedAt)
 	}
 }
 
@@ -204,6 +207,25 @@ func TestTikTokOrderSnapshotServiceNotifiesObserverAfterPersistence(t *testing.T
 	result, err := service.Sync(t.Context(), TikTokOrderSnapshotRequest{ShopID: "7000714532876273420", OrderIDs: []string{"1001"}})
 	if err != nil || store.calls != 1 || len(observer.records) != 1 || observer.records[0].OrderID != "1001" || result.Snapshots[0].LastOrderUpdateAt == nil {
 		t.Fatalf("result=%+v err=%v store=%d observed=%+v", result, err, store.calls, observer.records)
+	}
+}
+
+func TestTikTokOrderSnapshotServiceNotifiesAllObserversWithOrigin(t *testing.T) {
+	gateway := &snapshotGatewayFake{
+		details: &GatewayOrderDetailsResponse{UpstreamRequestID: "detail", Orders: []Order{validSnapshotOrder("1001")}},
+		prices:  map[string]*GatewayOrderPriceDetailResponse{"1001": {UpstreamRequestID: "price-1", PriceDetail: ptrPrice(validSnapshotPrice("307.49"))}},
+	}
+	first, second := &snapshotObserverFake{}, &snapshotObserverFake{}
+	service := NewOrderSnapshotService(gateway, &snapshotStoreFake{}).WithObserver(first).WithObserver(second)
+
+	_, err := service.Sync(t.Context(), TikTokOrderSnapshotRequest{
+		ShopID: "7000714532876273420", OrderIDs: []string{"1001"}, ObservationSource: "webhook",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.records) != 1 || len(second.records) != 1 || first.records[0].ObservationSource != "webhook" || second.records[0].ObservationSource != "webhook" {
+		t.Fatalf("first=%+v second=%+v", first.records, second.records)
 	}
 }
 
@@ -394,7 +416,7 @@ func TestTikTokOrderSnapshotStoreRejectsUnboundedOrMalformedListFilters(t *testi
 
 func validSnapshotOrder(orderID string) Order {
 	return Order{
-		ID: orderID, Status: OrderStatusCompleted, UpdateTime: 1789123000,
+		ID: orderID, Status: OrderStatusCompleted, CreateTime: 1789000000, UpdateTime: 1789123000,
 		Payment:   OrderPayment{Currency: "THB", SubTotal: "300", ShippingFee: "0", ItemInsuranceFee: "7.49", TotalAmount: "307.49"},
 		LineItems: []OrderLineItem{{ID: "line-" + orderID, ProductID: "prod-1", SKUID: "sku-1", ProductName: "A", SKUName: "Red", Currency: "THB", OriginalPrice: "300", SalePrice: "300"}},
 	}

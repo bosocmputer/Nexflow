@@ -116,6 +116,7 @@ interface TikTokDiagnostics {
   api: { enabled: boolean; gateway_configured: boolean; connected_shops: number }
   sync: { worker_enabled: boolean; configured: boolean; enabled_shops: number; error_shops: number }
   webhook: { enabled: boolean }
+  line_notifications?: { enabled: boolean; eligible_after?: string }
   document: { reviewed_bill_enabled: boolean; sml_send_enabled: boolean; route_ready: boolean }
   cancellation?: { document_create_enabled: boolean; webhook_enabled: boolean }
   coverage: {
@@ -833,6 +834,7 @@ function TikTokDiagnosticsPanel({
     { label: 'Open API / Gateway', ok: diagnostics.api.enabled && diagnostics.api.gateway_configured && diagnostics.api.connected_shops > 0 },
     { label: 'ซิงก์ออเดอร์', ok: diagnostics.sync.worker_enabled && diagnostics.sync.enabled_shops > 0 && diagnostics.sync.error_shops === 0 },
     { label: 'Webhook', ok: diagnostics.webhook.enabled },
+    { label: 'LINE ออเดอร์ใหม่', ok: diagnostics.line_notifications?.enabled === true },
     { label: 'เส้นทาง SML', ok: diagnostics.document.route_ready && diagnostics.document.sml_send_enabled },
     { label: 'Webhook ยกเลิก', ok: diagnostics.cancellation?.webhook_enabled === true },
     { label: 'เอกสารยกเลิก (Canary)', ok: diagnostics.cancellation?.document_create_enabled === true },

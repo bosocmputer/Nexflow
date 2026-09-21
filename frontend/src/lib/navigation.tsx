@@ -132,7 +132,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ลูกค้าและ LINE',
     items: [
-      { menuKey: 'line_notifications', to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จาก Shopee และ NextStep Marketplace', adminOnly: true },
+      { menuKey: 'line_notifications', to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จาก Shopee, TikTok Shop และ NextStep Marketplace', adminOnly: true },
       { menuKey: 'line_myshop', to: '/settings/line-myshop', label: 'LINE MyShop', icon: ShoppingBag, hint: 'บัญชี OA Plus และ webhook orders', enabled: ENABLE_LINE_MYSHOP, adminOnly: true },
     ],
   },

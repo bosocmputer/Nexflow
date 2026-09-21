@@ -91,14 +91,22 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 		"sample_text": h.sampleMessage(),
 		"sample_texts": gin.H{
 			"shopee":               h.sampleMessageForSource("shopee"),
+			"tiktok_shop":          h.sampleMessageForSource("tiktok_shop"),
 			"nextstep_marketplace": h.sampleMessageForSource("nextstep_marketplace"),
 		},
 		"readiness": gin.H{
-			"sender_count":             len(senders),
-			"enabled_sender_count":     enabledSenders,
-			"recipient_count":          len(recipients),
-			"enabled_recipient_count":  enabledRecipients,
-			"shopee_realtime_enabled":  h.cfg != nil && h.cfg.ShopeeRealtimeOpsEnabled,
+			"sender_count":                      len(senders),
+			"enabled_sender_count":              enabledSenders,
+			"recipient_count":                   len(recipients),
+			"enabled_recipient_count":           enabledRecipients,
+			"shopee_realtime_enabled":           h.cfg != nil && h.cfg.ShopeeRealtimeOpsEnabled,
+			"tiktok_shop_notifications_enabled": h.cfg != nil && h.cfg.TikTokShopLineEnabled,
+			"tiktok_shop_notifications_eligible_after": func() string {
+				if h.cfg == nil || h.cfg.TikTokShopLineEligibleAfter.IsZero() {
+					return ""
+				}
+				return h.cfg.TikTokShopLineEligibleAfter.Format(time.RFC3339)
+			}(),
 			"delivery_worker_interval": "15s",
 		},
 	})
@@ -361,6 +369,8 @@ func (h *LineNotificationHandler) sampleMessage() string {
 
 func (h *LineNotificationHandler) sampleMessageForSource(source string) string {
 	switch normalizeLineNotificationSampleSource(source) {
+	case "tiktok_shop":
+		return linenotify.BuildTikTokShopNewOrderLineText(sampleTikTokShopOrder(), h.publicBaseURL())
 	case "nextstep_marketplace":
 		return linenotify.BuildNextStepMarketplaceNewOrderLineText(sampleNextStepMarketplaceOrder(), h.publicBaseURL())
 	default:
@@ -370,6 +380,8 @@ func (h *LineNotificationHandler) sampleMessageForSource(source string) string {
 
 func (h *LineNotificationHandler) sampleFlexForSource(source string) (string, map[string]any) {
 	switch normalizeLineNotificationSampleSource(source) {
+	case "tiktok_shop":
+		return linenotify.BuildTikTokShopNewOrderLineFlex(sampleTikTokShopOrder(), h.publicBaseURL())
 	case "nextstep_marketplace":
 		return linenotify.BuildNextStepMarketplaceNewOrderLineFlex(sampleNextStepMarketplaceOrder(), h.publicBaseURL())
 	default:
@@ -379,10 +391,24 @@ func (h *LineNotificationHandler) sampleFlexForSource(source string) (string, ma
 
 func normalizeLineNotificationSampleSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "tiktok", "tiktok_shop", "tiktok-shop":
+		return "tiktok_shop"
 	case "nextstep", "nextstep_marketplace", "nextstep-marketplace":
 		return "nextstep_marketplace"
 	default:
 		return "shopee"
+	}
+}
+
+func sampleTikTokShopOrder() models.TikTokShopNewOrderNotification {
+	return models.TikTokShopNewOrderNotification{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586030483469993439",
+		OrderStatus: "AWAITING_SHIPMENT", Currency: "THB", PaymentTotalAmount: "307.49",
+		ProductSubtotalAmount: "300.00", ShippingFeeAmount: "7.49", ItemCount: 2, SKUCount: 1,
+		CreatedAt: time.Date(2026, 9, 21, 3, 4, 5, 0, time.UTC),
+		Items: []models.TikTokShopNewOrderNotificationItem{{
+			ProductName: "สีเพ้นท์คิ้วมิวฟอร์ด", VariantName: "No.5 สีฟ้า", Quantity: 2,
+		}},
 	}
 }
 

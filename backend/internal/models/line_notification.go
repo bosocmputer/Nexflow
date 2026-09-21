@@ -103,6 +103,31 @@ type LineNotificationMessageInput struct {
 	PayloadVersion int
 }
 
+// TikTokShopNewOrderNotification is deliberately PII-free. It contains only
+// the order, amount, and product evidence already stored in the typed TikTok
+// snapshot so LINE delivery can never inherit recipient or buyer fields.
+type TikTokShopNewOrderNotification struct {
+	ShopID                string
+	ShopName              string
+	OrderID               string
+	OrderStatus           string
+	Currency              string
+	PaymentTotalAmount    string
+	ProductSubtotalAmount string
+	ShippingFeeAmount     string
+	ItemCount             int
+	SKUCount              int
+	CreatedAt             time.Time
+	ObservationSource     string
+	Items                 []TikTokShopNewOrderNotificationItem
+}
+
+type TikTokShopNewOrderNotificationItem struct {
+	ProductName string
+	VariantName string
+	Quantity    int
+}
+
 type LineNotificationDeliveryJob struct {
 	LineNotificationDelivery
 	DestinationType    string

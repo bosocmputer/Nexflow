@@ -351,6 +351,7 @@ func (h *TikTokShopAPIHandler) SnapshotOrders(c *gin.Context) {
 		h.error(c, http.StatusBadRequest, "invalid_request", "ระบุร้านและ Order ID ของ TikTok Shop จำนวน 1–20 รายการ")
 		return
 	}
+	input.ObservationSource = "manual"
 	result, err := h.snapshots.Sync(c.Request.Context(), input)
 	if err != nil {
 		switch {
@@ -581,6 +582,15 @@ func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"overall": overall, "api": api, "sync": syncState,
 		"webhook": gin.H{"enabled": webhookEnabled},
+		"line_notifications": gin.H{
+			"enabled": h != nil && h.config != nil && h.config.TikTokShopLineEnabled,
+			"eligible_after": func() string {
+				if h == nil || h.config == nil || h.config.TikTokShopLineEligibleAfter.IsZero() {
+					return ""
+				}
+				return h.config.TikTokShopLineEligibleAfter.Format(time.RFC3339)
+			}(),
+		},
 		"document": gin.H{
 			"reviewed_bill_enabled": h != nil && h.config != nil && h.config.TikTokShopReviewedBillEnabled,
 			"sml_send_enabled":      smlSendEnabled, "route_ready": routeReady,

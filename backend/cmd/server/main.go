@@ -361,6 +361,7 @@ func main() {
 	})
 	tiktokSnapshotStore := tiktokshop.NewTikTokOrderSnapshotStore(db)
 	tiktokSnapshotService := tiktokshop.NewOrderSnapshotService(tiktokGatewayClient, tiktokSnapshotStore)
+	tiktokConnectionStore := tiktokshop.NewTenantConnectionStore(db)
 	tiktokBillShadowStore := tiktokshop.NewTikTokBillShadowStore(db)
 	tiktokBillShadowService := tiktokshop.NewTikTokBillShadowService(tiktokBillShadowStore)
 	tiktokBillShadowMappingService := tiktokshop.NewTikTokBillShadowMappingService(tiktokBillShadowStore, aliasRepo)
@@ -369,14 +370,21 @@ func main() {
 	tiktokCancellationRepo := repository.NewTikTokCancellationRepo(db)
 	tiktokCancellationCoordinator := handlers.NewTikTokCancellationCoordinator(cfg, tiktokCancellationRepo, channelDefaultRepo, saleInvoiceCancelClient, billH, logger)
 	tiktokAutoSMLController := handlers.NewTikTokAutoSMLController(cfg, tiktokAutoSMLRepo, tiktokBillShadowService, tiktokReviewedBillService, billH, auditLogRepo, logger)
-	tiktokSnapshotService.WithObserver(tiktokAutoSMLController)
+	tiktokLineObserver := tiktokshop.NewTikTokNewOrderLineObserver(
+		cfg.TikTokShopLineEnabled,
+		cfg.TikTokShopLineEligibleAfter,
+		tiktokConnectionStore,
+		lineNotificationSvc,
+		logger,
+	)
+	tiktokSnapshotService.WithObserver(tiktokAutoSMLController).WithObserver(tiktokLineObserver)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
 	tiktokReconcileService := tiktokshop.NewTikTokOrderReconciler(tiktokGatewayClient, tiktokSnapshotService, tiktokReconcileStore)
 	tiktokProductCatalogStore := tiktokshop.NewProductCatalogStore(db)
 	tiktokProductCatalogService := tiktokshop.NewProductCatalogService(tiktokGatewayClient, tiktokProductCatalogStore)
 	tiktokWebhookStore := tiktokshop.NewTikTokWebhookStore(db)
 	tiktokGatewayInternalH := handlers.NewTikTokGatewayInternalHandler(db, cfg, tiktokWebhookStore, logger)
-	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokshop.NewTenantConnectionStore(db), tiktokSnapshotService, logger).
+	tiktokAPIH := handlers.NewTikTokShopAPIHandler(cfg, tiktokGatewayClient, tiktokConnectionStore, tiktokSnapshotService, logger).
 		WithOrderReconciler(tiktokReconcileService).
 		WithOrderSyncSettings(tiktokReconcileStore).
 		WithOrderReader(tiktokSnapshotStore).

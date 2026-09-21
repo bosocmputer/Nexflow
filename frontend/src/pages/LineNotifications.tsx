@@ -109,10 +109,12 @@ interface Overview {
     recipient_count: number
     enabled_recipient_count: number
     shopee_realtime_enabled?: boolean
+    tiktok_shop_notifications_enabled?: boolean
+    tiktok_shop_notifications_eligible_after?: string
   }
 }
 
-type LineSampleSource = 'shopee' | 'nextstep_marketplace'
+type LineSampleSource = 'shopee' | 'tiktok_shop' | 'nextstep_marketplace'
 
 const destinationLabels: Record<LineRecipient['destination_type'], string> = {
   user: 'User ID',
@@ -316,7 +318,7 @@ export default function LineNotifications() {
     <div className="min-w-0 space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
+        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee, TikTok Shop และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
         actions={
           <>
             <Button variant="outline" size="icon" aria-label="ดูตัวอย่างข้อความสำรอง" title="ตัวอย่างข้อความสำรอง" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('sample') }}>
@@ -355,13 +357,14 @@ export default function LineNotifications() {
                 {ready ? 'พร้อมส่ง LINE เมื่อมีออเดอร์ใหม่' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                เพิ่ม LINE OA, copy Webhook URL ไปเปิด Use webhook ใน LINE Developers, ให้ผู้รับทัก OA แล้วเพิ่มเป็นผู้รับแจ้งเตือนสำหรับ Shopee และ NextStep Marketplace
+                เพิ่ม LINE OA, copy Webhook URL ไปเปิด Use webhook ใน LINE Developers, ให้ผู้รับทัก OA แล้วเพิ่มเป็นผู้รับแจ้งเตือนสำหรับ Shopee, TikTok Shop และ NextStep Marketplace
               </p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
             <ReadinessChip label="LINE OA" value={`${readiness?.enabled_sender_count ?? 0}/${readiness?.sender_count ?? 0}`} ok={!!readiness?.enabled_sender_count} />
             <ReadinessChip label="ผู้รับ" value={`${enabledRecipients}`} ok={enabledRecipients > 0} />
+            <ReadinessChip label="TikTok Shop" value={readiness?.tiktok_shop_notifications_enabled ? 'เปิด' : 'ปิด'} ok={!!readiness?.tiktok_shop_notifications_enabled} />
             <ReadinessChip label="ล่าสุด" value={data?.deliveries[0]?.status ? deliveryStatusLabel(data.deliveries[0].status) : 'ยังไม่มี'} ok={data?.deliveries[0]?.status === 'sent'} />
           </div>
         </div>
@@ -622,7 +625,7 @@ export default function LineNotifications() {
           </DialogHeader>
           {supportDialog === 'sample' ? <div className="min-w-0">
             <div className="mt-2 flex rounded-md border border-border bg-muted/30 p-1">
-              {(['shopee', 'nextstep_marketplace'] as LineSampleSource[]).map((source) => (
+              {(['shopee', 'tiktok_shop', 'nextstep_marketplace'] as LineSampleSource[]).map((source) => (
                 <Button
                   key={source}
                   type="button"
@@ -1098,6 +1101,8 @@ function deliveryStatusLabel(status: string) {
 
 function sampleSourceLabel(source: LineSampleSource) {
   switch (source) {
+    case 'tiktok_shop':
+      return 'TikTok Shop'
     case 'nextstep_marketplace':
       return 'NextStep Marketplace'
     default:

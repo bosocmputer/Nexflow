@@ -30,8 +30,9 @@ var (
 )
 
 type TikTokOrderSnapshotRequest struct {
-	ShopID   string   `json:"shop_id"`
-	OrderIDs []string `json:"order_ids"`
+	ShopID            string   `json:"shop_id"`
+	OrderIDs          []string `json:"order_ids"`
+	ObservationSource string   `json:"-"`
 }
 
 type TikTokOrderSnapshotSummary struct {
@@ -78,7 +79,9 @@ type TikTokOrderSnapshotRecord struct {
 	DetailRequestID      string
 	PriceDetailRequestID string
 	SourceHash           string
+	OrderCreatedAt       *time.Time
 	LastOrderUpdateAt    *time.Time
+	ObservationSource    string
 }
 
 type TikTokOrderSnapshotListFilter struct {
@@ -178,9 +181,9 @@ type orderSnapshotBatchStore interface {
 }
 
 type OrderSnapshotService struct {
-	gateway  orderSnapshotGateway
-	store    orderSnapshotBatchStore
-	observer TikTokOrderSnapshotObserver
+	gateway   orderSnapshotGateway
+	store     orderSnapshotBatchStore
+	observers []TikTokOrderSnapshotObserver
 }
 
 type TikTokOrderSnapshotObserver interface {
@@ -192,8 +195,8 @@ func NewOrderSnapshotService(gateway orderSnapshotGateway, store orderSnapshotBa
 }
 
 func (s *OrderSnapshotService) WithObserver(observer TikTokOrderSnapshotObserver) *OrderSnapshotService {
-	if s != nil {
-		s.observer = observer
+	if s != nil && observer != nil {
+		s.observers = append(s.observers, observer)
 	}
 	return s
 }
@@ -238,15 +241,16 @@ func (s *OrderSnapshotService) Sync(ctx context.Context, input TikTokOrderSnapsh
 			}
 			return nil, fmt.Errorf("%w: %v", ErrSnapshotSourceInvalid, err)
 		}
+		record.ObservationSource = normalizeTikTokObservationSource(input.ObservationSource)
 		records = append(records, record)
 	}
 	if err := s.store.UpsertBatch(ctx, shopID, records); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSnapshotPersistenceFailed, err)
 	}
-	if s.observer != nil {
+	for _, observer := range s.observers {
 		for _, record := range records {
-			if err := s.observer.ObserveTikTokOrderSnapshot(ctx, shopID, record); err != nil {
-				return nil, fmt.Errorf("%w: observe Auto SML eligibility: %v", ErrSnapshotPersistenceFailed, err)
+			if err := observer.ObserveTikTokOrderSnapshot(ctx, shopID, record); err != nil {
+				return nil, fmt.Errorf("%w: observe TikTok Shop snapshot: %v", ErrSnapshotPersistenceFailed, err)
 			}
 		}
 	}
@@ -332,6 +336,11 @@ func BuildTikTokOrderSnapshot(order Order, price PriceDetail, detailRequestID, p
 	}
 	digest := sha256.Sum256(hashInput)
 	var lastUpdate *time.Time
+	var createdAt *time.Time
+	if order.CreateTime > 0 {
+		value := time.Unix(order.CreateTime, 0).UTC()
+		createdAt = &value
+	}
 	if order.UpdateTime > 0 {
 		value := time.Unix(order.UpdateTime, 0).UTC()
 		lastUpdate = &value
@@ -342,8 +351,18 @@ func BuildTikTokOrderSnapshot(order Order, price PriceDetail, detailRequestID, p
 		ItemInsuranceFee: itemInsuranceFee, ItemCount: len(order.LineItems), SKUCount: len(normalized),
 		SafeOrderJSON: safeOrder, SafePriceDetailJSON: safePrice, NormalizedItems: normalized,
 		NormalizedItemsJSON: normalizedJSON, DetailRequestID: detailRequestID,
-		PriceDetailRequestID: priceRequestID, SourceHash: hex.EncodeToString(digest[:]), LastOrderUpdateAt: lastUpdate,
+		PriceDetailRequestID: priceRequestID, SourceHash: hex.EncodeToString(digest[:]),
+		OrderCreatedAt: createdAt, LastOrderUpdateAt: lastUpdate,
 	}, nil
+}
+
+func normalizeTikTokObservationSource(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "polling", "webhook", "manual":
+		return strings.ToLower(strings.TrimSpace(raw))
+	default:
+		return "manual"
+	}
 }
 
 func normalizeTikTokOrderItems(lineItems []OrderLineItem) ([]NormalizedTikTokOrderItem, error) {

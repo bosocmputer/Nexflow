@@ -25,6 +25,26 @@ func NewTenantConnectionStore(database *sql.DB) *TenantConnectionStore {
 	return &TenantConnectionStore{database: database}
 }
 
+func (s *TenantConnectionStore) ActiveShopLabel(ctx context.Context, shopID string) (string, error) {
+	shopID = strings.TrimSpace(shopID)
+	if s == nil || s.database == nil {
+		return "", ErrTenantStoreNotConfigured
+	}
+	if shopID == "" {
+		return "", ErrInvalidGatewayConnection
+	}
+	var label string
+	err := s.database.QueryRowContext(ctx,
+		`SELECT COALESCE(NULLIF(BTRIM(label), ''), NULLIF(BTRIM(shop_name), ''), shop_id)
+		   FROM tiktok_shop_connections
+		  WHERE shop_id = $1 AND disabled_at IS NULL`, shopID,
+	).Scan(&label)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(label), nil
+}
+
 func (s *TenantConnectionStore) Sync(ctx context.Context, connections []GatewayConnection) error {
 	if s == nil || s.database == nil {
 		return ErrTenantStoreNotConfigured
