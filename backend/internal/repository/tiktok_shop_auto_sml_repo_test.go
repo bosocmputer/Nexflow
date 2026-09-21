@@ -60,6 +60,29 @@ func TestTikTokAutoSMLUpdateSettingRejectsStaleVersion(t *testing.T) {
 	}
 }
 
+func TestTikTokAutoSMLListSettingsIsReadOnly(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewTikTokAutoSMLRepo(db)
+
+	// Opening an Operations page must not create a default setting row. New rows
+	// are created only by the explicit update path or the connection migration.
+	mock.ExpectQuery("SELECT c.shop_id").WillReturnRows(sqlmock.NewRows([]string{"shop_id"}))
+	settings, err := repo.ListSettings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(settings) != 0 {
+		t.Fatalf("settings=%+v, want empty", settings)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTikTokAutoSMLRetryRefreshesReviewedEvidenceWithoutCreatingAnotherJob(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

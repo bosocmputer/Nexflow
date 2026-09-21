@@ -636,6 +636,7 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/cancellation/preview", middleware.RequireRole("admin", "staff"), tiktokAPIH.PreviewCancellation)
 		api.POST("/tiktok-shop-api/orders/:shop_id/:order_id/cancellation", middleware.RequireRole("admin", "staff"), tiktokAPIH.CreateCancellation)
 		api.GET("/tiktok-shop-api/order-sync-settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrderSyncSettings)
+		api.GET("/tiktok-shop-api/operations-summary", middleware.RequireRole("admin", "staff"), tiktokAPIH.OperationsSummary)
 		api.GET("/tiktok-shop-api/diagnostics", middleware.RequireRole("admin", "staff"), tiktokAPIH.Diagnostics)
 		api.GET("/tiktok-shop-api/auto-sml/settings", middleware.RequireRole("admin", "staff"), tiktokAPIH.AutoSMLSettings)
 		api.PUT("/tiktok-shop-api/auto-sml/settings/:shop_id", middleware.RequireRole("admin"), tiktokAPIH.UpdateAutoSMLSetting)

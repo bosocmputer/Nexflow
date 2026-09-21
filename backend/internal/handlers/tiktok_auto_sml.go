@@ -410,8 +410,14 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		h.error(c, http.StatusConflict, "auto_sml_global_disabled", "Auto SML ยังปิดในระดับเซิร์ฟเวอร์")
 		return
 	}
-	if *request.Enabled && strings.TrimSpace(request.Confirm) != "ENABLE_TIKTOK_AUTO_SML" {
-		h.error(c, http.StatusBadRequest, "confirmation_required", "กรุณายืนยันเปิด Auto SML อีกครั้ง")
+	expectedConfirmation := "DISABLE_TIKTOK_AUTO_SML"
+	confirmationMessage := "กรุณายืนยันปิด Auto SML อีกครั้ง"
+	if *request.Enabled {
+		expectedConfirmation = "ENABLE_TIKTOK_AUTO_SML"
+		confirmationMessage = "กรุณายืนยันเปิด Auto SML อีกครั้ง"
+	}
+	if strings.TrimSpace(request.Confirm) != expectedConfirmation {
+		h.error(c, http.StatusBadRequest, "confirmation_required", confirmationMessage)
 		return
 	}
 	routeSignature := ""

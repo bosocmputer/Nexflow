@@ -47,20 +47,18 @@ func (r *TikTokAutoSMLRepo) ListSettings(ctx context.Context) ([]models.TikTokAu
 	if r == nil || r.db == nil {
 		return nil, sql.ErrConnDone
 	}
-	if _, err := r.db.ExecContext(ctx, `INSERT INTO tiktok_shop_auto_sml_settings (shop_id) SELECT shop_id FROM tiktok_shop_connections WHERE disabled_at IS NULL ON CONFLICT (shop_id) DO NOTHING`); err != nil {
-		return nil, err
-	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT st.shop_id,c.shop_name,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
-		       st.route_signature,st.enabled_by::text,st.enabled_at,st.paused_reason,st.paused_at,
-		       st.consecutive_system_failures,st.last_success_at,st.last_failure_at,
+		SELECT c.shop_id,c.shop_name,COALESCE(st.enabled,FALSE),COALESCE(st.trigger_status,'AWAITING_COLLECTION'),COALESCE(st.config_version,1),st.eligible_after,
+		       COALESCE(st.route_signature,''),st.enabled_by::text,st.enabled_at,COALESCE(st.paused_reason,''),st.paused_at,
+		       COALESCE(st.consecutive_system_failures,0),st.last_success_at,st.last_failure_at,
 		       COUNT(j.id) FILTER (WHERE j.status IN ('queued','running','retry_wait')),
 		       COUNT(j.id) FILTER (WHERE j.status='needs_review'),
-		       COUNT(j.id) FILTER (WHERE j.status='failed'),st.updated_at
-		  FROM tiktok_shop_auto_sml_settings st
-		  JOIN tiktok_shop_connections c ON c.shop_id=st.shop_id AND c.disabled_at IS NULL
+		       COUNT(j.id) FILTER (WHERE j.status='failed'),COALESCE(st.updated_at,c.updated_at)
+		  FROM tiktok_shop_connections c
+		  LEFT JOIN tiktok_shop_auto_sml_settings st ON st.shop_id=c.shop_id
 		  LEFT JOIN tiktok_shop_auto_sml_jobs j ON j.shop_id=st.shop_id
-		 GROUP BY st.shop_id,c.shop_name,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
+		 WHERE c.disabled_at IS NULL
+		 GROUP BY c.shop_id,c.shop_name,c.updated_at,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
 		          st.route_signature,st.enabled_by,st.enabled_at,st.paused_reason,st.paused_at,
 		          st.consecutive_system_failures,st.last_success_at,st.last_failure_at,st.updated_at
 		 ORDER BY c.shop_name,st.shop_id`)
@@ -84,9 +82,6 @@ func (r *TikTokAutoSMLRepo) GetSetting(ctx context.Context, shopID string) (*mod
 		return nil, sql.ErrConnDone
 	}
 	shopID = strings.TrimSpace(shopID)
-	if err := r.ensure(ctx, shopID); err != nil {
-		return nil, err
-	}
 	setting, err := scanTikTokAutoSMLSetting(r.db.QueryRowContext(ctx, `
 		SELECT st.shop_id,c.shop_name,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
 		       st.route_signature,st.enabled_by::text,st.enabled_at,st.paused_reason,st.paused_at,

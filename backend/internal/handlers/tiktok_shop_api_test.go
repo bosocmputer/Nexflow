@@ -929,6 +929,60 @@ func TestTikTokShopAPIHandlerCannotEnableAutoSMLWhileGlobalGateIsOff(t *testing.
 	}
 }
 
+func TestTikTokShopAPIHandlerRequiresExplicitConfirmationToDisableAutoSML(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: "7494619203789490654", Enabled: true, ConfigVersion: 3,
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
+		`{"enabled":false,"expected_config_version":3}`,
+	)))
+	if response.Code != http.StatusBadRequest || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "confirmation_required") {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
+	}
+
+	confirmed := httptest.NewRecorder()
+	router.ServeHTTP(confirmed, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
+		`{"enabled":false,"expected_config_version":3,"confirm":"DISABLE_TIKTOK_AUTO_SML"}`,
+	)))
+	if confirmed.Code != http.StatusOK || store.updated.ShopID != "7494619203789490654" || store.updated.Enabled {
+		t.Fatalf("status=%d update=%+v body=%s", confirmed.Code, store.updated, confirmed.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerOperationsSummaryAvoidsOrderPreviews(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	shopID := "7494619203789490654"
+	reader := &tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{}}
+	previewer := &tenantTikTokBillShadowPreviewerFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: true,
+		TikTokShopWebhookEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopAutoSMLEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, ShopName: "ร้านทดสอบ", Enabled: true, IntervalSeconds: 300}}}).
+		WithOrderReader(reader).
+		WithBillShadowPreviewer(previewer).
+		WithAutoSML(&tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{ShopID: shopID, ShopName: "ร้านทดสอบ", Enabled: true, ConfigVersion: 2}}})
+	router := gin.New()
+	router.GET("/operations-summary", handler.OperationsSummary)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/operations-summary?shop_id="+shopID, nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"shop_id":"`+shopID+`"`) || !strings.Contains(response.Body.String(), `"webhook_enabled":true`) {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if reader.calls != 0 || previewer.calls != 0 {
+		t.Fatalf("summary must not read order evidence: reader=%d previewer=%d", reader.calls, previewer.calls)
+	}
+}
+
 func TestTikTokAutoSMLRouteSignatureChangesWithRouteEvidence(t *testing.T) {
 	base := tiktokshop.TikTokBillShadowRoute{
 		Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: "SI",

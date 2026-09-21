@@ -432,6 +432,43 @@ func (h *TikTokShopAPIHandler) ListOrderSyncSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"worker_enabled": h.config.TikTokShopOrderSyncEnabled, "data": settings})
 }
 
+// OperationsSummary returns only persisted operational state needed to render
+// the Operations header. It deliberately avoids order preview/reconciliation so
+// opening the page remains bounded and read-only.
+func (h *TikTokShopAPIHandler) OperationsSummary(c *gin.Context) {
+	shopID := strings.TrimSpace(c.Query("shop_id"))
+	if shopID != "" && !tiktokshop.ValidTikTokShopID(shopID) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "Shop ID ของ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	if h == nil || h.syncSettings == nil || h.autoSML == nil {
+		h.error(c, http.StatusServiceUnavailable, "operations_summary_unavailable", "สถานะ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	syncSettings, err := h.syncSettings.ListSettings(c.Request.Context())
+	if err != nil {
+		h.error(c, http.StatusInternalServerError, "order_sync_settings_failed", "โหลดสถานะซิงก์ออเดอร์ไม่สำเร็จ")
+		return
+	}
+	autoSMLSettings, err := h.autoSML.ListSettings(c.Request.Context())
+	if err != nil {
+		h.error(c, http.StatusInternalServerError, "auto_sml_settings_failed", "โหลดสถานะส่ง SML อัตโนมัติไม่สำเร็จ")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"shop_id":                   shopID,
+		"open_api_enabled":          h.config != nil && h.config.TikTokShopOpenAPIEnabled,
+		"webhook_enabled":           h.config != nil && h.config.TikTokShopWebhookEnabled,
+		"sml_send_enabled":          h.config != nil && h.config.TikTokShopSMLSendEnabled,
+		"order_sync_worker_enabled": h.config != nil && h.config.TikTokShopOrderSyncEnabled,
+		"auto_sml": gin.H{
+			"global_enabled": h.config != nil && h.config.TikTokShopAutoSMLEnabled,
+			"settings":       autoSMLSettings,
+		},
+		"shops": syncSettings,
+	})
+}
+
 // Diagnostics reports bounded, PII-safe operational evidence. It never
 // returns raw TikTok payloads, credentials, or customer fields.
 func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
