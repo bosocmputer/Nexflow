@@ -1293,6 +1293,23 @@ Current AOY UAT scope:
     evidence is exactly one new `AWAITING_COLLECTION` order after the cutoff
     creating one Bill and one SML document with the reviewed SML values.
 
+68. AOY-only Marketplace Operations UI parity is deployed at `2357944` on
+    2026-09-21 during the user-declared maintenance window. Shopee and TikTok
+    now share one compact operations-header component across normal and
+    cancelled queues: title, `เรียลไทม์` mode, route explanation, health line,
+    shop selector, Auto SML state, diagnostics, and local refresh controls have
+    a common order and visual vocabulary. TikTok accurately reports the signed
+    webhook as the realtime trigger and the five-minute poll as `ซิงก์สำรอง`;
+    pages still read the local PII-minimized snapshot and make no TikTok call at
+    render time. The automatic diagnostics request is read-only and degrades
+    safely if unavailable. No route, feature gate, order, Bill, SML, mapping,
+    notification, or runtime setting changed. AOY pre/post Marketplace counts
+    were identical; direct/public health, frontend build, sales-only guard, and
+    deployment error scan passed. Desktop and 390px QA passed for Shopee/TikTok
+    normal and cancelled queues with no horizontal overflow. The AOY backup is
+    `pre-deploy-20260921-071216.sql.gz`; Demo, Lanboon, Ploy, and the Central
+    Gateways were not redeployed or reconfigured.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
