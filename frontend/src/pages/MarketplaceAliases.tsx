@@ -583,6 +583,17 @@ export default function MarketplaceAliases() {
         )}
       />
 
+      {canManage && selectedTikTokConnection && !selectedTikTokCatalogReady && (
+        <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" role="status">
+          <p className="font-medium">ยังอัปเดตรายการสินค้า TikTok Shop ไม่ได้</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            ร้าน {selectedTikTokConnection.shop_name || selectedTikTokConnection.shop_code || 'TikTok Shop'} ยังไม่ได้อนุญาตสิทธิ์ Product Basic
+            ให้ไปที่ <Link to="/settings/tiktok-shop" className="font-medium text-primary underline-offset-4 hover:underline">ร้าน TikTok Shop</Link> แล้วเชื่อมต่อร้านนี้ใหม่
+            หลังอนุญาตสิทธิ์แล้ว กลับมากด “อัปเดตรายการจาก TikTok” เพื่อดึงสินค้าเข้าคิวรอจับคู่ โดยระบบจะไม่จับคู่สินค้า ส่ง SML หรือซิงก์สต๊อกให้อัตโนมัติ
+          </p>
+        </div>
+      )}
+
       {readiness && (!readiness.catalog_generation_ready || !readiness.mapping_backfill_ready || !readiness.reservation_ledger_ready) && (
         <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
           <p className="font-medium">กำลังเตรียมข้อมูล conversion สำหรับ tenant นี้</p>
