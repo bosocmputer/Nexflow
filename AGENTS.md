@@ -1164,6 +1164,34 @@ Current AOY UAT scope:
     `CANCELLATION_STATUS_CHANGE` must be enabled and reconciled separately.
     The AOY pre-deploy backup is `pre-deploy-20260920-031019.sql.gz`.
 
+63. AOY-only TikTok Shop new-order LINE alerts are deployed and enabled at
+    application `3ee2a9e` as of 2026-09-21. Polling, webhook, and manual snapshot
+    refresh now share one post-persistence observer and the durable LINE outbox;
+    polling/webhook use the same recipient-level dedupe identity
+    `tiktok_shop:new_order:<shop_id>:<order_id>`. The payload contains only the
+    shop label, order ID/status, safe amounts, order time, and at most five
+    product/variant rows; it never includes buyer/recipient name, phone, address,
+    email, token, or raw upstream JSON. AOY has
+    `TIKTOK_SHOP_LINE_NOTIFICATIONS_ENABLED=true` with the mandatory order-create
+    cutoff `2026-09-21T03:47:16Z`; orders created before that instant cannot
+    notify even when replayed by polling. One natural five-minute polling run
+    completed successfully at `2026-09-21 03:52:23Z` after activation, TikTok
+    LINE delivery count remained zero, both existing recipients remained
+    enabled, and the TikTok Auto SML job table remained empty, proving no
+    historical backfill. `/settings/line-notifications` now includes TikTok Shop
+    status and sample Flex/fallback text, while TikTok Operations diagnostics
+    show the LINE readiness gate. Auto SML remains disabled globally and for
+    shop `7494619203789490654`; operators continue manual Reviewed Bill and
+    one-Bill SML dispatch while collecting 3–5 real-order samples during App
+    Review. Go tests/race/vet, frontend lint/build, sales-only guard, health,
+    Gateway connectivity, a natural polling run, and severe-log scans passed.
+    Interactive browser QA redirected to login because the saved AOY browser
+    session had expired; no credential was retrieved or reused. AOY backups are
+    `pre-deploy-20260921-034432.sql.gz`,
+    `pre-deploy-20260921-034812.sql.gz`, and
+    `.env.pre-tiktok-line-20260921-034716`. Demo, Lanboon, Ploy, and the Central
+    TikTok Gateway were not redeployed or enabled.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
@@ -1446,4 +1474,4 @@ GET  /health
 
 ---
 
-Last updated: 2026-09-13 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
+Last updated: 2026-09-21 | Ports: edge 6323, backends 8110/8111/8112/8113, postgres 5440/5441/5442/5443
