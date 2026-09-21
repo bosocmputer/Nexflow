@@ -1273,6 +1273,25 @@ Current AOY UAT scope:
     `pre-deploy-20260921-045800.sql.gz`. This changes Ploy only; Demo,
     Lanboon, AOY, and the Central TikTok Gateway were not reconfigured.
 
+67. AOY TikTok Auto SML controlled readiness is deployed at `17fb170` on
+    2026-09-21. The central signed webhook and five-minute polling reconciliation
+    were already delivering local snapshots; this rollout corrects diagnostics
+    so one historical incomplete snapshot remains visible for follow-up without
+    blocking controlled enablement when another unsent order has a complete
+    reviewed-Bill preview. Every future job still rebuilds that exact preview
+    and fails closed on changed mapping, amount, route, or lifecycle evidence.
+    AOY now has `TIKTOK_SHOP_AUTO_SML_ENABLED=true`; its only TikTok shop
+    `7494619203789490654` (`henna_milkford`) remains disabled at config version
+    1, with zero durable Auto SML jobs, so the flag change created no Bill, SML
+    document, notification, or historical backfill. Production diagnostics show
+    baseline ready, 8 of 9 sampled unsent orders ready for Auto, full 10/10
+    sampled mapping coverage, and one historical order requiring separate
+    review. Health, full Go tests/vet, frontend lint/build, sales-only guard,
+    deployed asset, and browser accessibility QA passed. Before enabling the
+    shop, obtain explicit controlled-canary approval, record the newly displayed
+    cutoff, then prove exactly one new `AWAITING_COLLECTION` order creates one
+    Bill and one SML document with the reviewed SML values.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
