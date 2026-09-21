@@ -13,6 +13,9 @@ export function marketplacePendingSummary(row: MarketplacePendingCounts) {
       secondary: `พบใน ${(row.order_count ?? 0).toLocaleString('th-TH')} ออเดอร์ TikTok Shop`,
     }
   }
+  if (row.discovery_source === 'tiktok_product_catalog') {
+    return { primary: 'รอจับคู่', secondary: 'จากรายการสินค้า TikTok Shop' }
+  }
   if (row.catalog_product && row.bill_count === 0) {
     return { primary: 'รอจับคู่', secondary: 'จากรายการสินค้า Shopee' }
   }

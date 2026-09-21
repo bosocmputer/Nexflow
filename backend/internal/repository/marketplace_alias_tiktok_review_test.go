@@ -128,6 +128,8 @@ func TestMarketplaceAliasReviewGroupsIncludesTikTokOrderSnapshots(t *testing.T) 
 		}))
 	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_order_snapshots s.*jsonb_array_elements\(s\.normalized_items\)`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_products p.*JOIN tiktok_shop_product_skus sku.*NOT EXISTS.*marketplace_item_aliases`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`(?s)SELECT .*shop_id.*order_count.*source_order_id.*FROM tiktok_shop_order_snapshots s.*LIMIT \$1 OFFSET \$2`).
 		WithArgs(30, 0).
 		WillReturnRows(sqlmock.NewRows([]string{

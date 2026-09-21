@@ -223,6 +223,64 @@ func TestMarketplaceAliasReviewGroupsIncludesUnmappedShopeeCatalogProducts(t *te
 	}
 }
 
+func TestMarketplaceAliasReviewGroupsIncludesUnmappedTikTokCatalogProducts(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery(`(?s)FROM bill_items bi.*JOIN bills b.*WHERE.*b\.bill_type = \$1.*b\.source = \$2`).
+		WithArgs("sale", "tiktok").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"bill_id", "source", "account_key", "account_name", "bill_type", "item_id", "raw_name",
+			"source_sku", "external_item_id", "external_variant_id",
+		}))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_order_snapshots s.*jsonb_array_elements\(s\.normalized_items\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_products p.*JOIN tiktok_shop_product_skus sku.*NOT EXISTS.*marketplace_item_aliases`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`(?s)SELECT p\.shop_id.*FROM tiktok_shop_products p.*JOIN tiktok_shop_product_skus sku.*ORDER BY.*LIMIT \$1 OFFSET \$2`).
+		WithArgs(30, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"shop_id", "account_name", "product_id", "sku_id", "title", "seller_sku",
+		}).AddRow(
+			"7494619203789490654", "henna_milkford", "1729429119195974110", "1729429118580984286", "สินค้าทดสอบ TikTok", "TIKTOK-001",
+		))
+
+	result, err := NewMarketplaceAliasRepo(db).ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
+		BillType: "sale", Source: "tiktok", Sort: "impact", Page: 1, PerPage: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 1 || len(result.Groups) != 1 {
+		t.Fatalf("result=%+v, want one catalog-discovered review group", result)
+	}
+	group := result.Groups[0]
+	if !group.CatalogProduct || group.Source != "tiktok" || group.AccountKey != "shop:7494619203789490654" {
+		t.Fatalf("group=%+v, want a TikTok catalog product scoped to the connected shop", group)
+	}
+	if group.DiscoverySource != "tiktok_product_catalog" {
+		t.Fatalf("discovery_source=%q, want tiktok_product_catalog", group.DiscoverySource)
+	}
+	if len(group.InputChannels) != 1 || group.InputChannels[0] != "tiktok_shop" {
+		t.Fatalf("input channels=%v, want TikTok Shop API only", group.InputChannels)
+	}
+	if group.ExternalItemID != "1729429119195974110" || group.ExternalVariantID != "1729429118580984286" {
+		t.Fatalf("group identity=%s/%s, want exact TikTok product/SKU identity", group.ExternalItemID, group.ExternalVariantID)
+	}
+	if group.RawName != "สินค้าทดสอบ TikTok" || group.SourceSKU != "TIKTOK-001" {
+		t.Fatalf("group=%+v, want TikTok catalog title and seller SKU", group)
+	}
+	if group.ItemCount != 0 || group.BillCount != 0 {
+		t.Fatalf("catalog-only group must not claim pending orders: items=%d bills=%d", group.ItemCount, group.BillCount)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMarketplaceAliasReviewGroupsKeepsOrderIssuesAheadOfCatalogOnlyProducts(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -237,6 +295,8 @@ func TestMarketplaceAliasReviewGroupsKeepsOrderIssuesAheadOfCatalogOnlyProducts(
 			"source_sku", "external_item_id", "external_variant_id",
 		}).AddRow("bill-1", "lazada", "default", "", "sale", "item-1", "สินค้าในออเดอร์", "SKU-1", "", ""))
 	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_order_snapshots s.*jsonb_array_elements\(s\.normalized_items\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM tiktok_shop_products p.*JOIN tiktok_shop_product_skus sku.*NOT EXISTS.*marketplace_item_aliases`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM shopee_stock_products p.*NOT EXISTS.*COALESCE\(NULLIF\(btrim\(p\.model_sku\),''\),p\.item_sku,''\).*marketplace_item_aliases`).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(4))

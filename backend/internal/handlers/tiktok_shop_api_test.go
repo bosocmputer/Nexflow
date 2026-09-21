@@ -61,6 +61,12 @@ type tenantTikTokStoreFake struct {
 	err         error
 }
 
+type tenantTikTokLocalConnectionStoreFake struct {
+	tenantTikTokStoreFake
+	connections []tiktokshop.TenantConnectionView
+	err         error
+}
+
 type tenantTikTokSnapshotterFake struct {
 	input  tiktokshop.TikTokOrderSnapshotRequest
 	result *tiktokshop.TikTokOrderSnapshotResult
@@ -215,6 +221,10 @@ func (f *tenantTikTokStoreFake) Sync(_ context.Context, connections []tiktokshop
 	return f.err
 }
 
+func (f *tenantTikTokLocalConnectionStoreFake) ListLocalConnections(context.Context) ([]tiktokshop.TenantConnectionView, error) {
+	return append([]tiktokshop.TenantConnectionView(nil), f.connections...), f.err
+}
+
 func TestTikTokShopAPIHandlerCreatesGatewayAuthorizationURLForCurrentAdmin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gateway := &tenantTikTokGatewayFake{configured: true, auth: &tiktokshop.GatewayAuthURLResponse{
@@ -247,6 +257,23 @@ func TestTikTokShopAPIHandlerListsAndPersistsEveryGatewayConnection(t *testing.T
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/connections", nil))
 	if response.Code != http.StatusOK || len(store.connections) != 2 || !strings.Contains(response.Body.String(), "AOY Outlet") {
 		t.Fatalf("status = %d, stored = %+v, body = %s", response.Code, store.connections, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerListsPersistedConnectionsWithoutCallingGateway(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &tenantTikTokGatewayFake{configured: true}
+	store := &tenantTikTokLocalConnectionStoreFake{connections: []tiktokshop.TenantConnectionView{{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", ShopCode: "AOY-TH",
+		GrantedScopes: []string{"seller.order.info", "seller.product.basic"},
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, gateway, store, nil, nil)
+	router := gin.New()
+	router.GET("/local-connections", handler.ListLocalConnections)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/local-connections", nil))
+	if response.Code != http.StatusOK || gateway.listCalls != 0 || !strings.Contains(response.Body.String(), "seller.product.basic") {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, gateway.listCalls, response.Body.String())
 	}
 }
 

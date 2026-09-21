@@ -33,6 +33,10 @@ type TikTokShopConnectionSyncer interface {
 	Sync(context.Context, []tiktokshop.GatewayConnection) error
 }
 
+type TikTokShopLocalConnectionReader interface {
+	ListLocalConnections(context.Context) ([]tiktokshop.TenantConnectionView, error)
+}
+
 type TikTokShopOrderSnapshotter interface {
 	Sync(context.Context, tiktokshop.TikTokOrderSnapshotRequest) (*tiktokshop.TikTokOrderSnapshotResult, error)
 }
@@ -91,22 +95,23 @@ type tikTokReviewedBillRequest struct {
 }
 
 type TikTokShopAPIHandler struct {
-	config         *config.Config
-	gateway        TikTokShopGateway
-	store          TikTokShopConnectionSyncer
-	snapshots      TikTokShopOrderSnapshotter
-	reconciler     TikTokShopOrderReconciler
-	syncSettings   TikTokShopOrderSyncSettings
-	orderReader    TikTokShopOrderReader
-	billShadow     TikTokShopBillShadowPreviewer
-	billMapper     TikTokShopBillShadowMapper
-	reviewedBill   TikTokShopReviewedBillCreator
-	cancellation   *TikTokCancellationCoordinator
-	productCatalog TikTokShopProductCatalogSyncer
-	productReader  TikTokShopProductCatalogReader
-	autoSML        TikTokAutoSMLSettingsStore
-	audit          TikTokShopAuditLogger
-	logger         *zap.Logger
+	config           *config.Config
+	gateway          TikTokShopGateway
+	store            TikTokShopConnectionSyncer
+	localConnections TikTokShopLocalConnectionReader
+	snapshots        TikTokShopOrderSnapshotter
+	reconciler       TikTokShopOrderReconciler
+	syncSettings     TikTokShopOrderSyncSettings
+	orderReader      TikTokShopOrderReader
+	billShadow       TikTokShopBillShadowPreviewer
+	billMapper       TikTokShopBillShadowMapper
+	reviewedBill     TikTokShopReviewedBillCreator
+	cancellation     *TikTokCancellationCoordinator
+	productCatalog   TikTokShopProductCatalogSyncer
+	productReader    TikTokShopProductCatalogReader
+	autoSML          TikTokAutoSMLSettingsStore
+	audit            TikTokShopAuditLogger
+	logger           *zap.Logger
 }
 
 func (h *TikTokShopAPIHandler) WithCancellation(coordinator *TikTokCancellationCoordinator) *TikTokShopAPIHandler {
@@ -169,7 +174,11 @@ func NewTikTokShopAPIHandler(config *config.Config, gateway TikTokShopGateway, s
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &TikTokShopAPIHandler{config: config, gateway: gateway, store: store, snapshots: snapshots, logger: logger}
+	handler := &TikTokShopAPIHandler{config: config, gateway: gateway, store: store, snapshots: snapshots, logger: logger}
+	if localConnections, ok := store.(TikTokShopLocalConnectionReader); ok {
+		handler.localConnections = localConnections
+	}
+	return handler
 }
 
 func (h *TikTokShopAPIHandler) WithOrderReconciler(reconciler TikTokShopOrderReconciler) *TikTokShopAPIHandler {
@@ -247,6 +256,27 @@ func (h *TikTokShopAPIHandler) ListConnections(c *gin.Context) {
 	if err := h.store.Sync(c.Request.Context(), connections); err != nil {
 		h.logger.Warn("tiktok_shop_connections_sync_failed", zap.Error(err))
 		h.error(c, http.StatusInternalServerError, "connection_sync_failed", "บันทึกข้อมูลร้าน TikTok Shop ใน tenant ไม่สำเร็จ")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": connections})
+}
+
+// ListLocalConnections reads the tenant's last persisted, PII-free connection
+// metadata. It must not call the Gateway or write the database so operational
+// pages can decide whether Product Basic is available without a remote call.
+func (h *TikTokShopAPIHandler) ListLocalConnections(c *gin.Context) {
+	if h == nil || h.config == nil || !h.config.TikTokShopOpenAPIEnabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if h.localConnections == nil {
+		h.error(c, http.StatusServiceUnavailable, "connection_store_not_configured", "สถานะร้าน TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	connections, err := h.localConnections.ListLocalConnections(c.Request.Context())
+	if err != nil {
+		h.logger.Error("tiktok_shop_local_connections_failed", zap.String("trace_id", c.GetString("trace_id")), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "local_connections_failed", "โหลดสถานะร้าน TikTok Shop ไม่สำเร็จ")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": connections})

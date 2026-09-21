@@ -39,6 +39,17 @@ type ShopeeCatalogConnection = {
   disabled_at?: string
   can_fetch: boolean
 }
+type TikTokCatalogConnection = {
+  shop_id: string
+  shop_name: string
+  shop_code: string
+  granted_scopes: string[]
+  disabled: boolean
+}
+type TikTokCatalogSyncRun = {
+  product_count: number
+  sku_count: number
+}
 type ConversionConfig = {
   unitCode: string
   quantityMultiplier: number
@@ -93,6 +104,9 @@ export default function MarketplaceAliases() {
   const [shopeeConnections, setShopeeConnections] = useState<ShopeeCatalogConnection[]>([])
   const [shopeeShopID, setShopeeShopID] = useState('')
   const [catalogSyncing, setCatalogSyncing] = useState(false)
+  const [tiktokConnections, setTikTokConnections] = useState<TikTokCatalogConnection[]>([])
+  const [tiktokShopID, setTikTokShopID] = useState('')
+  const [tiktokCatalogSyncing, setTikTokCatalogSyncing] = useState(false)
   const jobPollToken = useRef(0)
   const policyJobPollToken = useRef(0)
 
@@ -102,6 +116,7 @@ export default function MarketplaceAliases() {
   const pendingItems = useMemo(() => pending.reduce((sum, item) => sum + item.item_count, 0), [pending])
   const shopeeCatalogItems = useMemo(() => pending.filter((item) => item.discovery_source === 'product_catalog').length, [pending])
   const tiktokSnapshotItems = useMemo(() => pending.filter((item) => item.discovery_source === 'tiktok_order_snapshot').length, [pending])
+  const tiktokCatalogItems = useMemo(() => pending.filter((item) => item.discovery_source === 'tiktok_product_catalog').length, [pending])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -161,6 +176,22 @@ export default function MarketplaceAliases() {
       })
       .catch(() => {
         // Marketplace imports remain usable when Shopee is not configured.
+      })
+    return () => { active = false }
+  }, [canManage])
+  useEffect(() => {
+    if (!canManage) return
+    let active = true
+    client.get<{ data: TikTokCatalogConnection[] }>('/api/tiktok-shop-api/local-connections')
+      .then((response) => {
+        if (!active) return
+        const connections = (response.data.data ?? []).filter((item) => !item.disabled)
+        setTikTokConnections(connections)
+        setTikTokShopID((current) => current || connections[0]?.shop_id || '')
+      })
+      .catch(() => {
+        // Marketplace imports and existing Product Master remain usable when
+        // TikTok Shop is not connected or its Catalog capability is disabled.
       })
     return () => { active = false }
   }, [canManage])
@@ -478,13 +509,45 @@ export default function MarketplaceAliases() {
     }
   }
 
+  const syncTikTokCatalog = async () => {
+    const connection = tiktokConnections.find((item) => item.shop_id === tiktokShopID)
+    if (!connection) return
+    if (!connection.granted_scopes.includes('seller.product.basic')) {
+      toast.error('ร้านนี้ยังไม่มีสิทธิ์ Product Basic กรุณาอนุญาตสิทธิ์และเชื่อมต่อ TikTok Shop ใหม่ก่อนอัปเดตรายการสินค้า')
+      return
+    }
+    setTikTokCatalogSyncing(true)
+    try {
+      const response = await client.post<{ data: TikTokCatalogSyncRun }>('/api/tiktok-shop-api/products/catalog-sync', { shop_id: connection.shop_id }, { timeout: 180000 })
+      const run = response.data.data
+      toast.success(`อัปเดตจาก TikTok Shop แล้ว ${run.product_count.toLocaleString('th-TH')} สินค้า · ${run.sku_count.toLocaleString('th-TH')} SKU`)
+      const pendingViewAlreadySelected = tab === 'pending' && page === 1 && source === 'tiktok' && query === ''
+      setTab('pending')
+      setPage(1)
+      setSource('tiktok')
+      setDraft('')
+      setQuery('')
+      setGroupCursor('')
+      setGroupCursorHistory([])
+      if (pendingViewAlreadySelected) {
+        await load()
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, 'อัปเดตรายการสินค้าจาก TikTok Shop ไม่สำเร็จ'))
+    } finally {
+      setTikTokCatalogSyncing(false)
+    }
+  }
+
   const selectedShopeeConnection = shopeeConnections.find((item) => String(item.shop_id) === shopeeShopID)
+  const selectedTikTokConnection = tiktokConnections.find((item) => item.shop_id === tiktokShopID)
+  const selectedTikTokCatalogReady = Boolean(selectedTikTokConnection?.granted_scopes.includes('seller.product.basic'))
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
       <PageHeader
         title="จับคู่สินค้า Marketplace"
-        description="จับคู่สินค้าที่อัปเดตจาก Shopee หรือพบในออเดอร์ Shopee, Lazada และ TikTok Shop แล้วใช้ Product Master เดียวกันในครั้งถัดไป"
+        description="อัปเดตรายการจาก Shopee หรือ TikTok Shop แล้วเลือกสินค้า SML ให้ครั้งเดียว ระบบจะใช้ Product Master เดียวกันกับออเดอร์และไฟล์ Marketplace ครั้งถัดไป"
         actions={(
           <>
             {canManage && shopeeConnections.length > 0 && (
@@ -500,7 +563,20 @@ export default function MarketplaceAliases() {
                 </Button>
               </>
             )}
-            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || catalogSyncing}>
+            {canManage && tiktokConnections.length > 0 && (
+              <>
+                {tiktokConnections.length > 1 && (
+                  <Select value={tiktokShopID} onValueChange={setTikTokShopID} disabled={tiktokCatalogSyncing}>
+                    <SelectTrigger className="h-9 w-full sm:w-[190px]" aria-label="เลือกร้าน TikTok Shop ที่จะอัปเดต"><SelectValue /></SelectTrigger>
+                    <SelectContent>{tiktokConnections.map((item) => <SelectItem key={item.shop_id} value={item.shop_id}>{item.shop_name || item.shop_code || `TikTok Shop ${item.shop_id}`}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}
+                <Button variant="outline" size="sm" onClick={() => void syncTikTokCatalog()} disabled={tiktokCatalogSyncing || !selectedTikTokCatalogReady} title={!selectedTikTokCatalogReady ? 'ร้านต้องอนุญาตสิทธิ์ Product Basic และเชื่อมต่อ TikTok Shop ใหม่ก่อนอัปเดต' : undefined}>
+                  {tiktokCatalogSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />} {tiktokCatalogSyncing ? 'กำลังอัปเดต...' : 'อัปเดตรายการจาก TikTok'}
+                </Button>
+              </>
+            )}
+            <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || catalogSyncing || tiktokCatalogSyncing}>
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> รีเฟรช
             </Button>
           </>
@@ -587,7 +663,7 @@ export default function MarketplaceAliases() {
           </TabsContent>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
-			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่${pendingItems > 0 ? ` · ${pendingItems.toLocaleString()} รายการจากบิลในหน้านี้` : ''}${tiktokSnapshotItems > 0 ? ` · ${tiktokSnapshotItems.toLocaleString()} ตัวเลือกจากออเดอร์ TikTok ในหน้านี้` : ''}${shopeeCatalogItems > 0 ? ` · ${shopeeCatalogItems.toLocaleString()} ตัวเลือกจาก Shopee ในหน้านี้` : ''}` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า ${currentPage}/${pages}</span>
+			<span>{tab === 'pending' ? `${total.toLocaleString()} สินค้าที่ต้องจับคู่${pendingItems > 0 ? ` · ${pendingItems.toLocaleString()} รายการจากบิลในหน้านี้` : ''}${tiktokSnapshotItems > 0 ? ` · ${tiktokSnapshotItems.toLocaleString()} ตัวเลือกจากออเดอร์ TikTok ในหน้านี้` : ''}${tiktokCatalogItems > 0 ? ` · ${tiktokCatalogItems.toLocaleString()} ตัวเลือกจาก TikTok Shop ในหน้านี้` : ''}${shopeeCatalogItems > 0 ? ` · ${shopeeCatalogItems.toLocaleString()} ตัวเลือกจาก Shopee ในหน้านี้` : ''}` : groupedAvailable === true ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้` : `${total.toLocaleString()} การจับคู่ที่ใช้งานอยู่`} · หน้า ${currentPage}/${pages}</span>
             <div className="flex gap-1">
 			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? groupCursorHistory.length === 0 : page <= 1) || loading} onClick={goPrevious} aria-label="หน้าก่อน"><ChevronLeft className="h-4 w-4" /></Button>
 			  <Button size="icon" variant="outline" className="h-8 w-8" disabled={(groupedSaved ? !nextGroupCursor : page >= pages) || loading} onClick={goNext} aria-label="หน้าถัดไป"><ChevronRight className="h-4 w-4" /></Button>
@@ -763,7 +839,7 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
 }
 
 function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; rows: MarketplaceAliasReviewGroup[]; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
-  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="หลังอัปเดตรายการจาก Shopee หรือมีออเดอร์ Marketplace ใหม่ สินค้าที่ยังไม่พบคู่ใน SML จะมาแสดงที่นี่" />
+  if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="หลังอัปเดตรายการจาก Shopee หรือ TikTok Shop หรือมีออเดอร์ Marketplace ใหม่ สินค้าที่ยังไม่พบคู่ใน SML จะมาแสดงที่นี่" />
   return (
     <div className="overflow-x-auto">
       <Table>

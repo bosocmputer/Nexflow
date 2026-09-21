@@ -22,6 +22,18 @@ test('describes a catalog-only Shopee product without claiming it is an order', 
   )
 })
 
+test('describes a catalog-only TikTok product without claiming it is an order', () => {
+  assert.deepEqual(
+    marketplacePendingSummary({
+      catalog_product: true,
+      discovery_source: 'tiktok_product_catalog',
+      item_count: 0,
+      bill_count: 0,
+    }),
+    { primary: 'รอจับคู่', secondary: 'จากรายการสินค้า TikTok Shop' },
+  )
+})
+
 test('keeps pending order counts for products discovered from sales documents', () => {
   assert.deepEqual(
     marketplacePendingSummary({ catalog_product: false, item_count: 3, bill_count: 2 }),

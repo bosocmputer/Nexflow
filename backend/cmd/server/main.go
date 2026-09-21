@@ -622,6 +622,7 @@ func main() {
 		api.POST("/shopee-api/auth-url", middleware.RequireRole("admin"), shopeeH.CreateAPIAuthURL)
 		api.GET("/settings/tiktok-shop-api/status", middleware.RequireRole("admin", "staff"), tiktokAPIH.Status)
 		api.GET("/tiktok-shop-api/connections", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListConnections)
+		api.GET("/tiktok-shop-api/local-connections", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListLocalConnections)
 		api.POST("/tiktok-shop-api/auth-url", middleware.RequireRole("admin"), tiktokAPIH.CreateAuthURL)
 		api.POST("/tiktok-shop-api/orders/search", middleware.RequireRole("admin", "staff"), tiktokAPIH.SearchOrders)
 		api.POST("/tiktok-shop-api/orders/detail", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetOrderDetails)

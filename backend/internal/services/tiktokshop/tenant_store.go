@@ -21,6 +21,16 @@ type TenantConnectionStore struct {
 	database *sql.DB
 }
 
+// TenantConnectionView is persisted, non-secret connection metadata for local
+// UI read paths. It intentionally excludes gateway IDs and token timestamps.
+type TenantConnectionView struct {
+	ShopID        string   `json:"shop_id"`
+	ShopName      string   `json:"shop_name"`
+	ShopCode      string   `json:"shop_code"`
+	GrantedScopes []string `json:"granted_scopes"`
+	Disabled      bool     `json:"disabled"`
+}
+
 func NewTenantConnectionStore(database *sql.DB) *TenantConnectionStore {
 	return &TenantConnectionStore{database: database}
 }
@@ -43,6 +53,36 @@ func (s *TenantConnectionStore) ActiveShopLabel(ctx context.Context, shopID stri
 		return "", err
 	}
 	return strings.TrimSpace(label), nil
+}
+
+func (s *TenantConnectionStore) ListLocalConnections(ctx context.Context) ([]TenantConnectionView, error) {
+	if s == nil || s.database == nil {
+		return nil, ErrTenantStoreNotConfigured
+	}
+	rows, err := s.database.QueryContext(ctx, `SELECT shop_id, shop_name, shop_code,
+		COALESCE(granted_scopes,'[]'::jsonb), disabled_at IS NOT NULL
+		FROM tiktok_shop_connections
+		ORDER BY connected_at ASC, shop_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	connections := make([]TenantConnectionView, 0)
+	for rows.Next() {
+		var connection TenantConnectionView
+		var rawScopes []byte
+		if err := rows.Scan(&connection.ShopID, &connection.ShopName, &connection.ShopCode, &rawScopes, &connection.Disabled); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(rawScopes, &connection.GrantedScopes); err != nil {
+			return nil, fmt.Errorf("decode TikTok Shop connection scopes: %w", err)
+		}
+		connections = append(connections, connection)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return connections, nil
 }
 
 func (s *TenantConnectionStore) Sync(ctx context.Context, connections []GatewayConnection) error {
