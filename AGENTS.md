@@ -1192,6 +1192,35 @@ Current AOY UAT scope:
     `.env.pre-tiktok-line-20260921-034716`. Demo, Lanboon, Ploy, and the Central
     TikTok Gateway were not redeployed or enabled.
 
+64. AOY-only TikTok Shop new-order Topbar alerts are deployed and enabled at
+    application `6063aa6` as of 2026-09-21. A separately gated snapshot observer
+    creates one deduplicated `warning` notification per Admin/Staff recipient
+    with source `tiktok_shop`, entity `tiktok_shop_order`, and identity
+    `tiktok_shop:new_order:<shop_id>:<order_id>`. It publishes both created and
+    unread-count events over the existing SSE broker, so the generic Topbar bell
+    updates immediately; the bell now treats TikTok new-order keys as repeating
+    audible order alerts. Clicking an entry marks that notification read and
+    opens `/tiktok-shop-operations?order_id=<order_id>`. The body contains only
+    shop label, Order ID, and item count—never buyer name, phone, address, raw
+    JSON, or credentials. AOY uses the independent gates
+    `TIKTOK_SHOP_IN_APP_NOTIFICATIONS_ENABLED=true` and cutoff
+    `2026-09-21T04:08:50Z`, so disabling LINE does not disable the bell and no
+    historical order can backfill it. TikTok Operations diagnostics now shows a
+    separate `กระดิ่งออเดอร์ใหม่` readiness check. The first natural five-minute
+    poll after deployment succeeded at `2026-09-21 04:13:35Z` with no error;
+    there were zero TikTok orders created after the cutoff and zero
+    `tiktok_shop` notifications, while the existing 584 Shopee notifications
+    were unchanged. TikTok Auto SML remains disabled for the one shop setting
+    and its job table remains empty. Full Go tests, targeted race tests, vet,
+    frontend alert tests, lint (zero errors), production build, sales-only
+    guard, direct/public health, deployed asset checks, and recent severe-log
+    scans passed. The AOY database backup is
+    `pre-deploy-20260921-040948.sql.gz`; the pre-flag environment backup is
+    `.env.pre-tiktok-in-app-20260921-040850`. Demo, Lanboon, Ploy, and both
+    Central Gateways were not redeployed or enabled. The first real post-cutoff
+    TikTok order is still required to prove one live bell row, one sound cycle,
+    and click-through/read behavior in an authenticated browser.
+
 Known deferred or incomplete validation:
 
 - Lazada Open API is pending approval; current Lazada flow is Excel import.
