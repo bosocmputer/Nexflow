@@ -36,7 +36,7 @@ func TestProductCatalogStoreReplacesSnapshotAndFinishesRunAtomically(t *testing.
 		WithArgs(result.ShopID, "1001", "AOY Product", ProductStatusActivate, int64(0), int64(0), result.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO tiktok_shop_product_skus`).
-		WithArgs(result.ShopID, "1001", "2001", "AOY-001", sqlmock.AnyArg(), int64(7), int64(1), result.ID).
+		WithArgs(result.ShopID, "1001", "2001", "AOY-001", "", sqlmock.AnyArg(), int64(7), int64(1), result.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO tiktok_shop_product_inventory`).
 		WithArgs(result.ShopID, "1001", "2001", "3001", int64(7), int64(1), result.ID).

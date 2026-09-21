@@ -48,6 +48,7 @@ interface TikTokCatalogItem {
   product_status: string
   sku_id: string
   seller_sku: string
+  variant_name: string
   price: {
     currency?: string
     tax_exclusive_price?: string
@@ -308,7 +309,7 @@ export default function TikTokShopStock() {
               </SelectContent>
             </Select>
             <div className="flex min-w-0">
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ชื่อสินค้า, Seller SKU หรือ ID" className="rounded-r-none sm:w-[280px]" maxLength={100} />
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="ชื่อสินค้า, ตัวเลือก, SKU หรือ ID" className="rounded-r-none sm:w-[280px]" maxLength={100} />
               <Button type="submit" variant="outline" className="rounded-l-none border-l-0" aria-label="ค้นหาสินค้า"><Search className="h-4 w-4" /></Button>
             </div>
           </form>
@@ -380,8 +381,9 @@ function CatalogMobileCard({ item }: { item: TikTokCatalogItem }) {
 function ProductIdentity({ item }: { item: TikTokCatalogItem }) {
   return (
     <div className="min-w-0">
-      <p className="max-w-xl font-medium text-foreground">{item.product_title}</p>
-      <p className="mt-1 break-all text-xs text-muted-foreground">Seller SKU {item.seller_sku || '—'} · SKU ID {item.sku_id}</p>
+      <p className="max-w-xl line-clamp-1 font-medium text-foreground">{item.product_title}</p>
+      <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{item.variant_name ? `ตัวเลือก: ${item.variant_name}` : 'TikTok ไม่ได้ส่งชื่อตัวเลือกของ SKU นี้'}</p>
+      <p className="mt-0.5 break-all text-xs text-muted-foreground">Seller SKU {item.seller_sku || '—'} · SKU ID {item.sku_id}</p>
       <p className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">Product ID {item.product_id}</p>
     </div>
   )

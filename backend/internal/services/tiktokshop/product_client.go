@@ -76,10 +76,37 @@ type Product struct {
 }
 
 type ProductSKU struct {
-	ID        string             `json:"id"`
-	SellerSKU string             `json:"seller_sku"`
-	Price     ProductPrice       `json:"price"`
-	Inventory []ProductInventory `json:"inventory"`
+	ID              string                  `json:"id"`
+	SellerSKU       string                  `json:"seller_sku"`
+	SalesAttributes []ProductSalesAttribute `json:"sales_attributes"`
+	Price           ProductPrice            `json:"price"`
+	Inventory       []ProductInventory      `json:"inventory"`
+}
+
+// ProductSalesAttribute is the human-readable sales-term identity TikTok Shop
+// assigns to one SKU, such as colour or size. It contains no buyer data.
+type ProductSalesAttribute struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ValueID   string `json:"value_id"`
+	ValueName string `json:"value_name"`
+}
+
+// TikTokProductSKUVariantName produces a stable, operator-facing SKU option
+// label. It deliberately does not fall back to opaque TikTok IDs.
+func TikTokProductSKUVariantName(sku ProductSKU) string {
+	parts := make([]string, 0, len(sku.SalesAttributes))
+	for _, attribute := range sku.SalesAttributes {
+		name := strings.TrimSpace(attribute.Name)
+		value := strings.TrimSpace(attribute.ValueName)
+		switch {
+		case name != "" && value != "":
+			parts = append(parts, name+": "+value)
+		case value != "":
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 type ProductPrice struct {

@@ -27,6 +27,7 @@ var (
 
 type TikTokCatalogGateway interface {
 	SearchProducts(context.Context, GatewayProductSearchRequest) (*GatewayProductSearchResponse, error)
+	GetProduct(context.Context, GatewayProductDetailRequest) (*GatewayProductDetailResponse, error)
 	SearchInventory(context.Context, GatewayInventorySearchRequest) (*GatewayInventorySearchResponse, error)
 }
 
@@ -78,6 +79,7 @@ type TikTokCatalogListItem struct {
 	ProductStatus          ProductStatus                `json:"product_status"`
 	SKUID                  string                       `json:"sku_id"`
 	SellerSKU              string                       `json:"seller_sku"`
+	VariantName            string                       `json:"variant_name"`
 	Price                  ProductPrice                 `json:"price"`
 	TotalAvailableQuantity int64                        `json:"total_available_quantity"`
 	TotalCommittedQuantity int64                        `json:"total_committed_quantity"`
@@ -128,6 +130,9 @@ func (s *ProductCatalogService) Sync(ctx context.Context, shopID, triggerSource 
 		return fail(err, catalogErrorCode(err))
 	}
 	result.PageCount, result.UpstreamRequestIDs = pageCount, requestIDs
+	if err := s.enrichProductsWithDetails(ctx, shopID, products, &result.UpstreamRequestIDs); err != nil {
+		return fail(err, catalogErrorCode(err))
+	}
 	if err := s.loadInventory(ctx, shopID, products, &result.UpstreamRequestIDs); err != nil {
 		return fail(err, catalogErrorCode(err))
 	}
@@ -144,6 +149,46 @@ func (s *ProductCatalogService) Sync(ctx context.Context, shopID, triggerSource 
 		return fail(fmt.Errorf("replace TikTok Shop product catalog: %w", err), "persistence_failed")
 	}
 	return result, nil
+}
+
+// enrichProductsWithDetails adds only the stable, human-readable SKU option
+// names returned by TikTok Product Basic. The Search response remains the
+// catalog authority for product membership; a detail response must prove the
+// same product and exact SKU set before it can enrich that snapshot.
+func (s *ProductCatalogService) enrichProductsWithDetails(ctx context.Context, shopID string, products []TikTokCatalogProduct, requestIDs *[]string) error {
+	for productIndex := range products {
+		listed := &products[productIndex].Product
+		response, err := s.gateway.GetProduct(ctx, GatewayProductDetailRequest{ShopID: shopID, ProductID: listed.ID})
+		if err != nil {
+			return fmt.Errorf("get TikTok Shop product detail: %w", err)
+		}
+		if response == nil || !validCatalogRequestID(response.UpstreamRequestID) || response.Product == nil || response.Product.ID != listed.ID {
+			return ErrProductCatalogSourceInvalid
+		}
+		*requestIDs = append(*requestIDs, strings.TrimSpace(response.UpstreamRequestID))
+
+		detailBySKU := make(map[string]ProductSKU, len(response.Product.SKUs))
+		for _, detailSKU := range response.Product.SKUs {
+			if _, duplicate := detailBySKU[detailSKU.ID]; detailSKU.ID == "" || duplicate {
+				return ErrProductCatalogSourceInvalid
+			}
+			detailBySKU[detailSKU.ID] = detailSKU
+		}
+		if len(detailBySKU) != len(listed.SKUs) {
+			return ErrProductCatalogSourceInvalid
+		}
+		for skuIndex := range listed.SKUs {
+			detailSKU, ok := detailBySKU[listed.SKUs[skuIndex].ID]
+			if !ok {
+				return ErrProductCatalogSourceInvalid
+			}
+			if sellerSKU := strings.TrimSpace(detailSKU.SellerSKU); sellerSKU != "" {
+				listed.SKUs[skuIndex].SellerSKU = sellerSKU
+			}
+			listed.SKUs[skuIndex].SalesAttributes = append([]ProductSalesAttribute(nil), detailSKU.SalesAttributes...)
+		}
+	}
+	return nil
 }
 
 func (s *ProductCatalogService) loadAllProducts(ctx context.Context, shopID string) ([]TikTokCatalogProduct, []string, int, error) {
@@ -364,14 +409,14 @@ func (s *ProductCatalogStore) ReplaceCatalog(ctx context.Context, result TikTokC
 			}
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO tiktok_shop_product_skus
-				 (shop_id,product_id,sku_id,seller_sku,price,total_available_quantity,total_committed_quantity,catalog_run_id,last_seen_at,is_active)
-				VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::uuid,NOW(),true)
-				ON CONFLICT (shop_id,product_id,sku_id) DO UPDATE SET
-				 seller_sku=EXCLUDED.seller_sku,price=EXCLUDED.price,
+				 (shop_id,product_id,sku_id,seller_sku,variant_name,price,total_available_quantity,total_committed_quantity,catalog_run_id,last_seen_at,is_active)
+			VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::uuid,NOW(),true)
+			ON CONFLICT (shop_id,product_id,sku_id) DO UPDATE SET
+				 seller_sku=EXCLUDED.seller_sku,variant_name=EXCLUDED.variant_name,price=EXCLUDED.price,
 				 total_available_quantity=EXCLUDED.total_available_quantity,total_committed_quantity=EXCLUDED.total_committed_quantity,
 				 catalog_run_id=EXCLUDED.catalog_run_id,last_seen_at=NOW(),is_active=true,updated_at=NOW()`,
-				shopID, product.ID, sku.ID, sku.SellerSKU, price, inventory.TotalAvailableQuantity,
-				inventory.TotalCommittedQuantity, runID); err != nil {
+				shopID, product.ID, sku.ID, sku.SellerSKU, TikTokProductSKUVariantName(sku), price,
+				inventory.TotalAvailableQuantity, inventory.TotalCommittedQuantity, runID); err != nil {
 				return err
 			}
 			for _, warehouse := range inventory.WarehouseInventory {
@@ -419,7 +464,7 @@ func (s *ProductCatalogStore) List(ctx context.Context, filter TikTokCatalogList
 	}
 	where := `p.is_active=true AND s.is_active=true AND ($1='' OR p.shop_id=$1)
 		AND ($2='' OR p.status=$2)
-		AND ($3='' OR p.title ILIKE '%'||$3||'%' OR s.seller_sku ILIKE '%'||$3||'%' OR p.product_id=$3 OR s.sku_id=$3)`
+		AND ($3='' OR p.title ILIKE '%'||$3||'%' OR s.seller_sku ILIKE '%'||$3||'%' OR s.variant_name ILIKE '%'||$3||'%' OR p.product_id=$3 OR s.sku_id=$3)`
 	var total int64
 	if err := s.database.QueryRowContext(ctx, `SELECT COUNT(*) FROM tiktok_shop_products p
 		JOIN tiktok_shop_product_skus s USING(shop_id,product_id) WHERE `+where,
@@ -427,7 +472,7 @@ func (s *ProductCatalogStore) List(ctx context.Context, filter TikTokCatalogList
 		return nil, err
 	}
 	rows, err := s.database.QueryContext(ctx, `
-		SELECT p.shop_id,c.shop_name,p.product_id,p.title,p.status,s.sku_id,s.seller_sku,s.price,
+		SELECT p.shop_id,c.shop_name,p.product_id,p.title,p.status,s.sku_id,s.seller_sku,s.variant_name,s.price,
 		       s.total_available_quantity,s.total_committed_quantity,s.last_seen_at,
 		       COALESCE(jsonb_agg(jsonb_build_object(
 		         'warehouse_id',i.warehouse_id,'available_quantity',i.available_quantity,
@@ -439,7 +484,7 @@ func (s *ProductCatalogStore) List(ctx context.Context, filter TikTokCatalogList
 		  LEFT JOIN tiktok_shop_product_inventory i ON i.shop_id=s.shop_id AND i.product_id=s.product_id
 		       AND i.sku_id=s.sku_id AND i.is_active=true
 		 WHERE `+where+`
-		 GROUP BY p.shop_id,c.shop_name,p.product_id,p.title,p.status,s.sku_id,s.seller_sku,s.price,
+		GROUP BY p.shop_id,c.shop_name,p.product_id,p.title,p.status,s.sku_id,s.seller_sku,s.variant_name,s.price,
 		          s.total_available_quantity,s.total_committed_quantity,s.last_seen_at
 		 ORDER BY p.product_id,s.sku_id
 		 LIMIT $4 OFFSET $5`, filter.ShopID, filter.Status, filter.Query, filter.PageSize, (filter.Page-1)*filter.PageSize)
@@ -452,7 +497,7 @@ func (s *ProductCatalogStore) List(ctx context.Context, filter TikTokCatalogList
 		var item TikTokCatalogListItem
 		var priceJSON, inventoryJSON []byte
 		if err := rows.Scan(&item.ShopID, &item.ShopName, &item.ProductID, &item.ProductTitle, &item.ProductStatus,
-			&item.SKUID, &item.SellerSKU, &priceJSON, &item.TotalAvailableQuantity, &item.TotalCommittedQuantity,
+			&item.SKUID, &item.SellerSKU, &item.VariantName, &priceJSON, &item.TotalAvailableQuantity, &item.TotalCommittedQuantity,
 			&item.LastSeenAt, &inventoryJSON); err != nil {
 			return nil, err
 		}

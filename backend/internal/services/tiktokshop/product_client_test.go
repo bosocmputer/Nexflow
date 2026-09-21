@@ -46,6 +46,26 @@ func TestProductClientSearchesCurrentCatalogWithExactSignedBody(t *testing.T) {
 	}
 }
 
+func TestProductClientGetsSKUOptionNamesFromProductDetail(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantPath := PathGetProductBase + "/1729429119195974110"
+		if r.Method != http.MethodGet || r.URL.Path != wantPath || r.URL.Query().Get("shop_cipher") != "shop-cipher" {
+			t.Fatalf("request=%s %s query=%v", r.Method, r.URL.Path, r.URL.Query())
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-detail","data":{"id":"1729429119195974110","title":"AOY Product","status":"ACTIVATE","skus":[{"id":"1729429119195974111","sales_attributes":[{"name":"สี","value_name":"น้ำตาลเข้ม"}]}]}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewProductClient(ProductClientConfig{BaseURL: server.URL, AppKey: "app-key", AppSecret: "app-secret", HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	product, requestID, err := client.GetProduct(context.Background(), "seller-token", "shop-cipher", "1729429119195974110")
+	if err != nil || requestID != "req-detail" || len(product.SKUs) != 1 || TikTokProductSKUVariantName(product.SKUs[0]) != "สี: น้ำตาลเข้ม" {
+		t.Fatalf("product=%+v requestID=%q err=%v", product, requestID, err)
+	}
+}
+
 func TestProductClientUpdatesInventoryAndPreservesPerSKUFailures(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

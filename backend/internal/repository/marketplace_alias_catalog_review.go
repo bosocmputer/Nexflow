@@ -50,10 +50,10 @@ func tiktokCatalogReviewWhere(filter models.MarketplaceAliasReviewFilter) (strin
 		args = append(args, "%"+query+"%")
 		n := len(args)
 		conditions = append(conditions, fmt.Sprintf(`(
-			p.title ILIKE $%d OR sku.seller_sku ILIKE $%d
+			p.title ILIKE $%d OR sku.seller_sku ILIKE $%d OR sku.variant_name ILIKE $%d
 			OR p.product_id ILIKE $%d OR sku.sku_id ILIKE $%d
 			OR c.label ILIKE $%d OR c.shop_name ILIKE $%d
-		)`, n, n, n, n, n, n))
+		)`, n, n, n, n, n, n, n))
 	}
 	return strings.Join(conditions, " AND "), args
 }
@@ -104,7 +104,7 @@ func (r *MarketplaceAliasRepo) listTikTokCatalogReviewGroups(filter models.Marke
 	}
 	rows, err := r.db.Query(fmt.Sprintf(`SELECT p.shop_id,
 		COALESCE(NULLIF(c.label,''),NULLIF(c.shop_name,''),'TikTok Shop '||p.shop_id),
-		p.product_id,sku.sku_id,p.title,sku.seller_sku
+		p.product_id,sku.sku_id,p.title,sku.seller_sku,sku.variant_name
 		%s
 		WHERE %s
 		ORDER BY %s
@@ -115,12 +115,17 @@ func (r *MarketplaceAliasRepo) listTikTokCatalogReviewGroups(filter models.Marke
 	defer rows.Close()
 	groups := make([]models.MarketplaceAliasReviewGroup, 0, limit)
 	for rows.Next() {
-		var shopID, accountName, productID, skuID, title, sellerSKU string
-		if err := rows.Scan(&shopID, &accountName, &productID, &skuID, &title, &sellerSKU); err != nil {
+		var shopID, accountName, productID, skuID, title, sellerSKU, variantName string
+		if err := rows.Scan(&shopID, &accountName, &productID, &skuID, &title, &sellerSKU, &variantName); err != nil {
 			return nil, err
 		}
 		sourceSKU := normalizeAliasSKU(sellerSKU)
-		rawName := strings.TrimSpace(title)
+		productName := strings.TrimSpace(title)
+		variantName = strings.TrimSpace(variantName)
+		rawName := productName
+		if variantName != "" {
+			rawName = strings.TrimSpace(productName + " / " + variantName)
+		}
 		if rawName == "" {
 			rawName = firstNonEmptyRepository(sourceSKU, "สินค้า TikTok Shop "+productID+"/"+skuID)
 		}
@@ -129,7 +134,8 @@ func (r *MarketplaceAliasRepo) listTikTokCatalogReviewGroups(filter models.Marke
 			GroupKey: "tiktok|" + accountKey + "|identity|" + productID + "|" + skuID,
 			Source:   "tiktok", AccountKey: accountKey, AccountName: accountName,
 			ExternalItemID: productID, ExternalVariantID: skuID, BillType: "sale",
-			SourceSKU: sourceSKU, RawName: rawName, NormalizedKey: marketplace.NormalizeKey(rawName, sourceSKU),
+			SourceSKU: sourceSKU, SourceProductName: productName, SourceVariantName: variantName,
+			RawName: rawName, NormalizedKey: marketplace.NormalizeKey(rawName, sourceSKU),
 			CatalogProduct: true, DiscoverySource: "tiktok_product_catalog", InputChannels: []string{"tiktok_shop"},
 		})
 	}

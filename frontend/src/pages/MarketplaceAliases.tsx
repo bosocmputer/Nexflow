@@ -857,7 +857,18 @@ function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; 
             return (
               <TableRow key={row.group_key}>
                 <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} inputChannels={row.input_channels} catalogProduct={row.catalog_product} /></TableCell>
-                <TableCell><div className="font-medium">{row.raw_name}</div>{row.source_sku && <div className="mt-1 text-xs text-muted-foreground">SKU: <span className="font-mono">{row.source_sku}</span></div>}</TableCell>
+                <TableCell>
+                  <div className="line-clamp-1 font-medium">{row.source_product_name || row.raw_name}</div>
+                  <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+                    {row.source_variant_name
+                      ? <>ตัวเลือก: {row.source_variant_name}</>
+                      : row.source_sku
+                        ? <>SKU: <span className="font-mono">{row.source_sku}</span></>
+                        : row.discovery_source === 'tiktok_product_catalog'
+                          ? 'TikTok ไม่ได้ส่งชื่อตัวเลือกของ SKU นี้'
+                          : 'ไม่มี SKU ต้นทาง'}
+                  </div>
+                </TableCell>
                 <TableCell className="text-right tabular-nums"><div>{summary.primary}</div><div className="text-xs text-muted-foreground">{summary.secondary}</div></TableCell>
                 <TableCell className="text-right">
                   {canManage && row.discovery_source === 'tiktok_order_snapshot' && row.source_reference_id ? (

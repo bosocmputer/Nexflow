@@ -58,6 +58,8 @@ type MarketplaceAliasReviewGroup struct {
 	ExternalVariantID string `json:"external_variant_id"`
 	BillType          string `json:"bill_type"`
 	SourceSKU         string `json:"source_sku"`
+	SourceProductName string `json:"source_product_name,omitempty"`
+	SourceVariantName string `json:"source_variant_name,omitempty"`
 	RawName           string `json:"raw_name"`
 	NormalizedKey     string `json:"normalized_key"`
 	ItemCount         int    `json:"item_count"`

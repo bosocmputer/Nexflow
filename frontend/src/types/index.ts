@@ -376,6 +376,8 @@ export interface MarketplaceAliasReviewGroup {
   external_variant_id: string
   bill_type: string
   source_sku: string
+  source_product_name?: string
+  source_variant_name?: string
   raw_name: string
   normalized_key: string
   bill_count: number

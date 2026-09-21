@@ -243,9 +243,9 @@ func TestMarketplaceAliasReviewGroupsIncludesUnmappedTikTokCatalogProducts(t *te
 	mock.ExpectQuery(`(?s)SELECT p\.shop_id.*FROM tiktok_shop_products p.*JOIN tiktok_shop_product_skus sku.*ORDER BY.*LIMIT \$1 OFFSET \$2`).
 		WithArgs(30, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"shop_id", "account_name", "product_id", "sku_id", "title", "seller_sku",
+			"shop_id", "account_name", "product_id", "sku_id", "title", "seller_sku", "variant_name",
 		}).AddRow(
-			"7494619203789490654", "henna_milkford", "1729429119195974110", "1729429118580984286", "สินค้าทดสอบ TikTok", "TIKTOK-001",
+			"7494619203789490654", "henna_milkford", "1729429119195974110", "1729429118580984286", "สินค้าทดสอบ TikTok", "TIKTOK-001", "สี: น้ำตาล",
 		))
 
 	result, err := NewMarketplaceAliasRepo(db).ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
@@ -270,7 +270,7 @@ func TestMarketplaceAliasReviewGroupsIncludesUnmappedTikTokCatalogProducts(t *te
 	if group.ExternalItemID != "1729429119195974110" || group.ExternalVariantID != "1729429118580984286" {
 		t.Fatalf("group identity=%s/%s, want exact TikTok product/SKU identity", group.ExternalItemID, group.ExternalVariantID)
 	}
-	if group.RawName != "สินค้าทดสอบ TikTok" || group.SourceSKU != "TIKTOK-001" {
+	if group.RawName != "สินค้าทดสอบ TikTok / สี: น้ำตาล" || group.SourceSKU != "TIKTOK-001" || group.SourceProductName != "สินค้าทดสอบ TikTok" || group.SourceVariantName != "สี: น้ำตาล" {
 		t.Fatalf("group=%+v, want TikTok catalog title and seller SKU", group)
 	}
 	if group.ItemCount != 0 || group.BillCount != 0 {

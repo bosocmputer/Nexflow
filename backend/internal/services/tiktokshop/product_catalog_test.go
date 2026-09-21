@@ -9,11 +9,21 @@ import (
 
 type catalogGatewayFake struct {
 	productPages     map[string]*GatewayProductSearchResponse
+	productDetails   map[string]*GatewayProductDetailResponse
 	inventoryBySKU   map[string]InventorySearchSKU
 	productCalls     []GatewayProductSearchRequest
+	detailCalls      []GatewayProductDetailRequest
 	inventoryCalls   []GatewayInventorySearchRequest
 	err              error
 	missingInventory bool
+}
+
+func (f *catalogGatewayFake) GetProduct(_ context.Context, input GatewayProductDetailRequest) (*GatewayProductDetailResponse, error) {
+	f.detailCalls = append(f.detailCalls, input)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.productDetails[input.ProductID], nil
 }
 
 func (f *catalogGatewayFake) SearchProducts(_ context.Context, input GatewayProductSearchRequest) (*GatewayProductSearchResponse, error) {
@@ -88,6 +98,10 @@ func TestProductCatalogSyncPaginatesAndReplacesOnlyAfterExactInventory(t *testin
 			"":     {UpstreamRequestID: "products-1", NextPageToken: "next", TotalCount: 2, Products: []Product{productOne}},
 			"next": {UpstreamRequestID: "products-2", TotalCount: 2, Products: []Product{productTwo}},
 		},
+		productDetails: map[string]*GatewayProductDetailResponse{
+			"1001": {UpstreamRequestID: "detail-1", Product: &productOne},
+			"1002": {UpstreamRequestID: "detail-2", Product: &productTwo},
+		},
 		inventoryBySKU: map[string]InventorySearchSKU{
 			"2001": {ID: "2001", TotalAvailableQuantity: 7, TotalCommittedQuantity: 1, WarehouseInventory: []WarehouseInventory{{WarehouseID: "3001", AvailableQuantity: 7, CommittedQuantity: 1}}},
 			"2002": {ID: "2002", TotalAvailableQuantity: 2, WarehouseInventory: []WarehouseInventory{{WarehouseID: "3001", AvailableQuantity: 2}}},
@@ -102,11 +116,36 @@ func TestProductCatalogSyncPaginatesAndReplacesOnlyAfterExactInventory(t *testin
 	if result.Status != "succeeded" || result.PageCount != 2 || result.ProductCount != 2 || result.SKUCount != 2 || result.WarehouseCount != 2 {
 		t.Fatalf("result=%+v", result)
 	}
-	if len(gateway.productCalls) != 2 || len(gateway.inventoryCalls) != 1 || len(store.replaced) != 2 || len(store.finished) != 1 {
+	if len(gateway.productCalls) != 2 || len(gateway.detailCalls) != 2 || len(gateway.inventoryCalls) != 1 || len(store.replaced) != 2 || len(store.finished) != 1 {
 		t.Fatalf("gateway=%+v store=%+v", gateway, store)
 	}
 	if store.replaced[0].Inventory["2001"].TotalAvailableQuantity != 7 || store.finished[0].Status != "succeeded" {
 		t.Fatalf("replaced=%+v finished=%+v", store.replaced, store.finished)
+	}
+}
+
+func TestProductCatalogSyncEnrichesSKUWithProductDetailSalesAttributes(t *testing.T) {
+	listed := Product{ID: "1001", Title: "ดินสอเขียนคิ้ว", Status: ProductStatusActivate, SKUs: []ProductSKU{{ID: "2001"}}}
+	detailed := listed
+	detailed.SKUs[0].SalesAttributes = []ProductSalesAttribute{{Name: "สี", ValueName: "น้ำตาลเข้ม"}}
+	gateway := &catalogGatewayFake{
+		productPages:   map[string]*GatewayProductSearchResponse{"": {UpstreamRequestID: "products-1", TotalCount: 1, Products: []Product{listed}}},
+		productDetails: map[string]*GatewayProductDetailResponse{"1001": {UpstreamRequestID: "detail-1", Product: &detailed}},
+		inventoryBySKU: map[string]InventorySearchSKU{"2001": {ID: "2001"}},
+	}
+	store := &catalogStoreFake{}
+	result, err := NewProductCatalogService(gateway, store).Sync(context.Background(), "7494619203789490654", "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gateway.detailCalls) != 1 || gateway.detailCalls[0].ProductID != "1001" {
+		t.Fatalf("detail calls = %+v", gateway.detailCalls)
+	}
+	if got, want := TikTokProductSKUVariantName(store.replaced[0].Product.SKUs[0]), "สี: น้ำตาลเข้ม"; got != want {
+		t.Fatalf("variant label = %q, want %q", got, want)
+	}
+	if got, want := result.UpstreamRequestIDs, []string{"products-1", "detail-1", "inventory-1"}; len(got) != len(want) || got[1] != want[1] {
+		t.Fatalf("request ids = %#v, want %#v", got, want)
 	}
 }
 
@@ -116,8 +155,27 @@ func TestProductCatalogSyncRejectsMissingInventoryAndKeepsExistingSnapshot(t *te
 			UpstreamRequestID: "products-1", TotalCount: 1,
 			Products: []Product{{ID: "1001", Title: "One", Status: ProductStatusActivate, SKUs: []ProductSKU{{ID: "2001"}}}},
 		}},
+		productDetails: map[string]*GatewayProductDetailResponse{
+			"1001": {UpstreamRequestID: "detail-1", Product: &Product{ID: "1001", Title: "One", Status: ProductStatusActivate, SKUs: []ProductSKU{{ID: "2001"}}}},
+		},
 		inventoryBySKU:   map[string]InventorySearchSKU{"2001": {ID: "2001"}},
 		missingInventory: true,
+	}
+	store := &catalogStoreFake{}
+	_, err := NewProductCatalogService(gateway, store).Sync(context.Background(), "7494619203789490654", "manual")
+	if !errors.Is(err, ErrProductCatalogSourceInvalid) || len(store.replaced) != 0 || len(store.finished) != 1 || store.finished[0].Status != "failed" {
+		t.Fatalf("err=%v store=%+v", err, store)
+	}
+}
+
+func TestProductCatalogSyncRejectsMismatchedProductDetailBeforeReplacement(t *testing.T) {
+	listed := Product{ID: "1001", Title: "สินค้า", Status: ProductStatusActivate, SKUs: []ProductSKU{{ID: "2001"}}}
+	gateway := &catalogGatewayFake{
+		productPages: map[string]*GatewayProductSearchResponse{"": {UpstreamRequestID: "products-1", TotalCount: 1, Products: []Product{listed}}},
+		productDetails: map[string]*GatewayProductDetailResponse{
+			"1001": {UpstreamRequestID: "detail-1", Product: &Product{ID: "1001", Title: "สินค้า", Status: ProductStatusActivate, SKUs: []ProductSKU{{ID: "different-sku"}}}},
+		},
+		inventoryBySKU: map[string]InventorySearchSKU{"2001": {ID: "2001"}},
 	}
 	store := &catalogStoreFake{}
 	_, err := NewProductCatalogService(gateway, store).Sync(context.Background(), "7494619203789490654", "manual")
