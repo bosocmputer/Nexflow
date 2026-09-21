@@ -61,7 +61,7 @@ func (r *TikTokAutoSMLRepo) ListSettings(ctx context.Context) ([]models.TikTokAu
 		 GROUP BY c.shop_id,c.shop_name,c.updated_at,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
 		          st.route_signature,st.enabled_by,st.enabled_at,st.paused_reason,st.paused_at,
 		          st.consecutive_system_failures,st.last_success_at,st.last_failure_at,st.updated_at
-		 ORDER BY c.shop_name,st.shop_id`)
+		 ORDER BY c.shop_name,c.shop_id`)
 	if err != nil {
 		return nil, err
 	}
