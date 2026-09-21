@@ -106,6 +106,8 @@ TIKTOK_SHOP_GATEWAY_TENANT=aoy
 TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET=<derived AOY secret>
 TIKTOK_SHOP_ORDER_SYNC_ENABLED=false
 TIKTOK_SHOP_WEBHOOK_ENABLED=false
+TIKTOK_SHOP_IN_APP_NOTIFICATIONS_ENABLED=false
+TIKTOK_SHOP_IN_APP_NOTIFICATIONS_ELIGIBLE_AFTER=<RFC3339 activation cutoff>
 TIKTOK_SHOP_LINE_NOTIFICATIONS_ENABLED=false
 TIKTOK_SHOP_LINE_NOTIFICATIONS_ELIGIBLE_AFTER=<RFC3339 activation cutoff>
 VITE_ENABLE_TIKTOK_SHOP_API=true
@@ -116,7 +118,12 @@ LINE ออเดอร์ใหม่ใช้ outbox และผู้รั�
 TikTok และจะไม่แจ้งออเดอร์เก่าก่อน cutoff ทั้ง polling และ webhook ใช้ dedupe key
 เดียวกันต่อ `shop_id + order_id` จึงส่งให้ผู้รับแต่ละรายได้เพียงครั้งเดียว ข้อความมี
 เฉพาะร้าน เลขออเดอร์ สถานะ ยอด และรายการสินค้าแบบจำกัดจำนวน โดยไม่มีชื่อผู้รับ
-เบอร์โทร หรือที่อยู่
+
+กระดิ่ง Topbar ใช้ gate `TIKTOK_SHOP_IN_APP_NOTIFICATIONS_ENABLED` และ cutoff
+`TIKTOK_SHOP_IN_APP_NOTIFICATIONS_ELIGIBLE_AFTER` แยกจาก LINE เพื่อให้ปิดช่องทางใด
+ช่องทางหนึ่งได้โดยไม่กระทบอีกช่องทาง รายการในกระดิ่งสร้างให้ role `admin` และ `staff`
+แบบ dedupe ต่อ `shop_id + order_id`, อัปเดตผ่าน SSE และกดแล้วเปิดหน้าคำสั่งซื้อ
+TikTok Shop ที่กรองด้วย Order ID โดยไม่เก็บข้อมูลผู้รับ เบอร์โทร หรือที่อยู่
 
 `TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET` ต้อง derive จาก Central Gateway internal master key ด้วย tenant slug `aoy` ห้าม reuse ค่า Shopee หรือคัดลอกจาก tenant อื่น
 

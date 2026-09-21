@@ -591,6 +591,15 @@ func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
 				return h.config.TikTokShopLineEligibleAfter.Format(time.RFC3339)
 			}(),
 		},
+		"in_app_notifications": gin.H{
+			"enabled": h != nil && h.config != nil && h.config.TikTokShopInAppEnabled,
+			"eligible_after": func() string {
+				if h == nil || h.config == nil || h.config.TikTokShopInAppEligibleAfter.IsZero() {
+					return ""
+				}
+				return h.config.TikTokShopInAppEligibleAfter.Format(time.RFC3339)
+			}(),
+		},
 		"document": gin.H{
 			"reviewed_bill_enabled": h != nil && h.config != nil && h.config.TikTokShopReviewedBillEnabled,
 			"sml_send_enabled":      smlSendEnabled, "route_ready": routeReady,

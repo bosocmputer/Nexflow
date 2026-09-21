@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useAuth } from '@/hooks/useAuth'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
+import { isOrderAlertNotification } from '@/lib/notification-alerts'
 import { type AppNotification, type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
 
@@ -505,11 +506,6 @@ function formatNotificationTime(value: string): string {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(d)
-}
-
-function isOrderAlertNotification(notification: AppNotification): boolean {
-  const key = notification.dedupe_key?.trim() ?? ''
-  return key.startsWith('nextstep:new_order:') || key.startsWith('shopee:new_order:')
 }
 
 function notificationTimeMs(value: string): number {

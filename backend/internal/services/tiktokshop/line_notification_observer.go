@@ -11,7 +11,7 @@ import (
 	"nexflow/internal/models"
 )
 
-type tikTokLineShopLabelStore interface {
+type tikTokShopLabelStore interface {
 	ActiveShopLabel(context.Context, string) (string, error)
 }
 
@@ -22,7 +22,7 @@ type tikTokNewOrderLineNotifier interface {
 type TikTokNewOrderLineObserver struct {
 	enabled  bool
 	cutoff   time.Time
-	shops    tikTokLineShopLabelStore
+	shops    tikTokShopLabelStore
 	notifier tikTokNewOrderLineNotifier
 	logger   *zap.Logger
 }
@@ -30,7 +30,7 @@ type TikTokNewOrderLineObserver struct {
 func NewTikTokNewOrderLineObserver(
 	enabled bool,
 	cutoff time.Time,
-	shops tikTokLineShopLabelStore,
+	shops tikTokShopLabelStore,
 	notifier tikTokNewOrderLineNotifier,
 	logger *zap.Logger,
 ) *TikTokNewOrderLineObserver {
@@ -47,7 +47,7 @@ func (o *TikTokNewOrderLineObserver) ObserveTikTokOrderSnapshot(ctx context.Cont
 	orderID := strings.TrimSpace(record.OrderID)
 	if o == nil || !o.enabled || o.cutoff.IsZero() || o.shops == nil || o.notifier == nil ||
 		shopID == "" || orderID == "" || record.OrderCreatedAt == nil || record.OrderCreatedAt.Before(o.cutoff) ||
-		!tikTokNewOrderLineEligibleStatus(record.OrderStatus) {
+		!tikTokNewOrderNotificationEligibleStatus(record.OrderStatus) {
 		return nil
 	}
 	shopLabel, err := o.shops.ActiveShopLabel(ctx, shopID)
@@ -82,7 +82,7 @@ func (o *TikTokNewOrderLineObserver) ObserveTikTokOrderSnapshot(ctx context.Cont
 	return nil
 }
 
-func tikTokNewOrderLineEligibleStatus(status OrderStatus) bool {
+func tikTokNewOrderNotificationEligibleStatus(status OrderStatus) bool {
 	switch status {
 	case OrderStatusAwaitingShipment, OrderStatusPartiallyShipping, OrderStatusAwaitingCollection,
 		OrderStatusInTransit, OrderStatusDelivered, OrderStatusCompleted:

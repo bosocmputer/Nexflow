@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -760,6 +761,7 @@ func TestTikTokShopAPIHandlerDiagnosticsUsesSafeOperationalEvidence(t *testing.T
 	handler := NewTikTokShopAPIHandler(&config.Config{
 		TikTokShopOpenAPIEnabled: true, TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
 		TikTokShopReviewedBillEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopInAppEnabled: true, TikTokShopInAppEligibleAfter: time.Date(2026, 9, 21, 4, 0, 0, 0, time.UTC),
 	}, gateway, &tenantTikTokStoreFake{}, nil, nil).
 		WithOrderSyncSettings(settings).
 		WithOrderReader(reader).
@@ -790,13 +792,18 @@ func TestTikTokShopAPIHandlerDiagnosticsUsesSafeOperationalEvidence(t *testing.T
 			DocumentCreateEnabled bool `json:"document_create_enabled"`
 			WebhookEnabled        bool `json:"webhook_enabled"`
 		} `json:"cancellation"`
+		InAppNotifications struct {
+			Enabled       bool   `json:"enabled"`
+			EligibleAfter string `json:"eligible_after"`
+		} `json:"in_app_notifications"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v body=%s", err, response.Body.String())
 	}
 	if body.Overall != "ready_for_controlled_enablement" || body.API.ConnectedShops != 1 ||
 		body.Coverage.SampledOrders != 1 || body.Coverage.ReadyOrders != 1 || body.Coverage.BlockedOrders != 0 ||
-		body.AutoSML.GlobalEnabled || body.AutoSML.CanEnable || body.Cancellation.DocumentCreateEnabled || body.Cancellation.WebhookEnabled {
+		body.AutoSML.GlobalEnabled || body.AutoSML.CanEnable || body.Cancellation.DocumentCreateEnabled || body.Cancellation.WebhookEnabled ||
+		!body.InAppNotifications.Enabled || body.InAppNotifications.EligibleAfter != "2026-09-21T04:00:00Z" {
 		t.Fatalf("unexpected diagnostics: %+v body=%s", body, response.Body.String())
 	}
 	for _, forbidden := range []string{"buyer", "recipient", "phone", "address", "token", "secret", "signature"} {
