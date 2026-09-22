@@ -210,6 +210,178 @@ func (s *PostgresStore) UpdateSettings(ctx context.Context, input SettingsUpdate
 	return &result, nil
 }
 
+func (s *PostgresStore) StartPreview(ctx context.Context, poolID string, input PreviewRequest, userID string) (*PreviewPlan, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("marketplace stock store is not configured")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	plan := &PreviewPlan{RequestedBy: userID}
+	err = tx.QueryRowContext(ctx, `SELECT warehouse_code,location_code,default_buffer_pct::float8,kill_switch_enabled,config_version,updated_at
+		FROM marketplace_stock_settings WHERE singleton=true FOR SHARE`).Scan(
+		&plan.Settings.WarehouseCode, &plan.Settings.LocationCode, &plan.Settings.DefaultBufferPct,
+		&plan.Settings.KillSwitch, &plan.Settings.ConfigVersion, &plan.Settings.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConfigVersionConflict
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load marketplace stock settings for preview: %w", err)
+	}
+	if plan.Settings.KillSwitch {
+		return nil, ErrGlobalKillSwitch
+	}
+	if strings.TrimSpace(plan.Settings.WarehouseCode) == "" || strings.TrimSpace(plan.Settings.LocationCode) == "" {
+		return nil, ErrInvalidPoolInput
+	}
+	err = tx.QueryRowContext(ctx, `SELECT id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
+		shared_risk_acknowledged,status,auto_enabled,dry_run_required,paused_reason,config_version,
+		last_preview_at,last_success_at,last_error,updated_at
+		FROM marketplace_stock_pools WHERE id=$1::uuid FOR UPDATE`, poolID).Scan(poolScanner(&plan.Pool)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConfigVersionConflict
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load marketplace stock pool for preview: %w", err)
+	}
+	if plan.Pool.Status == "paused" {
+		return nil, ErrPoolPaused
+	}
+	if plan.Pool.ConfigVersion != input.ExpectedConfigVersion {
+		return nil, ErrConfigVersionConflict
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT u.stand_value::float8/u.divide_value::float8
+		FROM sml_catalog_sync_runs r
+		JOIN sml_catalog_units u ON u.generation_id=r.id AND u.is_active=true
+		WHERE r.status='active' AND u.item_code=$1 AND u.unit_code=$2
+		LIMIT 1`, plan.Pool.SMLItemCode, plan.Pool.SMLUnitCode).Scan(&plan.UnitBaseFactor); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrInvalidPoolInput
+		}
+		return nil, fmt.Errorf("load SML unit conversion for preview: %w", err)
+	}
+	if plan.UnitBaseFactor <= 0 {
+		return nil, ErrInvalidPoolInput
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(demand.base_qty),0)::float8 FROM (
+		SELECT r.base_qty FROM marketplace_stock_reservations r
+		WHERE r.sml_item_code=$1 AND r.state IN ('active','sending_sml','awaiting_stock_recalc') AND r.base_qty>0
+		  AND ((r.warehouse_code=$2 AND r.location_code=$3) OR (r.warehouse_code='' AND r.location_code=''))
+		  AND NOT EXISTS(SELECT 1 FROM marketplace_stock_reservation_components c WHERE c.reservation_id=r.id)
+		UNION ALL
+		SELECT c.component_base_qty FROM marketplace_stock_reservation_components c
+		JOIN marketplace_stock_reservations r ON r.id=c.reservation_id
+		WHERE c.component_item_code=$1 AND r.state IN ('active','sending_sml','awaiting_stock_recalc') AND c.component_base_qty>0
+		  AND ((c.warehouse_code=$2 AND c.location_code=$3) OR (c.warehouse_code='' AND c.location_code=''))
+	) demand`, plan.Pool.SMLItemCode, plan.Settings.WarehouseCode, plan.Settings.LocationCode).Scan(&plan.PendingBaseQty); err != nil {
+		return nil, fmt.Errorf("load marketplace reservations for preview: %w", err)
+	}
+	plan.Pool.Members, err = listPoolMembersTx(ctx, tx, plan.Pool.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.Pool.Members) == 0 {
+		return nil, ErrInvalidPoolInput
+	}
+	var liveRunID string
+	_ = tx.QueryRowContext(ctx, `SELECT id::text FROM marketplace_stock_runs WHERE pool_id=$1::uuid AND status IN ('queued','running') LIMIT 1`, plan.Pool.ID).Scan(&liveRunID)
+	if liveRunID != "" {
+		return nil, ErrPreviewAlreadyRunning
+	}
+	err = tx.QueryRowContext(ctx, `INSERT INTO marketplace_stock_runs(pool_id,trigger_source,run_type,status,config_version,requested_by,started_at)
+		VALUES($1::uuid,'manual','preview','running',$2,$3::uuid,NOW()) RETURNING id::text`, plan.Pool.ID, plan.Pool.ConfigVersion, userID).Scan(&plan.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("create marketplace stock preview: %w", err)
+	}
+	if err := insertAudit(ctx, tx, "marketplace_stock_preview_started", plan.Pool.ID, userID, map[string]any{
+		"run_id": plan.RunID, "config_version": plan.Pool.ConfigVersion,
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func (s *PostgresStore) CompletePreview(ctx context.Context, result PreviewResult) error {
+	if s == nil || s.db == nil || strings.TrimSpace(result.RunID) == "" {
+		return errors.New("marketplace stock preview result is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var poolID, userID string
+	var configVersion int64
+	err = tx.QueryRowContext(ctx, `SELECT pool_id::text,COALESCE(requested_by::text,''),config_version
+		FROM marketplace_stock_runs WHERE id=$1::uuid AND status='running' FOR UPDATE`, result.RunID).Scan(&poolID, &userID, &configVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrConfigVersionConflict
+	}
+	if err != nil {
+		return err
+	}
+	summary, err := json.Marshal(map[string]any{
+		"sml_available_qty": result.SMLAvailableQty, "reservation_qty": result.ReservationQty, "usable_qty": result.UsableQty,
+		"buffer_qty": result.BufferQty, "distributable_qty": result.DistributableQty, "write_ready": false,
+	})
+	if err != nil {
+		return err
+	}
+	for _, line := range result.Lines {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_run_lines(run_id,member_id,status,target_qty,error_message)
+			VALUES($1::uuid,$2::uuid,$3,$4,$5)`, result.RunID, line.MemberID, line.Status, line.TargetQty, line.Message); err != nil {
+			return fmt.Errorf("save marketplace stock preview line: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_runs SET status='success',total_count=$2,changed_count=0,blocked_count=0,error_count=0,
+		summary=$3::jsonb,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, result.RunID, len(result.Lines), summary); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET last_preview_at=NOW(),last_error='',updated_at=NOW()
+		WHERE id=$1::uuid AND config_version=$2`, poolID, configVersion); err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, "marketplace_stock_preview_completed", poolID, userID, map[string]any{
+		"run_id": result.RunID, "line_count": len(result.Lines), "write_ready": false,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *PostgresStore) FailPreview(ctx context.Context, runID, message string) error {
+	if s == nil || s.db == nil || strings.TrimSpace(runID) == "" {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var poolID, userID string
+	err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_runs SET status='failed',error_count=1,error_message=$2,finished_at=NOW(),updated_at=NOW()
+		WHERE id=$1::uuid AND status='running' RETURNING pool_id::text,COALESCE(requested_by::text,'')`, runID, message).Scan(&poolID, &userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET status='paused',auto_enabled=false,dry_run_required=true,
+		paused_reason='preview_failed',last_error=$2,updated_at=NOW() WHERE id=$1::uuid`, poolID, message); err != nil {
+		return err
+	}
+	if err := insertAudit(ctx, tx, "marketplace_stock_preview_failed", poolID, userID, map[string]any{"run_id": runID}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func insertPool(ctx context.Context, tx *sql.Tx, input PoolInput, userID string) (*Pool, error) {
 	pool := &Pool{}
 	err := tx.QueryRowContext(ctx, `INSERT INTO marketplace_stock_pools

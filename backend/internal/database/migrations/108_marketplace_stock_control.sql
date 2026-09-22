@@ -114,7 +114,9 @@ CREATE TABLE IF NOT EXISTS marketplace_stock_run_lines (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   run_id UUID NOT NULL REFERENCES marketplace_stock_runs(id) ON DELETE CASCADE,
   member_id UUID NOT NULL REFERENCES marketplace_stock_pool_members(id) ON DELETE RESTRICT,
-  status TEXT NOT NULL CHECK (status IN ('changed','unchanged','blocked','failed','stale_before_write')),
+  -- planned is used by a read-only dry-run. It is deliberately distinct from
+  -- changed, which means a Marketplace write was actually confirmed.
+  status TEXT NOT NULL CHECK (status IN ('planned','changed','unchanged','blocked','failed','stale_before_write')),
   previous_qty BIGINT,
   target_qty BIGINT,
   actual_qty BIGINT,

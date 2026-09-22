@@ -100,3 +100,36 @@ type SettingsUpdate struct {
 	ExpectedConfigVersion int64   `json:"expected_config_version"`
 	ConfirmAction         string  `json:"confirm_action"`
 }
+
+type PreviewRequest struct {
+	ExpectedConfigVersion int64  `json:"expected_config_version"`
+	ConfirmAction         string `json:"confirm_action"`
+}
+
+type PreviewPlan struct {
+	RunID          string
+	Settings       Settings
+	Pool           Pool
+	UnitBaseFactor float64
+	PendingBaseQty float64
+	RequestedBy    string
+}
+
+type PreviewLine struct {
+	MemberID  string `json:"member_id"`
+	TargetQty int64  `json:"target_qty"`
+	Status    string `json:"status"`
+	Message   string `json:"message,omitempty"`
+}
+
+type PreviewResult struct {
+	RunID            string        `json:"run_id"`
+	Status           string        `json:"status"`
+	SMLAvailableQty  float64       `json:"sml_available_qty"`
+	ReservationQty   float64       `json:"reservation_qty"`
+	UsableQty        float64       `json:"usable_qty"`
+	BufferQty        float64       `json:"buffer_qty"`
+	DistributableQty float64       `json:"distributable_qty"`
+	Lines            []PreviewLine `json:"lines"`
+	ExpiresAt        time.Time     `json:"expires_at"`
+}

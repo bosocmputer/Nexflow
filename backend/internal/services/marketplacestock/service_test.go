@@ -3,6 +3,9 @@ package marketplacestock
 import (
 	"context"
 	"testing"
+	"time"
+
+	"nexflow/internal/services/sml"
 )
 
 type serviceStoreFake struct{ createCalls int }
@@ -20,6 +23,40 @@ func (f *serviceStoreFake) UpdatePool(context.Context, string, PoolUpdate, strin
 }
 func (f *serviceStoreFake) UpdateSettings(context.Context, SettingsUpdate, string) (*Settings, error) {
 	return &Settings{}, nil
+}
+func (f *serviceStoreFake) StartPreview(context.Context, string, PreviewRequest, string) (*PreviewPlan, error) {
+	return &PreviewPlan{}, nil
+}
+func (f *serviceStoreFake) CompletePreview(context.Context, PreviewResult) error { return nil }
+func (f *serviceStoreFake) FailPreview(context.Context, string, string) error    { return nil }
+
+type previewStoreFake struct {
+	serviceStoreFake
+	plan      PreviewPlan
+	completed *PreviewResult
+	failed    bool
+}
+
+func (f *previewStoreFake) StartPreview(_ context.Context, _ string, _ PreviewRequest, _ string) (*PreviewPlan, error) {
+	return &f.plan, nil
+}
+func (f *previewStoreFake) CompletePreview(_ context.Context, result PreviewResult) error {
+	f.completed = &result
+	return nil
+}
+func (f *previewStoreFake) FailPreview(context.Context, string, string) error {
+	f.failed = true
+	return nil
+}
+
+type balanceClientFake struct {
+	response *sml.StockBalanceBatchResponse
+	calls    int
+}
+
+func (f *balanceClientFake) BalancesBatch(_ context.Context, _ sml.StockBalanceBatchRequest) (*sml.StockBalanceBatchResponse, error) {
+	f.calls++
+	return f.response, nil
 }
 
 func TestCreatePoolRejectsSharedPoolWithoutAcknowledgementBeforeStore(t *testing.T) {
@@ -41,5 +78,35 @@ func TestUpdatePoolRequiresExplicitConfirmation(t *testing.T) {
 	}, "user-1")
 	if err != ErrConfirmationRequired {
 		t.Fatalf("UpdatePool() error = %v, want %v", err, ErrConfirmationRequired)
+	}
+}
+
+func TestPreviewPoolUsesNetSMLStockReservationAndBufferWithoutMarketplaceWrite(t *testing.T) {
+	store := &previewStoreFake{plan: PreviewPlan{
+		RunID: "run-1", Settings: Settings{WarehouseCode: "AB-1", LocationCode: "001", DefaultBufferPct: 10}, UnitBaseFactor: 2,
+		PendingBaseQty: 4,
+		Pool: Pool{ID: "pool-1", SMLItemCode: "AH-1", AllocationMode: AllocationModeQuota, ConfigVersion: 7,
+			Members: []Member{{ID: "member-a", UnitFactor: 1, AllocationPct: 100, Enabled: true}}},
+	}}
+	balance := &balanceClientFake{response: &sml.StockBalanceBatchResponse{Scopes: []sml.StockBalanceScopeResult{{
+		Items: []sml.StockBalanceItem{{ItemCode: "AH-1", AvailableBalanceQty: 10, AvailabilityStatus: "ready"}},
+	}}}}
+	result, err := NewService(store).WithSML(balance).PreviewPool(context.Background(), "pool-1", PreviewRequest{
+		ExpectedConfigVersion: 7, ConfirmAction: "PREVIEW_MARKETPLACE_STOCK_POOL",
+	}, "user-1")
+	if err != nil {
+		t.Fatalf("PreviewPool() error = %v", err)
+	}
+	if result.ReservationQty != 2 || result.UsableQty != 8 || result.BufferQty != 1 || result.DistributableQty != 7 {
+		t.Fatalf("preview arithmetic = %#v, want reservation=2 usable=8 buffer=1 distributable=7", result)
+	}
+	if len(result.Lines) != 1 || result.Lines[0].TargetQty != 7 || result.Lines[0].Status != "planned" {
+		t.Fatalf("preview lines = %#v", result.Lines)
+	}
+	if balance.calls != 1 || store.completed == nil || store.failed {
+		t.Fatalf("balance calls=%d completed=%v failed=%v", balance.calls, store.completed != nil, store.failed)
+	}
+	if result.ExpiresAt.Before(time.Now().UTC()) {
+		t.Fatalf("preview plan should expire in the future: %s", result.ExpiresAt)
 	}
 }

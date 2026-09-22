@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
+import { permissionForMenu } from '@/lib/navigation'
 import { useAuthStore } from '@/store/auth'
 
 type Source = 'shopee' | 'tiktok'
@@ -24,13 +25,16 @@ interface Member { id: string; source: Source; account_key: string; external_pro
 interface Pool { id: string; sml_item_code: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_error?: string; members: Member[] }
 interface Overview { available: boolean; settings: Settings; pools: Pool[] }
 interface Candidate extends Omit<Member, 'id' | 'last_target_qty' | 'last_actual_qty' | 'last_error'> { sml_item_code: string; sml_unit_code: string }
+interface PreviewResult { run_id: string; sml_available_qty: number; reservation_qty: number; usable_qty: number; buffer_qty: number; distributable_qty: number; expires_at: string; lines: { member_id: string; target_qty: number; status: string; message?: string }[] }
 
 const sourceLabel: Record<Source, string> = { shopee: 'Shopee', tiktok: 'TikTok Shop' }
 const poolStatus: Record<Pool['status'], string> = { draft: 'รอตั้งค่า', ready: 'พร้อมตรวจ', paused: 'หยุดชั่วคราว', active: 'เปิดใช้งาน' }
 
 export default function MarketplaceStock() {
   const user = useAuthStore((state) => state.user)
-  const canManage = user?.role === 'admin'
+  const permission = permissionForMenu(user, 'marketplace_stock')
+  const canManage = permission?.can_update === true
+  const canOperate = permission?.can_create === true
   const [data, setData] = useState<Overview | null>(null)
   const [tab, setTab] = useState<'all' | Source>('all')
   const [loading, setLoading] = useState(true)
@@ -40,6 +44,8 @@ export default function MarketplaceStock() {
   const [createOpen, setCreateOpen] = useState(false)
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [saving, setSaving] = useState(false)
+  const [previewingPoolID, setPreviewingPoolID] = useState('')
+  const [previews, setPreviews] = useState<Record<string, PreviewResult>>({})
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -88,6 +94,18 @@ export default function MarketplaceStock() {
     } catch (cause) { setError(messageOf(cause, 'สร้างกลุ่มสต๊อกไม่สำเร็จ')) } finally { setSaving(false) }
   }
 
+  const previewPool = async (pool: Pool) => {
+    setPreviewingPoolID(pool.id); setError(''); setNotice('')
+    try {
+      const response = await client.post<PreviewResult>(`/api/settings/marketplace-stock/pools/${pool.id}/preview`, {
+        expected_config_version: pool.config_version, confirm_action: 'PREVIEW_MARKETPLACE_STOCK_POOL',
+      })
+      setPreviews((current) => ({ ...current, [pool.id]: response.data }))
+      setNotice('ตรวจยอดจาก SML แล้ว เป็นแผนอ่านอย่างเดียว ยังไม่ได้ส่งยอดไป Shopee หรือ TikTok Shop')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'ตรวจยอดจาก SML ไม่สำเร็จ')) } finally { setPreviewingPoolID('') }
+  }
+
   return (
     <main className="space-y-4 p-4 sm:p-6" aria-busy={loading}>
       <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
@@ -103,7 +121,7 @@ export default function MarketplaceStock() {
 
       {error && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ดำเนินการไม่สำเร็จ</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
       {notice && <Alert><CheckCircle2 className="h-4 w-4 text-success" /><AlertTitle>บันทึกแล้ว</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert>}
-      {!canManage && <Alert><Info className="h-4 w-4" /><AlertTitle>โหมดติดตามผล</AlertTitle><AlertDescription>ผู้ดูแลระบบกำหนดนโยบายและเปิดการซิงก์อัตโนมัติ พนักงานสามารถตรวจสถานะและผลการทำงานได้จากหน้านี้</AlertDescription></Alert>}
+      {!canManage && <Alert><Info className="h-4 w-4" /><AlertTitle>{canOperate ? 'โหมดตรวจสอบและสั่งงาน' : 'โหมดติดตามผล'}</AlertTitle><AlertDescription>{canOperate ? 'คุณตรวจยอดจาก SML แบบอ่านอย่างเดียวได้ ส่วนการเปลี่ยนนโยบายและเปิด Auto ต้องให้ผู้ดูแลดำเนินการ' : 'ผู้ดูแลระบบกำหนดนโยบายและเปิดการซิงก์อัตโนมัติ พนักงานสามารถตรวจสถานะและผลการทำงานได้จากหน้านี้'}</AlertDescription></Alert>}
       {data?.settings.kill_switch_enabled && <Alert variant="destructive"><CircleOff className="h-4 w-4" /><AlertTitle>หยุดส่งสต๊อกทั้งร้านอยู่</AlertTitle><AlertDescription>งานที่ยังไม่เริ่มจะไม่ส่งยอดออกไป Marketplace จนกว่าผู้ดูแลจะเปิดระบบอีกครั้ง</AlertDescription></Alert>}
 
       <section className="grid gap-3 sm:grid-cols-3" aria-label="ภาพรวมการควบคุมสต๊อก">
@@ -115,7 +133,7 @@ export default function MarketplaceStock() {
       <Tabs value={tab} onValueChange={(value) => setTab(value as 'all' | Source)}>
         <TabsList aria-label="กรองช่องทาง"><TabsTrigger value="all">ทั้งหมด</TabsTrigger><TabsTrigger value="shopee">Shopee</TabsTrigger><TabsTrigger value="tiktok">TikTok Shop</TabsTrigger></TabsList>
         <TabsContent value={tab} className="space-y-3">
-          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} />)}
+          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} canOperate={canOperate} preview={previews[pool.id]} previewing={previewingPoolID === pool.id} onPreview={() => void previewPool(pool)} />)}
         </TabsContent>
       </Tabs>
 
@@ -129,9 +147,9 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-lg font-semibold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>
 }
 
-function PoolCard({ pool }: { pool: Pool }) {
+function PoolCard({ pool, canOperate, preview, previewing, onPreview }: { pool: Pool; canOperate: boolean; preview?: PreviewResult; previewing: boolean; onPreview: () => void }) {
   const channels = [...new Set(pool.members.map((member) => member.source))]
-  return <Card><CardHeader className="gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="text-base">{pool.sml_item_code} <span className="font-normal text-muted-foreground">· {pool.sml_unit_code}</span></CardTitle><CardDescription className="mt-1">{pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · กันสต๊อก {pool.buffer_pct_override ?? 'ค่าเริ่มต้น'}%</CardDescription></div><div className="flex flex-wrap gap-2"><Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge><Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge></div></CardHeader><CardContent className="grid gap-2 p-4 pt-0 sm:grid-cols-2">{pool.members.map((member) => <div key={member.id} className="rounded-md border px-3 py-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{sourceLabel[member.source]}</span><span className="text-muted-foreground">{pool.allocation_mode === 'quota' ? `${member.allocation_pct}%` : 'ยอดร่วม'}</span></div><p className="mt-1 truncate text-muted-foreground" title={[member.product_name, member.variant_name].filter(Boolean).join(' · ')}>{[member.product_name, member.variant_name].filter(Boolean).join(' · ') || 'ยังไม่มีชื่อสินค้า'}</p>{member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}</div>)}</CardContent>{pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}{channels.length === 0 && <div className="border-t px-4 py-2 text-xs text-muted-foreground">ยังไม่มี SKU ในกลุ่มนี้</div>}</Card>
+  return <Card><CardHeader className="gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="text-base">{pool.sml_item_code} <span className="font-normal text-muted-foreground">· {pool.sml_unit_code}</span></CardTitle><CardDescription className="mt-1">{pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · กันสต๊อก {pool.buffer_pct_override ?? 'ค่าเริ่มต้น'}%</CardDescription></div><div className="flex flex-wrap gap-2"><Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge><Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge>{canOperate && pool.status !== 'paused' && <Button variant="outline" size="sm" onClick={onPreview} disabled={previewing}><RefreshCw className={cn('mr-2 h-4 w-4', previewing && 'animate-spin')} />ตรวจ SML</Button>}</div></CardHeader><CardContent className="grid gap-2 p-4 pt-0 sm:grid-cols-2">{pool.members.map((member) => <div key={member.id} className="rounded-md border px-3 py-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{sourceLabel[member.source]}</span><span className="text-muted-foreground">{pool.allocation_mode === 'quota' ? `${member.allocation_pct}%` : 'ยอดร่วม'}</span></div><p className="mt-1 truncate text-muted-foreground" title={[member.product_name, member.variant_name].filter(Boolean).join(' · ')}>{[member.product_name, member.variant_name].filter(Boolean).join(' · ') || 'ยังไม่มีชื่อสินค้า'}</p>{member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}</div>)}</CardContent>{preview && <div className="border-t bg-muted/30 px-4 py-3 text-sm"><p className="font-medium">แผนจาก SML: พร้อมใช้ {preview.usable_qty} {pool.sml_unit_code} · กันชน {preview.buffer_qty} · ส่งออกได้ {preview.distributable_qty}</p><p className="mt-1 text-xs text-muted-foreground">หัก reservation {preview.reservation_qty} แล้ว; แผนหมดอายุใน 60 วินาที และยังไม่ได้อ่านหรือเขียนยอด Marketplace</p><div className="mt-2 flex flex-wrap gap-2">{preview.lines.map((line) => <Badge key={line.member_id} variant="outline">SKU → {line.target_qty}</Badge>)}</div></div>}{pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}{channels.length === 0 && <div className="border-t px-4 py-2 text-xs text-muted-foreground">ยังไม่มี SKU ในกลุ่มนี้</div>}</Card>
 }
 
 function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) { return <Card><CardContent className="flex flex-col items-center px-6 py-12 text-center"><Boxes className="h-9 w-9 text-muted-foreground" /><h2 className="mt-3 font-semibold">ยังไม่มีกลุ่มสต๊อก</h2><p className="mt-1 max-w-md text-sm text-muted-foreground">เริ่มจากจับคู่สินค้า Marketplace กับสินค้า SML ให้พร้อม แล้วสร้างกลุ่มเพื่อเลือกว่าจะแบ่งโควตาหรือใช้สต๊อกร่วม</p>{canManage && <Button className="mt-4" onClick={onCreate}>สร้างกลุ่มสต๊อก</Button>}</CardContent></Card> }
@@ -149,8 +167,9 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
   const [mode, setMode] = useState<Mode>('quota')
   const [sharedAcknowledged, setSharedAcknowledged] = useState(false)
   const [members, setMembers] = useState<Candidate[]>([])
-  useEffect(() => { if (open) { const first = groups[0]?.[0] ?? ''; setGroupKey(first); setMode('quota'); setSharedAcknowledged(false); setMembers(first ? candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === first) : []) } }, [open, candidates, groups])
-  const changeGroup = (value: string) => { setGroupKey(value); setMembers(candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === value)) }
+  const draftMembers = (key: string) => { const selected = candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === key); const share = selected.length ? Math.floor((10000 / selected.length)) / 100 : 0; return selected.map((candidate, index) => ({ ...candidate, allocation_pct: index === selected.length - 1 ? Number((100 - share * Math.max(0, selected.length - 1)).toFixed(2)) : share, enabled: true })) }
+  useEffect(() => { if (open) { const first = groups[0]?.[0] ?? ''; setGroupKey(first); setMode('quota'); setSharedAcknowledged(false); setMembers(draftMembers(first)) } }, [open, candidates, groups])
+  const changeGroup = (value: string) => { setGroupKey(value); setMembers(draftMembers(value)) }
   const total = members.filter((member) => member.enabled).reduce((sum, member) => sum + member.allocation_pct, 0)
   const submit = () => { const [smlItem, smlUnit] = groupKey.split('|', 2); if (smlItem && smlUnit) onCreate({ smlItem, smlUnit, mode, sharedAcknowledged, members }) }
   return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>สร้างกลุ่มสต๊อก Marketplace</DialogTitle><DialogDescription>เลือก SKU ที่จับคู่กับสินค้า SML เดียวกันแล้ว ระบบจะเริ่มเป็นแบบร่าง ยังไม่ส่งสต๊อกจริง</DialogDescription></DialogHeader>{groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4"><div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{groups.map(([key, item]) => <SelectItem key={key} value={key}>{item.sml_item_code} · {item.sml_unit_code}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>{mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}<div className="space-y-2"><Label>SKU ในกลุ่ม</Label>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => setMembers((current) => current.map((value, i) => i === index ? { ...value, enabled: checked === true } : value))} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div></div>}<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={submit} disabled={saving || !groupKey || members.filter((member) => member.enabled).length === 0 || (mode === 'quota' && total > 100) || (mode === 'shared' && !sharedAcknowledged)}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}สร้างแบบร่าง</Button></DialogFooter></DialogContent></Dialog>

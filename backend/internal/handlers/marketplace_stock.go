@@ -7,8 +7,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"nexflow/internal/models"
 	"nexflow/internal/services/marketplacestock"
 )
+
+// marketplaceStockUserReader keeps the handler independently testable while
+// ensuring browser claims are never trusted for stock-control permissions.
+type marketplaceStockUserReader interface {
+	FindByID(string) (*models.User, error)
+}
 
 // MarketplaceStockHandler deliberately keeps GET endpoints read-only. All
 // external inventory writes will be owned by the durable worker, never by a
@@ -16,14 +23,18 @@ import (
 type MarketplaceStockHandler struct {
 	service *marketplacestock.Service
 	enabled bool
+	users   marketplaceStockUserReader
 }
 
-func NewMarketplaceStockHandler(service *marketplacestock.Service, enabled bool) *MarketplaceStockHandler {
-	return &MarketplaceStockHandler{service: service, enabled: enabled}
+func NewMarketplaceStockHandler(service *marketplacestock.Service, enabled bool, users marketplaceStockUserReader) *MarketplaceStockHandler {
+	return &MarketplaceStockHandler{service: service, enabled: enabled, users: users}
 }
 
 func (h *MarketplaceStockHandler) Overview(c *gin.Context) {
 	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.requirePermission(c, "view") {
 		return
 	}
 	result, err := h.service.Overview(c.Request.Context())
@@ -38,6 +49,9 @@ func (h *MarketplaceStockHandler) Candidates(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
+	if !h.requirePermission(c, "view") {
+		return
+	}
 	result, err := h.service.Candidates(c.Request.Context(), strings.TrimSpace(c.Query("source")))
 	if err != nil {
 		h.fail(c, err)
@@ -48,6 +62,9 @@ func (h *MarketplaceStockHandler) Candidates(c *gin.Context) {
 
 func (h *MarketplaceStockHandler) CreatePool(c *gin.Context) {
 	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.requirePermission(c, "update") {
 		return
 	}
 	var request marketplacestock.PoolInput
@@ -65,6 +82,9 @@ func (h *MarketplaceStockHandler) CreatePool(c *gin.Context) {
 
 func (h *MarketplaceStockHandler) UpdatePool(c *gin.Context) {
 	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.requirePermission(c, "update") {
 		return
 	}
 	poolID := strings.TrimSpace(c.Param("pool_id"))
@@ -89,6 +109,9 @@ func (h *MarketplaceStockHandler) UpdateSettings(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
+	if !h.requirePermission(c, "update") {
+		return
+	}
 	var request marketplacestock.SettingsUpdate
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลตั้งค่าสต๊อกไม่ถูกต้อง"})
@@ -102,11 +125,66 @@ func (h *MarketplaceStockHandler) UpdateSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *MarketplaceStockHandler) PreviewPool(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.requirePermission(c, "create") {
+		return
+	}
+	poolID := strings.TrimSpace(c.Param("pool_id"))
+	if !uuidPattern.MatchString(poolID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id ไม่ถูกต้อง"})
+		return
+	}
+	var request marketplacestock.PreviewRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลตรวจสต๊อกไม่ถูกต้อง"})
+		return
+	}
+	result, err := h.service.PreviewPool(c.Request.Context(), poolID, request, c.GetString("user_id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *MarketplaceStockHandler) checkEnabled(c *gin.Context) bool {
 	if h != nil && h.enabled && h.service != nil {
 		return true
 	}
 	c.JSON(http.StatusNotFound, gin.H{"error": "Marketplace Stock Control ยังไม่ได้เปิดสำหรับร้านนี้"})
+	return false
+}
+
+func (h *MarketplaceStockHandler) requirePermission(c *gin.Context, action string) bool {
+	if h == nil || h.users == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ยังตรวจสอบสิทธิ์ควบคุมสต๊อกไม่ได้"})
+		return false
+	}
+	user, err := h.users.FindByID(c.GetString("user_id"))
+	if err != nil || user == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์ใช้งานการควบคุมสต๊อก Marketplace"})
+		return false
+	}
+	for _, permission := range user.MenuPermissions {
+		if permission.MenuKey != "marketplace_stock" {
+			continue
+		}
+		allowed := permission.CanView
+		switch action {
+		case "create":
+			allowed = permission.CanCreate
+		case "update":
+			allowed = permission.CanUpdate
+		}
+		if allowed {
+			return true
+		}
+		break
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์ดำเนินการนี้ในการควบคุมสต๊อก Marketplace"})
 	return false
 }
 
@@ -124,6 +202,12 @@ func (h *MarketplaceStockHandler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "กรุณายืนยันการเปลี่ยนแปลงก่อนบันทึก"})
 	case errors.Is(err, marketplacestock.ErrConfigVersionConflict):
 		c.JSON(http.StatusConflict, gin.H{"error": "ข้อมูลถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดใหม่ก่อนบันทึก"})
+	case errors.Is(err, marketplacestock.ErrGlobalKillSwitch):
+		c.JSON(http.StatusConflict, gin.H{"error": "ระบบถูกหยุดชั่วคราวโดยผู้ดูแล จึงยังตรวจหรือส่งสต๊อกไม่ได้"})
+	case errors.Is(err, marketplacestock.ErrPoolPaused):
+		c.JSON(http.StatusConflict, gin.H{"error": "กลุ่มสต๊อกถูกพักไว้ กรุณาตรวจการตั้งค่าแล้วบันทึกใหม่"})
+	case errors.Is(err, marketplacestock.ErrPreviewAlreadyRunning):
+		c.JSON(http.StatusConflict, gin.H{"error": "กำลังตรวจสต๊อกกลุ่มนี้อยู่ กรุณารอผลก่อน"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกการควบคุมสต๊อกไม่สำเร็จ"})
 	}
