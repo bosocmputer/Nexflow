@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Boxes, Database, ImageIcon, Plus, RefreshCw, Search } from 'lucide-react'
+import { Boxes, Database, ImageIcon, Link2, Plus, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 
 import api from '@/api/client'
 import { AuthImage } from '@/components/common/AuthImage'
 import { EmptyState } from '@/components/common/EmptyState'
-import { PageHeader } from '@/components/common/PageHeader'
 import { ProductImagePreviewDialog } from '@/components/common/ProductImagePreviewDialog'
 import { CatalogMarketplaceLinksDialog } from '@/components/catalog/CatalogMarketplaceLinksDialog'
 import { MarketplaceSourceChannelBadges } from '@/components/marketplace/InputChannelBadge'
@@ -103,34 +102,36 @@ export default function CatalogSettings() {
     }
   }
 
+  const visibleCount = items.length
+
   return (
     <div className="space-y-4 p-4 sm:p-6">
-      <PageHeader
-        title="รายการสินค้า SML"
-        description="ข้อมูลสินค้าที่ใช้ค้นหาและจับคู่แบบตรงจากฐานข้อมูล SML"
-        actions={canManageCatalog ? (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />เพิ่มสินค้า</Button>
-            <Button onClick={syncCatalog} disabled={syncing || stats?.sync_running}>
+      <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">รายการสินค้า SML</h1>
+            <span className="text-sm tabular-nums text-muted-foreground">{(stats?.total ?? 0).toLocaleString()} รายการ</span>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">ดูสินค้า SML และกลุ่มรายการ Marketplace ที่ใช้สินค้านี้ร่วมกัน</p>
+        </div>
+        {canManageCatalog && (
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />เพิ่มสินค้า</Button>
+            <Button size="sm" onClick={syncCatalog} disabled={syncing || stats?.sync_running}>
               <RefreshCw className={cn('h-4 w-4', (syncing || stats?.sync_running) && 'animate-spin')} />
               {stats?.sync_running ? 'กำลังซิงก์' : 'ซิงก์จาก SML'}
             </Button>
           </div>
-        ) : undefined}
-      />
+        )}
+      </header>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3">
-        <div>
-          <div className="text-2xl font-semibold tabular-nums">{(stats?.total ?? 0).toLocaleString()}</div>
-          <div className="text-xs text-muted-foreground">สินค้าที่พร้อมใช้งาน</div>
-        </div>
-        <div className="text-right text-xs text-muted-foreground">
-          {stats?.sync_running
-            ? `ซิงก์แล้ว ${(stats.sync_status?.count ?? 0).toLocaleString()} รายการ`
-            : stats?.sync_status?.error
-              ? <span className="text-destructive">ซิงก์ล่าสุดไม่สำเร็จ: {stats.sync_status.error}</span>
-              : 'ค้นหาด้วยรหัสหรือชื่อสินค้าจากฐานข้อมูล SML'}
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
+        <span>ค้นหาได้ด้วยรหัสหรือชื่อสินค้าจากฐานข้อมูล SML</span>
+        {stats?.sync_running
+          ? <span>กำลังซิงก์แล้ว {(stats.sync_status?.count ?? 0).toLocaleString()} รายการ</span>
+          : stats?.sync_status?.error
+            ? <span className="text-destructive">ซิงก์ล่าสุดไม่สำเร็จ: {stats.sync_status.error}</span>
+            : <span>แสดง {visibleCount.toLocaleString()} จาก {(stats?.total ?? 0).toLocaleString()} รายการ</span>}
       </div>
 
       {items.some((item) => item.item_type === 3) && (
@@ -140,8 +141,8 @@ export default function CatalogSettings() {
         </div>
       )}
 
-      <div className="rounded-lg border bg-card">
-        <div className="flex gap-2 border-b p-3">
+      <section className="overflow-hidden rounded-lg border bg-card" aria-labelledby="catalog-results-heading">
+        <div className="flex flex-col gap-2 border-b p-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -152,67 +153,37 @@ export default function CatalogSettings() {
               className="pl-8"
             />
           </div>
-          <Button variant="outline" onClick={() => { setQuery(draft.trim()); setPage(1) }}>ค้นหา</Button>
+          <Button variant="outline" className="sm:shrink-0" onClick={() => { setQuery(draft.trim()); setPage(1) }}>ค้นหา</Button>
         </div>
 
         {!loading && items.length === 0 ? (
           <EmptyState icon={Database} title="ยังไม่มีสินค้า SML" description="กดซิงก์จาก SML ก่อนเริ่มนำเข้าและสร้างเอกสารขาย" />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <h2 id="catalog-results-heading" className="sr-only">รายการสินค้าและการจับคู่ Marketplace</h2>
+            <div className="hidden overflow-x-auto md:block">
             <Table>
-              <TableHeader><TableRow><TableHead className="w-16">รูป</TableHead><TableHead>รหัสสินค้า</TableHead><TableHead className="min-w-[260px]">ชื่อสินค้า</TableHead><TableHead className="min-w-[210px]">จับคู่ Marketplace</TableHead><TableHead>หน่วยหลัก</TableHead>{canManageCatalog && <TableHead className="text-right">จัดการ</TableHead>}</TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="min-w-[360px]">สินค้า SML</TableHead><TableHead className="min-w-[360px]">กลุ่มการจับคู่ Marketplace</TableHead>{canManageCatalog && <TableHead className="w-[112px] text-right">จัดการ</TableHead>}</TableRow></TableHeader>
               <TableBody>
-                {loading ? Array.from({ length: 8 }).map((_, index) => <TableRow key={index}><TableCell colSpan={canManageCatalog ? 6 : 5}><Skeleton className="h-11 w-full" /></TableCell></TableRow>) : items.map((item) => {
-                  const hasImage = Boolean(item.image_url && (item.image_count ?? 0) > 0)
-                  const marketplaceSummaries = item.marketplace_summaries ?? []
-                  return (
-                    <TableRow key={item.item_code}>
-                      <TableCell><button type="button" className="h-10 w-10 rounded-md" disabled={!hasImage} onClick={() => hasImage && setPreview(item)}><AuthImage src={hasImage ? item.image_url : undefined} className="h-full w-full rounded-md border bg-muted/30" imgClassName="object-cover" fallback={<div className="flex h-full items-center justify-center"><ImageIcon className="h-4 w-4 text-muted-foreground" /></div>} /></button></TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <code className="font-semibold">{item.item_code}</code>
-                          {item.item_type === 3 && <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary"><Boxes className="mr-1 h-3 w-3" />สินค้าชุด</Badge>}
-                          {item.has_hidden_chars && <Badge variant="destructive">รหัสผิดรูปแบบ</Badge>}
-                        </div>
-                        {item.item_type === 3 && (
-                          <Button type="button" variant="link" size="sm" className="mt-0.5 h-auto px-0 text-xs" onClick={() => setSetDetailsItem(item)}>
-                            ดูส่วนประกอบ {item.set_component_count ?? 0} รายการ
-                          </Button>
-                        )}
-                      </TableCell>
-                      <TableCell><div className="font-medium">{item.item_name}</div>{item.item_name2 && <div className="text-xs text-muted-foreground">{item.item_name2}</div>}</TableCell>
-                      <TableCell>
-                        {marketplaceSummaries.length > 0 ? (
-                          <button type="button" className="rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => setMarketplaceDetailsItem(item)} aria-label={`ดูสินค้า Marketplace ที่จับคู่กับ ${item.item_code}`}>
-                            <span className="flex flex-wrap gap-1.5">
-                              {marketplaceSummaries.map((summary) => (
-                                <MarketplaceSourceChannelBadges
-                                  key={`${summary.source}:${summary.input_channels?.join(',') ?? ''}`}
-                                  source={summary.source}
-                                  count={summary.mapping_count}
-                                  channels={marketplaceDisplayInputChannels(summary.source, { inputChannels: summary.input_channels })}
-                                />
-                              ))}
-                            </span>
-                            <span className="mt-1 block text-xs text-link">ดูชื่อสินค้าและตัวเลือก</span>
-                          </button>
-                        ) : <span className="text-xs text-muted-foreground">ยังไม่จับคู่</span>}
-                      </TableCell>
-                      <TableCell>{item.unit_code || '-'}</TableCell>
-                      {canManageCatalog && <TableCell className="text-right"><Button size="sm" variant="outline" disabled={refreshingCode === item.item_code} onClick={() => void refreshOne(item.item_code)}><RefreshCw className={cn('h-3.5 w-3.5', refreshingCode === item.item_code && 'animate-spin')} />อัปเดต</Button></TableCell>}
-                    </TableRow>
-                  )
+                {loading ? Array.from({ length: 8 }).map((_, index) => <TableRow key={index}><TableCell colSpan={canManageCatalog ? 3 : 2}><Skeleton className="h-11 w-full" /></TableCell></TableRow>) : items.map((item) => {
+                  return <CatalogTableRow key={item.item_code} item={item} canManageCatalog={canManageCatalog} refreshing={refreshingCode === item.item_code} onRefresh={refreshOne} onPreview={setPreview} onSetDetails={setSetDetailsItem} onMarketplaceDetails={setMarketplaceDetailsItem} />
                 })}
               </TableBody>
             </Table>
-          </div>
+            </div>
+            <div className="divide-y md:hidden">
+              {loading ? Array.from({ length: 6 }).map((_, index) => <div key={index} className="p-4"><Skeleton className="h-28 w-full" /></div>) : items.map((item) => (
+                <CatalogMobileCard key={item.item_code} item={item} canManageCatalog={canManageCatalog} refreshing={refreshingCode === item.item_code} onRefresh={refreshOne} onPreview={setPreview} onSetDetails={setSetDetailsItem} onMarketplaceDetails={setMarketplaceDetailsItem} />
+              ))}
+            </div>
+          </>
         )}
 
         <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
           <span>หน้า {page}/{totalPages}</span>
           <div className="flex gap-2"><Button size="sm" variant="outline" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)}>ก่อนหน้า</Button><Button size="sm" variant="outline" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>ถัดไป</Button></div>
         </div>
-      </div>
+      </section>
 
       {canManageCatalog && <CreateProductDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={load} />}
       <ProductImagePreviewDialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)} imageUrl={preview?.image_url} itemCode={preview?.item_code} itemName={preview?.item_name} imageCount={preview?.image_count ?? 0} />
@@ -235,6 +206,96 @@ export default function CatalogSettings() {
       />
     </div>
   )
+}
+
+interface CatalogRowProps {
+  item: CatalogItem
+  canManageCatalog: boolean
+  refreshing: boolean
+  onRefresh: (code: string) => Promise<void>
+  onPreview: (item: CatalogItem) => void
+  onSetDetails: (item: CatalogItem) => void
+  onMarketplaceDetails: (item: CatalogItem) => void
+}
+
+function CatalogTableRow(props: CatalogRowProps) {
+  const { item, canManageCatalog, refreshing, onRefresh, onPreview, onSetDetails, onMarketplaceDetails } = props
+  return (
+    <TableRow>
+      <TableCell><CatalogProductIdentity item={item} onPreview={onPreview} onSetDetails={onSetDetails} /></TableCell>
+      <TableCell><MarketplaceMappingSummary item={item} onShowDetails={onMarketplaceDetails} /></TableCell>
+      {canManageCatalog && <TableCell className="text-right"><RefreshCatalogProductButton itemCode={item.item_code} refreshing={refreshing} onRefresh={onRefresh} /></TableCell>}
+    </TableRow>
+  )
+}
+
+function CatalogMobileCard(props: CatalogRowProps) {
+  const { item, canManageCatalog, refreshing, onRefresh, onPreview, onSetDetails, onMarketplaceDetails } = props
+  return (
+    <article className="space-y-3 p-4">
+      <CatalogProductIdentity item={item} onPreview={onPreview} onSetDetails={onSetDetails} />
+      <div className="border-t pt-3">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">กลุ่มการจับคู่ Marketplace</p>
+        <MarketplaceMappingSummary item={item} onShowDetails={onMarketplaceDetails} />
+      </div>
+      {canManageCatalog && <div className="flex justify-end"><RefreshCatalogProductButton itemCode={item.item_code} refreshing={refreshing} onRefresh={onRefresh} /></div>}
+    </article>
+  )
+}
+
+function CatalogProductIdentity({ item, onPreview, onSetDetails }: Pick<CatalogRowProps, 'item' | 'onPreview' | 'onSetDetails'>) {
+  const hasImage = Boolean(item.image_url && (item.image_count ?? 0) > 0)
+  return (
+    <div className="flex min-w-0 items-start gap-3">
+      <button type="button" className="h-10 w-10 shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" disabled={!hasImage} onClick={() => hasImage && onPreview(item)} aria-label={hasImage ? `ดูรูปสินค้า ${item.item_name}` : undefined}>
+        <AuthImage src={hasImage ? item.image_url : undefined} className="h-full w-full rounded-md border bg-muted/30" imgClassName="object-cover" fallback={<div className="flex h-full items-center justify-center"><ImageIcon className="h-4 w-4 text-muted-foreground" /></div>} />
+      </button>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <code className="font-semibold">{item.item_code}</code>
+          {item.item_type === 3 && <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary"><Boxes className="mr-1 h-3 w-3" />สินค้าชุด</Badge>}
+          {item.has_hidden_chars && <Badge variant="destructive">รหัสผิดรูปแบบ</Badge>}
+        </div>
+        <p className="mt-0.5 break-words font-medium leading-snug">{item.item_name}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span>หน่วย SML: <span className="text-foreground">{item.unit_code || '-'}</span></span>
+          {item.item_name2 && <span className="break-words">{item.item_name2}</span>}
+        </div>
+        {item.item_type === 3 && (
+          <Button type="button" variant="link" size="sm" className="mt-1 h-auto px-0 text-xs" onClick={() => onSetDetails(item)}>
+            ดูส่วนประกอบ {item.set_component_count ?? 0} รายการ
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MarketplaceMappingSummary({ item, onShowDetails }: { item: CatalogItem; onShowDetails: (item: CatalogItem) => void }) {
+  const summaries = item.marketplace_summaries ?? []
+  const mappingCount = summaries.reduce((total, summary) => total + summary.mapping_count, 0)
+  if (summaries.length === 0) return <p className="text-sm text-muted-foreground">ยังไม่จับคู่กับ Marketplace</p>
+  return (
+    <button type="button" className="group block rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => onShowDetails(item)} aria-label={`ดูสินค้า Marketplace ที่จับคู่กับ ${item.item_code}`}>
+      <span className="flex flex-wrap gap-1.5">
+        {summaries.map((summary) => (
+          <MarketplaceSourceChannelBadges
+            key={`${summary.source}:${summary.input_channels?.join(',') ?? ''}`}
+            source={summary.source}
+            count={summary.mapping_count}
+            channels={marketplaceDisplayInputChannels(summary.source, { inputChannels: summary.input_channels })}
+          />
+        ))}
+      </span>
+      <span className="mt-2 flex items-center gap-1.5 text-xs text-link group-hover:underline">
+        <Link2 className="h-3.5 w-3.5" aria-hidden="true" />ดู {mappingCount.toLocaleString()} รายการที่จับคู่และตัวเลือก
+      </span>
+    </button>
+  )
+}
+
+function RefreshCatalogProductButton({ itemCode, refreshing, onRefresh }: { itemCode: string; refreshing: boolean; onRefresh: (code: string) => Promise<void> }) {
+  return <Button size="sm" variant="outline" disabled={refreshing} onClick={() => void onRefresh(itemCode)}><RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />อัปเดต</Button>
 }
 
 function CreateProductDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => Promise<void> }) {
