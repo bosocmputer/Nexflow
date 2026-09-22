@@ -16,6 +16,16 @@ CREATE TABLE IF NOT EXISTS marketplace_stock_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Reuse an already selected single SML location as a draft source. The new
+-- control stays disabled; this only avoids asking AOY to enter AB-1/001 again.
+INSERT INTO marketplace_stock_settings (singleton, warehouse_code, location_code, default_buffer_pct)
+SELECT true, locations->0->>'warehouse', locations->0->>'location', 10
+  FROM shopee_stock_settings
+ WHERE scope_mode='selected' AND jsonb_array_length(locations)=1
+ ORDER BY shop_id
+ LIMIT 1
+ON CONFLICT (singleton) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS marketplace_stock_pools (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   sml_item_code TEXT NOT NULL,

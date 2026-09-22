@@ -30,6 +30,7 @@ import (
 	lineservice "nexflow/internal/services/line"
 	linenotify "nexflow/internal/services/line_notifications"
 	"nexflow/internal/services/mapper"
+	"nexflow/internal/services/marketplacestock"
 	"nexflow/internal/services/media"
 	nextstepnotifications "nexflow/internal/services/nextstep_notifications"
 	"nexflow/internal/services/shopeeapi"
@@ -454,6 +455,10 @@ func main() {
 	shopeestock.NewWorker(stockService, logger).Start(appCtx)
 	stockrecalc.NewWorker(billRepo, appSettingsRepo, cfg, stockSMLClient, logger).Start(appCtx)
 	shopeeStockH := handlers.NewShopeeStockHandler(stockService, aliasRepo, auditLogRepo, logger)
+	marketplaceStockH := handlers.NewMarketplaceStockHandler(
+		marketplacestock.NewService(marketplacestock.NewPostgresStore(db)),
+		cfg.MarketplaceStockControlEnabled,
+	)
 
 	// Webhooks (no auth)
 	// Webhook routes:
@@ -615,6 +620,10 @@ func main() {
 		api.GET("/settings/shopee-stock/:shop_id/shared-pool", middleware.RequireRole("admin", "staff"), shopeeStockH.SharedPool)
 		api.PUT("/settings/shopee-stock/:shop_id/shared-pool", middleware.RequireRole("admin"), shopeeStockH.UpdateSharedPool)
 		api.PUT("/settings/shopee-stock/:shop_id/mappings/:item_id/:model_id", middleware.RequireRole("admin"), shopeeStockH.UpdateMapping)
+		api.GET("/settings/marketplace-stock", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.Overview)
+		api.POST("/settings/marketplace-stock/pools", middleware.RequireRole("admin"), marketplaceStockH.CreatePool)
+		api.PUT("/settings/marketplace-stock/pools/:pool_id", middleware.RequireRole("admin"), marketplaceStockH.UpdatePool)
+		api.PUT("/settings/marketplace-stock", middleware.RequireRole("admin"), marketplaceStockH.UpdateSettings)
 		api.GET("/settings/shopee-settlement-defaults", middleware.RequireRole("admin", "staff"), shopeeH.GetSettlementDefaults)
 		api.PUT("/settings/shopee-settlement-defaults", middleware.RequireRole("admin"), shopeeH.UpdateSettlementDefaults)
 		api.GET("/shopee-api/connections", middleware.RequireRole("admin", "staff"), shopeeH.ListAPIConnections)
