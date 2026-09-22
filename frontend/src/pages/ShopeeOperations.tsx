@@ -2494,6 +2494,7 @@ function OrderStatusBadge({ status }: { status: string }) {
     <Badge variant="outline" className={cn(
       'whitespace-nowrap bg-background',
       (s === 'CANCELLED' || s === 'IN_CANCEL') && 'border-destructive/40 bg-destructive/10 text-destructive',
+      s === 'TO_RETURN' && 'border-warning/40 bg-warning/10 text-warning',
       s === 'SHIPPED' || s === 'COMPLETED' ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : '',
       s === 'READY_TO_SHIP' && 'border-[#EE4D2D]/40 bg-[#EE4D2D]/10 text-[#C23B21]',
       s === 'PROCESSED' && 'border-info/40 bg-info/10 text-info',
