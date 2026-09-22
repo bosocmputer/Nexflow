@@ -458,7 +458,7 @@ func main() {
 	shopeeStockH := handlers.NewShopeeStockHandler(stockService, aliasRepo, auditLogRepo, logger)
 	marketplaceStockStore := marketplacestock.NewPostgresStore(db)
 	marketplaceStockService := marketplacestock.NewService(marketplaceStockStore).WithSML(stockSMLClient).WithWriteEnabled(cfg.MarketplaceStockWriteEnabled)
-	marketplacestock.NewSyncWorker(marketplaceStockStore, marketplaceStockService, tiktokGatewayClient, cfg.MarketplaceStockWriteEnabled, logger).Start(appCtx)
+	marketplacestock.NewSyncWorker(marketplaceStockStore, marketplaceStockService, stockShopeeClient, tiktokGatewayClient, cfg.MarketplaceStockWriteEnabled, logger).Start(appCtx)
 	marketplaceStockH := handlers.NewMarketplaceStockHandler(
 		marketplaceStockService,
 		cfg.MarketplaceStockControlEnabled,

@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
+	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/tiktokshop"
 )
 
@@ -19,6 +22,15 @@ import (
 type inventoryGateway interface {
 	SearchInventory(context.Context, tiktokshop.GatewayInventorySearchRequest) (*tiktokshop.GatewayInventorySearchResponse, error)
 	UpdateInventory(context.Context, tiktokshop.GatewayInventoryUpdateRequest) (*tiktokshop.GatewayInventoryUpdateResponse, error)
+}
+
+// shopeeInventoryGateway is the deliberately small stock-only Shopee surface
+// required by the unified Marketplace writer.  The Central Gateway remains
+// responsible for credentials and request signing.
+type shopeeInventoryGateway interface {
+	GetItemBaseInfo(context.Context, string, int64, []int64) (*shopeeapi.ItemBaseInfoResponse, error)
+	GetModelList(context.Context, string, int64, int64) (*shopeeapi.ModelListResponse, error)
+	UpdateStock(context.Context, string, int64, shopeeapi.UpdateStockRequest) (*shopeeapi.UpdateStockResponse, error)
 }
 
 type claimedSync struct {
@@ -32,6 +44,7 @@ type claimedSync struct {
 type SyncWorker struct {
 	store        *PostgresStore
 	service      *Service
+	shopee       shopeeInventoryGateway
 	tiktok       inventoryGateway
 	writeEnabled bool
 	logger       *zap.Logger
@@ -39,11 +52,11 @@ type SyncWorker struct {
 	mu           sync.Mutex
 }
 
-func NewSyncWorker(store *PostgresStore, service *Service, tiktok inventoryGateway, writeEnabled bool, logger *zap.Logger) *SyncWorker {
+func NewSyncWorker(store *PostgresStore, service *Service, shopee shopeeInventoryGateway, tiktok inventoryGateway, writeEnabled bool, logger *zap.Logger) *SyncWorker {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &SyncWorker{store: store, service: service, tiktok: tiktok, writeEnabled: writeEnabled, logger: logger, owner: "marketplace-stock-v2"}
+	return &SyncWorker{store: store, service: service, shopee: shopee, tiktok: tiktok, writeEnabled: writeEnabled, logger: logger, owner: "marketplace-stock-v2"}
 }
 
 func (w *SyncWorker) Start(ctx context.Context) {
@@ -173,12 +186,16 @@ func (w *SyncWorker) execute(ctx context.Context, claim claimedSync) {
 			_ = w.store.recordExecutionLine(ctx, preview.RunID, member.ID, "blocked", 0, 0, "missing_target", "ไม่พบเป้าหมายของ SKU")
 			continue
 		}
-		if member.Source != "tiktok" {
-			blocked++
-			_ = w.store.recordExecutionLine(ctx, preview.RunID, member.ID, "blocked", 0, target, "legacy_shopee_writer", "SKU Shopee ยังใช้ worker เดิมและยังไม่ย้ายเข้า pool")
-			continue
+		var status, code, message string
+		var previous, actual int64
+		switch member.Source {
+		case "shopee":
+			status, previous, actual, code, message = w.syncShopee(ctx, member, target)
+		case "tiktok":
+			status, previous, actual, code, message = w.syncTikTok(ctx, member, target)
+		default:
+			status, code, message = "blocked", "unsupported_channel", "ช่องทางของ SKU นี้ยังไม่รองรับการเขียนสต๊อกจากกลุ่ม"
 		}
-		status, previous, actual, code, message := w.syncTikTok(ctx, member, target)
 		_ = w.store.recordExecutionLine(context.Background(), preview.RunID, member.ID, status, previous, actual, code, message)
 		switch status {
 		case "changed":
@@ -200,6 +217,121 @@ func (w *SyncWorker) execute(ctx context.Context, claim claimedSync) {
 	}
 	_ = w.store.finishPreviewExecution(context.Background(), preview.RunID, claim.PoolID, claim.RequestedBy, final, changed, blocked, failed, message)
 	_ = w.store.finishSync(context.Background(), claim, final, changed, blocked, failed, message)
+}
+
+func (w *SyncWorker) syncShopee(ctx context.Context, member Member, target int64) (status string, previous, actual int64, code, message string) {
+	if w.shopee == nil {
+		return "failed", 0, 0, "gateway_unavailable", "ยังเชื่อม Shopee Gateway ไม่ได้"
+	}
+	shopID, err := parseMarketplaceNumericID(member.AccountKey, "shop:")
+	if err != nil || shopID <= 0 {
+		return "blocked", 0, 0, "invalid_shop", "ไม่พบรหัสร้าน Shopee"
+	}
+	itemID, err := parseMarketplaceNumericID(member.ExternalProductID, "")
+	if err != nil || itemID <= 0 {
+		return "blocked", 0, 0, "invalid_item", "ไม่พบรหัสสินค้า Shopee"
+	}
+	modelID, err := parseMarketplaceNumericID(member.ExternalSKUID, "")
+	if err != nil {
+		return "blocked", 0, 0, "invalid_model", "ไม่พบรหัสตัวเลือกสินค้า Shopee"
+	}
+
+	locationID, current, ok, err := w.readShopeeInventory(ctx, shopID, itemID, modelID)
+	if err != nil {
+		return "failed", 0, 0, "inventory_read_failed", "อ่านยอด Shopee ก่อนส่งไม่สำเร็จ"
+	}
+	if !ok {
+		return "blocked", 0, 0, "inventory_not_ready", "SKU หรือคลัง Shopee ไม่พร้อมสำหรับการเขียน"
+	}
+	previous = current
+	if current == target {
+		return "unchanged", previous, current, "", ""
+	}
+	write, err := w.shopee.UpdateStock(ctx, "", shopID, shopeeapi.UpdateStockRequest{ItemID: itemID, StockList: []shopeeapi.ModelStock{{
+		ModelID: modelID, SellerStock: []shopeeapi.SellerStock{{LocationID: locationID, Stock: target}},
+	}}})
+	if err != nil || write == nil {
+		return "failed", previous, 0, "inventory_write_unknown", "Shopee ยังยืนยันผลการเขียนไม่ได้ จึงไม่ลองซ้ำอัตโนมัติ"
+	}
+	for _, failure := range write.Response.FailureList {
+		if failure.ModelID == modelID {
+			return "failed", previous, 0, "inventory_item_rejected", "Shopee ปฏิเสธ SKU นี้"
+		}
+	}
+	if !shopeeWriteSucceeded(write, modelID) {
+		return "failed", previous, 0, "inventory_write_unknown", "Shopee ยังยืนยันผลการเขียนของ SKU นี้ไม่ได้"
+	}
+	_, actual, ok, err = w.readShopeeInventory(ctx, shopID, itemID, modelID)
+	if err != nil {
+		return "failed", previous, 0, "read_back_failed", "อ่านผลหลังส่ง Shopee ไม่สำเร็จ"
+	}
+	if !ok || actual != target {
+		return "failed", previous, actual, "read_back_mismatch", "ยอด Shopee หลังส่งไม่ตรงกับเป้าหมาย"
+	}
+	return "changed", previous, actual, "", ""
+}
+
+// readShopeeInventory accepts exactly one Seller stock location.  Choosing a
+// location implicitly when Shopee returns more than one can overwrite the
+// wrong warehouse, so a multi-location SKU stays blocked until a future pool
+// configuration records its explicitly selected Seller location.
+func (w *SyncWorker) readShopeeInventory(ctx context.Context, shopID, itemID, modelID int64) (shopeeapi.StringID, int64, bool, error) {
+	if modelID == 0 {
+		base, err := w.shopee.GetItemBaseInfo(ctx, "", shopID, []int64{itemID})
+		if err != nil {
+			return "", 0, false, err
+		}
+		if base == nil || len(base.Response.ItemList) != 1 || base.Response.ItemList[0].ItemID != itemID {
+			return "", 0, false, nil
+		}
+		return exactShopeeSellerStock(base.Response.ItemList[0].StockInfoV2)
+	}
+	models, err := w.shopee.GetModelList(ctx, "", shopID, itemID)
+	if err != nil {
+		return "", 0, false, err
+	}
+	if models == nil {
+		return "", 0, false, nil
+	}
+	var found *shopeeapi.ProductModel
+	for i := range models.Response.Model {
+		if models.Response.Model[i].ModelID != modelID {
+			continue
+		}
+		if found != nil {
+			return "", 0, false, nil
+		}
+		found = &models.Response.Model[i]
+	}
+	if found == nil {
+		return "", 0, false, nil
+	}
+	return exactShopeeSellerStock(found.StockInfoV2)
+}
+
+func exactShopeeSellerStock(info shopeeapi.StockInfoV2) (shopeeapi.StringID, int64, bool, error) {
+	if len(info.SellerStock) != 1 {
+		return "", 0, false, nil
+	}
+	return info.SellerStock[0].LocationID, info.SellerStock[0].Stock, true, nil
+}
+
+func shopeeWriteSucceeded(response *shopeeapi.UpdateStockResponse, modelID int64) bool {
+	for _, success := range response.Response.SuccessList {
+		if success.ModelID == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+func parseMarketplaceNumericID(value, trimPrefix string) (int64, error) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), trimPrefix)
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id < 0 {
+		return 0, fmt.Errorf("invalid marketplace numeric id")
+	}
+	return id, nil
 }
 
 // validateMemberLive prevents a queued worker from writing a SKU after its

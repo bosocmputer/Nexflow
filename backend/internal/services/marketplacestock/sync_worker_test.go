@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/tiktokshop"
 )
 
@@ -55,5 +56,74 @@ func TestSyncTikTokReadsBySKUOnlyBeforeWriteAndReadBack(t *testing.T) {
 		if len(input.Search.ProductIDs) != 0 || len(input.Search.SKUIDs) != 1 || input.Search.SKUIDs[0] != "sku-1" {
 			t.Fatalf("inventory search must request the exact SKU only: %#v", input.Search)
 		}
+	}
+}
+
+type syncWorkerShopeeGatewayFake struct {
+	modelStock int64
+	writes     []shopeeapi.UpdateStockRequest
+}
+
+func (f *syncWorkerShopeeGatewayFake) GetItemBaseInfo(_ context.Context, _ string, _ int64, _ []int64) (*shopeeapi.ItemBaseInfoResponse, error) {
+	return nil, nil
+}
+
+func (f *syncWorkerShopeeGatewayFake) GetModelList(_ context.Context, _ string, _ int64, itemID int64) (*shopeeapi.ModelListResponse, error) {
+	if itemID != 4940107291 {
+		return &shopeeapi.ModelListResponse{}, nil
+	}
+	response := &shopeeapi.ModelListResponse{}
+	response.Response.Model = []shopeeapi.ProductModel{{
+		ModelID: 42891916896,
+		StockInfoV2: shopeeapi.StockInfoV2{SellerStock: []shopeeapi.SellerStock{{
+			Stock: f.modelStock,
+		}}},
+	}}
+	return response, nil
+}
+
+func (f *syncWorkerShopeeGatewayFake) UpdateStock(_ context.Context, _ string, _ int64, request shopeeapi.UpdateStockRequest) (*shopeeapi.UpdateStockResponse, error) {
+	f.writes = append(f.writes, request)
+	f.modelStock = request.StockList[0].SellerStock[0].Stock
+	response := &shopeeapi.UpdateStockResponse{}
+	response.Response.SuccessList = []shopeeapi.StockUpdateSuccess{{ModelID: request.StockList[0].ModelID}}
+	return response, nil
+}
+
+func TestSyncShopeeReadsExactModelWritesAbsoluteTargetAndReadsBack(t *testing.T) {
+	gateway := &syncWorkerShopeeGatewayFake{modelStock: 4}
+	worker := &SyncWorker{shopee: gateway}
+	status, previous, actual, code, message := worker.syncShopee(context.Background(), Member{
+		Source: "shopee", AccountKey: "shop:264993963", ExternalProductID: "4940107291", ExternalSKUID: "42891916896",
+	}, 7)
+	if status != "changed" || previous != 4 || actual != 7 || code != "" || message != "" {
+		t.Fatalf("syncShopee() = %q,%d,%d,%q,%q", status, previous, actual, code, message)
+	}
+	if len(gateway.writes) != 1 {
+		t.Fatalf("write count = %d, want 1", len(gateway.writes))
+	}
+	write := gateway.writes[0]
+	if write.ItemID != 4940107291 || len(write.StockList) != 1 || write.StockList[0].ModelID != 42891916896 || len(write.StockList[0].SellerStock) != 1 || write.StockList[0].SellerStock[0].Stock != 7 {
+		t.Fatalf("unexpected absolute Shopee write: %#v", write)
+	}
+}
+
+type syncWorkerShopeeReadBackMismatchFake struct{ syncWorkerShopeeGatewayFake }
+
+func (f *syncWorkerShopeeReadBackMismatchFake) UpdateStock(_ context.Context, _ string, _ int64, request shopeeapi.UpdateStockRequest) (*shopeeapi.UpdateStockResponse, error) {
+	f.writes = append(f.writes, request)
+	response := &shopeeapi.UpdateStockResponse{}
+	response.Response.SuccessList = []shopeeapi.StockUpdateSuccess{{ModelID: request.StockList[0].ModelID}}
+	return response, nil
+}
+
+func TestSyncShopeeFailsClosedWhenReadBackDoesNotMatchTarget(t *testing.T) {
+	gateway := &syncWorkerShopeeReadBackMismatchFake{syncWorkerShopeeGatewayFake{modelStock: 4}}
+	worker := &SyncWorker{shopee: gateway}
+	status, previous, actual, code, _ := worker.syncShopee(context.Background(), Member{
+		Source: "shopee", AccountKey: "shop:264993963", ExternalProductID: "4940107291", ExternalSKUID: "42891916896",
+	}, 7)
+	if status != "failed" || previous != 4 || actual != 4 || code != "read_back_mismatch" {
+		t.Fatalf("syncShopee() = %q,%d,%d,%q", status, previous, actual, code)
 	}
 }

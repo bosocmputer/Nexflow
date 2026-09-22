@@ -912,6 +912,52 @@ func (s *Store) ListProducts(ctx context.Context, shopID int64) ([]ProductRow, e
 	return products, err
 }
 
+// UnifiedMarketplacePoolProductKeys returns the active Shopee SKU identities
+// owned by Marketplace Stock Control v2.  The legacy Shopee worker must never
+// write these identities, even while the new pool is paused, otherwise a retry
+// from either worker could overwrite the other channel's stock decision.
+func (s *Store) UnifiedMarketplacePoolProductKeys(ctx context.Context, shopID int64) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT m.external_product_id,m.external_sku_id
+		FROM marketplace_stock_pool_members m
+		JOIN marketplace_stock_pools p ON p.id=m.pool_id
+		WHERE m.source='shopee' AND m.account_key=('shop:' || $1::text)
+		  AND m.enabled=true AND p.archived_at IS NULL`, shopID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := map[string]struct{}{}
+	for rows.Next() {
+		var itemIDText, modelIDText string
+		if err := rows.Scan(&itemIDText, &modelIDText); err != nil {
+			return nil, err
+		}
+		itemID, itemErr := strconv.ParseInt(strings.TrimSpace(itemIDText), 10, 64)
+		modelID, modelErr := strconv.ParseInt(strings.TrimSpace(modelIDText), 10, 64)
+		if itemErr != nil || modelErr != nil || itemID <= 0 || modelID < 0 {
+			// A corrupt or stale pool member must never make the legacy writer
+			// guess. The unified worker will block and surface the repair action.
+			continue
+		}
+		keys[stockProductKey(itemID, modelID)] = struct{}{}
+	}
+	return keys, rows.Err()
+}
+
+func excludeUnifiedMarketplacePoolProducts(products []ProductRow, unifiedKeys map[string]struct{}) []ProductRow {
+	if len(unifiedKeys) == 0 {
+		return products
+	}
+	eligible := make([]ProductRow, 0, len(products))
+	for _, product := range products {
+		if _, unified := unifiedKeys[stockProductKey(product.ItemID, product.ModelID)]; unified {
+			continue
+		}
+		eligible = append(eligible, product)
+	}
+	return eligible
+}
+
 func (s *Store) ListProductsPage(ctx context.Context, shopID int64, filter ProductFilter) ([]ProductRow, int, ProductCounts, error) {
 	if filter.Page < 1 {
 		filter.Page = 1

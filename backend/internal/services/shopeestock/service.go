@@ -777,8 +777,13 @@ func (s *Service) calculate(ctx context.Context, shopID int64, asOfDate, runType
 	if err != nil {
 		return fail(err)
 	}
+	unifiedPoolKeys, err := s.store.UnifiedMarketplacePoolProductKeys(ctx, shopID)
+	if err != nil {
+		return fail(fmt.Errorf("load Marketplace Stock Control ownership: %w", err))
+	}
+	products = excludeUnifiedMarketplacePoolProducts(products, unifiedPoolKeys)
 	if len(products) == 0 {
-		return fail(errors.New("ยังไม่มีรายการสินค้า Shopee กรุณากดอัปเดตรายการสินค้าก่อน"))
+		return fail(errors.New("ไม่มี SKU Shopee ที่ worker เดิมรับผิดชอบ กรุณาใช้กลุ่มควบคุมสต๊อก Marketplace สำหรับรายการที่ย้ายเข้า pool"))
 	}
 	if strings.EqualFold(strings.TrimSpace(s.cfg.ConversionMode), "active") {
 		for index := range products {

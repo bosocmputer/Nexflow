@@ -675,3 +675,16 @@ func TestZeroDropCircuit(t *testing.T) {
 		t.Fatalf("circuit = %q", got)
 	}
 }
+
+func TestExcludeUnifiedMarketplacePoolProductsPreventsLegacyWriterOverlap(t *testing.T) {
+	products := []ProductRow{
+		{ItemID: 4940107291, ModelID: 42891916896},
+		{ItemID: 4940107291, ModelID: 42891916897},
+	}
+	eligible := excludeUnifiedMarketplacePoolProducts(products, map[string]struct{}{
+		stockProductKey(4940107291, 42891916896): {},
+	})
+	if len(eligible) != 1 || eligible[0].ModelID != 42891916897 {
+		t.Fatalf("legacy eligible products = %#v, want only the SKU outside Marketplace Stock Control v2", eligible)
+	}
+}
