@@ -37,9 +37,20 @@ type WebhookEventInput struct {
 	ShopID           string
 	OrderID          string
 	OrderStatus      string
+	Cancellation     *CancellationWebhookData
 	Timestamp        time.Time
 	OrderUpdateAt    time.Time
 	BodySHA256       string
+}
+
+// CancellationWebhookData contains the transition supplied by TikTok Shop.
+// It is only a trigger; downstream code must still reconcile the order before
+// offering any local or SML operation.
+type CancellationWebhookData struct {
+	ID        string
+	Role      string
+	Status    string
+	CreatedAt time.Time
 }
 
 type WebhookEventResult struct {
@@ -60,7 +71,57 @@ type orderStatusWebhookPayload struct {
 	} `json:"data"`
 }
 
+type cancellationStatusWebhookPayload struct {
+	Type           int    `json:"type"`
+	NotificationID string `json:"tts_notification_id"`
+	ShopID         string `json:"shop_id"`
+	Timestamp      int64  `json:"timestamp"`
+	Data           struct {
+		OrderID   string `json:"order_id"`
+		Role      string `json:"cancellations_role"`
+		Status    string `json:"cancel_status"`
+		ID        string `json:"cancel_id"`
+		CreatedAt int64  `json:"create_time"`
+	} `json:"data"`
+}
+
+var cancellationWebhookStatuses = map[string]struct{}{
+	"CANCELLATION_REQUEST_PENDING":   {},
+	"CANCELLATION_REQUEST_SUCCESS":   {},
+	"CANCELLATION_REQUEST_CANCELLED": {},
+	"CANCELLATION_REQUEST_COMPLETE":  {},
+}
+
+var cancellationWebhookRoles = map[string]struct{}{"BUYER": {}, "SELLER": {}, "SYSTEM": {}}
+
+// ParseWebhook accepts only the typed topics supported by Nexflow. Other
+// signed TikTok Shop topics remain rejected until their own durable model and
+// reconciliation policy exists.
+func ParseWebhook(rawBody []byte) (WebhookEventInput, error) {
+	if len(rawBody) == 0 || !json.Valid(rawBody) {
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+	var envelope struct {
+		Type int `json:"type"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+	switch envelope.Type {
+	case 1:
+		return parseOrderStatusWebhook(rawBody)
+	case 11:
+		return parseCancellationStatusWebhook(rawBody)
+	default:
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+}
+
 func ParseOrderStatusWebhook(rawBody []byte) (WebhookEventInput, error) {
+	return parseOrderStatusWebhook(rawBody)
+}
+
+func parseOrderStatusWebhook(rawBody []byte) (WebhookEventInput, error) {
 	if len(rawBody) == 0 || !json.Valid(rawBody) {
 		return WebhookEventInput{}, ErrInvalidWebhookEvent
 	}
@@ -86,6 +147,44 @@ func ParseOrderStatusWebhook(rawBody []byte) (WebhookEventInput, error) {
 	}, nil
 }
 
+func parseCancellationStatusWebhook(rawBody []byte) (WebhookEventInput, error) {
+	var payload cancellationStatusWebhookPayload
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+	payload.NotificationID = strings.TrimSpace(payload.NotificationID)
+	payload.ShopID = strings.TrimSpace(payload.ShopID)
+	payload.Data.OrderID = strings.TrimSpace(payload.Data.OrderID)
+	payload.Data.ID = strings.TrimSpace(payload.Data.ID)
+	payload.Data.Role = strings.ToUpper(strings.TrimSpace(payload.Data.Role))
+	payload.Data.Status = strings.ToUpper(strings.TrimSpace(payload.Data.Status))
+	if payload.Type != 11 || !webhookNumericIDPattern.MatchString(payload.NotificationID) ||
+		!webhookNumericIDPattern.MatchString(payload.ShopID) || !webhookNumericIDPattern.MatchString(payload.Data.OrderID) ||
+		!webhookNumericIDPattern.MatchString(payload.Data.ID) || payload.Timestamp <= 0 || payload.Data.CreatedAt <= 0 {
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+	if _, ok := cancellationWebhookStatuses[payload.Data.Status]; !ok {
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+	if _, ok := cancellationWebhookRoles[payload.Data.Role]; !ok {
+		return WebhookEventInput{}, ErrInvalidWebhookEvent
+	}
+	digest := sha256.Sum256(rawBody)
+	return WebhookEventInput{
+		NotificationID: payload.NotificationID, NotificationType: payload.Type,
+		ShopID: payload.ShopID, OrderID: payload.Data.OrderID,
+		Cancellation: &CancellationWebhookData{
+			ID: payload.Data.ID, Role: payload.Data.Role, Status: payload.Data.Status,
+			CreatedAt: time.Unix(payload.Data.CreatedAt, 0).UTC(),
+		},
+		Timestamp: time.Unix(payload.Timestamp, 0).UTC(),
+		// Type 11 does not provide an order update timestamp. Use the signed
+		// event time only for queue ordering; the worker reads the order again.
+		OrderUpdateAt: time.Unix(payload.Timestamp, 0).UTC(),
+		BodySHA256:    hex.EncodeToString(digest[:]),
+	}, nil
+}
+
 func (h *Handler) ReceiveWebhook(c *gin.Context) {
 	requestID := webhookRequestID(c)
 	if h == nil || !h.config.WebhookEnabled || h.webhooks == nil {
@@ -106,7 +205,7 @@ func (h *Handler) ReceiveWebhook(c *gin.Context) {
 		c.Status(http.StatusBadRequest)
 		return
 	}
-	event, err := ParseOrderStatusWebhook(body)
+	event, err := ParseWebhook(body)
 	if err != nil {
 		h.logger.Warn("tiktok_gateway_webhook_payload_rejected", zap.String("request_id", requestID))
 		c.Status(http.StatusBadRequest)

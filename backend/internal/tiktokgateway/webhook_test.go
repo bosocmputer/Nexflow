@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -49,6 +50,26 @@ func TestParseOrderStatusWebhookRejectsWrongTopicAndMissingIdentifiers(t *testin
 		if _, err := ParseOrderStatusWebhook([]byte(body)); err == nil {
 			t.Fatalf("ParseOrderStatusWebhook(%s) error = nil", body)
 		}
+	}
+}
+
+func TestParseWebhookAcceptsTypedCancellationStatusEvent(t *testing.T) {
+	body := `{"type":11,"tts_notification_id":"7327112393057371910","shop_id":"7494619203789490654","timestamp":1644412885,"data":{"order_id":"576486316948490001","cancellations_role":"BUYER","cancel_status":"CANCELLATION_REQUEST_PENDING","cancel_id":"4035318504086604100","create_time":1627587600}}`
+	event, err := ParseWebhook([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseWebhook() error = %v", err)
+	}
+	if event.NotificationType != 11 || event.OrderID != "576486316948490001" || event.Cancellation == nil ||
+		event.Cancellation.Status != "CANCELLATION_REQUEST_PENDING" || event.Cancellation.ID != "4035318504086604100" ||
+		event.Cancellation.Role != "BUYER" || !event.Cancellation.CreatedAt.Equal(time.Unix(1627587600, 0).UTC()) {
+		t.Fatalf("event = %+v", event)
+	}
+}
+
+func TestParseWebhookRejectsCancellationWithoutKnownStatus(t *testing.T) {
+	body := `{"type":11,"tts_notification_id":"7327112393057371910","shop_id":"7494619203789490654","timestamp":1644412885,"data":{"order_id":"576486316948490001","cancellations_role":"BUYER","cancel_status":"UNKNOWN","cancel_id":"4035318504086604100","create_time":1627587600}}`
+	if _, err := ParseWebhook([]byte(body)); !errors.Is(err, ErrInvalidWebhookEvent) {
+		t.Fatalf("ParseWebhook() error = %v, want invalid webhook event", err)
 	}
 }
 

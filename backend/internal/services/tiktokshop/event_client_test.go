@@ -55,6 +55,33 @@ func TestEventClientUpdatesOnlyOrderStatusWebhook(t *testing.T) {
 	}
 }
 
+func TestEventClientUpdatesCancellationStatusWebhook(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input updateShopWebhookRequest
+		if err := json.Unmarshal(body, &input); err != nil {
+			t.Fatal(err)
+		}
+		if request.Method != http.MethodPut || request.URL.Path != PathShopWebhooks || input.EventType != EventTypeCancellationStatusChange {
+			t.Fatalf("request=%s %s input=%+v", request.Method, request.URL.Path, input)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"code":0,"data":{},"message":"Success","request_id":"tts-event-cancel-1"}`))
+	}))
+	defer server.Close()
+	client, err := NewEventClient(EventClientConfig{BaseURL: server.URL, AppKey: "app-key", AppSecret: "app-secret", HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := client.UpdateCancellationStatusWebhook(context.Background(), "access-secret", "shop-cipher", "https://gateway.example.com/webhook/tiktok-shop")
+	if err != nil || requestID != "tts-event-cancel-1" {
+		t.Fatalf("requestID=%q error=%v", requestID, err)
+	}
+}
+
 func TestEventClientRejectsUnsafeWebhookAddressBeforeRequest(t *testing.T) {
 	client, err := NewEventClient(EventClientConfig{BaseURL: "https://open-api.example.com", AppKey: "app-key", AppSecret: "app-secret"})
 	if err != nil {

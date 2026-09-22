@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	PathShopWebhooks           = "/event/202309/webhooks"
-	EventTypeOrderStatusChange = "ORDER_STATUS_CHANGE"
-	maxEventResponseSize       = 1 << 20
+	PathShopWebhooks                  = "/event/202309/webhooks"
+	EventTypeOrderStatusChange        = "ORDER_STATUS_CHANGE"
+	EventTypeCancellationStatusChange = "CANCELLATION_STATUS_CHANGE"
+	maxEventResponseSize              = 1 << 20
 )
 
 var (
@@ -73,13 +74,22 @@ func NewEventClient(config EventClientConfig) (*EventClient, error) {
 }
 
 func (c *EventClient) UpdateOrderStatusWebhook(ctx context.Context, accessToken, shopCipher, address string) (string, error) {
+	return c.UpdateWebhook(ctx, accessToken, shopCipher, address, EventTypeOrderStatusChange)
+}
+
+func (c *EventClient) UpdateCancellationStatusWebhook(ctx context.Context, accessToken, shopCipher, address string) (string, error) {
+	return c.UpdateWebhook(ctx, accessToken, shopCipher, address, EventTypeCancellationStatusChange)
+}
+
+func (c *EventClient) UpdateWebhook(ctx context.Context, accessToken, shopCipher, address, eventType string) (string, error) {
 	accessToken = strings.TrimSpace(accessToken)
 	shopCipher = strings.TrimSpace(shopCipher)
 	address = strings.TrimSpace(address)
-	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || !validWebhookAddress(address) {
+	eventType = strings.TrimSpace(eventType)
+	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || !validWebhookAddress(address) || !validWebhookEventType(eventType) {
 		return "", ErrInvalidEventInput
 	}
-	body, err := json.Marshal(updateShopWebhookRequest{Address: address, EventType: EventTypeOrderStatusChange})
+	body, err := json.Marshal(updateShopWebhookRequest{Address: address, EventType: eventType})
 	if err != nil {
 		return "", fmt.Errorf("encode TikTok Shop webhook update: %w", err)
 	}
@@ -124,6 +134,10 @@ func (c *EventClient) UpdateOrderStatusWebhook(ctx context.Context, accessToken,
 		return "", ErrInvalidEventResponse
 	}
 	return requestID, nil
+}
+
+func validWebhookEventType(value string) bool {
+	return value == EventTypeOrderStatusChange || value == EventTypeCancellationStatusChange
 }
 
 func validWebhookAddress(address string) bool {
