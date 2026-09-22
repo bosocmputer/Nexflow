@@ -342,9 +342,13 @@ func (s *PostgresStore) CompletePreview(ctx context.Context, result PreviewResul
 		summary=$3::jsonb,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, result.RunID, len(result.Lines), summary); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET last_preview_at=NOW(),last_error='',updated_at=NOW()
-		WHERE id=$1::uuid AND config_version=$2`, poolID, configVersion); err != nil {
+	updated, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET last_preview_at=NOW(),last_error='',updated_at=NOW()
+		WHERE id=$1::uuid AND config_version=$2`, poolID, configVersion)
+	if err != nil {
 		return err
+	}
+	if affected, err := updated.RowsAffected(); err != nil || affected != 1 {
+		return ErrConfigVersionConflict
 	}
 	if err := insertAudit(ctx, tx, "marketplace_stock_preview_completed", poolID, userID, map[string]any{
 		"run_id": result.RunID, "line_count": len(result.Lines), "write_ready": false,
