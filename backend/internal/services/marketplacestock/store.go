@@ -255,7 +255,9 @@ func (s *PostgresStore) StartPreview(ctx context.Context, poolID string, input P
 	if err != nil {
 		return nil, fmt.Errorf("load marketplace stock pool for preview: %w", err)
 	}
-	if plan.Pool.Status == "paused" {
+	// A successful fresh dry-run is the recovery action for a paused pool. Do
+	// not make an operator edit configuration just to clear a safe pause.
+	if plan.Pool.KillSwitch {
 		return nil, ErrPoolPaused
 	}
 	if plan.Pool.ConfigVersion != input.ExpectedConfigVersion {
@@ -351,7 +353,8 @@ func (s *PostgresStore) CompletePreview(ctx context.Context, result PreviewResul
 		summary=$3::jsonb,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, result.RunID, len(result.Lines), summary); err != nil {
 		return err
 	}
-	updated, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET status=CASE WHEN status='draft' THEN 'ready' ELSE status END,
+	updated, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET status=CASE WHEN status IN ('draft','paused') THEN 'ready' ELSE status END,
+		paused_reason=CASE WHEN status IN ('draft','paused') THEN '' ELSE paused_reason END,
 		dry_run_required=false,last_preview_at=NOW(),last_error='',updated_at=NOW()
 		WHERE id=$1::uuid AND config_version=$2`, poolID, configVersion)
 	if err != nil {
