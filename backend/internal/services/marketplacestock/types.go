@@ -48,9 +48,13 @@ type Pool struct {
 	LastPreviewAt           *time.Time     `json:"last_preview_at,omitempty"`
 	LastSuccessAt           *time.Time     `json:"last_success_at,omitempty"`
 	LastScheduleAt          *time.Time     `json:"last_schedule_at,omitempty"`
-	LastError               string         `json:"last_error,omitempty"`
-	UpdatedAt               time.Time      `json:"updated_at"`
-	Members                 []Member       `json:"members"`
+	// LastSMLAvailableQty is the most recent read-only SML snapshot from a
+	// successful preview. Overview deliberately does not refresh it, so loading
+	// the page never calls SML or a Marketplace API.
+	LastSMLAvailableQty *float64  `json:"last_sml_available_qty,omitempty"`
+	LastError           string    `json:"last_error,omitempty"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	Members             []Member  `json:"members"`
 }
 
 type Overview struct {

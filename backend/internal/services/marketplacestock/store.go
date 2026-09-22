@@ -32,9 +32,16 @@ func (s *PostgresStore) Overview(ctx context.Context) (*Overview, error) {
 
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id::text,p.sml_item_code,p.sml_unit_code,p.allocation_mode,p.buffer_pct_override::float8,
 		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
-		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at,COALESCE(c.item_name,'')
+		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at,COALESCE(c.item_name,''),snapshot.sml_available_qty
 		FROM marketplace_stock_pools p
 		LEFT JOIN sml_catalog c ON c.item_code=p.sml_item_code AND c.is_active=true
+		LEFT JOIN LATERAL (
+			SELECT NULLIF(r.summary->>'sml_available_qty','')::float8 AS sml_available_qty
+			FROM marketplace_stock_runs r
+			WHERE r.pool_id=p.id AND r.run_type='preview' AND r.status='success'
+			ORDER BY r.finished_at DESC NULLS LAST,r.created_at DESC
+			LIMIT 1
+		) snapshot ON true
 		WHERE p.archived_at IS NULL
 		ORDER BY p.updated_at DESC,p.id`)
 	if err != nil {
@@ -43,7 +50,7 @@ func (s *PostgresStore) Overview(ctx context.Context) (*Overview, error) {
 	defer rows.Close()
 	for rows.Next() {
 		pool := Pool{Members: []Member{}}
-		if err := rows.Scan(append(poolScanner(&pool), &pool.SMLItemName)...); err != nil {
+		if err := rows.Scan(append(poolScanner(&pool), &pool.SMLItemName, &pool.LastSMLAvailableQty)...); err != nil {
 			return nil, err
 		}
 		overview.Pools = append(overview.Pools, pool)
@@ -614,10 +621,22 @@ func (s *PostgresStore) listMembers(ctx context.Context) (map[string][]Member, e
 	return out, rows.Err()
 }
 
-const memberSelect = `SELECT pool_id::text,id::text,source,account_key,external_product_id,external_sku_id,external_warehouse_id,
+const memberSelect = `SELECT m.pool_id::text,m.id::text,m.source,m.account_key,m.external_product_id,m.external_sku_id,m.external_warehouse_id,
 	COALESCE(marketplace_alias_id::text,''),product_name,variant_name,unit_factor::float8,allocation_pct::float8,
-	enabled,last_catalog_seen_at,last_target_qty,last_actual_qty,last_error
-	FROM marketplace_stock_pool_members`
+	enabled,last_catalog_seen_at,COALESCE(snapshot.target_qty,m.last_target_qty),COALESCE(snapshot.actual_qty,m.last_actual_qty),last_error
+	FROM marketplace_stock_pool_members m
+	LEFT JOIN LATERAL (
+		SELECT line.target_qty,line.actual_qty
+		FROM marketplace_stock_run_lines line
+		JOIN marketplace_stock_runs run ON run.id=line.run_id
+		-- A manual execution retains the immutable preview run id. Both it and a
+		-- queued sync can carry a verified changed/unchanged read-back, so run
+		-- type is not a correctness boundary here.
+		WHERE line.member_id=m.id AND run.status='success'
+			AND line.status IN ('changed','unchanged') AND line.actual_qty IS NOT NULL
+		ORDER BY run.finished_at DESC NULLS LAST,run.created_at DESC,line.updated_at DESC
+		LIMIT 1
+	) snapshot ON true`
 
 func listPoolMembersTx(ctx context.Context, tx *sql.Tx, poolID string) ([]Member, error) {
 	rows, err := tx.QueryContext(ctx, memberSelect+` WHERE pool_id=$1::uuid ORDER BY source,product_name,variant_name,id`, poolID)

@@ -246,26 +246,18 @@ function CatalogMobileCard(props: CatalogRowProps) {
 function CatalogProductIdentity({ item, onPreview, onSetDetails }: Pick<CatalogRowProps, 'item' | 'onPreview' | 'onSetDetails'>) {
   const hasImage = Boolean(item.image_url && (item.image_count ?? 0) > 0)
   return (
-    <div className="flex min-w-0 items-start gap-3">
-      <button type="button" className="h-10 w-10 shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" disabled={!hasImage} onClick={() => hasImage && onPreview(item)} aria-label={hasImage ? `ดูรูปสินค้า ${item.item_name}` : undefined}>
+    <div className="flex min-w-0 items-start gap-2.5">
+      <button type="button" className="h-8 w-8 shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" disabled={!hasImage} onClick={() => hasImage && onPreview(item)} aria-label={hasImage ? `ดูรูปสินค้า ${item.item_name}` : undefined}>
         <AuthImage src={hasImage ? item.image_url : undefined} className="h-full w-full rounded-md border bg-muted/30" imgClassName="object-cover" fallback={<div className="flex h-full items-center justify-center"><ImageIcon className="h-4 w-4 text-muted-foreground" /></div>} />
       </button>
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <code className="font-semibold">{item.item_code}</code>
-          {item.item_type === 3 && <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary"><Boxes className="mr-1 h-3 w-3" />สินค้าชุด</Badge>}
-          {item.has_hidden_chars && <Badge variant="destructive">รหัสผิดรูปแบบ</Badge>}
+        <p className="line-clamp-1 font-medium leading-snug" title={`${item.item_code} · ${item.item_name}`}><code className="font-semibold">{item.item_code}</code><span> · {item.item_name}</span></p>
+        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="shrink-0">หน่วย SML: <span className="text-foreground">{item.unit_code || '-'}</span></span>
+          {item.item_type === 3 && <button type="button" className="shrink-0 text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => onSetDetails(item)}>สินค้าชุด · ดูส่วนประกอบ {item.set_component_count ?? 0}</button>}
+          {item.has_hidden_chars && <Badge variant="destructive" className="h-5 shrink-0">รหัสผิดรูปแบบ</Badge>}
+          {item.item_name2 && <span className="truncate" title={item.item_name2}>{item.item_name2}</span>}
         </div>
-        <p className="mt-0.5 break-words font-medium leading-snug">{item.item_name}</p>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>หน่วย SML: <span className="text-foreground">{item.unit_code || '-'}</span></span>
-          {item.item_name2 && <span className="break-words">{item.item_name2}</span>}
-        </div>
-        {item.item_type === 3 && (
-          <Button type="button" variant="link" size="sm" className="mt-1 h-auto px-0 text-xs" onClick={() => onSetDetails(item)}>
-            ดูส่วนประกอบ {item.set_component_count ?? 0} รายการ
-          </Button>
-        )}
       </div>
     </div>
   )

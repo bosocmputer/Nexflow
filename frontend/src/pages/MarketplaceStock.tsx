@@ -5,7 +5,7 @@ import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -19,19 +19,20 @@ import { cn } from '@/lib/utils'
 import { permissionForMenu } from '@/lib/navigation'
 import { useAuthStore } from '@/store/auth'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { InputChannelBadge } from '@/components/marketplace/InputChannelBadge'
 
 type Source = 'shopee' | 'tiktok'
 type Mode = 'quota' | 'shared'
 
 interface Settings { warehouse_code: string; location_code: string; default_buffer_pct: number; kill_switch_enabled: boolean; config_version: number }
 interface Member { id: string; source: Source; account_key: string; external_product_id: string; external_sku_id: string; external_warehouse_id?: string; marketplace_alias_id?: string; product_name: string; variant_name: string; unit_factor: number; allocation_pct: number; enabled: boolean; last_target_qty?: number; last_actual_qty?: number; last_error?: string }
-interface Pool { id: string; sml_item_code: string; sml_item_name?: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; kill_switch_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_error?: string; members: Member[] }
+interface Pool { id: string; sml_item_code: string; sml_item_name?: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; kill_switch_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_sml_available_qty?: number; last_error?: string; members: Member[] }
 interface Overview { available: boolean; settings: Settings; pools: Pool[] }
 interface Candidate extends Omit<Member, 'id' | 'last_target_qty' | 'last_actual_qty' | 'last_error'> { sml_item_code: string; sml_item_name?: string; sml_unit_code: string }
 interface CandidateGroup { key: string; smlItem: string; smlItemName: string; smlUnit: string; members: Candidate[]; searchableText: string }
 interface PreviewResult { run_id: string; sml_available_qty: number; reservation_qty: number; usable_qty: number; buffer_qty: number; distributable_qty: number; expires_at: string; lines: { member_id: string; target_qty: number; status: string; message?: string }[] }
 
-const sourceLabel: Record<Source, string> = { shopee: 'Shopee', tiktok: 'TikTok Shop' }
+const sourceLabel: Record<Source, string> = { shopee: 'Shopee', tiktok: 'TikTok' }
 const poolStatus: Record<Pool['status'], string> = { draft: 'รอตั้งค่า', ready: 'พร้อมตรวจ', paused: 'หยุดชั่วคราว', active: 'เปิดใช้งาน' }
 
 export default function MarketplaceStock() {
@@ -181,7 +182,7 @@ export default function MarketplaceStock() {
       <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">ควบคุมสต๊อก Marketplace</h1><Badge variant="outline">AOY</Badge></div>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">SML เป็นยอดกลาง ระบบจะคำนวณยอดพร้อมขายแล้วส่งยอดไป Shopee และ TikTok Shop ตามนโยบายของแต่ละกลุ่มสินค้า</p>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">SML เป็นยอดกลาง ระบบจะคำนวณยอดพร้อมขายแล้วส่งยอดไป Shopee และ TikTok ตามนโยบายของแต่ละกลุ่มสินค้า</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />รีเฟรช</Button>
@@ -201,7 +202,7 @@ export default function MarketplaceStock() {
       </section>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as 'all' | Source)}>
-        <TabsList aria-label="กรองช่องทาง"><TabsTrigger value="all">ทั้งหมด</TabsTrigger><TabsTrigger value="shopee">Shopee</TabsTrigger><TabsTrigger value="tiktok">TikTok Shop</TabsTrigger></TabsList>
+        <TabsList aria-label="กรองช่องทาง"><TabsTrigger value="all">ทั้งหมด</TabsTrigger><TabsTrigger value="shopee">Shopee</TabsTrigger><TabsTrigger value="tiktok">TikTok</TabsTrigger></TabsList>
         <TabsContent value={tab} className="space-y-3">
           {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} canManage={canManage} canOperate={canOperate} preview={previews[pool.id]} previewing={previewingPoolID === pool.id} actioning={actioningPoolID === pool.id} onPreview={() => void previewPool(pool)} onAuto={(enabled) => setConfirmAction({ pool, kind: enabled ? 'auto-on' : 'auto-off' })} onSync={() => setConfirmAction({ pool, kind: 'sync' })} onEdit={() => void openEdit(pool)} onArchive={() => setArchivingPool(pool)} />)}
         </TabsContent>
@@ -228,15 +229,12 @@ export default function MarketplaceStock() {
 
 function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning, onPreview, onAuto, onSync, onEdit, onArchive }: { pool: Pool; canManage: boolean; canOperate: boolean; preview?: PreviewResult; previewing: boolean; actioning: boolean; onPreview: () => void; onAuto: (enabled: boolean) => void; onSync: () => void; onEdit: () => void; onArchive: () => void }) {
   const enabledMembers = pool.members.filter((member) => member.enabled)
-  const channels = [...new Set(enabledMembers.map((member) => member.source))]
-  const bufferLabel = pool.buffer_pct_override === undefined ? 'ใช้กันชนเริ่มต้นของร้าน' : `กันสต๊อก ${pool.buffer_pct_override}%`
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
+      <CardHeader className="gap-3 p-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">สินค้าและหน่วย SML</p>
-          <CardTitle className="mt-1 break-words text-base"><span className="font-mono">{pool.sml_item_code}</span><span className="font-normal"> · {pool.sml_item_name || 'ยังไม่พบชื่อสินค้า SML'}</span></CardTitle>
-          <CardDescription className="mt-1">หน่วย {pool.sml_unit_code} · {pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · {bufferLabel}</CardDescription>
+          <CardTitle className="line-clamp-1 text-base" title={`${pool.sml_item_code} · ${pool.sml_item_name || 'ยังไม่พบชื่อสินค้า SML'}`}><span className="font-mono">{pool.sml_item_code}</span><span className="font-normal"> · {pool.sml_item_name || 'ยังไม่พบชื่อสินค้า SML'}</span></CardTitle>
+          <PoolSnapshot pool={pool} members={enabledMembers} />
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge>
@@ -249,18 +247,12 @@ function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning,
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">SKU ที่ควบคุม</span>
-          <span>{channels.length ? `ช่องทาง: ${channels.map((channel) => sourceLabel[channel]).join(' · ')}` : 'ยังไม่มี SKU ที่เปิดควบคุม'}</span>
-        </div>
-        {enabledMembers.length > 0 && <div className="divide-y">
-          {enabledMembers.map((member) => <div key={member.id} className="flex flex-col gap-2 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+        {enabledMembers.length > 0 && <div className="divide-y border-t">
+          {enabledMembers.map((member) => <div key={member.id} className="flex min-w-0 items-center gap-2 px-3 py-2 text-sm">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{sourceLabel[member.source]}</Badge><p className="font-medium">{member.product_name || 'ยังไม่มีชื่อสินค้า'}</p></div>
-              <p className="mt-1 truncate text-xs text-muted-foreground" title={member.variant_name || member.external_sku_id}>{member.variant_name ? `ตัวเลือก: ${member.variant_name}` : `SKU: ${member.external_sku_id}`}</p>
-              {member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}
+              <div className="flex min-w-0 items-center gap-2"><SourceBadge source={member.source} /><p className="truncate font-medium" title={member.product_name || 'ยังไม่มีชื่อสินค้า'}>{member.product_name || 'ยังไม่มีชื่อสินค้า'}</p></div>
+              <p className={cn('mt-0.5 truncate text-xs', member.last_error ? 'text-destructive' : 'text-muted-foreground')} title={member.last_error || member.variant_name || member.external_sku_id}>{member.last_error ? `ต้องตรวจ: ${member.last_error}` : [member.variant_name ? `ตัวเลือก: ${member.variant_name}` : `SKU: ${member.external_sku_id}`, pool.allocation_mode === 'quota' ? `โควตา ${formatNumber(member.allocation_pct)}%` : 'ใช้ยอดร่วม', `ยอดล่าสุด ${formatNumber(member.last_actual_qty)}`].join(' · ')}</p>
             </div>
-            <span className="shrink-0 text-xs text-muted-foreground">{pool.allocation_mode === 'quota' ? `โควตา ${member.allocation_pct}%` : 'ใช้ยอดร่วม'}</span>
           </div>)}
         </div>}
       </CardContent>
@@ -268,6 +260,38 @@ function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning,
       {pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}
     </Card>
   )
+}
+
+function SourceBadge({ source }: { source: Source }) {
+  return <InputChannelBadge channel={source === 'shopee' ? 'shopee' : 'tiktok_shop'} label={sourceLabel[source]} />
+}
+
+function PoolSnapshot({ pool, members }: { pool: Pool; members: Member[] }) {
+  const sources: Source[] = ['shopee', 'tiktok']
+  const bufferLabel = pool.buffer_pct_override === undefined ? 'กันชนเริ่มต้น' : `กันชน ${formatNumber(pool.buffer_pct_override)}%`
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-label="ยอดสต๊อกล่าสุดที่ระบบตรวจสอบแล้ว">
+      <span>หน่วย <strong className="font-medium text-foreground">{pool.sml_unit_code}</strong></span>
+      <span>{pool.allocation_mode === 'quota' ? 'แบ่งโควตา' : 'ใช้ยอดร่วม'}</span>
+      <span>{bufferLabel}</span>
+      <span title="ยอดจากการตรวจ SML ล่าสุด ไม่ได้เรียก SML ใหม่เมื่อเปิดหน้า">SML ล่าสุด <strong className="tabular-nums text-foreground">{formatNumber(pool.last_sml_available_qty)}</strong> {pool.sml_unit_code}</span>
+      {sources.filter((source) => members.some((member) => member.source === source)).map((source) => <PlatformSnapshot key={source} source={source} members={members.filter((member) => member.source === source)} />)}
+      <span className="text-muted-foreground/80">ข้อมูลจากการตรวจ/ซิงก์ล่าสุด</span>
+    </div>
+  )
+}
+
+function PlatformSnapshot({ source, members }: { source: Source; members: Member[] }) {
+  const verified = members.map((member) => member.last_actual_qty).filter((quantity): quantity is number => quantity !== undefined)
+  const label = members.length === 1
+    ? formatNumber(verified[0])
+    : verified.length === members.length ? `${formatNumber(verified.reduce((total, quantity) => total + quantity, 0))} รวม ${members.length} SKU` : `${verified.length}/${members.length} SKU มีข้อมูล`
+  return <span className="inline-flex items-center gap-1"><SourceBadge source={source} /><strong className="tabular-nums text-foreground">{label}</strong></span>
+}
+
+function formatNumber(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return '—'
+  return new Intl.NumberFormat('th-TH', { maximumFractionDigits: 2 }).format(value)
 }
 
 function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) { return <Card><CardContent className="flex flex-col items-center px-6 py-12 text-center"><Boxes className="h-9 w-9 text-muted-foreground" /><h2 className="mt-3 font-semibold">ยังไม่มีกลุ่มสต๊อก</h2><p className="mt-1 max-w-md text-sm text-muted-foreground">เริ่มจากจับคู่สินค้า Marketplace กับสินค้า SML ให้พร้อม แล้วสร้างกลุ่มเพื่อเลือกว่าจะแบ่งโควตาหรือใช้สต๊อกร่วม</p>{canManage && <Button className="mt-4" onClick={onCreate}>สร้างกลุ่มสต๊อก</Button>}</CardContent></Card> }
