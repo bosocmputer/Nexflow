@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Boxes, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
 
 import client from '@/api/client'
@@ -192,17 +192,58 @@ function SettingsDialog({ open, settings, saving, onOpenChange, onSave }: { open
 }
 
 function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: { open: boolean; candidates: Candidate[]; saving: boolean; onOpenChange: (open: boolean) => void; onCreate: (input: { smlItem: string; smlUnit: string; mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => void }) {
-  const groups = useMemo(() => [...new Map(candidates.map((candidate) => [`${candidate.sml_item_code}|${candidate.sml_unit_code}`, candidate])).entries()], [candidates])
+  const groups = useMemo(() => {
+    const grouped = new Map<string, Candidate[]>()
+    for (const candidate of candidates) {
+      const key = `${candidate.sml_item_code}|${candidate.sml_unit_code}`
+      grouped.set(key, [...(grouped.get(key) ?? []), candidate])
+    }
+    return [...grouped.entries()].map(([key, members]) => ({
+      key,
+      smlItem: members[0]?.sml_item_code ?? '',
+      smlUnit: members[0]?.sml_unit_code ?? '',
+      members,
+      searchableText: [members[0]?.sml_item_code, members[0]?.sml_unit_code, ...members.flatMap((member) => [member.product_name, member.variant_name])].join(' ').toLocaleLowerCase(),
+    }))
+  }, [candidates])
   const [groupKey, setGroupKey] = useState('')
+  const [groupSearch, setGroupSearch] = useState('')
   const [mode, setMode] = useState<Mode>('quota')
   const [sharedAcknowledged, setSharedAcknowledged] = useState(false)
   const [members, setMembers] = useState<Candidate[]>([])
-  const draftMembers = (key: string) => { const selected = candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === key); const share = selected.length ? Math.floor((10000 / selected.length)) / 100 : 0; return selected.map((candidate, index) => ({ ...candidate, allocation_pct: index === selected.length - 1 ? Number((100 - share * Math.max(0, selected.length - 1)).toFixed(2)) : share, enabled: true })) }
-  useEffect(() => { if (open) { const first = groups[0]?.[0] ?? ''; setGroupKey(first); setMode('quota'); setSharedAcknowledged(false); setMembers(draftMembers(first)) } }, [open, candidates, groups])
+  const [confirmCreate, setConfirmCreate] = useState(false)
+  const initializedForOpen = useRef(false)
+  const draftMembers = (key: string) => {
+    const selected = candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === key)
+    const share = selected.length ? Math.floor(10000 / selected.length) / 100 : 0
+    return selected.map((candidate, index) => ({ ...candidate, allocation_pct: index === selected.length - 1 ? Number((100 - share * Math.max(0, selected.length - 1)).toFixed(2)) : share, enabled: true }))
+  }
+  useEffect(() => {
+    if (!open) { initializedForOpen.current = false; return }
+    if (initializedForOpen.current) return
+    const first = groups[0]?.key ?? ''
+    setGroupKey(first); setGroupSearch(''); setMode('quota'); setSharedAcknowledged(false); setMembers(draftMembers(first)); setConfirmCreate(false)
+    initializedForOpen.current = true
+  }, [open, candidates, groups])
   const changeGroup = (value: string) => { setGroupKey(value); setMembers(draftMembers(value)) }
+  const toggleMember = (index: number, enabled: boolean) => {
+    setMembers((current) => {
+      const next = current.map((member, currentIndex) => ({ ...member, enabled: currentIndex === index ? enabled : member.enabled }))
+      if (mode !== 'quota') return next
+      const enabledIndexes = next.flatMap((member, currentIndex) => member.enabled ? [currentIndex] : [])
+      const share = enabledIndexes.length ? Math.floor(10000 / enabledIndexes.length) / 100 : 0
+      return next.map((member, currentIndex) => !member.enabled ? member : {
+        ...member,
+        allocation_pct: currentIndex === enabledIndexes[enabledIndexes.length - 1] ? Number((100 - share * Math.max(0, enabledIndexes.length - 1)).toFixed(2)) : share,
+      })
+    })
+  }
+  const visibleGroups = groups.filter((group) => !groupSearch.trim() || group.searchableText.includes(groupSearch.trim().toLocaleLowerCase()))
   const total = members.filter((member) => member.enabled).reduce((sum, member) => sum + member.allocation_pct, 0)
-  const submit = () => { const [smlItem, smlUnit] = groupKey.split('|', 2); if (smlItem && smlUnit) onCreate({ smlItem, smlUnit, mode, sharedAcknowledged, members }) }
-  return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>สร้างกลุ่มสต๊อก Marketplace</DialogTitle><DialogDescription>เลือก SKU ที่จับคู่กับสินค้า SML เดียวกันแล้ว ระบบจะเริ่มเป็นแบบร่าง ยังไม่ส่งสต๊อกจริง</DialogDescription></DialogHeader>{groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4"><div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{groups.map(([key, item]) => <SelectItem key={key} value={key}>{item.sml_item_code} · {item.sml_unit_code}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>{mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}<div className="space-y-2"><Label>SKU ในกลุ่ม</Label>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => setMembers((current) => current.map((value, i) => i === index ? { ...value, enabled: checked === true } : value))} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div></div>}<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={submit} disabled={saving || !groupKey || members.filter((member) => member.enabled).length === 0 || (mode === 'quota' && total > 100) || (mode === 'shared' && !sharedAcknowledged)}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}สร้างแบบร่าง</Button></DialogFooter></DialogContent></Dialog>
+  const channels = [...new Set(members.filter((member) => member.enabled).map((member) => sourceLabel[member.source]))]
+  const submit = () => setConfirmCreate(true)
+  const confirmCreatePool = () => { const [smlItem, smlUnit] = groupKey.split('|', 2); if (smlItem && smlUnit) onCreate({ smlItem, smlUnit, mode, sharedAcknowledged, members }) }
+  return <><Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>สร้างกลุ่มสต๊อก Marketplace</DialogTitle><DialogDescription>เลือก SKU ที่จับคู่กับสินค้า SML เดียวกันแล้ว ระบบจะเริ่มเป็นแบบร่าง ยังไม่ส่งสต๊อกจริง</DialogDescription></DialogHeader>{groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4"><div className="space-y-1"><Label htmlFor="marketplace-stock-group-search">ค้นหาสินค้า SML หรือชื่อสินค้า Marketplace</Label><Input id="marketplace-stock-group-search" value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder="เช่น AH-0029 หรือ สีชมพู" /></div><div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{visibleGroups.map((group) => <SelectItem key={group.key} value={group.key}>{group.smlItem} · {group.smlUnit} · {group.members.length} SKU</SelectItem>)}</SelectContent></Select>{visibleGroups.length === 0 && <p className="text-xs text-destructive">ไม่พบสินค้าในคำค้นหา ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p>}</div><div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>{mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}<div className="space-y-2"><Label>SKU ในกลุ่ม</Label><p className="text-xs text-muted-foreground">เลือกเฉพาะ SKU ที่ต้องการควบคุม เมื่อเลือกหรือเอาออก ระบบจะกระจายโควตาของ SKU ที่เลือกใหม่ให้รวม 100%.</p>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => toggleMember(index, checked === true)} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div><Alert><Info className="h-4 w-4" /><AlertTitle>สรุปก่อนสร้างแบบร่าง</AlertTitle><AlertDescription>{members.filter((member) => member.enabled).length} SKU · {channels.join(', ') || 'ยังไม่ได้เลือก SKU'} · {mode === 'quota' ? `รวมโควตา ${total.toFixed(2)}%` : 'ใช้ยอดร่วม'}<br />ขั้นต่อไปยังเป็น Dry-run เท่านั้น ระบบจะยังไม่เขียนสต๊อกไป Marketplace</AlertDescription></Alert></div>}<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={submit} disabled={saving || !groupKey || members.filter((member) => member.enabled).length === 0 || (mode === 'quota' && total > 100) || (mode === 'shared' && !sharedAcknowledged)}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ตรวจสอบก่อนสร้าง</Button></DialogFooter></DialogContent></Dialog><ConfirmDialog open={confirmCreate} onOpenChange={setConfirmCreate} title="สร้างกลุ่มสต๊อกแบบร่างหรือไม่?" description={`จะสร้างแบบร่าง ${groupKey.replace('|', ' · ')} สำหรับ ${members.filter((member) => member.enabled).length} SKU (${channels.join(', ') || 'ยังไม่ได้เลือก'}) ยังไม่ส่งหรือเขียนสต๊อกไป Marketplace`} confirmLabel="สร้างแบบร่าง" onConfirm={confirmCreatePool} /></>
 }
 
 function thaiPause(value: string) { return value === 'configuration_changed' ? 'การตั้งค่ากลุ่มเปลี่ยน' : value === 'stock_source_changed' ? 'แหล่งสต๊อก SML เปลี่ยน' : value }
