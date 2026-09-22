@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Boxes, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
+import { AlertTriangle, Boxes, Check, CheckCircle2, ChevronsUpDown, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
 
 import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -7,9 +7,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -27,6 +29,7 @@ interface Member { id: string; source: Source; account_key: string; external_pro
 interface Pool { id: string; sml_item_code: string; sml_item_name?: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; kill_switch_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_error?: string; members: Member[] }
 interface Overview { available: boolean; settings: Settings; pools: Pool[] }
 interface Candidate extends Omit<Member, 'id' | 'last_target_qty' | 'last_actual_qty' | 'last_error'> { sml_item_code: string; sml_item_name?: string; sml_unit_code: string }
+interface CandidateGroup { key: string; smlItem: string; smlItemName: string; smlUnit: string; members: Candidate[]; searchableText: string }
 interface PreviewResult { run_id: string; sml_available_qty: number; reservation_qty: number; usable_qty: number; buffer_qty: number; distributable_qty: number; expires_at: string; lines: { member_id: string; target_qty: number; status: string; message?: string }[] }
 
 const sourceLabel: Record<Source, string> = { shopee: 'Shopee', tiktok: 'TikTok Shop' }
@@ -233,7 +236,7 @@ function SettingsDialog({ open, settings, saving, onOpenChange, onSave }: { open
 }
 
 function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: { open: boolean; candidates: Candidate[]; saving: boolean; onOpenChange: (open: boolean) => void; onCreate: (input: { smlItem: string; smlUnit: string; mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => void }) {
-  const groups = useMemo(() => {
+  const groups = useMemo<CandidateGroup[]>(() => {
     const grouped = new Map<string, Candidate[]>()
     for (const candidate of candidates) {
       const key = `${candidate.sml_item_code}|${candidate.sml_unit_code}`
@@ -249,7 +252,6 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
     }))
   }, [candidates])
   const [groupKey, setGroupKey] = useState('')
-  const [groupSearch, setGroupSearch] = useState('')
   const [mode, setMode] = useState<Mode>('quota')
   const [sharedAcknowledged, setSharedAcknowledged] = useState(false)
   const [members, setMembers] = useState<Candidate[]>([])
@@ -263,8 +265,7 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
   useEffect(() => {
     if (!open) { initializedForOpen.current = false; return }
     if (initializedForOpen.current) return
-    const first = groups[0]?.key ?? ''
-    setGroupKey(first); setGroupSearch(''); setMode('quota'); setSharedAcknowledged(false); setMembers(draftMembers(first)); setReviewingCreate(false)
+    setGroupKey(''); setMode('quota'); setSharedAcknowledged(false); setMembers([]); setReviewingCreate(false)
     initializedForOpen.current = true
   }, [open, candidates, groups])
   const changeGroup = (value: string) => { setGroupKey(value); setMembers(draftMembers(value)) }
@@ -280,7 +281,6 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
       })
     })
   }
-  const visibleGroups = groups.filter((group) => !groupSearch.trim() || group.searchableText.includes(groupSearch.trim().toLocaleLowerCase()))
   const total = members.filter((member) => member.enabled).reduce((sum, member) => sum + member.allocation_pct, 0)
   const channels = [...new Set(members.filter((member) => member.enabled).map((member) => sourceLabel[member.source]))]
   const submit = () => setReviewingCreate(true)
@@ -306,8 +306,7 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
           <DialogDescription>เลือก SKU ที่จับคู่กับสินค้า SML เดียวกันแล้ว ระบบจะเริ่มเป็นแบบร่าง ยังไม่ส่งสต๊อกจริง</DialogDescription>
         </DialogHeader>
         {groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4">
-          <div className="space-y-1"><Label htmlFor="marketplace-stock-group-search">ค้นหาสินค้า SML หรือชื่อสินค้า Marketplace</Label><Input id="marketplace-stock-group-search" value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder="เช่น AH-0029 หรือ สีชมพู" /></div>
-          <div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{visibleGroups.map((group) => <SelectItem key={group.key} value={group.key}>{selectedGroupLabel([group], group.key)} · {group.members.length} SKU</SelectItem>)}</SelectContent></Select>{visibleGroups.length === 0 && <p className="text-xs text-destructive">ไม่พบสินค้าในคำค้นหา ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p>}</div>
+          <SMLGroupAutocomplete groups={groups} value={groupKey} onChange={changeGroup} />
           <div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>
           {mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}
           <div className="space-y-2"><Label>SKU ในกลุ่ม</Label><p className="text-xs text-muted-foreground">เลือกเฉพาะ SKU ที่ต้องการควบคุม เมื่อเลือกหรือเอาออก ระบบจะกระจายโควตาของ SKU ที่เลือกใหม่ให้รวม 100%.</p>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => toggleMember(index, checked === true)} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div>
@@ -319,7 +318,41 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
   </Dialog>
 }
 
-function selectedGroupLabel(groups: Array<{ key: string; smlItem: string; smlItemName: string; smlUnit: string }>, key: string) {
+function SMLGroupAutocomplete({ groups, value, onChange }: { groups: CandidateGroup[]; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleGroups = groups.filter((group) => !normalizedQuery || group.searchableText.includes(normalizedQuery))
+  const selected = groups.find((group) => group.key === value)
+
+  return <div className="space-y-1">
+    <Label htmlFor="marketplace-stock-group-autocomplete">สินค้า SML ที่จะควบคุม</Label>
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery('') }}>
+      <PopoverTrigger asChild>
+        <Button id="marketplace-stock-group-autocomplete" type="button" variant="outline" role="combobox" aria-expanded={open} className="h-auto min-h-10 w-full justify-between gap-2 px-3 py-2 text-left font-normal">
+          <span className="min-w-0 truncate">{selected ? selectedGroupLabel([selected], selected.key) : 'ค้นหาด้วยรหัส SML, ชื่อสินค้า หรือชื่อ Marketplace'}</span>
+          <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput value={query} onValueChange={setQuery} placeholder="พิมพ์รหัสหรือชื่อสินค้า…" />
+          <CommandList>
+            {visibleGroups.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">ไม่พบสินค้า ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p> : <CommandGroup>
+              {visibleGroups.map((group) => <CommandItem key={group.key} value={group.key} onSelect={() => { onChange(group.key); setQuery(''); setOpen(false) }}>
+                <Check className={cn('mt-0.5 h-4 w-4 shrink-0', value === group.key ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />
+                <span className="min-w-0"><span className="block truncate">{selectedGroupLabel([group], group.key)}</span><span className="block text-xs text-muted-foreground">{group.members.length} SKU ที่พร้อมควบคุม</span></span>
+              </CommandItem>)}
+            </CommandGroup>}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+    <p className="text-xs text-muted-foreground">เลือกสินค้า SML 1 รายการ ระบบจะแสดง SKU ที่จับคู่ได้ด้านล่าง</p>
+  </div>
+}
+
+function selectedGroupLabel(groups: CandidateGroup[], key: string) {
   const group = groups.find((candidate) => candidate.key === key)
   if (!group) return key.replace('|', ' · ')
   return [group.smlItem, group.smlItemName || 'ยังไม่พบชื่อสินค้า SML', group.smlUnit].join(' · ')
