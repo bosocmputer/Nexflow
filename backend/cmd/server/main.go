@@ -629,6 +629,7 @@ func main() {
 		api.GET("/settings/marketplace-stock/candidates", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.Candidates)
 		api.POST("/settings/marketplace-stock/pools", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.CreatePool)
 		api.PUT("/settings/marketplace-stock/pools/:pool_id", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.UpdatePool)
+		api.DELETE("/settings/marketplace-stock/pools/:pool_id", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.ArchivePool)
 		api.POST("/settings/marketplace-stock/pools/:pool_id/preview", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.PreviewPool)
 		api.PUT("/settings/marketplace-stock/pools/:pool_id/auto", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.UpdateAuto)
 		api.POST("/settings/marketplace-stock/pools/:pool_id/sync", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.QueueSync)

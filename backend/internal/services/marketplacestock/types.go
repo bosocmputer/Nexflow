@@ -99,6 +99,13 @@ type PoolUpdate struct {
 	ConfirmAction         string `json:"confirm_action"`
 }
 
+// PoolArchive removes a pool from active configuration without deleting its
+// immutable run and audit evidence.
+type PoolArchive struct {
+	ExpectedConfigVersion int64  `json:"expected_config_version"`
+	ConfirmAction         string `json:"confirm_action"`
+}
+
 type SettingsUpdate struct {
 	WarehouseCode         string  `json:"warehouse_code"`
 	LocationCode          string  `json:"location_code"`

@@ -35,6 +35,7 @@ func (s *PostgresStore) Overview(ctx context.Context) (*Overview, error) {
 		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at,COALESCE(c.item_name,'')
 		FROM marketplace_stock_pools p
 		LEFT JOIN sml_catalog c ON c.item_code=p.sml_item_code AND c.is_active=true
+		WHERE p.archived_at IS NULL
 		ORDER BY p.updated_at DESC,p.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list marketplace stock pools: %w", err)
@@ -72,13 +73,14 @@ func (s *PostgresStore) Candidates(ctx context.Context, source string) ([]Candid
 		a.quantity_multiplier::float8
 		FROM marketplace_item_aliases a
 		LEFT JOIN marketplace_stock_pool_members m ON m.marketplace_alias_id=a.id AND m.enabled=true
+		LEFT JOIN marketplace_stock_pools p ON p.id=m.pool_id AND p.archived_at IS NULL
 		LEFT JOIN sml_catalog c ON c.item_code=a.item_code AND c.is_active=true
 		WHERE a.is_active=true AND a.source IN ('shopee','tiktok')
 		  AND ($1='' OR a.source=$1)
 		  AND a.conversion_status='ready' AND a.sales_enabled=true
 		  AND a.item_code<>'' AND a.unit_code<>''
 		  AND a.external_item_id<>'' AND a.external_variant_id<>''
-		  AND m.id IS NULL
+		  AND p.id IS NULL
 		ORDER BY a.item_code,a.unit_code,a.source,a.source_product_name,a.source_variant_name,a.id
 		LIMIT 500`, source)
 	if err != nil {
@@ -138,7 +140,7 @@ func (s *PostgresStore) UpdatePool(ctx context.Context, poolID string, input Poo
 		SET sml_item_code=$2,sml_unit_code=$3,allocation_mode=$4,buffer_pct_override=$5,
 		shared_risk_acknowledged=$6,status='paused',auto_enabled=false,dry_run_required=true,
 		paused_reason='configuration_changed',config_version=config_version+1,last_error='',updated_by=$7,updated_at=NOW()
-		WHERE id=$1::uuid AND config_version=$8
+		WHERE id=$1::uuid AND archived_at IS NULL AND config_version=$8
 		RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
 		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
 		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at`,
@@ -169,6 +171,65 @@ func (s *PostgresStore) UpdatePool(ctx context.Context, poolID string, input Poo
 		return nil, err
 	}
 	return &updated, nil
+}
+
+// ArchivePool deliberately retains rows for completed runs and audit logs.
+// It removes the pool from all active reads, disables members, and cancels only
+// queued work. A running worker must finish before an operator can archive.
+func (s *PostgresStore) ArchivePool(ctx context.Context, poolID string, input PoolArchive, userID string) error {
+	if s == nil || s.db == nil {
+		return errors.New("marketplace stock store is not configured")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var version int64
+	err = tx.QueryRowContext(ctx, `SELECT config_version FROM marketplace_stock_pools
+		WHERE id=$1::uuid AND archived_at IS NULL FOR UPDATE`, poolID).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrConfigVersionConflict
+	}
+	if err != nil {
+		return fmt.Errorf("load marketplace stock pool for archive: %w", err)
+	}
+	if version != input.ExpectedConfigVersion {
+		return ErrConfigVersionConflict
+	}
+
+	var running bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM marketplace_stock_runs WHERE pool_id=$1::uuid AND status='running'
+	)`, poolID).Scan(&running); err != nil {
+		return fmt.Errorf("check marketplace stock pool archive work: %w", err)
+	}
+	if running {
+		return ErrPoolBusy
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_runs
+		SET status='cancelled',error_message='cancelled_by_pool_archive',finished_at=NOW(),updated_at=NOW()
+		WHERE pool_id=$1::uuid AND status='queued'`, poolID); err != nil {
+		return fmt.Errorf("cancel queued marketplace stock work for archive: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pool_members
+		SET enabled=false,updated_at=NOW() WHERE pool_id=$1::uuid`, poolID); err != nil {
+		return fmt.Errorf("disable marketplace stock pool members for archive: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools
+		SET archived_at=NOW(),archived_by=$2::uuid,status='paused',auto_enabled=false,
+			paused_reason='archived_by_admin',config_version=config_version+1,updated_by=$2::uuid,updated_at=NOW()
+		WHERE id=$1::uuid AND archived_at IS NULL`, poolID, userID); err != nil {
+		return fmt.Errorf("archive marketplace stock pool: %w", err)
+	}
+	if err := insertAudit(ctx, tx, "marketplace_stock_pool_archived", poolID, userID, map[string]any{
+		"config_version":        version,
+		"queued_work_cancelled": true,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *PostgresStore) UpdateSettings(ctx context.Context, input SettingsUpdate, userID string) (*Settings, error) {
@@ -248,7 +309,7 @@ func (s *PostgresStore) StartPreview(ctx context.Context, poolID string, input P
 	err = tx.QueryRowContext(ctx, `SELECT id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
 		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
 		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at
-		FROM marketplace_stock_pools WHERE id=$1::uuid FOR UPDATE`, poolID).Scan(poolScanner(&plan.Pool)...)
+		FROM marketplace_stock_pools WHERE id=$1::uuid AND archived_at IS NULL FOR UPDATE`, poolID).Scan(poolScanner(&plan.Pool)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrConfigVersionConflict
 	}
@@ -356,7 +417,7 @@ func (s *PostgresStore) CompletePreview(ctx context.Context, result PreviewResul
 	updated, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET status=CASE WHEN status IN ('draft','paused') THEN 'ready' ELSE status END,
 		paused_reason=CASE WHEN status IN ('draft','paused') THEN '' ELSE paused_reason END,
 		dry_run_required=false,last_preview_at=NOW(),last_error='',updated_at=NOW()
-		WHERE id=$1::uuid AND config_version=$2`, poolID, configVersion)
+		WHERE id=$1::uuid AND archived_at IS NULL AND config_version=$2`, poolID, configVersion)
 	if err != nil {
 		return err
 	}
@@ -412,7 +473,7 @@ func (s *PostgresStore) UpdateAuto(ctx context.Context, poolID string, input Aut
 	if input.Enabled {
 		err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_pools
 			SET auto_enabled=true,status='active',paused_reason='',config_version=config_version+1,updated_by=$2::uuid,updated_at=NOW()
-			WHERE id=$1::uuid AND config_version=$3 AND status='ready' AND dry_run_required=false
+			WHERE id=$1::uuid AND archived_at IS NULL AND config_version=$3 AND status='ready' AND dry_run_required=false
 			AND kill_switch_enabled=false AND last_success_at IS NOT NULL
 			RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
 			shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
@@ -420,7 +481,7 @@ func (s *PostgresStore) UpdateAuto(ctx context.Context, poolID string, input Aut
 	} else {
 		err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_pools
 			SET auto_enabled=false,status='paused',paused_reason='auto_disabled_by_admin',config_version=config_version+1,updated_by=$2::uuid,updated_at=NOW()
-			WHERE id=$1::uuid AND config_version=$3
+			WHERE id=$1::uuid AND archived_at IS NULL AND config_version=$3
 			RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
 			shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
 			last_preview_at,last_success_at,last_schedule_at,last_error,updated_at`, poolID, userID, input.ExpectedConfigVersion).Scan(poolScanner(&pool)...)
@@ -460,7 +521,7 @@ func (s *PostgresStore) QueueSync(ctx context.Context, poolID string, input Sync
 	var version int64
 	err = tx.QueryRowContext(ctx, `SELECT p.status,p.dry_run_required,s.kill_switch_enabled,p.kill_switch_enabled,p.config_version
 		FROM marketplace_stock_pools p JOIN marketplace_stock_settings s ON s.singleton=true
-		WHERE p.id=$1::uuid FOR UPDATE`, poolID).Scan(&status, &dryRunRequired, &globalKill, &poolKill, &version)
+		WHERE p.id=$1::uuid AND p.archived_at IS NULL FOR UPDATE`, poolID).Scan(&status, &dryRunRequired, &globalKill, &poolKill, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrConfigVersionConflict
 	}

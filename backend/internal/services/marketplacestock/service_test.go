@@ -21,6 +21,9 @@ func (f *serviceStoreFake) CreatePool(_ context.Context, input PoolInput, _ stri
 func (f *serviceStoreFake) UpdatePool(context.Context, string, PoolUpdate, string) (*Pool, error) {
 	return &Pool{}, nil
 }
+func (f *serviceStoreFake) ArchivePool(context.Context, string, PoolArchive, string) error {
+	return nil
+}
 func (f *serviceStoreFake) UpdateSettings(context.Context, SettingsUpdate, string) (*Settings, error) {
 	return &Settings{}, nil
 }
@@ -101,6 +104,13 @@ func TestUpdatePoolRequiresExplicitConfirmation(t *testing.T) {
 	}, "user-1")
 	if err != ErrConfirmationRequired {
 		t.Fatalf("UpdatePool() error = %v, want %v", err, ErrConfirmationRequired)
+	}
+}
+
+func TestArchivePoolRequiresExplicitConfirmation(t *testing.T) {
+	err := NewService(&serviceStoreFake{}).ArchivePool(context.Background(), "pool-1", PoolArchive{ExpectedConfigVersion: 1}, "user-1")
+	if err != ErrConfirmationRequired {
+		t.Fatalf("ArchivePool() error = %v, want %v", err, ErrConfirmationRequired)
 	}
 }
 

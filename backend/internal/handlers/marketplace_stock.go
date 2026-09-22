@@ -105,6 +105,30 @@ func (h *MarketplaceStockHandler) UpdatePool(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *MarketplaceStockHandler) ArchivePool(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.requirePermission(c, "update") {
+		return
+	}
+	poolID := strings.TrimSpace(c.Param("pool_id"))
+	if !uuidPattern.MatchString(poolID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id ไม่ถูกต้อง"})
+		return
+	}
+	var request marketplacestock.PoolArchive
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลการลบกลุ่มสต๊อกไม่ถูกต้อง"})
+		return
+	}
+	if err := h.service.ArchivePool(c.Request.Context(), poolID, request, c.GetString("user_id")); err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *MarketplaceStockHandler) UpdateSettings(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -273,6 +297,8 @@ func (h *MarketplaceStockHandler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "ร้านนี้ยังไม่เปิดการเขียนสต๊อก Marketplace เพื่อความปลอดภัย"})
 	case errors.Is(err, marketplacestock.ErrPreviewAlreadyRunning):
 		c.JSON(http.StatusConflict, gin.H{"error": "กำลังตรวจสต๊อกกลุ่มนี้อยู่ กรุณารอผลก่อน"})
+	case errors.Is(err, marketplacestock.ErrPoolBusy):
+		c.JSON(http.StatusConflict, gin.H{"error": "กลุ่มนี้มีงานสต๊อกกำลังทำอยู่ กรุณารอให้งานเสร็จก่อนลบ"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกการควบคุมสต๊อกไม่สำเร็จ"})
 	}

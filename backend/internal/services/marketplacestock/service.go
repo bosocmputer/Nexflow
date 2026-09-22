@@ -20,6 +20,7 @@ var (
 	ErrPreviewAlreadyRunning = errors.New("marketplace stock preview is already running")
 	ErrWriteDisabled         = errors.New("marketplace stock writes are disabled")
 	ErrDryRunRequired        = errors.New("marketplace stock needs a fresh dry-run")
+	ErrPoolBusy              = errors.New("marketplace stock pool has a running job")
 )
 
 type Store interface {
@@ -27,6 +28,7 @@ type Store interface {
 	Candidates(context.Context, string) ([]Candidate, error)
 	CreatePool(context.Context, PoolInput, string) (*Pool, error)
 	UpdatePool(context.Context, string, PoolUpdate, string) (*Pool, error)
+	ArchivePool(context.Context, string, PoolArchive, string) error
 	UpdateSettings(context.Context, SettingsUpdate, string) (*Settings, error)
 	StartPreview(context.Context, string, PreviewRequest, string) (*PreviewPlan, error)
 	CompletePreview(context.Context, PreviewResult) error
@@ -102,6 +104,16 @@ func (s *Service) UpdatePool(ctx context.Context, poolID string, input PoolUpdat
 		return nil, err
 	}
 	return s.store.UpdatePool(ctx, poolID, input, userID)
+}
+
+func (s *Service) ArchivePool(ctx context.Context, poolID string, input PoolArchive, userID string) error {
+	if s == nil || s.store == nil || strings.TrimSpace(poolID) == "" || strings.TrimSpace(userID) == "" || input.ExpectedConfigVersion < 1 {
+		return ErrInvalidPoolInput
+	}
+	if strings.TrimSpace(input.ConfirmAction) != "ARCHIVE_MARKETPLACE_STOCK_POOL" {
+		return ErrConfirmationRequired
+	}
+	return s.store.ArchivePool(ctx, poolID, input, userID)
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, input SettingsUpdate, userID string) (*Settings, error) {

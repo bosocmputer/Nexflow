@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Boxes, Check, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
+import { AlertTriangle, Boxes, Check, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, Pencil, RefreshCw, Settings2, Trash2 } from 'lucide-react'
 
 import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -52,6 +52,8 @@ export default function MarketplaceStock() {
   const [previews, setPreviews] = useState<Record<string, PreviewResult>>({})
   const [actioningPoolID, setActioningPoolID] = useState('')
   const [confirmAction, setConfirmAction] = useState<{ pool: Pool; kind: 'auto-on' | 'auto-off' | 'sync' } | null>(null)
+  const [editingPool, setEditingPool] = useState<Pool | null>(null)
+  const [archivingPool, setArchivingPool] = useState<Pool | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -101,6 +103,44 @@ export default function MarketplaceStock() {
       setCreateOpen(false); setNotice('สร้างกลุ่มสต๊อกแบบร่างแล้ว ขั้นต่อไปคือกดตรวจสอบก่อนเปิดซิงก์จริง')
       await load()
     } catch (cause) { setError(messageOf(cause, 'สร้างกลุ่มสต๊อกไม่สำเร็จ')) } finally { setSaving(false) }
+  }
+
+  const openEdit = async (pool: Pool) => {
+    setError(''); setNotice('')
+    try {
+      const response = await client.get<{ data: Candidate[] }>('/api/settings/marketplace-stock/candidates')
+      setCandidates(response.data.data ?? [])
+      setEditingPool(pool)
+    } catch (cause) { setError(messageOf(cause, 'โหลด SKU สำหรับแก้ไขกลุ่มสต๊อกไม่สำเร็จ')) }
+  }
+
+  const updatePool = async (pool: Pool, input: { mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => {
+    setSaving(true); setError(''); setNotice('')
+    try {
+      await client.put(`/api/settings/marketplace-stock/pools/${pool.id}`, {
+        sml_item_code: pool.sml_item_code,
+        sml_unit_code: pool.sml_unit_code,
+        allocation_mode: input.mode,
+        shared_risk_acknowledged: input.sharedAcknowledged,
+        members: input.members.filter((member) => member.enabled).map(({ sml_item_code: _item, sml_unit_code: _unit, sml_item_name: _name, ...member }) => member),
+        expected_config_version: pool.config_version,
+        confirm_action: 'UPDATE_MARKETPLACE_STOCK_POOL',
+      })
+      setEditingPool(null)
+      setNotice('บันทึกกลุ่มแล้ว ระบบพัก Auto และให้ตรวจ SML ใหม่ก่อนซิงก์ครั้งถัดไป')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'บันทึกการแก้ไขกลุ่มสต๊อกไม่สำเร็จ')) } finally { setSaving(false) }
+  }
+
+  const archivePool = async (pool: Pool) => {
+    setActioningPoolID(pool.id); setError(''); setNotice('')
+    try {
+      await client.delete(`/api/settings/marketplace-stock/pools/${pool.id}`, {
+        data: { expected_config_version: pool.config_version, confirm_action: 'ARCHIVE_MARKETPLACE_STOCK_POOL' },
+      })
+      setNotice('ลบกลุ่มออกจากการใช้งานแล้ว ประวัติการตรวจและซิงก์เดิมยังเก็บไว้ในบันทึกระบบ')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'ลบกลุ่มสต๊อกไม่สำเร็จ')) } finally { setActioningPoolID('') }
   }
 
   const previewPool = async (pool: Pool) => {
@@ -163,23 +203,30 @@ export default function MarketplaceStock() {
       <Tabs value={tab} onValueChange={(value) => setTab(value as 'all' | Source)}>
         <TabsList aria-label="กรองช่องทาง"><TabsTrigger value="all">ทั้งหมด</TabsTrigger><TabsTrigger value="shopee">Shopee</TabsTrigger><TabsTrigger value="tiktok">TikTok Shop</TabsTrigger></TabsList>
         <TabsContent value={tab} className="space-y-3">
-          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} canManage={canManage} canOperate={canOperate} preview={previews[pool.id]} previewing={previewingPoolID === pool.id} actioning={actioningPoolID === pool.id} onPreview={() => void previewPool(pool)} onAuto={(enabled) => setConfirmAction({ pool, kind: enabled ? 'auto-on' : 'auto-off' })} onSync={() => setConfirmAction({ pool, kind: 'sync' })} />)}
+          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} canManage={canManage} canOperate={canOperate} preview={previews[pool.id]} previewing={previewingPoolID === pool.id} actioning={actioningPoolID === pool.id} onPreview={() => void previewPool(pool)} onAuto={(enabled) => setConfirmAction({ pool, kind: enabled ? 'auto-on' : 'auto-off' })} onSync={() => setConfirmAction({ pool, kind: 'sync' })} onEdit={() => void openEdit(pool)} onArchive={() => setArchivingPool(pool)} />)}
         </TabsContent>
       </Tabs>
 
       {data && <SettingsDialog open={settingsOpen} settings={data.settings} saving={saving} onOpenChange={setSettingsOpen} onSave={saveSettings} />}
       <CreatePoolDialog open={createOpen} candidates={candidates} saving={saving} onOpenChange={setCreateOpen} onCreate={createPool} />
+      <EditPoolDialog open={Boolean(editingPool)} pool={editingPool} candidates={candidates} saving={saving} onOpenChange={(open) => !open && setEditingPool(null)} onSave={updatePool} />
       <ConfirmDialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && setConfirmAction(null)}
         title={confirmAction?.kind === 'auto-on' ? 'เปิดส่งสต๊อกอัตโนมัติหรือไม่?' : confirmAction?.kind === 'auto-off' ? 'ปิดส่งสต๊อกอัตโนมัติหรือไม่?' : 'ส่งงานซิงก์สต๊อกด้วยมือหรือไม่?'}
         description={confirmAction?.kind === 'auto-on' ? 'ระบบจะเริ่มเฉพาะงานใหม่หลังจากผ่าน dry-run และการซิงก์ด้วยมือสำเร็จแล้ว ไม่ส่งย้อนหลัง' : confirmAction?.kind === 'auto-off' ? 'งานที่ยังไม่เริ่มจะถูกยกเลิก แต่งานที่เริ่มเขียนแล้วอาจทำต่อจนตรวจ read-back เสร็จ เพื่อไม่ให้ยอดค้างกลางทาง' : 'ระบบจะอ่าน SML และยอด Marketplace ล่าสุดอีกครั้งก่อนเขียน แล้วอ่านกลับทุก SKU ที่เปลี่ยน'}
         confirmLabel={confirmAction?.kind === 'auto-on' ? 'เปิด Auto' : confirmAction?.kind === 'auto-off' ? 'ปิด Auto' : 'ยืนยันส่งงาน'}
         variant={confirmAction?.kind === 'auto-off' ? 'destructive' : 'default'}
         onConfirm={async () => { if (!confirmAction) return; if (confirmAction.kind === 'sync') await queueSync(confirmAction.pool); else await updateAuto(confirmAction.pool, confirmAction.kind === 'auto-on') }} />
+      <ConfirmDialog open={Boolean(archivingPool)} onOpenChange={(open) => !open && setArchivingPool(null)}
+        title="ลบกลุ่มสต๊อกนี้หรือไม่?"
+        description={archivingPool ? `${archivingPool.sml_item_code} · ${archivingPool.sml_item_name || 'สินค้า SML'} จะหายจากหน้าควบคุมสต๊อก\n\nระบบจะปิด Auto และยกเลิกงานที่ยังไม่เริ่ม แต่จะเก็บประวัติการตรวจ/ซิงก์และ audit log ไว้เสมอ หากมีงานกำลังทำอยู่ ระบบจะไม่อนุญาตให้ลบจนกว่างานนั้นเสร็จ` : ''}
+        confirmLabel="ลบกลุ่ม"
+        variant="destructive"
+        onConfirm={async () => { if (archivingPool) await archivePool(archivingPool) }} />
     </main>
   )
 }
 
-function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning, onPreview, onAuto, onSync }: { pool: Pool; canManage: boolean; canOperate: boolean; preview?: PreviewResult; previewing: boolean; actioning: boolean; onPreview: () => void; onAuto: (enabled: boolean) => void; onSync: () => void }) {
+function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning, onPreview, onAuto, onSync, onEdit, onArchive }: { pool: Pool; canManage: boolean; canOperate: boolean; preview?: PreviewResult; previewing: boolean; actioning: boolean; onPreview: () => void; onAuto: (enabled: boolean) => void; onSync: () => void; onEdit: () => void; onArchive: () => void }) {
   const enabledMembers = pool.members.filter((member) => member.enabled)
   const channels = [...new Set(enabledMembers.map((member) => member.source))]
   const bufferLabel = pool.buffer_pct_override === undefined ? 'ใช้กันชนเริ่มต้นของร้าน' : `กันสต๊อก ${pool.buffer_pct_override}%`
@@ -197,6 +244,8 @@ function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning,
           {canOperate && <Button variant="outline" size="sm" onClick={onPreview} disabled={previewing || actioning || pool.kill_switch_enabled}><RefreshCw className={cn('mr-2 h-4 w-4', previewing && 'animate-spin')} />{pool.status === 'paused' ? 'ตรวจ SML อีกครั้ง' : 'ตรวจ SML'}</Button>}
           {canOperate && !pool.dry_run_required && pool.status !== 'paused' && <Button size="sm" onClick={onSync} disabled={actioning}>ซิงก์ด้วยมือ</Button>}
           {canManage && <label className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1 text-xs"><Switch checked={pool.auto_enabled} onCheckedChange={onAuto} disabled={actioning || pool.dry_run_required || pool.kill_switch_enabled} /><span>ส่งอัตโนมัติ</span></label>}
+          {canManage && <Button variant="outline" size="sm" onClick={onEdit} disabled={actioning}><Pencil className="mr-2 h-4 w-4" />แก้ไข</Button>}
+          {canManage && <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={onArchive} disabled={actioning}><Trash2 className="mr-2 h-4 w-4" />ลบกลุ่ม</Button>}
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -343,6 +392,108 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
           <Alert><Info className="h-4 w-4" /><AlertTitle>สรุปก่อนสร้างแบบร่าง</AlertTitle><AlertDescription>{summary}<br />ขั้นต่อไปยังเป็น Dry-run เท่านั้น ระบบจะยังไม่เขียนสต๊อกไป Marketplace</AlertDescription></Alert>
         </div>}
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={submit} disabled={!canCreate}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ตรวจสอบก่อนสร้าง</Button></DialogFooter>
+      </>}
+    </DialogContent>
+  </Dialog>
+}
+
+function poolMemberKey(member: Pick<Candidate, 'source' | 'account_key' | 'external_product_id' | 'external_sku_id'>) {
+  return `${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`
+}
+
+function candidateFromPoolMember(pool: Pool, member: Member): Candidate {
+  return {
+    source: member.source,
+    account_key: member.account_key,
+    external_product_id: member.external_product_id,
+    external_sku_id: member.external_sku_id,
+    external_warehouse_id: member.external_warehouse_id,
+    marketplace_alias_id: member.marketplace_alias_id,
+    product_name: member.product_name,
+    variant_name: member.variant_name,
+    unit_factor: member.unit_factor,
+    allocation_pct: member.allocation_pct,
+    enabled: member.enabled,
+    sml_item_code: pool.sml_item_code,
+    sml_item_name: pool.sml_item_name,
+    sml_unit_code: pool.sml_unit_code,
+  }
+}
+
+function EditPoolDialog({ open, pool, candidates, saving, onOpenChange, onSave }: { open: boolean; pool: Pool | null; candidates: Candidate[]; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (pool: Pool, input: { mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => void }) {
+  const [mode, setMode] = useState<Mode>('quota')
+  const [sharedAcknowledged, setSharedAcknowledged] = useState(false)
+  const [members, setMembers] = useState<Candidate[]>([])
+  const [reviewing, setReviewing] = useState(false)
+  const initializedForOpen = useRef(false)
+  const availableMembers = useMemo(() => {
+    if (!pool) return []
+    const key = `${pool.sml_item_code}|${pool.sml_unit_code}`
+    const merged = new Map<string, Candidate>()
+    for (const member of pool.members) {
+      const candidate = candidateFromPoolMember(pool, member)
+      merged.set(poolMemberKey(candidate), candidate)
+    }
+    for (const candidate of candidates) {
+      if (`${candidate.sml_item_code}|${candidate.sml_unit_code}` !== key) continue
+      const candidateKey = poolMemberKey(candidate)
+      if (!merged.has(candidateKey)) merged.set(candidateKey, { ...candidate, enabled: false, allocation_pct: 0 })
+    }
+    return [...merged.values()]
+  }, [candidates, pool])
+
+  useEffect(() => {
+    if (!open || !pool) { initializedForOpen.current = false; return }
+    if (initializedForOpen.current) return
+    setMode(pool.allocation_mode)
+    setSharedAcknowledged(pool.shared_risk_acknowledged)
+    setMembers(availableMembers)
+    setReviewing(false)
+    initializedForOpen.current = true
+  }, [availableMembers, open, pool])
+
+  const toggleMember = (index: number, enabled: boolean) => {
+    setMembers((current) => {
+      const next = current.map((member, currentIndex) => currentIndex === index ? { ...member, enabled } : member)
+      if (mode !== 'quota') return next
+      const enabledIndexes = next.flatMap((member, currentIndex) => member.enabled ? [currentIndex] : [])
+      const share = enabledIndexes.length ? Math.floor(10000 / enabledIndexes.length) / 100 : 0
+      return next.map((member, currentIndex) => !member.enabled ? member : {
+        ...member,
+        allocation_pct: currentIndex === enabledIndexes[enabledIndexes.length - 1] ? Number((100 - share * Math.max(0, enabledIndexes.length - 1)).toFixed(2)) : share,
+      })
+    })
+  }
+  const enabledMembers = members.filter((member) => member.enabled)
+  const total = enabledMembers.reduce((sum, member) => sum + member.allocation_pct, 0)
+  const canSave = Boolean(pool) && !saving && enabledMembers.length > 0 && (mode !== 'quota' || total <= 100) && (mode !== 'shared' || sharedAcknowledged)
+  const summary = `${enabledMembers.length} SKU · ${[...new Set(enabledMembers.map((member) => sourceLabel[member.source]))].join(', ') || 'ยังไม่ได้เลือก SKU'} · ${mode === 'quota' ? `รวมโควตา ${total.toFixed(2)}%` : 'ใช้ยอดร่วม'}`
+
+  return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+    <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+      {reviewing ? <>
+        <DialogHeader>
+          <DialogTitle>ยืนยันบันทึกการแก้ไขกลุ่มสต๊อก</DialogTitle>
+          <DialogDescription>การเปลี่ยน SKU, โควตา หรือนโยบายสต๊อกจะปิด Auto และบังคับตรวจ SML ใหม่ก่อนซิงก์ครั้งถัดไป</DialogDescription>
+        </DialogHeader>
+        <Alert><Info className="h-4 w-4" /><AlertTitle>{pool ? `${pool.sml_item_code} · ${pool.sml_item_name || 'สินค้า SML'} · ${pool.sml_unit_code}` : ''}</AlertTitle><AlertDescription>{summary}<br />ยังไม่มีการเขียนสต๊อกไป Marketplace จากการบันทึกครั้งนี้</AlertDescription></Alert>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setReviewing(false)} disabled={saving}>กลับไปแก้ไข</Button>
+          <Button onClick={() => pool && onSave(pool, { mode, sharedAcknowledged, members })} disabled={!canSave}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}บันทึกและพักกลุ่ม</Button>
+        </DialogFooter>
+      </> : <>
+        <DialogHeader>
+          <DialogTitle>แก้ไขกลุ่มสต๊อก Marketplace</DialogTitle>
+          <DialogDescription>แก้ไขเฉพาะ SKU ที่จับคู่กับสินค้า SML เดียวกัน เพื่อไม่ให้ย้ายสต๊อกข้ามสินค้าโดยไม่ตั้งใจ</DialogDescription>
+        </DialogHeader>
+        {pool && <div className="space-y-4">
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm"><span className="font-mono font-medium">{pool.sml_item_code}</span><span> · {pool.sml_item_name || 'ยังไม่พบชื่อสินค้า SML'} · หน่วย {pool.sml_unit_code}</span></div>
+          <div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>
+          {mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}
+          <div className="space-y-2"><Label>SKU ในกลุ่ม</Label><p className="text-xs text-muted-foreground">เลือกหรือเอา SKU ออกจากกลุ่มได้ การเปลี่ยนรายการจะพักกลุ่มและให้ตรวจ SML ใหม่</p>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={poolMemberKey(member)}><Checkbox checked={member.enabled} onCheckedChange={(checked) => toggleMember(index, checked === true)} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} disabled={!member.enabled} onChange={(event) => setMembers((current) => current.map((value, currentIndex) => currentIndex === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div>
+          <Alert><Info className="h-4 w-4" /><AlertTitle>ผลหลังบันทึก</AlertTitle><AlertDescription>{summary}<br />Auto จะปิดและต้องกดตรวจ SML ใหม่ก่อนสั่งซิงก์ด้วยมือหรือเปิด Auto อีกครั้ง</AlertDescription></Alert>
+        </div>}
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={() => setReviewing(true)} disabled={!canSave}>ตรวจสอบก่อนบันทึก</Button></DialogFooter>
       </>}
     </DialogContent>
   </Dialog>

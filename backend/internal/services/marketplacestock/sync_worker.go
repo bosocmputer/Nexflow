@@ -98,7 +98,7 @@ func (s *PostgresStore) enqueueDueAuto(ctx context.Context) error {
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx, `SELECT id::text,config_version,updated_by::text
 		FROM marketplace_stock_pools
-		WHERE status='active' AND auto_enabled=true AND kill_switch_enabled=false AND dry_run_required=false
+		WHERE archived_at IS NULL AND status='active' AND auto_enabled=true AND kill_switch_enabled=false AND dry_run_required=false
 		  AND updated_by IS NOT NULL
 		  AND (last_schedule_at IS NULL OR last_schedule_at <= NOW() - schedule_interval_seconds * INTERVAL '1 second')
 		FOR UPDATE SKIP LOCKED`)
@@ -309,7 +309,7 @@ func (s *PostgresStore) claimSync(ctx context.Context, owner string) (*claimedSy
 	if s == nil || s.db == nil {
 		return nil, errors.New("marketplace stock store is not configured")
 	}
-	row := s.db.QueryRowContext(ctx, `WITH next AS (SELECT r.id FROM marketplace_stock_runs r JOIN marketplace_stock_pools p ON p.id=r.pool_id JOIN marketplace_stock_settings st ON st.singleton=true WHERE r.status='queued' AND r.run_type='sync' AND st.kill_switch_enabled=false AND p.kill_switch_enabled=false AND p.status IN ('ready','active') ORDER BY r.created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE marketplace_stock_runs r SET status='running',lease_owner=$1,started_at=NOW(),updated_at=NOW() FROM next WHERE r.id=next.id RETURNING r.id::text,r.pool_id::text,COALESCE(r.requested_by::text,''),r.config_version`, owner)
+	row := s.db.QueryRowContext(ctx, `WITH next AS (SELECT r.id FROM marketplace_stock_runs r JOIN marketplace_stock_pools p ON p.id=r.pool_id JOIN marketplace_stock_settings st ON st.singleton=true WHERE r.status='queued' AND r.run_type='sync' AND st.kill_switch_enabled=false AND p.archived_at IS NULL AND p.kill_switch_enabled=false AND p.status IN ('ready','active') ORDER BY r.created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE marketplace_stock_runs r SET status='running',lease_owner=$1,started_at=NOW(),updated_at=NOW() FROM next WHERE r.id=next.id RETURNING r.id::text,r.pool_id::text,COALESCE(r.requested_by::text,''),r.config_version`, owner)
 	var out claimedSync
 	err := row.Scan(&out.RunID, &out.PoolID, &out.RequestedBy, &out.ConfigVersion)
 	if errors.Is(err, sql.ErrNoRows) {
