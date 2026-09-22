@@ -30,17 +30,19 @@ func (s *PostgresStore) Overview(ctx context.Context) (*Overview, error) {
 		return nil, fmt.Errorf("load marketplace stock settings: %w", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id::text,p.sml_item_code,p.sml_unit_code,p.allocation_mode,p.buffer_pct_override::float8,
 		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
-		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at
-		FROM marketplace_stock_pools ORDER BY updated_at DESC,id`)
+		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at,COALESCE(c.item_name,'')
+		FROM marketplace_stock_pools p
+		LEFT JOIN sml_catalog c ON c.item_code=p.sml_item_code AND c.is_active=true
+		ORDER BY p.updated_at DESC,p.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list marketplace stock pools: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		pool, err := scanPool(rows)
-		if err != nil {
+		pool := Pool{Members: []Member{}}
+		if err := rows.Scan(append(poolScanner(&pool), &pool.SMLItemName)...); err != nil {
 			return nil, err
 		}
 		overview.Pools = append(overview.Pools, pool)
@@ -66,10 +68,11 @@ func (s *PostgresStore) Candidates(ctx context.Context, source string) ([]Candid
 		return nil, errors.New("marketplace stock store is not configured")
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id::text,a.source,a.account_key,a.external_item_id,a.external_variant_id,
-		COALESCE(NULLIF(a.source_product_name,''),a.raw_name),a.source_variant_name,a.item_code,a.unit_code,
+		COALESCE(NULLIF(a.source_product_name,''),a.raw_name),a.source_variant_name,a.item_code,COALESCE(c.item_name,''),a.unit_code,
 		a.quantity_multiplier::float8
 		FROM marketplace_item_aliases a
 		LEFT JOIN marketplace_stock_pool_members m ON m.marketplace_alias_id=a.id AND m.enabled=true
+		LEFT JOIN sml_catalog c ON c.item_code=a.item_code AND c.is_active=true
 		WHERE a.is_active=true AND a.source IN ('shopee','tiktok')
 		  AND ($1='' OR a.source=$1)
 		  AND a.conversion_status='ready' AND a.sales_enabled=true
@@ -87,7 +90,7 @@ func (s *PostgresStore) Candidates(ctx context.Context, source string) ([]Candid
 		candidate := Candidate{}
 		if err := rows.Scan(&candidate.AliasID, &candidate.Source, &candidate.AccountKey, &candidate.ExternalProductID,
 			&candidate.ExternalSKUID, &candidate.ProductName, &candidate.VariantName, &candidate.SMLItemCode,
-			&candidate.SMLUnitCode, &candidate.UnitFactor); err != nil {
+			&candidate.SMLItemName, &candidate.SMLUnitCode, &candidate.UnitFactor); err != nil {
 			return nil, err
 		}
 		candidate.Enabled = true

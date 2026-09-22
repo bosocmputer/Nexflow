@@ -33,6 +33,7 @@ type Member struct {
 type Pool struct {
 	ID                      string         `json:"id"`
 	SMLItemCode             string         `json:"sml_item_code"`
+	SMLItemName             string         `json:"sml_item_name,omitempty"`
 	SMLUnitCode             string         `json:"sml_unit_code"`
 	AllocationMode          AllocationMode `json:"allocation_mode"`
 	BufferPctOverride       *float64       `json:"buffer_pct_override,omitempty"`
@@ -65,6 +66,7 @@ type Overview struct {
 type Candidate struct {
 	MemberInput
 	SMLItemCode string `json:"sml_item_code"`
+	SMLItemName string `json:"sml_item_name,omitempty"`
 	SMLUnitCode string `json:"sml_unit_code"`
 }
 
