@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
-import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_MARKETPLACE_OPERATIONS, ENABLE_MARKETPLACE_STOCK, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_STOCK } from './lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_MARKETPLACE_STOCK, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_STOCK } from './lib/featureFlags'
 import { canViewMenu, firstVisibleNavPath } from './lib/navigation'
 
 const Login = lazy(() => import('./pages/Login'))
@@ -18,7 +18,6 @@ const LazadaImport = lazy(() => import('./pages/LazadaImport'))
 const TikTokImport = lazy(() => import('./pages/TikTokImport'))
 const TikTokShopConnections = lazy(() => import('./pages/TikTokShopConnections'))
 const TikTokShopOperations = lazy(() => import('./pages/TikTokShopOperations'))
-const MarketplaceOperations = lazy(() => import('./pages/MarketplaceOperations'))
 const OldDataSettings = lazy(() => import('./pages/OldDataSettings'))
 const Logs = lazy(() => import('./pages/Logs'))
 const BulkSendJobs = lazy(() => import('./pages/BulkSendJobs'))
@@ -64,22 +63,19 @@ function IndexRedirect() {
   return <Navigate to={firstVisibleNavPath(user)} replace />
 }
 
-function LegacyMarketplaceOperationsRoute({ channel, children }: { channel: 'shopee' | 'tiktok'; children: React.ReactNode }) {
+function MarketplaceOperationsRedirect() {
   const location = useLocation()
   const query = new URLSearchParams(location.search)
-
-  // The unified page deliberately hands a row back to the mature, source-specific
-  // dialog when the operator needs a write action.  Those internal hand-offs must
-  // stay on the legacy screen; public/old URLs otherwise redirect safely.
-  if (!ENABLE_MARKETPLACE_OPERATIONS || query.get('legacy_action') === '1') return <>{children}</>
-
+  const channel = query.get('channel') === 'tiktok' ? 'tiktok' : 'shopee'
   const next = new URLSearchParams()
-  next.set('channel', channel)
-  if (query.get('status_group') === 'cancelled') next.set('view', 'cancelled')
+
+  if (query.get('view') === 'cancelled') next.set('status_group', 'cancelled')
   if (query.get('shop_id')) next.set('shop_id', query.get('shop_id')!)
-  const orderID = channel === 'shopee' ? query.get('order') : query.get('order_id')
-  if (orderID) next.set('q', orderID)
-  return <Navigate to={`/marketplace-operations?${next.toString()}`} replace />
+  const orderID = query.get('q')
+  if (orderID && /^\d+$/.test(orderID)) next.set(channel === 'tiktok' ? 'order_id' : 'order', orderID)
+
+  const suffix = next.toString()
+  return <Navigate to={`/${channel === 'tiktok' ? 'tiktok-shop-operations' : 'shopee-operations'}${suffix ? `?${suffix}` : ''}`} replace />
 }
 
 function NoMenuAccess() {
@@ -130,9 +126,9 @@ export default function App() {
           <Route path="messages" element={<Navigate to="/dashboard" replace />} />
           <Route path="import" element={<Navigate to="/import/shopee" replace />} />
           <Route path="import/shopee" element={ENABLE_SHOPEE_EXCEL ? <RequireMenu menuKey="import_shopee"><ShopeeImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />
-          <Route path="marketplace-operations" element={ENABLE_MARKETPLACE_OPERATIONS ? <RequireMenu menuKey="marketplace_operations"><MarketplaceOperations /></RequireMenu> : <Navigate to="/dashboard" replace />} />
-          <Route path="shopee-operations" element={ENABLE_SHOPEE_REALTIME_OPS ? <LegacyMarketplaceOperationsRoute channel="shopee"><RequireMenu menuKey="shopee_operations"><ShopeeOperations /></RequireMenu></LegacyMarketplaceOperationsRoute> : <Navigate to="/dashboard" replace />} />
-          <Route path="tiktok-shop-operations" element={ENABLE_TIKTOK_SHOP_API ? <LegacyMarketplaceOperationsRoute channel="tiktok"><RequireMenu menuKey="tiktok_shop_operations"><TikTokShopOperations /></RequireMenu></LegacyMarketplaceOperationsRoute> : <Navigate to="/dashboard" replace />} />
+          <Route path="marketplace-operations" element={<MarketplaceOperationsRedirect />} />
+          <Route path="shopee-operations" element={ENABLE_SHOPEE_REALTIME_OPS ? <RequireMenu menuKey="shopee_operations"><ShopeeOperations /></RequireMenu> : <Navigate to="/dashboard" replace />} />
+          <Route path="tiktok-shop-operations" element={ENABLE_TIKTOK_SHOP_API ? <RequireMenu menuKey="tiktok_shop_operations"><TikTokShopOperations /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="shopee-settlements" element={ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="shopee_settlements"><ShopeeSettlement /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="import/lazada" element={ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="import_lazada"><LazadaImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="import/tiktok" element={ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="import_tiktok"><TikTokImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />

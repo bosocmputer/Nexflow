@@ -66,16 +66,6 @@ test('activates only one TikTok sidebar entry for the cancelled filter', () => {
   assert.equal(isNavItemActive(cancellations, '/tiktok-shop-operations', '?status_group=cancelled'), true)
 })
 
-test('keeps Marketplace navigation active during an internal source-specific action', () => {
-  const items = NAV_GROUPS.flatMap((group) => group.items)
-  const marketplace = items.find((item) => item.label === 'คำสั่งซื้อ Marketplace')
-
-  assert.ok(marketplace)
-  assert.equal(isNavItemActive(marketplace, '/tiktok-shop-operations', '?legacy_action=1&shop_id=7494619203789490654&order_id=583201434243138991'), true)
-  assert.equal(isNavItemActive(marketplace, '/shopee-operations', '?legacy_action=1&shop_id=264993963&order=260826C78TFM12'), true)
-  assert.equal(isNavItemActive(marketplace, '/tiktok-shop-operations', '?shop_id=7494619203789490654'), false)
-})
-
 test('keeps TikTok Shop stock beside Shopee stock with its own permission and feature gate', () => {
   const group = NAV_GROUPS.find((item) => item.label === 'สินค้าและสต๊อก')
   const stock = group?.items.find((item) => item.label === 'ซิงก์สต๊อก TikTok Shop')
