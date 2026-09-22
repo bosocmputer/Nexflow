@@ -392,6 +392,19 @@ export default function TikTokShopOperations() {
     }
   }, [shopID])
 
+  useEffect(() => {
+    if (params.get('diagnostics') !== '1') return
+    if (shopID === ALL) {
+      toast.error('กรุณาเลือกร้าน TikTok Shop หนึ่งร้านก่อนตรวจระบบ')
+      setQuery({ diagnostics: null })
+      return
+    }
+    if (diagnosticsOpen) return
+    setDiagnosticsOpen(true)
+    void loadDiagnostics()
+    setQuery({ diagnostics: null })
+  }, [diagnosticsOpen, loadDiagnostics, params, setQuery, shopID])
+
   const updateAutoSML = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
     setAutoSMLSaving(true)
     try {

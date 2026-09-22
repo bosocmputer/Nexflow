@@ -1405,6 +1405,26 @@ export default function ShopeeOperations() {
     }
   }
 
+  useEffect(() => {
+    if (params.get('diagnostics') !== '1') return
+    if (shopID === ALL) {
+      toast.error('กรุณาเลือกร้าน Shopee หนึ่งร้านก่อนตรวจระบบ')
+      const next = new URLSearchParams(params)
+      next.delete('diagnostics')
+      setParams(next, { replace: true })
+      return
+    }
+    if (diagnosticsOpen) return
+    setDiagnosticsOpen(true)
+    void loadDiagnostics()
+    const next = new URLSearchParams(params)
+    next.delete('diagnostics')
+    setParams(next, { replace: true })
+    // `diagnostics=1` is written only by the unified queue after the operator
+    // explicitly chooses one source and one shop; never run it on ordinary loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diagnosticsOpen, params, setParams, shopID])
+
   const pageStart = total === 0 ? 0 : (page - 1) * perPage + 1
   const pageEnd = total === 0 ? 0 : Math.min(page * perPage, total)
 
