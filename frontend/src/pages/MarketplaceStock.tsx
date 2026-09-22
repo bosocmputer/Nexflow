@@ -248,11 +248,14 @@ function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning,
       </CardHeader>
       <CardContent className="p-0">
         {enabledMembers.length > 0 && <div className="divide-y border-t">
-          {enabledMembers.map((member) => <div key={member.id} className="flex min-w-0 items-center gap-2 px-3 py-2 text-sm">
+          {enabledMembers.map((member) => <div key={member.id} className="grid min-w-0 gap-x-6 gap-y-1 px-3 py-2 text-sm md:grid-cols-[minmax(0,1fr)_9rem_11rem] md:items-center">
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2"><SourceBadge source={member.source} /><p className="truncate font-medium" title={member.product_name || 'ยังไม่มีชื่อสินค้า'}>{member.product_name || 'ยังไม่มีชื่อสินค้า'}</p></div>
-              <p className={cn('mt-0.5 truncate text-xs', member.last_error ? 'text-destructive' : 'text-muted-foreground')} title={member.last_error || member.variant_name || member.external_sku_id}>{member.last_error ? `ต้องตรวจ: ${member.last_error}` : [member.variant_name ? `ตัวเลือก: ${member.variant_name}` : `SKU: ${member.external_sku_id}`, pool.allocation_mode === 'quota' ? `โควตา ${formatNumber(member.allocation_pct)}%` : 'ใช้ยอดร่วม', `ยอดล่าสุด ${formatNumber(member.last_actual_qty)}`].join(' · ')}</p>
+              <p className={cn('mt-0.5 truncate text-xs', member.last_error ? 'text-destructive' : 'text-muted-foreground')} title={member.last_error || member.variant_name || member.external_sku_id}>{member.last_error ? `ต้องตรวจ: ${member.last_error}` : member.variant_name ? `ตัวเลือก: ${member.variant_name}` : `SKU: ${member.external_sku_id}`}</p>
+              {!member.last_error && <p className="mt-1 text-xs text-muted-foreground md:hidden">{pool.allocation_mode === 'quota' ? `โควตา ${formatNumber(member.allocation_pct)}%` : 'ใช้ยอดร่วม'} · ยอดล่าสุด {formatNumber(member.last_actual_qty)}</p>}
             </div>
+            {!member.last_error && <div className="hidden text-right md:block"><p className="text-xs text-muted-foreground">การจัดสรร</p><p className="mt-0.5 font-medium">{pool.allocation_mode === 'quota' ? `โควตา ${formatNumber(member.allocation_pct)}%` : 'ใช้ยอดร่วม'}</p></div>}
+            {!member.last_error && <div className="hidden text-right md:block"><p className="text-xs text-muted-foreground">สต๊อกล่าสุดบน {sourceLabel[member.source]}</p><p className="mt-0.5 font-semibold tabular-nums">{formatNumber(member.last_actual_qty)} <span className="font-normal text-muted-foreground">{pool.sml_unit_code}</span></p></div>}
           </div>)}
         </div>}
       </CardContent>
