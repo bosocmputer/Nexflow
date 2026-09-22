@@ -314,7 +314,7 @@ func main() {
 	billH.RecoverInterruptedBulkSendJobs()
 	smlprofile.NewReconciliationWorker(billRepo, invoiceClient, saleOrderClient, cfg, auditLogRepo, logger).Start(appCtx)
 	mappingH := handlers.NewMappingHandler(mappingRepo, mapperSvc, catalogRepo, auditLogRepo, logger)
-	dashH := handlers.NewDashboardHandler(billRepo, lineOARepo, logger)
+	dashH := handlers.NewDashboardHandler(billRepo, aliasRepo, lineOARepo, logger)
 	dashH.SetSMLReadiness(smlReadiness)
 	dashH.SetNextStepMarketplace(nextStepMarketplaceClient, appSettingsRepo)
 	dashH.SetConfigStatus(
@@ -587,6 +587,7 @@ func main() {
 
 		// Dashboard
 		api.GET("/dashboard/stats", dashH.Stats)
+		api.GET("/dashboard/work-summary", dashH.WorkSummary)
 		api.GET("/dashboard/insights", dashH.Insights)
 		api.POST("/dashboard/insights/generate", middleware.RequireRole("admin"), dashH.GenerateInsight)
 		api.GET("/nextstep-marketplace/orders", middleware.RequireRole("admin", "staff"), dashH.NextStepMarketplaceOrders)

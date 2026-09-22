@@ -565,6 +565,25 @@ export interface DashboardStats {
   nextstep_marketplace?: NextStepMarketplaceState
 }
 
+export interface DashboardWorkSummary {
+  documents: {
+    shopee: number
+    tiktok: number
+  }
+  sml: {
+    needs_review: number
+    ready_to_send: number
+    failed: number
+    active_bulk_jobs: number
+  }
+  stock: {
+    needs_dry_run: number
+    paused: number
+    auto_enabled: number
+  }
+  mapping_pending: number
+}
+
 export type PlatformKey = 'shopee' | 'lazada' | 'tiktok'
 
 export interface PlatformSalesStat {

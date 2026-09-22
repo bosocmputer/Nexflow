@@ -13,12 +13,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"nexflow/internal/models"
 	"nexflow/internal/repository"
 	"nexflow/internal/services/sml"
 )
 
 type DashboardHandler struct {
 	billRepo            *repository.BillRepo
+	aliasRepo           *repository.MarketplaceAliasRepo
 	lineOARepo          *repository.LineOAAccountRepo
 	lineConfigured      bool
 	smlConfigured       bool
@@ -29,14 +31,54 @@ type DashboardHandler struct {
 
 func NewDashboardHandler(
 	billRepo *repository.BillRepo,
+	aliasRepo *repository.MarketplaceAliasRepo,
 	lineOARepo *repository.LineOAAccountRepo,
 	log *zap.Logger,
 ) *DashboardHandler {
 	return &DashboardHandler{
 		billRepo:   billRepo,
+		aliasRepo:  aliasRepo,
 		lineOARepo: lineOARepo,
 		log:        log,
 	}
+}
+
+// GET /api/dashboard/work-summary
+//
+// Returns compact local work queues for the home dashboard. Marketplace
+// connectivity, diagnostics, previews, and external API calls intentionally
+// belong on their Operations pages and are never triggered here.
+func (h *DashboardHandler) WorkSummary(c *gin.Context) {
+	summary, err := h.billRepo.DashboardWorkSummary(c.Request.Context())
+	if err != nil {
+		h.log.Error("DashboardWorkSummary", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load dashboard work summary"})
+		return
+	}
+
+	mappingPending := 0
+	if h.aliasRepo != nil {
+		result, err := h.aliasRepo.ReviewGroupsPaged(models.MarketplaceAliasReviewFilter{
+			BillType: "sale",
+			Page:     1,
+			PerPage:  1,
+		})
+		if err != nil {
+			// Mapping visibility is helpful but must not make the dashboard
+			// unavailable for an older tenant that has not received every
+			// optional Marketplace schema yet.
+			h.log.Warn("DashboardWorkSummary mapping count unavailable", zap.Error(err))
+		} else {
+			mappingPending = result.Total
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"documents":       summary.Documents,
+		"sml":             summary.SML,
+		"stock":           summary.Stock,
+		"mapping_pending": mappingPending,
+	})
 }
 
 // SetConfigStatus sets config flags for the settings status endpoint

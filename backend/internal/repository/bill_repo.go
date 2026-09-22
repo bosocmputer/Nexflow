@@ -40,6 +40,33 @@ type BillQueueCounts struct {
 	Total       int `json:"total"`
 }
 
+// DashboardWorkSummary is the small, action-oriented work queue shown on the
+// home dashboard. It deliberately contains local Nexflow state only: loading
+// the dashboard must never trigger Marketplace API calls or stock writes.
+type DashboardWorkSummary struct {
+	Documents DashboardDocumentWork `json:"documents"`
+	SML       DashboardSMLWork      `json:"sml"`
+	Stock     DashboardStockWork    `json:"stock"`
+}
+
+type DashboardDocumentWork struct {
+	Shopee int `json:"shopee"`
+	TikTok int `json:"tiktok"`
+}
+
+type DashboardSMLWork struct {
+	NeedsReview    int `json:"needs_review"`
+	ReadyToSend    int `json:"ready_to_send"`
+	Failed         int `json:"failed"`
+	ActiveBulkJobs int `json:"active_bulk_jobs"`
+}
+
+type DashboardStockWork struct {
+	NeedsDryRun int `json:"needs_dry_run"`
+	Paused      int `json:"paused"`
+	AutoEnabled int `json:"auto_enabled"`
+}
+
 type platformSalesSummary struct {
 	Platform            string   `json:"platform"`
 	Label               string   `json:"label"`
@@ -1292,6 +1319,88 @@ func (r *BillRepo) DashboardStatsForDateRange(fromDate, toDate string) (map[stri
 		return nil, err
 	}
 	return r.dashboardStats(window)
+}
+
+// DashboardWorkSummary reads bounded aggregate counts used to direct an
+// operator to the next action. The optional TikTok and Marketplace Stock
+// schemas were introduced after the original tenant baseline, so an older
+// tenant safely receives zero for those sections rather than a failed home
+// page.
+func (r *BillRepo) DashboardWorkSummary(ctx context.Context) (DashboardWorkSummary, error) {
+	var result DashboardWorkSummary
+
+	if err := r.db.QueryRowContext(ctx, `SELECT
+		COUNT(*) FILTER (
+			WHERE s.bill_id IS NULL
+			  AND s.erp_status IN ('pending','pending_erp')
+			  AND s.order_status NOT IN ('CANCELLED','IN_CANCEL')
+		)::int
+		FROM shopee_order_snapshots s`).Scan(&result.Documents.Shopee); err != nil {
+		return DashboardWorkSummary{}, fmt.Errorf("count Shopee document work: %w", err)
+	}
+
+	if exists, err := r.dashboardRelationExists(ctx, "tiktok_shop_order_snapshots"); err != nil {
+		return DashboardWorkSummary{}, err
+	} else if exists {
+		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*)::int
+			FROM tiktok_shop_order_snapshots s
+			JOIN tiktok_shop_connections c ON c.shop_id=s.shop_id AND c.disabled_at IS NULL
+			WHERE s.order_status IN ('ON_HOLD','AWAITING_SHIPMENT','AWAITING_COLLECTION')
+			  AND NOT EXISTS (
+				SELECT 1 FROM bills b
+				WHERE b.source='tiktok'
+				  AND b.source_account_key='shop:'||s.shop_id
+				  AND b.sml_order_id=s.order_id
+				  AND b.archived_at IS NULL
+			  )`).Scan(&result.Documents.TikTok); err != nil {
+			return DashboardWorkSummary{}, fmt.Errorf("count TikTok document work: %w", err)
+		}
+	}
+
+	if err := r.db.QueryRowContext(ctx, `SELECT
+		COUNT(*) FILTER (WHERE status='needs_review')::int,
+		COUNT(*) FILTER (WHERE status='pending')::int,
+		COUNT(*) FILTER (WHERE status='failed')::int
+		FROM bills
+		WHERE archived_at IS NULL AND bill_type='sale'`).Scan(
+		&result.SML.NeedsReview,
+		&result.SML.ReadyToSend,
+		&result.SML.Failed,
+	); err != nil {
+		return DashboardWorkSummary{}, fmt.Errorf("count SML document work: %w", err)
+	}
+
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*)::int
+		FROM sml_bulk_jobs WHERE status IN ('queued','running')`).Scan(&result.SML.ActiveBulkJobs); err != nil {
+		return DashboardWorkSummary{}, fmt.Errorf("count active SML bulk jobs: %w", err)
+	}
+
+	if exists, err := r.dashboardRelationExists(ctx, "marketplace_stock_pools"); err != nil {
+		return DashboardWorkSummary{}, err
+	} else if exists {
+		if err := r.db.QueryRowContext(ctx, `SELECT
+			COUNT(*) FILTER (WHERE dry_run_required=true AND status <> 'paused')::int,
+			COUNT(*) FILTER (WHERE status='paused' OR kill_switch_enabled=true)::int,
+			COUNT(*) FILTER (WHERE auto_enabled=true AND status='active' AND kill_switch_enabled=false)::int
+			FROM marketplace_stock_pools
+			WHERE archived_at IS NULL`).Scan(
+			&result.Stock.NeedsDryRun,
+			&result.Stock.Paused,
+			&result.Stock.AutoEnabled,
+		); err != nil {
+			return DashboardWorkSummary{}, fmt.Errorf("count Marketplace stock work: %w", err)
+		}
+	}
+
+	return result, nil
+}
+
+func (r *BillRepo) dashboardRelationExists(ctx context.Context, relation string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, "public."+relation).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check dashboard relation %s: %w", relation, err)
+	}
+	return exists, nil
 }
 
 func (r *BillRepo) dashboardStats(window platformSalesWindow) (map[string]interface{}, error) {
