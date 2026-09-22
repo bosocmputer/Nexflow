@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import client from '@/api/client'
+import { DateRangePicker } from '@/components/common/DateRangePicker'
 import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
 import { MarketplaceOperationsHelp } from '@/components/marketplace/MarketplaceOperationsHelp'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -166,6 +167,10 @@ export default function MarketplaceOperations() {
     }, { replace: true })
   }, [setParams])
 
+  const updateDateRange = useCallback((range: { from: string; to: string }) => {
+    updateQuery({ from: range.from, to: range.to, cursor: null })
+  }, [updateQuery])
+
   const load = useCallback(async (cursor = '', append = false) => {
     const request = ++sequence.current
     activeRequest.current?.abort()
@@ -300,8 +305,17 @@ export default function MarketplaceOperations() {
             <SelectTrigger className="h-9 w-[170px]"><SelectValue /></SelectTrigger>
             <SelectContent>{statusOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
           </Select>
-          <Input aria-label="ตั้งแต่วันที่" className="h-9 w-[142px]" type="date" value={from} onChange={(event) => updateQuery({ from: event.target.value, cursor: null })} />
-          <Input aria-label="ถึงวันที่" className="h-9 w-[142px]" type="date" value={to} min={from || undefined} onChange={(event) => updateQuery({ to: event.target.value, cursor: null })} />
+          <DateRangePicker
+            from={from}
+            to={to}
+            onFromChange={(value) => updateDateRange({ from: value, to })}
+            onToChange={(value) => updateDateRange({ from, to: value })}
+            onRangeChange={updateDateRange}
+            className="h-9 w-full sm:w-[250px]"
+            title="ช่วงเวลาที่อัปเดตคำสั่งซื้อ"
+            description="กรองตามเวลาที่ Marketplace แจ้งสถานะล่าสุดให้ Nexflow"
+            clearLabel="ล้างช่วงเวลา"
+          />
         </div>
 
         {loading ? <MarketplaceRowsSkeleton /> : rows.length === 0 ? <EmptyMarketplaceQueue view={view} channel={channel} /> : <MarketplaceRows rows={rows} />}
