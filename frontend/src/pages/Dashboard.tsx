@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw, Store } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, Radio, ReceiptText, RefreshCw, Store } from 'lucide-react'
 import {
   CartesianGrid,
   Line,
@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
-import { ENABLE_SHOPEE_REALTIME_OPS } from '@/lib/featureFlags'
+import { ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_SHOP_API } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 import type { DashboardStats, NextStepMarketplaceState, PlatformKey, PlatformSalesStat } from '@/types'
 
@@ -69,6 +69,27 @@ type SalesTrendPlatformSeries = {
   previousKey: SalesTrendSeriesKey
 }
 
+type ShopeeDashboardReadiness = {
+  enabled: boolean
+  api: { connected: boolean }
+  connections: Array<{ shop_id: number; label: string }>
+  push: { configured: boolean; last_event_at?: string }
+}
+
+type TikTokDashboardSummary = {
+  open_api_enabled: boolean
+  webhook_enabled: boolean
+  order_sync_worker_enabled: boolean
+  shops: Array<{
+    shop_id: string
+    shop_name: string
+    enabled: boolean
+    interval_seconds: number
+    last_success_at?: string
+    last_error_code?: string
+  }>
+}
+
 const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
   shopee: {
     key: 'shopee',
@@ -92,7 +113,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
     icon: '/tiktok2.png',
     color: 'hsl(var(--foreground))',
     softClass: 'bg-muted text-foreground border-border',
-    to: '/import/tiktok',
+    to: ENABLE_TIKTOK_SHOP_API ? '/tiktok-shop-operations' : '/import/tiktok',
   },
 }
 
@@ -119,6 +140,8 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [statsError, setStatsError] = useState(false)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
+  const [shopeeReadiness, setShopeeReadiness] = useState<ShopeeDashboardReadiness | null>(null)
+  const [tiktokSummary, setTikTokSummary] = useState<TikTokDashboardSummary | null>(null)
   const [dateRange, setDateRange] = useState<DashboardDateRange>(() => ({
     from: searchParams.get('from_date') || initialDateRange.from,
     to: searchParams.get('to_date') || initialDateRange.to,
@@ -200,6 +223,23 @@ export default function Dashboard() {
       .catch(() => null)
   }, [])
 
+  useEffect(() => {
+    let active = true
+    const requests: Promise<void>[] = []
+    if (ENABLE_SHOPEE_REALTIME_OPS) {
+      requests.push(client.get<ShopeeDashboardReadiness>('/api/shopee-operations/readiness')
+        .then((response) => { if (active) setShopeeReadiness(response.data) })
+        .catch(() => { if (active) setShopeeReadiness(null) }))
+    }
+    if (ENABLE_TIKTOK_SHOP_API) {
+      requests.push(client.get<TikTokDashboardSummary>('/api/tiktok-shop-api/operations-summary')
+        .then((response) => { if (active) setTikTokSummary(response.data) })
+        .catch(() => { if (active) setTikTokSummary(null) }))
+    }
+    void Promise.all(requests)
+    return () => { active = false }
+  }, [])
+
   const smlSetupIssue = setupStatus?.steps?.find((step) => step.key === 'instance' && !step.ready)
 
   return (
@@ -221,6 +261,10 @@ export default function Dashboard() {
         </Card>
       )}
 
+      {(ENABLE_SHOPEE_REALTIME_OPS || ENABLE_TIKTOK_SHOP_API) && (
+        <MarketplaceAPIHealth shopee={shopeeReadiness} tiktok={tiktokSummary} />
+      )}
+
       <PlatformSalesOverview
         stats={stats}
         loading={loading}
@@ -233,6 +277,95 @@ export default function Dashboard() {
       />
       <SalesTrendCard stats={stats} loading={loading} error={statsError} />
     </div>
+  )
+}
+
+function MarketplaceAPIHealth({
+  shopee,
+  tiktok,
+}: {
+  shopee: ShopeeDashboardReadiness | null
+  tiktok: TikTokDashboardSummary | null
+}) {
+  const tiktokEnabledShops = tiktok?.shops.filter((shop) => shop.enabled) ?? []
+  const tiktokSuccesses = tiktokEnabledShops
+    .map((shop) => shop.last_success_at)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+  const tiktokLastSuccess = tiktokSuccesses[tiktokSuccesses.length - 1]
+  const tiktokHasError = tiktokEnabledShops.some((shop) => Boolean(shop.last_error_code))
+
+  return (
+    <section aria-label="สุขภาพการเชื่อมต่อ Marketplace API">
+      <Card className="border-border/70 shadow-sm">
+        <CardContent className="p-4">
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Radio className="h-4 w-4 text-primary" />
+                <h2 className="text-sm font-semibold">การเชื่อมต่อ Marketplace API</h2>
+              </div>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+                Webhook คือช่องทางที่ Marketplace แจ้งการเปลี่ยนแปลง แล้ว Nexflow ตรวจข้อมูลจริงอีกครั้ง; ซิงก์สำรองจะตรวจซ้ำตามรอบเพื่อเก็บรายการที่อาจพลาด สถานะนี้ไม่รวมยอดขายและไม่เรียก API ภายนอก
+              </p>
+            </div>
+            <span className="text-xs text-muted-foreground">ดูรายละเอียดและตรวจระบบได้จากหน้าคำสั่งซื้อ</span>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {ENABLE_SHOPEE_REALTIME_OPS && (
+              <MarketplaceHealthCard
+                label="Shopee"
+                icon="/shopee2.svg"
+                ready={Boolean(shopee?.enabled && shopee.api.connected && shopee.connections.length > 0)}
+                lineOne={shopee?.push.configured ? 'Webhook พร้อมใช้งาน' : 'Webhook ยังไม่พร้อม'}
+                lineTwo={shopee?.push.last_event_at ? `Push ล่าสุด ${formatUpdatedAt(shopee.push.last_event_at)}` : `${shopee?.connections.length ?? 0} ร้านที่เชื่อมต่อ`}
+                to="/shopee-operations"
+              />
+            )}
+            {ENABLE_TIKTOK_SHOP_API && (
+              <MarketplaceHealthCard
+                label="TikTok Shop"
+                icon="/tiktok2.png"
+                ready={Boolean(tiktok?.open_api_enabled && tiktok?.order_sync_worker_enabled && tiktokEnabledShops.length > 0 && !tiktokHasError)}
+                lineOne={tiktok?.webhook_enabled ? 'Webhook พร้อมใช้งาน' : 'Webhook ยังไม่เปิดใช้'}
+                lineTwo={tiktokLastSuccess ? `ซิงก์ล่าสุด ${formatUpdatedAt(tiktokLastSuccess)}` : `${tiktokEnabledShops.length} ร้านที่เปิดซิงก์สำรอง`}
+                to="/tiktok-shop-operations"
+              />
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
+function MarketplaceHealthCard({
+  label,
+  icon,
+  ready,
+  lineOne,
+  lineTwo,
+  to,
+}: {
+  label: string
+  icon: string
+  ready: boolean
+  lineOne: string
+  lineTwo: string
+  to: string
+}) {
+  return (
+    <Link to={to} className="group flex items-center justify-between gap-3 rounded-lg border border-border/80 p-3 transition-colors hover:border-primary/50 hover:bg-muted/30">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-background"><img src={icon} alt="" className="h-6 w-6 object-contain" /></span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{label}</p>
+          <p className="truncate text-xs text-muted-foreground">{lineOne}</p>
+          <p className="truncate text-xs text-muted-foreground">{lineTwo}</p>
+        </div>
+      </div>
+      <Badge variant={ready ? 'secondary' : 'outline'} className={ready ? 'shrink-0 bg-success/15 text-success hover:bg-success/15' : 'shrink-0'}>{ready ? 'พร้อม' : 'ตรวจสอบ'}</Badge>
+    </Link>
   )
 }
 

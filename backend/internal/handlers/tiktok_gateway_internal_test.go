@@ -74,6 +74,34 @@ func TestTikTokGatewayInternalHandlerIsHiddenWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestTikTokGatewayInternalHandlerRejectsCancellationWhileFeatureGateIsOff(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ingester := &tikTokWebhookIngesterFake{inserted: true}
+	handler := NewTikTokGatewayInternalHandler(database, &config.Config{
+		TikTokShopWebhookEnabled: true, TikTokShopOpenAPIEnabled: true,
+		TikTokShopGatewayTenant: "aoy", TikTokShopGatewayInternalSecret: "secret",
+	}, ingester, nil)
+	handler.verify = gatewayauth.Verifier{ResolveSecret: func(context.Context, string) (string, error) { return "secret", nil }, Now: func() time.Time { return time.Unix(1, 0) }}
+	router := gin.New()
+	handler.Register(router)
+	body := `{"gateway_event_id":"11111111-1111-4111-8111-111111111111","tts_notification_id":"1","notification_type":11,"shop_id":"2","order_id":"3","cancellation_status":"CANCELLATION_REQUEST_SUCCESS","cancellation_id":"4","cancellation_role":"BUYER","cancellation_created_at":"2026-09-12T00:00:00Z","timestamp":"2026-09-12T00:00:00Z","order_update_at":"2026-09-12T00:00:00Z"}`
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayWebhookDeliveryPath, strings.NewReader(body))
+	request.Header.Set(gatewayauth.HeaderTenant, "aoy")
+	request.Header.Set(gatewayauth.HeaderTimestamp, "1")
+	request.Header.Set(gatewayauth.HeaderNonce, "nonce")
+	request.Header.Set(gatewayauth.HeaderSignature, gatewayauth.Sign("secret", request.Method, request.URL.RequestURI(), "aoy", "1", "nonce", []byte(body)))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "cancellation_webhook_disabled") || ingester.calls != 0 {
+		t.Fatalf("status=%d body=%s calls=%d", response.Code, response.Body.String(), ingester.calls)
+	}
+}
+
 func TestTikTokGatewayInternalHandlerRejectsReplayedNonce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	database, mock, err := sqlmock.New()

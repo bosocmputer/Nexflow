@@ -58,6 +58,7 @@ type ProductGatewayService interface {
 
 type WebhookGatewayConfigService interface {
 	ConfigureOrderStatus(context.Context, string, string, string) (*WebhookConfigResult, error)
+	ConfigureCancellationStatus(context.Context, string, string, string) (*WebhookConfigResult, error)
 }
 
 type HandlerOption func(*Handler)
@@ -172,6 +173,7 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(tiktokshop.GatewayShipmentRecipientPath, h.GetShipmentRecipient)
 	router.POST(tiktokshop.GatewayOrderPriceDetailPath, h.GetOrderPriceDetail)
 	router.PUT(tiktokshop.GatewayWebhookConfigurePath, h.ConfigureOrderStatusWebhook)
+	router.PUT(tiktokshop.GatewayCancellationWebhookConfigurePath, h.ConfigureCancellationStatusWebhook)
 	router.POST(tiktokshop.GatewayProductSearchPath, h.SearchProducts)
 	router.POST(tiktokshop.GatewayProductDetailPath, h.GetProduct)
 	router.POST(tiktokshop.GatewayInventorySearchPath, h.SearchInventory)
@@ -376,6 +378,14 @@ func (h *Handler) GetShipmentRecipient(c *gin.Context) {
 }
 
 func (h *Handler) ConfigureOrderStatusWebhook(c *gin.Context) {
+	h.configureWebhook(c, tiktokshop.EventTypeOrderStatusChange)
+}
+
+func (h *Handler) ConfigureCancellationStatusWebhook(c *gin.Context) {
+	h.configureWebhook(c, tiktokshop.EventTypeCancellationStatusChange)
+}
+
+func (h *Handler) configureWebhook(c *gin.Context, eventType string) {
 	body, identity, ok := h.authenticate(c)
 	if !ok {
 		return
@@ -383,8 +393,12 @@ func (h *Handler) ConfigureOrderStatusWebhook(c *gin.Context) {
 	startedAt := time.Now()
 	requestID := newRequestID()
 	statusCode, errorCode := http.StatusOK, ""
+	operation := "order_status_webhook_configure"
+	if eventType == tiktokshop.EventTypeCancellationStatusChange {
+		operation = "cancellation_status_webhook_configure"
+	}
 	defer func() {
-		h.record(c, identity, "order_status_webhook_configure", statusCode, startedAt, errorCode, requestID)
+		h.record(c, identity, operation, statusCode, startedAt, errorCode, requestID)
 	}()
 	if !h.config.WebhookEnabled {
 		statusCode, errorCode = http.StatusConflict, "webhook_disabled"
@@ -402,9 +416,13 @@ func (h *Handler) ConfigureOrderStatusWebhook(c *gin.Context) {
 		h.respondError(c, statusCode, errorCode, "ข้อมูลตั้งค่า TikTok Shop webhook ไม่ถูกต้อง", false, requestID)
 		return
 	}
-	result, err := h.webhookConfig.ConfigureOrderStatus(
-		c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), h.config.WebhookCallbackURL(),
-	)
+	var result *WebhookConfigResult
+	var err error
+	if eventType == tiktokshop.EventTypeCancellationStatusChange {
+		result, err = h.webhookConfig.ConfigureCancellationStatus(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), h.config.WebhookCallbackURL())
+	} else {
+		result, err = h.webhookConfig.ConfigureOrderStatus(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), h.config.WebhookCallbackURL())
+	}
 	if err != nil {
 		statusCode, errorCode = webhookConfigErrorMeta(err)
 		h.respondError(c, statusCode, errorCode, webhookConfigErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
@@ -415,7 +433,7 @@ func (h *Handler) ConfigureOrderStatusWebhook(c *gin.Context) {
 		h.respondError(c, statusCode, errorCode, "ตั้งค่า TikTok Shop webhook ไม่สำเร็จ", false, requestID)
 		return
 	}
-	h.logger.Info("tiktok_gateway_order_webhook_configured",
+	h.logger.Info("tiktok_gateway_webhook_configured",
 		zap.String("tenant", identity.Tenant), zap.String("shop_id", result.ShopID),
 		zap.String("event_type", result.EventType), zap.String("upstream_request_id", result.UpstreamRequestID))
 	c.JSON(http.StatusOK, gin.H{"data": result})

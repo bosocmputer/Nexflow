@@ -16,19 +16,20 @@ import (
 )
 
 const (
-	GatewayOAuthPath             = "/internal/v1/tiktok-shop/oauth/auth-url"
-	GatewayConnectionsPath       = "/internal/v1/tiktok-shop/connections"
-	GatewayOrderSearchPath       = "/internal/v1/tiktok-shop/orders/search"
-	GatewayOrderDetailsPath      = "/internal/v1/tiktok-shop/orders/detail"
-	GatewayShipmentRecipientPath = "/internal/v1/tiktok-shop/orders/shipment-recipient"
-	GatewayOrderPriceDetailPath  = "/internal/v1/tiktok-shop/orders/price-detail"
-	GatewayWebhookDeliveryPath   = "/internal/v1/tiktok-shop/webhooks/order-status"
-	GatewayWebhookConfigurePath  = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
-	GatewayProductSearchPath     = "/internal/v1/tiktok-shop/products/search"
-	GatewayProductDetailPath     = "/internal/v1/tiktok-shop/products/detail"
-	GatewayInventorySearchPath   = "/internal/v1/tiktok-shop/inventory/search"
-	GatewayInventoryUpdatePath   = "/internal/v1/tiktok-shop/inventory/update"
-	maxGatewayResponseSize       = 8 << 20
+	GatewayOAuthPath                        = "/internal/v1/tiktok-shop/oauth/auth-url"
+	GatewayConnectionsPath                  = "/internal/v1/tiktok-shop/connections"
+	GatewayOrderSearchPath                  = "/internal/v1/tiktok-shop/orders/search"
+	GatewayOrderDetailsPath                 = "/internal/v1/tiktok-shop/orders/detail"
+	GatewayShipmentRecipientPath            = "/internal/v1/tiktok-shop/orders/shipment-recipient"
+	GatewayOrderPriceDetailPath             = "/internal/v1/tiktok-shop/orders/price-detail"
+	GatewayWebhookDeliveryPath              = "/internal/v1/tiktok-shop/webhooks/order-status"
+	GatewayWebhookConfigurePath             = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
+	GatewayCancellationWebhookConfigurePath = "/internal/v1/tiktok-shop/webhooks/cancellation-status/configure"
+	GatewayProductSearchPath                = "/internal/v1/tiktok-shop/products/search"
+	GatewayProductDetailPath                = "/internal/v1/tiktok-shop/products/detail"
+	GatewayInventorySearchPath              = "/internal/v1/tiktok-shop/inventory/search"
+	GatewayInventoryUpdatePath              = "/internal/v1/tiktok-shop/inventory/update"
+	maxGatewayResponseSize                  = 8 << 20
 )
 
 var (
@@ -79,13 +80,18 @@ type GatewayConnection struct {
 }
 
 type GatewayWebhookDelivery struct {
-	GatewayEventID string `json:"gateway_event_id"`
-	NotificationID string `json:"tts_notification_id"`
-	ShopID         string `json:"shop_id"`
-	OrderID        string `json:"order_id"`
-	OrderStatus    string `json:"order_status"`
-	Timestamp      string `json:"timestamp"`
-	OrderUpdateAt  string `json:"order_update_at"`
+	GatewayEventID        string `json:"gateway_event_id"`
+	NotificationID        string `json:"tts_notification_id"`
+	NotificationType      int    `json:"notification_type"`
+	ShopID                string `json:"shop_id"`
+	OrderID               string `json:"order_id"`
+	OrderStatus           string `json:"order_status,omitempty"`
+	CancellationStatus    string `json:"cancellation_status,omitempty"`
+	CancellationID        string `json:"cancellation_id,omitempty"`
+	CancellationRole      string `json:"cancellation_role,omitempty"`
+	CancellationCreatedAt string `json:"cancellation_created_at,omitempty"`
+	Timestamp             string `json:"timestamp"`
+	OrderUpdateAt         string `json:"order_update_at"`
 }
 
 type GatewayOrderSearchRequest struct {

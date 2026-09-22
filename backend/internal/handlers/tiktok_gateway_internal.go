@@ -86,6 +86,10 @@ func (h *TikTokGatewayInternalHandler) OrderStatusWebhook(c *gin.Context) {
 		h.respondError(c, http.StatusBadRequest, "invalid_webhook_delivery", "ข้อมูล TikTok Shop webhook ไม่ถูกต้อง")
 		return
 	}
+	if delivery.NotificationType == 11 && !h.config.TikTokShopCancelWebhookEnabled {
+		h.respondError(c, http.StatusConflict, "cancellation_webhook_disabled", "tenant นี้ยังไม่เปิดรับ TikTok Shop webhook การยกเลิกคำสั่งซื้อ")
+		return
+	}
 	inserted, err := h.ingester.Ingest(c.Request.Context(), delivery)
 	if err != nil {
 		status := http.StatusServiceUnavailable

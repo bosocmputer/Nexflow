@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"nexflow/internal/services/tiktokshop"
 )
 
 type webhookUpdaterFake struct {
@@ -13,6 +15,11 @@ type webhookUpdaterFake struct {
 }
 
 func (f *webhookUpdaterFake) UpdateOrderStatusWebhook(_ context.Context, accessToken, shopCipher, address string) (string, error) {
+	f.accessToken, f.shopCipher, f.address = accessToken, shopCipher, address
+	return f.requestID, f.err
+}
+
+func (f *webhookUpdaterFake) UpdateCancellationStatusWebhook(_ context.Context, accessToken, shopCipher, address string) (string, error) {
 	f.accessToken, f.shopCipher, f.address = accessToken, shopCipher, address
 	return f.requestID, f.err
 }
@@ -33,6 +40,19 @@ func TestWebhookConfigServiceUsesTenantScopedCredential(t *testing.T) {
 	}
 	if result.ShopID != "shop-1" || result.EventType != "ORDER_STATUS_CHANGE" || result.UpstreamRequestID != "tts-event-request-1" {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestWebhookConfigServiceUsesCancellationTopicWithoutChangingOrderTopic(t *testing.T) {
+	credentials := &fakeOrderCredentialProvider{credential: &AccessCredential{AccessToken: "access-secret", ShopID: "shop-1", ShopCipher: "cipher-1"}}
+	updater := &webhookUpdaterFake{requestID: "tts-event-request-11"}
+	service, err := NewWebhookConfigService(credentials, updater)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.ConfigureCancellationStatus(t.Context(), "aoy", "shop-1", "https://gateway.example.com/webhook/tiktok-shop")
+	if err != nil || result.EventType != tiktokshop.EventTypeCancellationStatusChange {
+		t.Fatalf("result=%+v error=%v", result, err)
 	}
 }
 

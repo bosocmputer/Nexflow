@@ -73,7 +73,8 @@ func (w *TikTokWebhookWorker) ProcessOne(ctx context.Context) (bool, error) {
 		}
 		w.logger.Info("tiktok_webhook_reconciliation_succeeded",
 			zap.String("gateway_event_id", job.GatewayEventID), zap.String("notification_id", job.NotificationID),
-			zap.String("shop_id", job.ShopID), zap.String("order_id", job.OrderID), zap.Int("attempt", job.Attempts))
+			zap.Int("notification_type", job.NotificationType), zap.String("shop_id", job.ShopID),
+			zap.String("order_id", job.OrderID), zap.Int("attempt", job.Attempts))
 		return true, nil
 	}
 	errorCode := "snapshot_failed"
@@ -86,7 +87,8 @@ func (w *TikTokWebhookWorker) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	w.logger.Warn("tiktok_webhook_reconciliation_failed",
 		zap.String("gateway_event_id", job.GatewayEventID), zap.String("notification_id", job.NotificationID),
-		zap.String("shop_id", job.ShopID), zap.String("order_id", job.OrderID), zap.Int("attempt", job.Attempts),
+		zap.Int("notification_type", job.NotificationType), zap.String("shop_id", job.ShopID),
+		zap.String("order_id", job.OrderID), zap.Int("attempt", job.Attempts),
 		zap.String("error_code", errorCode), zap.Bool("terminal", job.Attempts >= maxTikTokWebhookAttempts))
 	return true, nil
 }

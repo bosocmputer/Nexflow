@@ -121,19 +121,22 @@ func (r *Repository) AcceptWebhookEvent(ctx context.Context, input WebhookEventI
 		status = "queued"
 		tenantID = tenant.ID
 	}
+	cancellationStatus, cancellationID, cancellationRole, cancellationCreatedAt := webhookCancellationFields(input)
 
 	var eventID string
 	var inserted bool
 	if err := tx.QueryRowContext(ctx,
 		`INSERT INTO webhook_events
 		   (tenant_id, notification_id, notification_type, shop_id, order_id, order_status,
+		    cancellation_status, cancellation_id, cancellations_role, cancellation_created_at,
 		    event_timestamp, order_update_at, body_sha256, processing_status)
-		 VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 VALUES (NULLIF($1, '')::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 ON CONFLICT (notification_id) DO UPDATE SET last_seen_at = NOW()
 		  WHERE webhook_events.body_sha256 = EXCLUDED.body_sha256
 		 RETURNING id::text, (xmax = 0)`,
 		tenantID, input.NotificationID, input.NotificationType, input.ShopID, input.OrderID,
-		input.OrderStatus, input.Timestamp, input.OrderUpdateAt, input.BodySHA256, status,
+		input.OrderStatus, cancellationStatus, cancellationID, cancellationRole,
+		nullableWebhookTime(cancellationCreatedAt), input.Timestamp, input.OrderUpdateAt, input.BodySHA256, status,
 	).Scan(&eventID, &inserted); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWebhookNotificationCollision
@@ -143,8 +146,11 @@ func (r *Repository) AcceptWebhookEvent(ctx context.Context, input WebhookEventI
 	if inserted && knownTenant {
 		payload, err := json.Marshal(tiktokshop.GatewayWebhookDelivery{
 			GatewayEventID: eventID, NotificationID: input.NotificationID, ShopID: input.ShopID,
-			OrderID: input.OrderID, OrderStatus: input.OrderStatus,
-			Timestamp: input.Timestamp.Format(time.RFC3339), OrderUpdateAt: input.OrderUpdateAt.Format(time.RFC3339),
+			NotificationType: input.NotificationType, OrderID: input.OrderID, OrderStatus: input.OrderStatus,
+			CancellationStatus: cancellationStatus, CancellationID: cancellationID,
+			CancellationRole:      cancellationRole,
+			CancellationCreatedAt: webhookTimeString(cancellationCreatedAt),
+			Timestamp:             input.Timestamp.Format(time.RFC3339), OrderUpdateAt: input.OrderUpdateAt.Format(time.RFC3339),
 		})
 		if err != nil {
 			return nil, err
@@ -168,10 +174,52 @@ func (r *Repository) AcceptWebhookEvent(ctx context.Context, input WebhookEventI
 }
 
 func validWebhookEventInput(input WebhookEventInput) bool {
-	return input.NotificationType == 1 && webhookNumericIDPattern.MatchString(strings.TrimSpace(input.NotificationID)) &&
-		webhookNumericIDPattern.MatchString(strings.TrimSpace(input.ShopID)) && webhookNumericIDPattern.MatchString(strings.TrimSpace(input.OrderID)) &&
-		strings.TrimSpace(input.OrderStatus) != "" && !input.Timestamp.IsZero() && !input.OrderUpdateAt.IsZero() &&
-		len(input.BodySHA256) == sha256HexLength && isLowerHex(input.BodySHA256)
+	if !webhookNumericIDPattern.MatchString(strings.TrimSpace(input.NotificationID)) ||
+		!webhookNumericIDPattern.MatchString(strings.TrimSpace(input.ShopID)) ||
+		!webhookNumericIDPattern.MatchString(strings.TrimSpace(input.OrderID)) ||
+		input.Timestamp.IsZero() || input.OrderUpdateAt.IsZero() ||
+		len(input.BodySHA256) != sha256HexLength || !isLowerHex(input.BodySHA256) {
+		return false
+	}
+	switch input.NotificationType {
+	case 1:
+		return strings.TrimSpace(input.OrderStatus) != "" && input.Cancellation == nil
+	case 11:
+		return strings.TrimSpace(input.OrderStatus) == "" && input.Cancellation != nil &&
+			validCancellationWebhookFields(input.Cancellation.Status, input.Cancellation.ID, input.Cancellation.Role, input.Cancellation.CreatedAt)
+	default:
+		return false
+	}
+}
+
+func webhookCancellationFields(input WebhookEventInput) (string, string, string, time.Time) {
+	if input.Cancellation == nil {
+		return "", "", "", time.Time{}
+	}
+	return strings.ToUpper(strings.TrimSpace(input.Cancellation.Status)), strings.TrimSpace(input.Cancellation.ID),
+		strings.ToUpper(strings.TrimSpace(input.Cancellation.Role)), input.Cancellation.CreatedAt.UTC()
+}
+
+func validCancellationWebhookFields(status, cancellationID, role string, createdAt time.Time) bool {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	role = strings.ToUpper(strings.TrimSpace(role))
+	_, knownStatus := cancellationWebhookStatuses[status]
+	_, knownRole := cancellationWebhookRoles[role]
+	return knownStatus && webhookNumericIDPattern.MatchString(strings.TrimSpace(cancellationID)) && knownRole && !createdAt.IsZero()
+}
+
+func nullableWebhookTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.UTC()
+}
+
+func webhookTimeString(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 const sha256HexLength = 64

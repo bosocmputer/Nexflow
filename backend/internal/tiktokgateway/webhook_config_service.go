@@ -13,6 +13,7 @@ var ErrWebhookConfigServiceNotConfigured = errors.New("TikTok Shop webhook confi
 
 type ShopWebhookUpdater interface {
 	UpdateOrderStatusWebhook(context.Context, string, string, string) (string, error)
+	UpdateCancellationStatusWebhook(context.Context, string, string, string) (string, error)
 }
 
 type WebhookConfigService struct {
@@ -35,6 +36,17 @@ func NewWebhookConfigService(credentials OrderCredentialProvider, webhooks ShopW
 }
 
 func (s *WebhookConfigService) ConfigureOrderStatus(ctx context.Context, tenantSlug, shopID, address string) (*WebhookConfigResult, error) {
+	return s.configure(ctx, tenantSlug, shopID, address, tiktokshop.EventTypeOrderStatusChange)
+}
+
+// ConfigureCancellationStatus is intentionally only a prepared Gateway action.
+// The tenant must keep its cancellation gate off until a controlled canary is
+// explicitly approved, so exposing this method never enables the tenant flow.
+func (s *WebhookConfigService) ConfigureCancellationStatus(ctx context.Context, tenantSlug, shopID, address string) (*WebhookConfigResult, error) {
+	return s.configure(ctx, tenantSlug, shopID, address, tiktokshop.EventTypeCancellationStatusChange)
+}
+
+func (s *WebhookConfigService) configure(ctx context.Context, tenantSlug, shopID, address, eventType string) (*WebhookConfigResult, error) {
 	if s == nil || s.credentials == nil || s.webhooks == nil {
 		return nil, ErrWebhookConfigServiceNotConfigured
 	}
@@ -51,15 +63,20 @@ func (s *WebhookConfigService) ConfigureOrderStatus(ctx context.Context, tenantS
 	if credential == nil || credential.ShopID != shopID || strings.TrimSpace(credential.AccessToken) == "" || strings.TrimSpace(credential.ShopCipher) == "" {
 		return nil, ErrInvalidTokenCredential
 	}
-	requestID, err := s.webhooks.UpdateOrderStatusWebhook(ctx, credential.AccessToken, credential.ShopCipher, address)
+	var requestID string
+	if eventType == tiktokshop.EventTypeCancellationStatusChange {
+		requestID, err = s.webhooks.UpdateCancellationStatusWebhook(ctx, credential.AccessToken, credential.ShopCipher, address)
+	} else {
+		requestID, err = s.webhooks.UpdateOrderStatusWebhook(ctx, credential.AccessToken, credential.ShopCipher, address)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("configure TikTok Shop order webhook: %w", err)
+		return nil, fmt.Errorf("configure TikTok Shop webhook: %w", err)
 	}
 	if strings.TrimSpace(requestID) == "" {
 		return nil, ErrInvalidTokenCredential
 	}
 	return &WebhookConfigResult{
-		ShopID: shopID, EventType: tiktokshop.EventTypeOrderStatusChange, Address: address,
+		ShopID: shopID, EventType: eventType, Address: address,
 		UpstreamRequestID: strings.TrimSpace(requestID),
 	}, nil
 }

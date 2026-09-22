@@ -17,15 +17,20 @@ var (
 )
 
 type TikTokWebhookJob struct {
-	ID             string
-	GatewayEventID string
-	NotificationID string
-	ShopID         string
-	OrderID        string
-	OrderStatus    string
-	Timestamp      time.Time
-	OrderUpdateAt  time.Time
-	Attempts       int
+	ID                    string
+	GatewayEventID        string
+	NotificationID        string
+	NotificationType      int
+	ShopID                string
+	OrderID               string
+	OrderStatus           string
+	CancellationStatus    string
+	CancellationID        string
+	CancellationRole      string
+	CancellationCreatedAt time.Time
+	Timestamp             time.Time
+	OrderUpdateAt         time.Time
+	Attempts              int
 }
 
 type TikTokWebhookStore struct {
@@ -62,11 +67,14 @@ func (s *TikTokWebhookStore) Ingest(ctx context.Context, delivery GatewayWebhook
 	result, err := tx.ExecContext(ctx,
 		`INSERT INTO tiktok_shop_webhook_events
 		   (gateway_event_id, notification_id, gateway_connection_id, shop_id, order_id,
-		    event_order_status, event_timestamp, order_update_at)
-		 VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8)
+		    notification_type, event_order_status, cancellation_status, cancellation_id,
+		    cancellation_role, cancellation_created_at, event_timestamp, order_update_at)
+		 VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		 ON CONFLICT DO NOTHING`,
 		prepared.GatewayEventID, prepared.NotificationID, connectionID, prepared.ShopID,
-		prepared.OrderID, prepared.OrderStatus, prepared.Timestamp, prepared.OrderUpdateAt,
+		prepared.OrderID, prepared.NotificationType, prepared.OrderStatus, prepared.CancellationStatus,
+		prepared.CancellationID, prepared.CancellationRole, nullableTikTokWebhookTime(prepared.CancellationCreatedAt),
+		prepared.Timestamp, prepared.OrderUpdateAt,
 	)
 	if err != nil {
 		return false, err
@@ -86,6 +94,7 @@ func (s *TikTokWebhookStore) ClaimDue(ctx context.Context, now time.Time) (TikTo
 		return TikTokWebhookJob{}, ErrWebhookStoreNotConfigured
 	}
 	var job TikTokWebhookJob
+	var cancellationCreatedAt sql.NullTime
 	err := s.database.QueryRowContext(ctx,
 		`WITH recovered AS (
 		   UPDATE tiktok_shop_webhook_events
@@ -101,16 +110,24 @@ func (s *TikTokWebhookStore) ClaimDue(ctx context.Context, now time.Time) (TikTo
 		      SET status = 'running', attempts = attempts + 1, started_at = COALESCE(started_at, $1),
 		          lease_until = $1 + INTERVAL '2 minutes', updated_at = NOW()
 		     FROM picked WHERE e.id = picked.id
-		   RETURNING e.id::text, e.gateway_event_id::text, e.notification_id, e.shop_id, e.order_id,
-		             e.event_order_status, e.event_timestamp, e.order_update_at, e.attempts
+		   RETURNING e.id::text, e.gateway_event_id::text, e.notification_id, e.notification_type, e.shop_id, e.order_id,
+		             e.event_order_status, e.cancellation_status, e.cancellation_id, e.cancellation_role,
+		             e.cancellation_created_at, e.event_timestamp, e.order_update_at, e.attempts
 		 )
 		 SELECT * FROM leased`, now.UTC(), maxTikTokWebhookAttempts,
-	).Scan(&job.ID, &job.GatewayEventID, &job.NotificationID, &job.ShopID, &job.OrderID,
-		&job.OrderStatus, &job.Timestamp, &job.OrderUpdateAt, &job.Attempts)
+	).Scan(&job.ID, &job.GatewayEventID, &job.NotificationID, &job.NotificationType, &job.ShopID, &job.OrderID,
+		&job.OrderStatus, &job.CancellationStatus,
+		&job.CancellationID, &job.CancellationRole, &cancellationCreatedAt, &job.Timestamp, &job.OrderUpdateAt, &job.Attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TikTokWebhookJob{}, ErrNoWebhookJobDue
 	}
-	return job, err
+	if err != nil {
+		return TikTokWebhookJob{}, err
+	}
+	if cancellationCreatedAt.Valid {
+		job.CancellationCreatedAt = cancellationCreatedAt.Time.UTC()
+	}
+	return job, nil
 }
 
 func (s *TikTokWebhookStore) MarkSucceeded(ctx context.Context, jobID string) error {
@@ -159,17 +176,60 @@ func prepareWebhookDelivery(input GatewayWebhookDelivery) (TikTokWebhookJob, err
 	input.ShopID = strings.TrimSpace(input.ShopID)
 	input.OrderID = strings.TrimSpace(input.OrderID)
 	input.OrderStatus = strings.ToUpper(strings.TrimSpace(input.OrderStatus))
+	input.CancellationStatus = strings.ToUpper(strings.TrimSpace(input.CancellationStatus))
+	input.CancellationID = strings.TrimSpace(input.CancellationID)
+	input.CancellationRole = strings.ToUpper(strings.TrimSpace(input.CancellationRole))
 	timestamp, timestampErr := time.Parse(time.RFC3339, input.Timestamp)
 	updateAt, updateErr := time.Parse(time.RFC3339, input.OrderUpdateAt)
+	cancellationCreatedAt, cancellationCreatedAtErr := parseOptionalTikTokWebhookTime(input.CancellationCreatedAt)
 	if !connectionIDPattern.MatchString(input.GatewayEventID) || !tikTokNumericIDPattern.MatchString(input.NotificationID) ||
 		!tikTokNumericIDPattern.MatchString(input.ShopID) || !tikTokNumericIDPattern.MatchString(input.OrderID) ||
-		input.OrderStatus == "" || len(input.OrderStatus) > 64 || timestampErr != nil || updateErr != nil {
+		timestampErr != nil || updateErr != nil || cancellationCreatedAtErr != nil {
+		return TikTokWebhookJob{}, ErrInvalidWebhookDelivery
+	}
+	notificationType := input.NotificationType
+	if notificationType == 0 {
+		notificationType = 1
+	}
+	if (notificationType == 1 && (input.OrderStatus == "" || len(input.OrderStatus) > 64 || input.CancellationStatus != "" || input.CancellationID != "" || input.CancellationRole != "" || !cancellationCreatedAt.IsZero())) ||
+		(notificationType == 11 && (input.OrderStatus != "" || !validTikTokCancellationWebhook(input.CancellationStatus, input.CancellationID, input.CancellationRole, cancellationCreatedAt))) ||
+		(notificationType != 1 && notificationType != 11) {
 		return TikTokWebhookJob{}, ErrInvalidWebhookDelivery
 	}
 	return TikTokWebhookJob{
-		GatewayEventID: input.GatewayEventID, NotificationID: input.NotificationID, ShopID: input.ShopID,
-		OrderID: input.OrderID, OrderStatus: input.OrderStatus, Timestamp: timestamp.UTC(), OrderUpdateAt: updateAt.UTC(),
+		GatewayEventID: input.GatewayEventID, NotificationID: input.NotificationID, NotificationType: notificationType,
+		ShopID: input.ShopID, OrderID: input.OrderID, OrderStatus: input.OrderStatus,
+		CancellationStatus: input.CancellationStatus, CancellationID: input.CancellationID,
+		CancellationRole: input.CancellationRole, CancellationCreatedAt: cancellationCreatedAt,
+		Timestamp: timestamp.UTC(), OrderUpdateAt: updateAt.UTC(),
 	}, nil
+}
+
+func validTikTokCancellationWebhook(status, cancellationID, role string, createdAt time.Time) bool {
+	if status != "CANCELLATION_REQUEST_PENDING" && status != "CANCELLATION_REQUEST_SUCCESS" &&
+		status != "CANCELLATION_REQUEST_CANCELLED" && status != "CANCELLATION_REQUEST_COMPLETE" {
+		return false
+	}
+	return tikTokNumericIDPattern.MatchString(cancellationID) && (role == "BUYER" || role == "SELLER" || role == "SYSTEM") && !createdAt.IsZero()
+}
+
+func parseOptionalTikTokWebhookTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.UTC(), nil
+}
+
+func nullableTikTokWebhookTime(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.UTC()
 }
 
 func requireOneWebhookRow(result sql.Result) error {

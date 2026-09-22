@@ -85,6 +85,11 @@ func (f *handlerWebhookConfigServiceFake) ConfigureOrderStatus(_ context.Context
 	return f.result, f.err
 }
 
+func (f *handlerWebhookConfigServiceFake) ConfigureCancellationStatus(_ context.Context, tenant, shopID, address string) (*WebhookConfigResult, error) {
+	f.tenant, f.shopID, f.address = tenant, shopID, address
+	return f.result, f.err
+}
+
 func (f *handlerOrderServiceFake) SearchOrders(_ context.Context, tenant, shopID string, input tiktokshop.SearchOrdersRequest) (*OrderSearchResult, error) {
 	f.tenant, f.shopID, f.searchInput = tenant, shopID, input
 	return f.searchResult, f.err
