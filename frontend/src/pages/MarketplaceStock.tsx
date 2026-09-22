@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Boxes, Check, CheckCircle2, ChevronsUpDown, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
+import { AlertTriangle, Boxes, Check, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
 
 import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -11,7 +11,6 @@ import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -319,7 +318,6 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
 }
 
 function SMLGroupAutocomplete({ groups, value, onChange }: { groups: CandidateGroup[]; value: string; onChange: (value: string) => void }) {
-  const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const visibleGroups = groups.filter((group) => !normalizedQuery || group.searchableText.includes(normalizedQuery))
@@ -327,28 +325,18 @@ function SMLGroupAutocomplete({ groups, value, onChange }: { groups: CandidateGr
 
   return <div className="space-y-1">
     <Label htmlFor="marketplace-stock-group-autocomplete">สินค้า SML ที่จะควบคุม</Label>
-    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery('') }}>
-      <PopoverTrigger asChild>
-        <Button id="marketplace-stock-group-autocomplete" type="button" variant="outline" role="combobox" aria-expanded={open} className="h-auto min-h-10 w-full justify-between gap-2 px-3 py-2 text-left font-normal">
-          <span className="min-w-0 truncate">{selected ? selectedGroupLabel([selected], selected.key) : 'ค้นหาด้วยรหัส SML, ชื่อสินค้า หรือชื่อ Marketplace'}</span>
-          <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-        <Command shouldFilter={false}>
-          <CommandInput value={query} onValueChange={setQuery} placeholder="พิมพ์รหัสหรือชื่อสินค้า…" />
-          <CommandList>
-            {visibleGroups.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">ไม่พบสินค้า ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p> : <CommandGroup>
-              {visibleGroups.map((group) => <CommandItem key={group.key} value={group.key} onSelect={() => { onChange(group.key); setQuery(''); setOpen(false) }}>
-                <Check className={cn('mt-0.5 h-4 w-4 shrink-0', value === group.key ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />
-                <span className="min-w-0"><span className="block truncate">{selectedGroupLabel([group], group.key)}</span><span className="block text-xs text-muted-foreground">{group.members.length} SKU ที่พร้อมควบคุม</span></span>
-              </CommandItem>)}
-            </CommandGroup>}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-    <p className="text-xs text-muted-foreground">เลือกสินค้า SML 1 รายการ ระบบจะแสดง SKU ที่จับคู่ได้ด้านล่าง</p>
+    <Command shouldFilter={false} className="h-auto rounded-md border">
+      <CommandInput id="marketplace-stock-group-autocomplete" value={query} onValueChange={setQuery} placeholder="ค้นหาด้วยรหัส SML, ชื่อสินค้า หรือชื่อ Marketplace…" />
+      <CommandList className="max-h-64 overscroll-contain">
+        {visibleGroups.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">ไม่พบสินค้า ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p> : <CommandGroup>
+          {visibleGroups.map((group) => <CommandItem key={group.key} value={group.key} onSelect={() => { onChange(group.key); setQuery('') }}>
+            <Check className={cn('mt-0.5 h-4 w-4 shrink-0', value === group.key ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />
+            <span className="min-w-0"><span className="block truncate">{selectedGroupLabel([group], group.key)}</span><span className="block text-xs text-muted-foreground">{group.members.length} SKU ที่พร้อมควบคุม</span></span>
+          </CommandItem>)}
+        </CommandGroup>}
+      </CommandList>
+    </Command>
+    <p className="text-xs text-muted-foreground">{selected ? `เลือกแล้ว: ${selectedGroupLabel([selected], selected.key)}` : 'เลือกสินค้า SML 1 รายการ ระบบจะแสดง SKU ที่จับคู่ได้ด้านล่าง'}</p>
   </div>
 }
 
