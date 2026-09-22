@@ -197,6 +197,12 @@ func (s *PostgresStore) UpdateSettings(ctx context.Context, input SettingsUpdate
 		WHERE status IN ('ready','active')`); err != nil {
 		return nil, err
 	}
+	if result.KillSwitch {
+		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_runs SET status='cancelled',error_message='stopped_by_store_kill_switch',finished_at=NOW(),updated_at=NOW()
+			WHERE status='queued' AND run_type='sync'`); err != nil {
+			return nil, err
+		}
+	}
 	if err := insertAudit(ctx, tx, "marketplace_stock_settings_updated", "", userID, map[string]any{
 		"warehouse_code": result.WarehouseCode, "location_code": result.LocationCode,
 		"buffer_pct": result.DefaultBufferPct, "kill_switch_enabled": result.KillSwitch,
@@ -286,7 +292,7 @@ func (s *PostgresStore) StartPreview(ctx context.Context, poolID string, input P
 		return nil, ErrInvalidPoolInput
 	}
 	var liveRunID string
-	_ = tx.QueryRowContext(ctx, `SELECT id::text FROM marketplace_stock_runs WHERE pool_id=$1::uuid AND status IN ('queued','running') LIMIT 1`, plan.Pool.ID).Scan(&liveRunID)
+	_ = tx.QueryRowContext(ctx, `SELECT id::text FROM marketplace_stock_runs WHERE pool_id=$1::uuid AND run_type='preview' AND status IN ('queued','running') LIMIT 1`, plan.Pool.ID).Scan(&liveRunID)
 	if liveRunID != "" {
 		return nil, ErrPreviewAlreadyRunning
 	}
@@ -419,6 +425,12 @@ func (s *PostgresStore) UpdateAuto(ctx context.Context, poolID string, input Aut
 	if err != nil {
 		return nil, fmt.Errorf("update marketplace stock auto: %w", err)
 	}
+	if !input.Enabled {
+		if _, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_runs SET status='cancelled',error_message='stopped_by_pool_auto_disable',finished_at=NOW(),updated_at=NOW()
+			WHERE pool_id=$1::uuid AND run_type='sync' AND status='queued'`, poolID); err != nil {
+			return nil, err
+		}
+	}
 	if err := insertAudit(ctx, tx, "marketplace_stock_auto_"+map[bool]string{true: "enabled", false: "disabled"}[input.Enabled], poolID, userID, map[string]any{"config_version": pool.ConfigVersion}); err != nil {
 		return nil, err
 	}
@@ -464,7 +476,7 @@ func (s *PostgresStore) QueueSync(ctx context.Context, poolID string, input Sync
 	var run Run
 	err = tx.QueryRowContext(ctx, `INSERT INTO marketplace_stock_runs(pool_id,trigger_source,run_type,status,config_version,requested_by)
 		VALUES($1::uuid,'manual','sync','queued',$2,$3::uuid)
-		ON CONFLICT (pool_id) WHERE status IN ('queued','running') DO UPDATE SET updated_at=marketplace_stock_runs.updated_at
+		ON CONFLICT (pool_id,run_type) WHERE status IN ('queued','running') DO UPDATE SET updated_at=marketplace_stock_runs.updated_at
 		RETURNING id::text,pool_id::text,trigger_source,run_type,status,config_version,total_count,changed_count,blocked_count,error_count,error_message,plan_expires_at,started_at,finished_at`, poolID, version, userID).Scan(runScanner(&run)...)
 	if err != nil {
 		return nil, fmt.Errorf("queue marketplace stock sync: %w", err)

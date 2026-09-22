@@ -39,12 +39,14 @@ not an authorization boundary.
 5. Run **ตรวจ SML** and resolve every blocked condition. A successful SML-only
    plan is not permission to write Marketplace stock.
 
-## First write and Auto pilot (not enabled by this foundation)
+## First write and Auto pilot
 
-Only after the write worker and relevant tenant feature gates are deployed:
+Only after the tenant runtime write gate is deliberately enabled:
 
-1. Verify one selected member has current catalog inventory, exact warehouse
-   readiness, API grant, and no legacy Shopee writer.
+1. Verify one selected TikTok member has current catalog inventory, an exact
+   warehouse (one live warehouse or a selected warehouse), and Product Modify
+   scope. Shopee members remain on the legacy Shopee worker until their own
+   migration gate is implemented; do not place them in an active v2 pool.
 2. Create a fresh plan, then manually confirm a changed-target write. The
    worker must recheck config, reservation, SML, and Marketplace current stock
    immediately before sending an absolute target.
@@ -65,9 +67,12 @@ writes. Keep the record and configuration history for investigation.
 
 ## Current rollout boundary
 
-The initial AOY implementation includes schema, RBAC, drafts, local catalog
-selection, durable SML-only plans, reservation/buffer arithmetic, and audits.
-Marketplace write workers, Auto scheduling, nightly reconciliation, and
-Lazada API stock integration remain intentionally disabled until their separate
-preflight/read-back implementation and controlled pilot are complete. Lazada
-Excel behavior is unchanged.
+The AOY implementation includes schema, RBAC, drafts, local catalog selection,
+durable SML-only plans, reservation/buffer arithmetic, explicit confirmations,
+kill switches, a coalesced five-minute Auto queue, and durable audit/run lines.
+The TikTok worker reads inventory, writes one absolute SKU target through the
+signed Central Gateway, then requires a matching read-back. A per-SKU TikTok
+error, timeout, stale mapping, multi-warehouse ambiguity, or mismatch pauses
+the pool; it never guesses a rollback. `MARKETPLACE_STOCK_WRITE_ENABLED` is
+off by default and remains the final tenant safety gate. Nightly reconciliation
+and Lazada API stock integration remain out of scope; Lazada Excel is unchanged.
