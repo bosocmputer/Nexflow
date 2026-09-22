@@ -63,7 +63,7 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-hidden p-0">
+      <DialogContent className="grid max-h-[85dvh] max-w-2xl grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b px-5 py-4 text-left">
           <DialogTitle className="flex flex-wrap items-center gap-2">
             <Store className="h-4 w-4 text-primary" />
@@ -73,7 +73,7 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
           <DialogDescription><span className="font-mono text-foreground">{itemCode}</span> · {itemName}</DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 overflow-y-auto overscroll-contain px-5 py-4">
           {loading && links.length === 0 ? (
             <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground" role="status">
               <Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดข้อมูลการจับคู่
