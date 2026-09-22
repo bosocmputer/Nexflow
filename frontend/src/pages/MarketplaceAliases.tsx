@@ -544,7 +544,7 @@ export default function MarketplaceAliases() {
       : `${total.toLocaleString()} จับคู่แล้ว`
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
+    <div className="space-y-4 p-0 sm:p-0">
       <header className="flex flex-col gap-3 border-b pb-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">จับคู่สินค้า Marketplace</h1><Badge variant="outline">{headerCount}</Badge></div>

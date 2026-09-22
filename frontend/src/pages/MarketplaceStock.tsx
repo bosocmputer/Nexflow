@@ -137,7 +137,7 @@ export default function MarketplaceStock() {
   }
 
   return (
-    <main className="space-y-4 p-4 sm:p-6" aria-busy={loading}>
+    <main className="space-y-4 p-0 sm:p-0" aria-busy={loading}>
       <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">ควบคุมสต๊อก Marketplace</h1><Badge variant="outline">AOY</Badge></div>
