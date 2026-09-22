@@ -403,6 +403,13 @@ remain useful as audit evidence but are not a current SML-send blocker.
   `false` ทั้งคู่:
   `TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED` และ
   `TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED`. ห้ามเปิดแค่ gate เดียว
+- ตั้งแต่ commit `806c268` Central Gateway และ AOY รองรับ type 11 แบบ durable
+  แล้ว: เก็บ `cancel_status`, `cancel_id`, `cancellations_role` และ
+  `create_time` แยกจาก type 1, deduplicate ด้วย notification ID แล้ว refresh
+  exact order ก่อนทำงานต่อ. เมื่อ cancellation gate ยังปิด AOY จะตอบรับแบบ
+  fail-closed และไม่บันทึก queue/ไม่สร้าง Bill/ไม่ส่ง SML. Gateway endpoint
+  สำหรับ subscribe type 11 ถูกเตรียมเป็น internal-only; ห้ามเรียก configure
+  หรือเปลี่ยนค่า Partner Center จนกว่าจะอนุมัติ canary โดยผู้ดูแล
 - ก่อน AOY canary ต้อง: App Review ผ่าน, เปิดและพิสูจน์
   `CANCELLATION_STATUS_CHANGE` (type 11) ว่า signature/dedup/reconciliation
   ทำงาน, ตรวจ route `/api/v1/ic/sale-invoices/:doc_no/void` และ format
