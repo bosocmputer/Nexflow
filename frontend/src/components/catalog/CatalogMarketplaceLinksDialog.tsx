@@ -96,8 +96,8 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
                   const showVariant = link.variant_name && link.variant_name !== link.product_name
                   const needsReview = link.conversion_status !== 'ready' || !link.scope_confirmed
                   return (
-                    <div key={link.id} className="space-y-3 px-4 py-4">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <div key={link.id} className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(148px,180px)_minmax(0,1fr)] sm:items-start">
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:pt-0.5">
                         <MarketplaceSourceChannelBadges
                           source={link.source}
                           accountName={link.account_name}
@@ -105,13 +105,24 @@ export function CatalogMarketplaceLinksDialog({ open, onOpenChange, itemCode, it
                         />
                         {needsReview && <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">รอตรวจสอบ</Badge>}
                       </div>
-                      <div className="min-w-0 space-y-1">
-                        <p className="break-words font-medium leading-snug">{link.product_name || 'ไม่มีชื่อสินค้า'}</p>
-                        {showVariant && <p className="break-words text-sm text-muted-foreground">ตัวเลือก: <span className="text-foreground">{link.variant_name}</span></p>}
-                        <div className="flex flex-wrap gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
-                          {link.source_sku && <span>SKU: <code className="text-foreground">{link.source_sku}</code></span>}
-                          {link.quantity_multiplier > 1 && <span>Marketplace 1 รายการ = {link.quantity_multiplier.toLocaleString()} {link.unit_code || 'หน่วย'} SML</span>}
-                        </div>
+                      <div className="min-w-0">
+                        <p className="line-clamp-1 font-medium leading-snug" title={link.product_name || 'ไม่มีชื่อสินค้า'}>{link.product_name || 'ไม่มีชื่อสินค้า'}</p>
+                        {(showVariant || link.source_sku || link.quantity_multiplier > 1) && (
+                          <p
+                            className="mt-0.5 truncate text-xs text-muted-foreground"
+                            title={[
+                              showVariant ? `ตัวเลือก: ${link.variant_name}` : '',
+                              link.source_sku ? `SKU: ${link.source_sku}` : '',
+                              link.quantity_multiplier > 1 ? `Marketplace 1 รายการ = ${link.quantity_multiplier.toLocaleString()} ${link.unit_code || 'หน่วย'} SML` : '',
+                            ].filter(Boolean).join(' · ')}
+                          >
+                            {showVariant && <>ตัวเลือก: <span className="text-foreground">{link.variant_name}</span></>}
+                            {showVariant && (link.source_sku || link.quantity_multiplier > 1) && ' · '}
+                            {link.source_sku && <>SKU: <code className="text-foreground">{link.source_sku}</code></>}
+                            {link.source_sku && link.quantity_multiplier > 1 && ' · '}
+                            {link.quantity_multiplier > 1 && <>Marketplace 1 รายการ = {link.quantity_multiplier.toLocaleString()} {link.unit_code || 'หน่วย'} SML</>}
+                          </p>
+                        )}
                       </div>
                     </div>
                   )
