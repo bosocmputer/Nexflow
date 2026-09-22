@@ -630,6 +630,6 @@ func insertAudit(ctx context.Context, tx *sql.Tx, action, targetID, userID strin
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO audit_logs(action,target_id,user_id,source,level,detail)
-		VALUES($1,NULLIF($2,''),NULLIF($3,'')::uuid,'marketplace_stock','info',$4::jsonb)`, action, targetID, userID, payload)
+		VALUES($1,NULLIF($2,'')::uuid,NULLIF($3,'')::uuid,'marketplace_stock','info',$4::jsonb)`, action, targetID, userID, payload)
 	return err
 }
