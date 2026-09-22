@@ -3,6 +3,7 @@ package marketplacestock
 import (
 	"context"
 	"testing"
+	"time"
 
 	"nexflow/internal/services/shopeeapi"
 	"nexflow/internal/services/tiktokshop"
@@ -125,5 +126,49 @@ func TestSyncShopeeFailsClosedWhenReadBackDoesNotMatchTarget(t *testing.T) {
 	}, 7)
 	if status != "failed" || previous != 4 || actual != 4 || code != "read_back_mismatch" {
 		t.Fatalf("syncShopee() = %q,%d,%d,%q", status, previous, actual, code)
+	}
+}
+
+type syncWorkerShopeeEventuallyConsistentFake struct {
+	stock      int64
+	target     int64
+	staleReads int
+}
+
+func (f *syncWorkerShopeeEventuallyConsistentFake) GetItemBaseInfo(_ context.Context, _ string, _ int64, _ []int64) (*shopeeapi.ItemBaseInfoResponse, error) {
+	return nil, nil
+}
+
+func (f *syncWorkerShopeeEventuallyConsistentFake) GetModelList(_ context.Context, _ string, _ int64, _ int64) (*shopeeapi.ModelListResponse, error) {
+	if f.target != 0 {
+		if f.staleReads > 0 {
+			f.staleReads--
+		} else {
+			f.stock = f.target
+		}
+	}
+	response := &shopeeapi.ModelListResponse{}
+	response.Response.Model = []shopeeapi.ProductModel{{
+		ModelID:     42891916896,
+		StockInfoV2: shopeeapi.StockInfoV2{SellerStock: []shopeeapi.SellerStock{{Stock: f.stock}}},
+	}}
+	return response, nil
+}
+
+func (f *syncWorkerShopeeEventuallyConsistentFake) UpdateStock(_ context.Context, _ string, _ int64, request shopeeapi.UpdateStockRequest) (*shopeeapi.UpdateStockResponse, error) {
+	f.target = request.StockList[0].SellerStock[0].Stock
+	response := &shopeeapi.UpdateStockResponse{}
+	response.Response.SuccessList = []shopeeapi.StockUpdateSuccess{{ModelID: request.StockList[0].ModelID}}
+	return response, nil
+}
+
+func TestSyncShopeeAcceptsOnlyConfirmedEventuallyConsistentReadBack(t *testing.T) {
+	gateway := &syncWorkerShopeeEventuallyConsistentFake{stock: 110, staleReads: 1}
+	worker := &SyncWorker{shopee: gateway, shopeeReadBackAttempts: 2, shopeeReadBackInterval: time.Millisecond}
+	status, previous, actual, code, message := worker.syncShopee(context.Background(), Member{
+		Source: "shopee", AccountKey: "shop:264993963", ExternalProductID: "4940107291", ExternalSKUID: "42891916896",
+	}, 47)
+	if status != "changed" || previous != 110 || actual != 47 || code != "" || message != "" {
+		t.Fatalf("syncShopee() = %q,%d,%d,%q,%q", status, previous, actual, code, message)
 	}
 }

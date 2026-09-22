@@ -50,13 +50,20 @@ type SyncWorker struct {
 	logger       *zap.Logger
 	owner        string
 	mu           sync.Mutex
+	// Shopee can acknowledge an absolute stock update before its read API is
+	// consistent.  Re-read only (never rewrite) within this bounded window.
+	shopeeReadBackAttempts int
+	shopeeReadBackInterval time.Duration
 }
 
 func NewSyncWorker(store *PostgresStore, service *Service, shopee shopeeInventoryGateway, tiktok inventoryGateway, writeEnabled bool, logger *zap.Logger) *SyncWorker {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &SyncWorker{store: store, service: service, shopee: shopee, tiktok: tiktok, writeEnabled: writeEnabled, logger: logger, owner: "marketplace-stock-v2"}
+	return &SyncWorker{
+		store: store, service: service, shopee: shopee, tiktok: tiktok, writeEnabled: writeEnabled, logger: logger, owner: "marketplace-stock-v2",
+		shopeeReadBackAttempts: 8, shopeeReadBackInterval: 2 * time.Second,
+	}
 }
 
 func (w *SyncWorker) Start(ctx context.Context) {
@@ -261,14 +268,47 @@ func (w *SyncWorker) syncShopee(ctx context.Context, member Member, target int64
 	if !shopeeWriteSucceeded(write, modelID) {
 		return "failed", previous, 0, "inventory_write_unknown", "Shopee ยังยืนยันผลการเขียนของ SKU นี้ไม่ได้"
 	}
-	_, actual, ok, err = w.readShopeeInventory(ctx, shopID, itemID, modelID)
-	if err != nil {
+	actual, matched, readable, err := w.awaitShopeeReadBack(ctx, shopID, itemID, modelID, target)
+	if !readable && err != nil {
 		return "failed", previous, 0, "read_back_failed", "อ่านผลหลังส่ง Shopee ไม่สำเร็จ"
 	}
-	if !ok || actual != target {
+	if !matched {
 		return "failed", previous, actual, "read_back_mismatch", "ยอด Shopee หลังส่งไม่ตรงกับเป้าหมาย"
 	}
 	return "changed", previous, actual, "", ""
+}
+
+// awaitShopeeReadBack handles Shopee's short eventual-consistency window. It
+// never repeats UpdateStock: a timeout or stale read is resolved only by fresh
+// reads, then the pool is paused if the target still cannot be proven.
+func (w *SyncWorker) awaitShopeeReadBack(ctx context.Context, shopID, itemID, modelID, target int64) (actual int64, matched, readable bool, lastErr error) {
+	attempts := w.shopeeReadBackAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 && w.shopeeReadBackInterval > 0 {
+			select {
+			case <-ctx.Done():
+				return actual, false, readable, ctx.Err()
+			case <-time.After(w.shopeeReadBackInterval):
+			}
+		}
+		_, current, ok, err := w.readShopeeInventory(ctx, shopID, itemID, modelID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if !ok {
+			continue
+		}
+		readable = true
+		actual = current
+		if current == target {
+			return actual, true, true, nil
+		}
+	}
+	return actual, false, readable, lastErr
 }
 
 // readShopeeInventory accepts exactly one Seller stock location.  Choosing a
