@@ -154,10 +154,10 @@ export default function MarketplaceStock() {
       {!canManage && <Alert><Info className="h-4 w-4" /><AlertTitle>{canOperate ? 'โหมดตรวจสอบและสั่งงาน' : 'โหมดติดตามผล'}</AlertTitle><AlertDescription>{canOperate ? 'คุณตรวจยอดจาก SML แบบอ่านอย่างเดียวได้ ส่วนการเปลี่ยนนโยบายและเปิด Auto ต้องให้ผู้ดูแลดำเนินการ' : 'ผู้ดูแลระบบกำหนดนโยบายและเปิดการซิงก์อัตโนมัติ พนักงานสามารถตรวจสถานะและผลการทำงานได้จากหน้านี้'}</AlertDescription></Alert>}
       {data?.settings.kill_switch_enabled && <Alert variant="destructive"><CircleOff className="h-4 w-4" /><AlertTitle>หยุดส่งสต๊อกทั้งร้านอยู่</AlertTitle><AlertDescription>งานที่ยังไม่เริ่มจะไม่ส่งยอดออกไป Marketplace จนกว่าผู้ดูแลจะเปิดระบบอีกครั้ง</AlertDescription></Alert>}
 
-      <section className="grid gap-3 sm:grid-cols-3" aria-label="ภาพรวมการควบคุมสต๊อก">
-        <Metric label="แหล่งสต๊อก SML" value={data?.settings.warehouse_code ? `${data.settings.warehouse_code} / ${data.settings.location_code}` : 'ยังไม่ได้เลือก'} detail="ใช้ร่วมกันทั้ง Shopee และ TikTok" />
-        <Metric label="กันสต๊อกเริ่มต้น" value={data ? `${data.settings.default_buffer_pct}%` : '—'} detail="ปรับเฉพาะกลุ่มสินค้าได้" />
-        <Metric label="เปิด Auto แล้ว" value={`${activePools} กลุ่ม`} detail="กลุ่มใหม่เริ่มปิดเสมอ" />
+      <section className="flex flex-wrap items-center gap-x-5 gap-y-2 border-y py-3 text-xs text-muted-foreground" aria-label="สรุปการควบคุมสต๊อก">
+        <p><span>แหล่งสต๊อก SML: </span><span className="font-medium text-foreground">{data?.settings.warehouse_code ? `${data.settings.warehouse_code} / ${data.settings.location_code}` : 'ยังไม่ได้เลือก'}</span></p>
+        <p><span>กันสต๊อกเริ่มต้น: </span><span className="font-medium text-foreground">{data ? `${data.settings.default_buffer_pct}%` : '—'}</span></p>
+        <p><span>เปิด Auto: </span><span className="font-medium text-foreground">{activePools} กลุ่ม</span><span> · กลุ่มใหม่เริ่มปิดเสมอ</span></p>
       </section>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as 'all' | Source)}>
@@ -179,15 +179,46 @@ export default function MarketplaceStock() {
   )
 }
 
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-lg font-semibold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>
-}
-
 function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning, onPreview, onAuto, onSync }: { pool: Pool; canManage: boolean; canOperate: boolean; preview?: PreviewResult; previewing: boolean; actioning: boolean; onPreview: () => void; onAuto: (enabled: boolean) => void; onSync: () => void }) {
   const enabledMembers = pool.members.filter((member) => member.enabled)
   const channels = [...new Set(enabledMembers.map((member) => member.source))]
   const bufferLabel = pool.buffer_pct_override === undefined ? 'ใช้กันชนเริ่มต้นของร้าน' : `กันสต๊อก ${pool.buffer_pct_override}%`
-  return <Card><CardHeader className="gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0"><CardTitle className="break-words text-base"><span className="font-mono">{pool.sml_item_code}</span><span className="font-normal"> · {pool.sml_item_name || 'ยังไม่พบชื่อสินค้า SML'}</span></CardTitle><CardDescription className="mt-1">หน่วย {pool.sml_unit_code} · {pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · {bufferLabel}</CardDescription></div><div className="flex flex-wrap items-center gap-2"><Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge><Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge>{canOperate && <Button variant="outline" size="sm" onClick={onPreview} disabled={previewing || actioning || pool.kill_switch_enabled}><RefreshCw className={cn('mr-2 h-4 w-4', previewing && 'animate-spin')} />{pool.status === 'paused' ? 'ตรวจ SML อีกครั้ง' : 'ตรวจ SML'}</Button>}{canOperate && !pool.dry_run_required && pool.status !== 'paused' && <Button size="sm" onClick={onSync} disabled={actioning}>ซิงก์ด้วยมือ</Button>}{canManage && <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs"><Switch checked={pool.auto_enabled} onCheckedChange={onAuto} disabled={actioning || pool.dry_run_required || pool.kill_switch_enabled} /><span>ส่งอัตโนมัติ</span></label>}</div></CardHeader><CardContent className="grid gap-2 p-4 pt-0 sm:grid-cols-2">{enabledMembers.map((member) => <div key={member.id} className="rounded-md border px-3 py-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{sourceLabel[member.source]}</span><span className="text-muted-foreground">{pool.allocation_mode === 'quota' ? `${member.allocation_pct}%` : 'ยอดร่วม'}</span></div><p className="mt-1 truncate text-muted-foreground" title={[member.product_name, member.variant_name].filter(Boolean).join(' · ')}>{[member.product_name, member.variant_name].filter(Boolean).join(' · ') || 'ยังไม่มีชื่อสินค้า'}</p>{member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}</div>)}</CardContent>{preview && <div className="border-t bg-muted/30 px-4 py-3 text-sm"><p className="font-medium">แผนจาก SML: พร้อมใช้ {preview.usable_qty} {pool.sml_unit_code} · กันชน {preview.buffer_qty} · ส่งออกได้ {preview.distributable_qty}</p><p className="mt-1 text-xs text-muted-foreground">หัก reservation {preview.reservation_qty} แล้ว; แผนหมดอายุใน 60 วินาที และยังไม่ได้อ่านหรือเขียนยอด Marketplace</p><div className="mt-2 flex flex-wrap gap-2">{preview.lines.map((line) => <Badge key={line.member_id} variant="outline">SKU → {line.target_qty}</Badge>)}</div></div>}{pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}{channels.length === 0 && <div className="border-t px-4 py-2 text-xs text-muted-foreground">ยังไม่มี SKU ที่เปิดควบคุมในกลุ่มนี้</div>}</Card>
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">สินค้าและหน่วย SML</p>
+          <CardTitle className="mt-1 break-words text-base"><span className="font-mono">{pool.sml_item_code}</span><span className="font-normal"> · {pool.sml_item_name || 'ยังไม่พบชื่อสินค้า SML'}</span></CardTitle>
+          <CardDescription className="mt-1">หน่วย {pool.sml_unit_code} · {pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · {bufferLabel}</CardDescription>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge>
+          <Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge>
+          {canOperate && <Button variant="outline" size="sm" onClick={onPreview} disabled={previewing || actioning || pool.kill_switch_enabled}><RefreshCw className={cn('mr-2 h-4 w-4', previewing && 'animate-spin')} />{pool.status === 'paused' ? 'ตรวจ SML อีกครั้ง' : 'ตรวจ SML'}</Button>}
+          {canOperate && !pool.dry_run_required && pool.status !== 'paused' && <Button size="sm" onClick={onSync} disabled={actioning}>ซิงก์ด้วยมือ</Button>}
+          {canManage && <label className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1 text-xs"><Switch checked={pool.auto_enabled} onCheckedChange={onAuto} disabled={actioning || pool.dry_run_required || pool.kill_switch_enabled} /><span>ส่งอัตโนมัติ</span></label>}
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">SKU ที่ควบคุม</span>
+          <span>{channels.length ? `ช่องทาง: ${channels.map((channel) => sourceLabel[channel]).join(' · ')}` : 'ยังไม่มี SKU ที่เปิดควบคุม'}</span>
+        </div>
+        {enabledMembers.length > 0 && <div className="divide-y">
+          {enabledMembers.map((member) => <div key={member.id} className="flex flex-col gap-2 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{sourceLabel[member.source]}</Badge><p className="font-medium">{member.product_name || 'ยังไม่มีชื่อสินค้า'}</p></div>
+              <p className="mt-1 truncate text-xs text-muted-foreground" title={member.variant_name || member.external_sku_id}>{member.variant_name ? `ตัวเลือก: ${member.variant_name}` : `SKU: ${member.external_sku_id}`}</p>
+              {member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}
+            </div>
+            <span className="shrink-0 text-xs text-muted-foreground">{pool.allocation_mode === 'quota' ? `โควตา ${member.allocation_pct}%` : 'ใช้ยอดร่วม'}</span>
+          </div>)}
+        </div>}
+      </CardContent>
+      {preview && <div className="border-t bg-muted/30 px-4 py-3 text-sm"><p className="font-medium">แผนจาก SML: พร้อมใช้ {preview.usable_qty} {pool.sml_unit_code} · กันชน {preview.buffer_qty} · ส่งออกได้ {preview.distributable_qty}</p><p className="mt-1 text-xs text-muted-foreground">หัก reservation {preview.reservation_qty} แล้ว; แผนหมดอายุใน 60 วินาที และยังไม่ได้อ่านหรือเขียนยอด Marketplace</p><div className="mt-2 flex flex-wrap gap-2">{preview.lines.map((line) => <Badge key={line.member_id} variant="outline">SKU → {line.target_qty}</Badge>)}</div></div>}
+      {pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}
+    </Card>
+  )
 }
 
 function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) { return <Card><CardContent className="flex flex-col items-center px-6 py-12 text-center"><Boxes className="h-9 w-9 text-muted-foreground" /><h2 className="mt-3 font-semibold">ยังไม่มีกลุ่มสต๊อก</h2><p className="mt-1 max-w-md text-sm text-muted-foreground">เริ่มจากจับคู่สินค้า Marketplace กับสินค้า SML ให้พร้อม แล้วสร้างกลุ่มเพื่อเลือกว่าจะแบ่งโควตาหรือใช้สต๊อกร่วม</p>{canManage && <Button className="mt-4" onClick={onCreate}>สร้างกลุ่มสต๊อก</Button>}</CardContent></Card> }

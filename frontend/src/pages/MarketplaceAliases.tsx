@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import client from '@/api/client'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { EmptyState } from '@/components/common/EmptyState'
-import { PageHeader } from '@/components/common/PageHeader'
 import { MarketplaceQuantityField, quantityModeFromMultiplier, type MarketplaceQuantityMode } from '@/components/marketplace/MarketplaceQuantityField'
 import { MarketplaceSourceChannelBadges } from '@/components/marketplace/InputChannelBadge'
 import { Badge } from '@/components/ui/badge'
@@ -538,14 +537,20 @@ export default function MarketplaceAliases() {
   const selectedShopeeConnection = shopeeConnections.find((item) => String(item.shop_id) === shopeeShopID)
   const selectedTikTokConnection = tiktokConnections.find((item) => item.shop_id === tiktokShopID)
   const selectedTikTokCatalogReady = Boolean(selectedTikTokConnection?.granted_scopes.includes('seller.product.basic'))
+  const headerCount = tab === 'pending'
+    ? `${total.toLocaleString()} รอจับคู่`
+    : groupedAvailable === true
+      ? `${savedGroups.length.toLocaleString()} สินค้าหลักในหน้านี้`
+      : `${total.toLocaleString()} จับคู่แล้ว`
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
-      <PageHeader
-        title="จับคู่สินค้า Marketplace"
-        description="อัปเดตรายการจาก Shopee หรือ TikTok Shop แล้วเลือกสินค้า SML ให้ครั้งเดียว ระบบจะใช้ Product Master เดียวกันกับออเดอร์และไฟล์ Marketplace ครั้งถัดไป"
-        actions={(
-          <>
+      <header className="flex flex-col gap-3 border-b pb-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">จับคู่สินค้า Marketplace</h1><Badge variant="outline">{headerCount}</Badge></div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">เลือกสินค้า SML ให้กับสินค้า Marketplace เพื่อใช้สร้างเอกสารและเตรียม SKU ที่พร้อมสำหรับกลุ่มควบคุมสต๊อก</p>
+        </div>
+        <div className="flex flex-wrap gap-2 xl:justify-end">
             {canManage && shopeeConnections.length > 0 && (
               <>
                 {shopeeConnections.length > 1 && (
@@ -575,9 +580,13 @@ export default function MarketplaceAliases() {
             <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading || catalogSyncing || tiktokCatalogSyncing}>
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> รีเฟรช
             </Button>
-          </>
-        )}
-      />
+        </div>
+      </header>
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-y py-2 text-xs text-muted-foreground" role="status">
+        <span>{tab === 'pending' ? 'รายการที่ยังไม่จับคู่จะยังไม่ถูกเลือกเข้าในกลุ่มควบคุมสต๊อก' : 'เฉพาะรายการที่ผ่านการตรวจหน่วยแล้วจึงใช้เป็น SKU ของกลุ่มควบคุมสต๊อกได้'}</span>
+        <span>การจับคู่ที่บันทึกแล้วใช้ร่วมกับ Product Master และออเดอร์ Marketplace</span>
+      </div>
 
       {canManage && selectedTikTokConnection && !selectedTikTokCatalogReady && (
         <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm" role="status">
@@ -848,44 +857,48 @@ function ConversionConfigDialog({ value, onClose, onContinue, onRecoverPolicyJob
 function PendingTable({ loading, rows, canManage, onPick }: { loading: boolean; rows: MarketplaceAliasReviewGroup[]; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
   if (!loading && rows.length === 0) return <EmptyState icon={Tags} title="ไม่มีสินค้าที่ต้องจับคู่" description="หลังอัปเดตรายการจาก Shopee หรือ TikTok Shop หรือมีออเดอร์ Marketplace ใหม่ สินค้าที่ยังไม่พบคู่ใน SML จะมาแสดงที่นี่" />
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader><TableRow><TableHead>ช่องทางและร้าน</TableHead><TableHead className="min-w-[280px]">สินค้า Marketplace</TableHead><TableHead className="text-right">รายการที่รอ</TableHead><TableHead className="text-right">จัดการ</TableHead></TableRow></TableHeader>
-        <TableBody>
-          {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={4}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => {
-            const summary = marketplacePendingSummary(row)
-            return (
-              <TableRow key={row.group_key}>
-                <TableCell><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} inputChannels={row.input_channels} catalogProduct={row.catalog_product} /></TableCell>
-                <TableCell>
-                  <div className="line-clamp-1 font-medium">{row.source_product_name || row.raw_name}</div>
-                  <div className="mt-1 line-clamp-1 text-xs text-muted-foreground">
-                    {row.source_variant_name
-                      ? <>ตัวเลือก: {row.source_variant_name}</>
-                      : row.source_sku
-                        ? <>SKU: <span className="font-mono">{row.source_sku}</span></>
-                        : row.discovery_source === 'tiktok_product_catalog'
-                          ? 'TikTok ไม่ได้ส่งชื่อตัวเลือกของ SKU นี้'
-                          : 'ไม่มี SKU ต้นทาง'}
-                  </div>
-                </TableCell>
-                <TableCell className="text-right tabular-nums"><div>{summary.primary}</div><div className="text-xs text-muted-foreground">{summary.secondary}</div></TableCell>
-                <TableCell className="text-right">
-                  {canManage && row.discovery_source === 'tiktok_order_snapshot' && row.source_reference_id ? (
-                    <Button size="sm" asChild><Link to={buildTikTokOrderMappingReviewPath(row.account_key, row.source_reference_id)}>ตรวจและจับคู่</Link></Button>
-                  ) : canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:')) ? (
-                    <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            )
-          })}
-        </TableBody>
-      </Table>
-    </div>
+    <>
+      <div className="hidden overflow-x-auto md:block">
+        <Table>
+          <TableHeader><TableRow><TableHead className="min-w-[360px]">สินค้า Marketplace</TableHead><TableHead className="min-w-[190px]">สถานะการจับคู่</TableHead><TableHead className="w-[156px] text-right">จัดการ</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {loading ? Array.from({ length: 6 }).map((_, index) => <TableRow key={index}><TableCell colSpan={3}><Skeleton className="h-10 w-full" /></TableCell></TableRow>) : rows.map((row) => <PendingRow key={row.group_key} row={row} canManage={canManage} onPick={onPick} />)}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="divide-y md:hidden">
+        {loading ? Array.from({ length: 4 }).map((_, index) => <div className="p-4" key={index}><Skeleton className="h-16 w-full" /></div>) : rows.map((row) => <PendingMobileCard key={row.group_key} row={row} canManage={canManage} onPick={onPick} />)}
+      </div>
+    </>
   )
+}
+
+function PendingRow({ row, canManage, onPick }: { row: MarketplaceAliasReviewGroup; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
+  const summary = marketplacePendingSummary(row)
+  return <TableRow>
+    <TableCell><PendingProductIdentity row={row} /></TableCell>
+    <TableCell><PendingMappingState summary={summary} /></TableCell>
+    <TableCell className="text-right"><PendingMappingAction row={row} canManage={canManage} onPick={onPick} /></TableCell>
+  </TableRow>
+}
+
+function PendingMobileCard({ row, canManage, onPick }: { row: MarketplaceAliasReviewGroup; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
+  const summary = marketplacePendingSummary(row)
+  return <article className="space-y-3 p-4"><PendingProductIdentity row={row} /><div className="flex flex-wrap items-center justify-between gap-2"><PendingMappingState summary={summary} /><PendingMappingAction row={row} canManage={canManage} onPick={onPick} /></div></article>
+}
+
+function PendingProductIdentity({ row }: { row: MarketplaceAliasReviewGroup }) {
+  return <div className="flex items-start gap-3"><ChannelAccount source={row.source} accountName={row.account_name} accountKey={row.account_key} inputChannels={row.input_channels} catalogProduct={row.catalog_product} /><div className="min-w-0"><p className="line-clamp-2 font-medium">{row.source_product_name || row.raw_name}</p><p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{row.source_variant_name ? `ตัวเลือก: ${row.source_variant_name}` : row.source_sku ? <>SKU: <span className="font-mono">{row.source_sku}</span></> : row.discovery_source === 'tiktok_product_catalog' ? 'TikTok ไม่ได้ส่งชื่อตัวเลือกของ SKU นี้' : 'ไม่มี SKU ต้นทาง'}</p></div></div>
+}
+
+function PendingMappingState({ summary }: { summary: ReturnType<typeof marketplacePendingSummary> }) {
+  return <div className="space-y-1"><Badge variant="outline">รอจับคู่กับ SML</Badge><p className="text-xs text-muted-foreground">{summary.primary} · {summary.secondary}</p></div>
+}
+
+function PendingMappingAction({ row, canManage, onPick }: { row: MarketplaceAliasReviewGroup; canManage: boolean; onPick: (row: MarketplaceAliasReviewGroup) => void }) {
+  if (canManage && row.discovery_source === 'tiktok_order_snapshot' && row.source_reference_id) return <Button size="sm" asChild><Link to={buildTikTokOrderMappingReviewPath(row.account_key, row.source_reference_id)}>ตรวจและจับคู่</Link></Button>
+  if (canManage && (row.source !== 'shopee' || row.account_key.startsWith('shop:'))) return <Button size="sm" onClick={() => onPick(row)}>เลือกสินค้า SML</Button>
+  return <span className="text-xs text-muted-foreground">{canManage ? 'ต้องระบุร้านในไฟล์' : 'ให้ผู้ดูแลยืนยัน'}</span>
 }
 
 type GroupVariantState = { rows: MarketplaceItemAlias[]; nextCursor: string; loading: boolean; error: string }
