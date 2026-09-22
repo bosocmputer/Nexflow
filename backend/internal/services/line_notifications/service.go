@@ -719,7 +719,7 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 		currency = "THB"
 	}
 	amount := tikTokShopLineMoney(in.PaymentTotalAmount)
-	title := "มีออเดอร์ TikTok Shop ใหม่"
+	title := "ออเดอร์ TikTok Shop ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, shop, amount}), " · ")
 	body := []map[string]any{
 		tikTokShopFlexHeader("ออเดอร์ใหม่"),
@@ -727,7 +727,9 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 		flexText(shop, "sm", "", "#64748B", "", true),
 	}
 	if amount != "" {
-		body = append(body, flexAmountRow("ยอดลูกค้าชำระ", amount+" "+currency, "#E11D48"))
+		// The compact black total keeps TikTok identifiable without adding a
+		// second alert colour; success/review/failure colours remain semantic.
+		body = append(body, flexAmountRow("ยอดลูกค้าชำระ", amount+" "+currency, "#111111"))
 	}
 	createdAt := ""
 	if !in.CreatedAt.IsZero() {
@@ -735,19 +737,20 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 	}
 	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{
 		{Label: "Order ID", Value: strings.TrimSpace(in.OrderID)},
-		{Label: "สถานะ", Value: tikTokShopOrderStatusLabel(in.OrderStatus)},
 		{Label: "วันที่สั่ง", Value: createdAt},
+		{Label: "สถานะ", Value: tikTokShopOrderStatusLabel(in.OrderStatus)},
+	})
+	body = appendFlexSection(body, "การชำระเงิน", []flexKVRow{
 		{Label: "ยอดสินค้า", Value: tikTokShopLineMoneyWithCurrency(in.ProductSubtotalAmount, currency)},
 		{Label: "ค่าจัดส่ง", Value: tikTokShopLineMoneyWithCurrency(in.ShippingFeeAmount, currency)},
 	})
 	body = append(body,
 		map[string]any{"type": "separator", "margin": "md"},
-		flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+		flexText("สินค้า", "sm", "bold", "#334155", "md", true),
 	)
 	for _, item := range tikTokShopProductLines(in.Items, tikTokShopNotificationItemLimit) {
 		body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
 	}
-	body = append(body, flexText("ไม่มีชื่อผู้รับ เบอร์โทร หรือที่อยู่ในข้อความแจ้งเตือน", "xs", "", "#94A3B8", "md", true))
 	return alt, map[string]any{
 		"type": "bubble", "size": "mega",
 		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
@@ -810,15 +813,17 @@ func buildTikTokShopAutoSMLFlex(title, kind string, in models.TikTokAutoSMLNotif
 	if in.TotalAmount != 0 {
 		body = append(body, flexAmountRow("ยอดรวม", formatLineMoneyValue(in.TotalAmount)+" "+currency, accent))
 	}
-	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
+	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{
 		{Label: "Order ID", Value: strings.TrimSpace(in.OrderID)},
+	})
+	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
 		{Label: "Bill ID", Value: strings.TrimSpace(in.BillID)},
 		{Label: "เลขเอกสาร SML", Value: strings.TrimSpace(in.SMLDocNo)},
 	})
 	if items := tikTokShopProductLines(in.Items, tikTokShopNotificationItemLimit); len(items) > 0 {
 		body = append(body,
 			map[string]any{"type": "separator", "margin": "md"},
-			flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+			flexText("สินค้า", "sm", "bold", "#334155", "md", true),
 		)
 		for _, item := range items {
 			body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
@@ -831,7 +836,6 @@ func buildTikTokShopAutoSMLFlex(title, kind string, in models.TikTokAutoSMLNotif
 			flexText(truncateRunes(message, 240), "sm", "", "#0F172A", "", true),
 		)
 	}
-	body = append(body, flexText("ไม่มีชื่อผู้รับ เบอร์โทร หรือที่อยู่ในข้อความแจ้งเตือน", "xs", "", "#94A3B8", "md", true))
 	return alt, map[string]any{
 		"type": "bubble", "size": "mega",
 		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},

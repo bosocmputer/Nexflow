@@ -50,6 +50,7 @@ type BillHandler struct {
 	appSettingsRepo      *repository.AppSettingsRepo    // runtime: sml.stock_request_url read per-send
 	shopeeRealtimeRepo   *repository.ShopeeRealtimeRepo
 	marketplaceAliasRepo *repository.MarketplaceAliasRepo
+	notificationRepo     *repository.NotificationRepo
 	eventBroker          *events.Broker
 	log                  *zap.Logger
 }
@@ -102,6 +103,19 @@ func (h *BillHandler) SetShopeeRealtimeSync(repo *repository.ShopeeRealtimeRepo,
 	}
 	h.shopeeRealtimeRepo = repo
 	h.eventBroker = broker
+}
+
+// SetNotificationResolver lets a successful SML send close the matching
+// topbar task. It is wired after shared services are constructed so the Bill
+// handler keeps its existing constructor and callers outside server setup.
+func (h *BillHandler) SetNotificationResolver(repo *repository.NotificationRepo, broker *events.Broker) {
+	if h == nil {
+		return
+	}
+	h.notificationRepo = repo
+	if broker != nil {
+		h.eventBroker = broker
+	}
 }
 
 func (h *BillHandler) SetMarketplaceAliasRepo(repo *repository.MarketplaceAliasRepo) {
@@ -1736,6 +1750,7 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	opts.Context = ctx
 	defer func() {
 		h.syncShopeeRealtimeFromSendResult(bill, result)
+		h.resolveMarketplaceNotificationFromSendResult(ctx, bill, result)
 	}()
 	if opts.Via == "" {
 		opts.Via = "retry"
@@ -1932,6 +1947,53 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 		result.Warnings = warnings
 		h.logHiddenItemCodeWarnings(bill, warnings, opts, "sml_send")
 		return result
+	}
+}
+
+func (h *BillHandler) resolveMarketplaceNotificationFromSendResult(ctx context.Context, bill *models.Bill, result retrySendResult) {
+	if h == nil || h.notificationRepo == nil || bill == nil || result.HTTPStatus != http.StatusOK {
+		return
+	}
+	source, entityType, entityID := "", "", ""
+	if shopID, orderID := tikTokShopBillAuditIdentity(bill); shopID != "" && orderID != "" {
+		source, entityType, entityID = "tiktok_shop", "tiktok_shop_order", shopID+":"+orderID
+	} else if shopID, orderSN, ok := shopeeRealtimeBillIdentity(bill); ok {
+		source, entityType, entityID = "shopee_realtime", "shopee_order", fmt.Sprintf("%d:%s", shopID, orderSN)
+	}
+	if source == "" {
+		return
+	}
+	users, err := h.notificationRepo.ResolveByEntity(ctx, source, entityType, entityID, "ส่ง SML สำเร็จแล้ว")
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("resolve marketplace notification after SML send failed", zap.String("bill_id", bill.ID), zap.Error(err))
+		}
+		return
+	}
+	if h.eventBroker == nil {
+		return
+	}
+	for _, userID := range users {
+		unread, err := h.notificationRepo.UnreadCount(ctx, userID)
+		if err != nil {
+			continue
+		}
+		bySource, _ := h.notificationRepo.UnreadCountsBySource(ctx, userID)
+		if bySource == nil {
+			bySource = map[string]int{}
+		}
+		h.eventBroker.Publish(events.Event{
+			Type:         events.TypeNotificationResolved,
+			TargetUserID: userID,
+			Payload: map[string]any{
+				"source":           source,
+				"entity_type":      entityType,
+				"entity_id":        entityID,
+				"reason":           "ส่ง SML สำเร็จแล้ว",
+				"unread":           unread,
+				"unread_by_source": bySource,
+			},
+		})
 	}
 }
 

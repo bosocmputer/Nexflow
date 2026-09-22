@@ -44,6 +44,12 @@ const (
 	// changed. Payload: { total: int }.
 	TypeNotificationUnreadChanged = "notification_unread_changed"
 
+	// NotificationResolved — an operational item is no longer actionable.
+	// Payload contains the entity identity and the recipient's refreshed unread
+	// totals. The topbar removes only this completed entity; read history is
+	// still retained in the database for audit screens.
+	TypeNotificationResolved = "notification_resolved"
+
 	// ShopeeRealtimeChanged — Shopee realtime snapshots changed and clients
 	// should refresh local dashboard/query state.
 	TypeShopeeRealtimeChanged = "shopee_realtime_changed"

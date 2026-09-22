@@ -410,6 +410,7 @@ func main() {
 	tiktokAutoSMLController.Start(appCtx)
 	tiktokCancellationCoordinator.Start(appCtx)
 	billH.SetShopeeRealtimeSync(shopeeRealtimeRepo, eventBroker)
+	billH.SetNotificationResolver(notificationRepo, eventBroker)
 	billH.SetMarketplaceAliasRepo(aliasRepo)
 	lazadaH := handlers.NewLazadaImportHandler(billRepo, mappingRepo, auditLogRepo, cfg, channelDefaultRepo, catalogRepo, catalogSvc, aliasRepo, logger)
 	lazadaH.SetArtifactService(artifactSvc)

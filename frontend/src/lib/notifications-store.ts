@@ -29,6 +29,7 @@ interface NotificationsState {
   markReadLocal: (id: string, unread: number, bySource?: NotificationUnreadBySource) => void
   markEntityReadLocal: (entityType: string, entityID: string, unread: number, bySource?: NotificationUnreadBySource) => void
   markAllReadLocal: (bySource?: NotificationUnreadBySource) => void
+  resolveEntityLocal: (source: string, entityType: string, entityID: string, unread: number, bySource?: NotificationUnreadBySource) => void
 }
 
 export const useNotificationsStore = create<NotificationsState>((set) => ({
@@ -78,6 +79,16 @@ export const useNotificationsStore = create<NotificationsState>((set) => ({
       unread: 0,
       unreadBySource: normalizeUnreadBySource(bySource),
       items: state.items.map((item) => ({ ...item, read_at: item.read_at || new Date().toISOString() })),
+    })),
+  resolveEntityLocal: (source, entityType, entityID, unread, bySource) =>
+    set((state) => ({
+      unread: Math.max(0, Number(unread) || 0),
+      unreadBySource: normalizeUnreadBySource(bySource),
+      items: state.items.filter((item) => !(
+        item.source === source
+        && item.entity_type === entityType
+        && item.entity_id === entityID
+      )),
     })),
 }))
 

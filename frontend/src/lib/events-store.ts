@@ -15,6 +15,7 @@ export type ServerEventType =
   | 'unread_changed'
   | 'notification_created'
   | 'notification_unread_changed'
+  | 'notification_resolved'
   | 'shopee_realtime_changed'
 
 // Listener signature — handlers get the parsed JSON payload + the event type
@@ -136,6 +137,9 @@ export const useEventsStore = create<EventsState>((set, get) => ({
     })
     es.addEventListener('notification_unread_changed', (ev) => {
       dispatch('notification_unread_changed', (ev as MessageEvent).data)
+    })
+    es.addEventListener('notification_resolved', (ev) => {
+      dispatch('notification_resolved', (ev as MessageEvent).data)
     })
     es.addEventListener('shopee_realtime_changed', (ev) => {
       dispatch('shopee_realtime_changed', (ev as MessageEvent).data)

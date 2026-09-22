@@ -198,6 +198,60 @@ func (r *NotificationRepo) MarkAllRead(ctx context.Context, userID string) (int,
 	return int(n), nil
 }
 
+// ResolveByEntity closes every active notification for one operational entity.
+// It is intentionally not recipient-scoped: a completed Marketplace order is
+// no longer actionable for any admin or staff recipient. The affected users
+// are returned so callers can refresh each live topbar immediately.
+func (r *NotificationRepo) ResolveByEntity(ctx context.Context, source, entityType, entityID, reason string) ([]string, error) {
+	source = strings.TrimSpace(source)
+	entityType = strings.TrimSpace(entityType)
+	entityID = strings.TrimSpace(entityID)
+	reason = strings.TrimSpace(reason)
+	if source == "" || entityType == "" || entityID == "" {
+		return nil, nil
+	}
+	if reason == "" {
+		reason = "งานเสร็จสมบูรณ์"
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`UPDATE notifications
+		    SET resolved_at = COALESCE(resolved_at, NOW()),
+		        resolved_reason = CASE
+		          WHEN COALESCE(resolved_reason, '') = '' THEN $4
+		          ELSE resolved_reason
+		        END,
+		        updated_at = NOW()
+		  WHERE source = $1
+		    AND entity_type = $2
+		    AND entity_id = $3
+		    AND resolved_at IS NULL
+		  RETURNING recipient_id::text`,
+		source, entityType, entityID, reason,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]struct{}{}
+	users := []string{}
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		userID = strings.TrimSpace(userID)
+		if userID == "" {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		users = append(users, userID)
+	}
+	return users, rows.Err()
+}
+
 func (r *NotificationRepo) ResolveShopeeShopIssues(ctx context.Context, shopID int64, reason string) (int, error) {
 	if shopID <= 0 {
 		return 0, nil

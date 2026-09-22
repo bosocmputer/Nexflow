@@ -231,3 +231,29 @@ func TestNotificationRepoMarkReadByEntityNoopIsOK(t *testing.T) {
 		t.Fatalf("unmet mock expectations: %v", err)
 	}
 }
+
+func TestNotificationRepoResolveByEntityReturnsAffectedRecipients(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("UPDATE notifications").
+		WithArgs("tiktok_shop", "tiktok_shop_order", "7494619203789490654:586180035911386153", "ส่ง SML สำเร็จแล้ว").
+		WillReturnRows(sqlmock.NewRows([]string{"recipient_id"}).
+			AddRow("admin-1").
+			AddRow("staff-1").
+			AddRow("admin-1"))
+
+	users, err := NewNotificationRepo(db).ResolveByEntity(context.Background(), "tiktok_shop", "tiktok_shop_order", "7494619203789490654:586180035911386153", "ส่ง SML สำเร็จแล้ว")
+	if err != nil {
+		t.Fatalf("ResolveByEntity: %v", err)
+	}
+	if len(users) != 2 || users[0] != "admin-1" || users[1] != "staff-1" {
+		t.Fatalf("users = %#v, want unique affected users", users)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet mock expectations: %v", err)
+	}
+}

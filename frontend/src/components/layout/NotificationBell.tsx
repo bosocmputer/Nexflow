@@ -84,6 +84,7 @@ export function NotificationBell() {
   const upsertFromEvent = useNotificationsStore((s) => s.upsertFromEvent)
   const markReadLocal = useNotificationsStore((s) => s.markReadLocal)
   const markAllReadLocal = useNotificationsStore((s) => s.markAllReadLocal)
+  const resolveEntityLocal = useNotificationsStore((s) => s.resolveEntityLocal)
 
   const canUseNotifications = user?.role === 'admin' || user?.role === 'staff'
 
@@ -294,6 +295,17 @@ export function NotificationBell() {
         setUnread(payload?.total ?? 0, payload?.unread_by_source)
         return
       }
+      if (type === 'notification_resolved') {
+        notificationRequestSeq.current += 1
+        resolveEntityLocal(
+          String(payload?.source || ''),
+          String(payload?.entity_type || ''),
+          String(payload?.entity_id || ''),
+          Number(payload?.unread ?? useNotificationsStore.getState().unread),
+          payload?.unread_by_source,
+        )
+        return
+      }
       if (type !== 'notification_created') return
       const notification = payload?.notification as AppNotification | undefined
       if (!notification?.id) return
@@ -305,7 +317,7 @@ export function NotificationBell() {
       else if (notification.severity === 'warning') toast.warning(notification.title, opts)
       else toast.info(notification.title, opts)
     })
-  }, [canUseNotifications, loadNotifications, setUnread, subscribe, upsertFromEvent])
+  }, [canUseNotifications, loadNotifications, resolveEntityLocal, setUnread, subscribe, upsertFromEvent])
 
   useEffect(() => {
     if (!canUseNotifications) return
