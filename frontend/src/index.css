@@ -97,6 +97,57 @@
   }
 }
 
+@layer components {
+  /* Marketplace uses its two channel colors only for source identity. Status
+     colors stay semantic, so light and dark themes retain the same meaning. */
+  .marketplace-channel-shopee {
+    border-color: hsl(10 85% 55%);
+    background-color: hsl(10 85% 55%);
+    color: hsl(0 0% 100%);
+  }
+
+  .marketplace-channel-tiktok {
+    border-color: hsl(147 17% 8%);
+    background-color: hsl(147 17% 8%);
+    color: hsl(0 0% 100%);
+  }
+
+  .marketplace-channel-shopee-dot { background-color: hsl(10 85% 55%); }
+  .marketplace-channel-tiktok-dot { background-color: hsl(147 17% 8%); }
+
+  .marketplace-status-warning {
+    border-color: hsl(var(--warning) / 0.42);
+    background-color: hsl(var(--warning) / 0.1);
+    color: hsl(var(--warning));
+  }
+
+  .marketplace-status-info {
+    border-color: hsl(var(--info) / 0.42);
+    background-color: hsl(var(--info) / 0.1);
+    color: hsl(var(--info));
+  }
+
+  .marketplace-status-danger {
+    border-color: hsl(var(--destructive) / 0.42);
+    background-color: hsl(var(--destructive) / 0.1);
+    color: hsl(var(--destructive));
+  }
+
+  .marketplace-status-success {
+    border-color: hsl(var(--success) / 0.42);
+    background-color: hsl(var(--success) / 0.1);
+    color: hsl(var(--success));
+  }
+
+  .dark .marketplace-channel-tiktok {
+    border-color: hsl(0 0% 92%);
+    background-color: hsl(0 0% 92%);
+    color: hsl(147 17% 8%);
+  }
+
+  .dark .marketplace-channel-tiktok-dot { background-color: hsl(0 0% 92%); }
+}
+
 @layer utilities {
   .text-primary {
     color: hsl(var(--accent-strong));

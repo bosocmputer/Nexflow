@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"nexflow/internal/config"
+	"nexflow/internal/models"
 )
 
 const (
@@ -102,14 +103,22 @@ type marketplaceOperationsRow struct {
 type MarketplaceOperationsHandler struct {
 	db     *sql.DB
 	cfg    *config.Config
+	users  marketplaceOperationsUserReader
 	logger *zap.Logger
 }
 
-func NewMarketplaceOperationsHandler(db *sql.DB, cfg *config.Config, logger *zap.Logger) *MarketplaceOperationsHandler {
+// marketplaceOperationsUserReader makes the combined queue enforce the same
+// current per-user permissions as the menu instead of trusting stale browser
+// state or the role embedded in a JWT.
+type marketplaceOperationsUserReader interface {
+	FindByID(string) (*models.User, error)
+}
+
+func NewMarketplaceOperationsHandler(db *sql.DB, cfg *config.Config, users marketplaceOperationsUserReader, logger *zap.Logger) *MarketplaceOperationsHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &MarketplaceOperationsHandler{db: db, cfg: cfg, logger: logger}
+	return &MarketplaceOperationsHandler{db: db, cfg: cfg, users: users, logger: logger}
 }
 
 func (h *MarketplaceOperationsHandler) enabledSources() []marketplaceOperationsSource {
@@ -145,9 +154,16 @@ func (h *MarketplaceOperationsHandler) List(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ตัวกรอง Marketplace Operations ไม่ถูกต้อง"})
 		return
 	}
-	sources := h.enabledSources()
+	sources, ok := h.authorizedSources(c)
+	if !ok {
+		return
+	}
 	if query.Source != marketplaceSourceAll {
 		sources = filterMarketplaceSource(sources, query.Source)
+		if len(sources) == 0 {
+			c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์ดูคำสั่งซื้อ Marketplace ช่องทางนี้"})
+			return
+		}
 	}
 	rows := make([]marketplaceOperationsRow, 0, query.Limit+1)
 	partial := make([]gin.H, 0, len(sources))
@@ -208,7 +224,10 @@ func (h *MarketplaceOperationsHandler) Summary(c *gin.Context) {
 		return
 	}
 	startedAt := time.Now()
-	sources := h.enabledSources()
+	sources, ok := h.authorizedSources(c)
+	if !ok {
+		return
+	}
 	type sourceSummary struct {
 		Source       marketplaceOperationsSource `json:"source"`
 		Enabled      bool                        `json:"enabled"`
@@ -274,6 +293,57 @@ func (h *MarketplaceOperationsHandler) Summary(c *gin.Context) {
 		zap.Int64("latency_ms", time.Since(startedAt).Milliseconds()),
 	)
 	c.JSON(http.StatusOK, gin.H{"data": data, "shops": shops, "checked_at": time.Now().UTC()})
+}
+
+func (h *MarketplaceOperationsHandler) authorizedSources(c *gin.Context) ([]marketplaceOperationsSource, bool) {
+	if h == nil || h.users == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ยังตรวจสอบสิทธิ์คำสั่งซื้อ Marketplace ไม่ได้"})
+		return nil, false
+	}
+	user, err := h.users.FindByID(c.GetString("user_id"))
+	if err != nil || user == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์ดูคำสั่งซื้อ Marketplace"})
+		return nil, false
+	}
+	if !marketplaceOperationsPermissionAllowed(user, "marketplace_operations") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์เข้าเมนูคำสั่งซื้อ Marketplace"})
+		return nil, false
+	}
+
+	sources := make([]marketplaceOperationsSource, 0, 2)
+	for _, source := range h.enabledSources() {
+		if marketplaceOperationsPermissionAllowed(user, marketplaceOperationsSourceMenuKey(source)) {
+			sources = append(sources, source)
+		}
+	}
+	if len(sources) == 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์ดูคำสั่งซื้อของช่องทางที่เชื่อมต่อ"})
+		return nil, false
+	}
+	return sources, true
+}
+
+func marketplaceOperationsSourceMenuKey(source marketplaceOperationsSource) string {
+	switch source {
+	case marketplaceSourceShopee:
+		return "shopee_operations"
+	case marketplaceSourceTikTok:
+		return "tiktok_shop_operations"
+	default:
+		return ""
+	}
+}
+
+func marketplaceOperationsPermissionAllowed(user *models.User, menuKey string) bool {
+	if user == nil || menuKey == "" {
+		return false
+	}
+	for _, permission := range user.MenuPermissions {
+		if permission.MenuKey == menuKey {
+			return permission.CanView
+		}
+	}
+	return false
 }
 
 func filterMarketplaceSource(sources []marketplaceOperationsSource, wanted marketplaceOperationsSource) []marketplaceOperationsSource {

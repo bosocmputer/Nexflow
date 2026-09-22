@@ -418,7 +418,7 @@ func main() {
 	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, cfg.MarketplaceGroupedUIEnabled, logger)
 	settingsH := handlers.NewSettingsHandler(platformRepo, logger)
 	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, auditLogRepo, cfg, logger)
-	marketplaceOperationsH := handlers.NewMarketplaceOperationsHandler(db, cfg, logger)
+	marketplaceOperationsH := handlers.NewMarketplaceOperationsHandler(db, cfg, userRepo, logger)
 	smlCapabilityClient := sml.NewGatewayCapabilityClient(sml.PartyConfig{
 		BaseURL: cfg.ShopeeSMLURL, GUID: cfg.ShopeeSMLGUID, Provider: cfg.ShopeeSMLProvider,
 		ConfigFile: cfg.ShopeeSMLConfigFile, Database: cfg.ShopeeSMLDatabase,

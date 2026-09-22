@@ -108,17 +108,17 @@ function orderStatusLabel(status: string) {
 
 function workStateMeta(row: MarketplaceRow) {
   const states: Record<WorkState, { label: string; detail: string; tone: string }> = {
-    needs_mapping: { label: 'รอจับคู่สินค้า', detail: 'ตรวจสินค้า SML ก่อนสร้างเอกสาร', tone: 'border-amber-300 bg-amber-50 text-amber-900' },
-    needs_review: { label: 'ต้องตรวจข้อมูล', detail: 'ตรวจความพร้อมก่อนทำรายการ', tone: 'border-amber-300 bg-amber-50 text-amber-900' },
-    ready_to_create: { label: 'พร้อมสร้างเอกสาร', detail: 'ยังไม่มี Bill ใน Nexflow', tone: 'border-sky-300 bg-sky-50 text-sky-900' },
-    ready_to_send: { label: 'รอส่ง SML', detail: 'มี Bill แล้ว แต่ยังไม่มีเลข SML', tone: 'border-violet-300 bg-violet-50 text-violet-900' },
-    send_failed: { label: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจและลองใหม่', tone: 'border-rose-300 bg-rose-50 text-rose-900' },
-    cancel_document_needed: { label: 'รอเอกสารหลังยกเลิก', detail: 'มีใบขายเดิมใน SML แล้ว', tone: 'border-rose-300 bg-rose-50 text-rose-900' },
-    cancel_failed: { label: 'เอกสารยกเลิกมีปัญหา', detail: 'ตรวจหลักฐานและสถานะ SML', tone: 'border-rose-300 bg-rose-50 text-rose-900' },
-    complete: { label: 'ดำเนินการแล้ว', detail: 'ไม่มีงานที่ต้องทำตอนนี้', tone: 'border-emerald-300 bg-emerald-50 text-emerald-900' },
+    needs_mapping: { label: 'รอจับคู่สินค้า', detail: 'ตรวจสินค้า SML ก่อนสร้างเอกสาร', tone: 'marketplace-status-warning' },
+    needs_review: { label: 'ต้องตรวจข้อมูล', detail: 'ตรวจความพร้อมก่อนทำรายการ', tone: 'marketplace-status-warning' },
+    ready_to_create: { label: 'พร้อมสร้างเอกสาร', detail: 'ยังไม่มี Bill ใน Nexflow', tone: 'marketplace-status-info' },
+    ready_to_send: { label: 'รอส่ง SML', detail: 'มี Bill แล้ว แต่ยังไม่มีเลข SML', tone: 'marketplace-status-info' },
+    send_failed: { label: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจและลองใหม่', tone: 'marketplace-status-danger' },
+    cancel_document_needed: { label: 'รอเอกสารหลังยกเลิก', detail: 'มีใบขายเดิมใน SML แล้ว', tone: 'marketplace-status-danger' },
+    cancel_failed: { label: 'เอกสารยกเลิกมีปัญหา', detail: 'ตรวจหลักฐานและสถานะ SML', tone: 'marketplace-status-danger' },
+    complete: { label: 'ดำเนินการแล้ว', detail: 'ไม่มีงานที่ต้องทำตอนนี้', tone: 'marketplace-status-success' },
   }
   if (row.work_state === 'cancel_document_needed' || row.work_state === 'cancel_failed') return states[row.work_state]
-  if (row.sml_doc_no) return { label: 'ส่ง SML แล้ว', detail: row.sml_doc_no, tone: 'border-emerald-300 bg-emerald-50 text-emerald-900' }
+  if (row.sml_doc_no) return { label: 'ส่ง SML แล้ว', detail: row.sml_doc_no, tone: 'marketplace-status-success' }
   return states[row.work_state]
 }
 
@@ -141,12 +141,15 @@ export default function MarketplaceOperations() {
   const [nextCursor, setNextCursor] = useState('')
   const [hasMore, setHasMore] = useState(false)
   const [summary, setSummary] = useState<SummaryResponse | null>(null)
+  const [summaryError, setSummaryError] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [partialErrors, setPartialErrors] = useState<Array<{ source: string; message: string }>>([])
   const sequence = useRef(0)
+  const summarySequence = useRef(0)
   const activeRequest = useRef<AbortController | null>(null)
+  const activeSummaryRequest = useRef<AbortController | null>(null)
 
   const view = (params.get('view') as View) || 'work'
   const channel = (params.get('channel') as Channel) || 'all'
@@ -155,6 +158,7 @@ export default function MarketplaceOperations() {
   const search = params.get('q') || ''
   const from = params.get('from') || ''
   const to = params.get('to') || ''
+  const [searchDraft, setSearchDraft] = useState(search)
 
   const updateQuery = useCallback((updates: Record<string, string | null>) => {
     setParams((current) => {
@@ -205,15 +209,35 @@ export default function MarketplaceOperations() {
     }
   }, [channel, from, search, shopID, status, to, view])
 
-  useEffect(() => { void load() }, [load])
-  useEffect(() => () => activeRequest.current?.abort(), [])
-  useEffect(() => {
-    let mounted = true
-    client.get<SummaryResponse>('/api/marketplace-operations/summary')
-      .then((response) => { if (mounted) setSummary(response.data) })
-      .catch(() => { if (mounted) setSummary(null) })
-    return () => { mounted = false }
+  const loadSummary = useCallback(async () => {
+    const request = ++summarySequence.current
+    activeSummaryRequest.current?.abort()
+    const controller = new AbortController()
+    activeSummaryRequest.current = controller
+    setSummaryError('')
+    try {
+      const response = await client.get<SummaryResponse>('/api/marketplace-operations/summary', { signal: controller.signal })
+      if (request !== summarySequence.current) return
+      setSummary(response.data)
+    } catch {
+      if (request !== summarySequence.current || controller.signal.aborted) return
+      setSummary(null)
+      setSummaryError('ยังโหลดสถานะการเชื่อมต่อ Marketplace ไม่สำเร็จ รายการออเดอร์อาจแสดงได้ไม่ครบ กรุณาลองรีเฟรชอีกครั้ง')
+    }
   }, [])
+
+  useEffect(() => { void load() }, [load])
+  useEffect(() => { void loadSummary() }, [loadSummary])
+  useEffect(() => () => {
+    activeRequest.current?.abort()
+    activeSummaryRequest.current?.abort()
+  }, [])
+  useEffect(() => { setSearchDraft(search) }, [search])
+  useEffect(() => {
+    if (searchDraft === search) return
+    const timer = window.setTimeout(() => updateQuery({ q: searchDraft, cursor: null }), 300)
+    return () => window.clearTimeout(timer)
+  }, [search, searchDraft, updateQuery])
 
   const selectedShop = useMemo(() => summary?.shops.find((shop) => shop.source === channel && shop.shop_id === shopID), [channel, shopID, summary?.shops])
   const shopSelection = channel === 'all' || shopID === 'all' ? 'all' : `${channel}:${shopID}`
@@ -232,6 +256,8 @@ export default function MarketplaceOperations() {
     navigate(`${target}?${query.toString()}`)
   }
 
+  const refresh = () => { void Promise.all([load(), loadSummary()]) }
+
   return (
     <div className="space-y-4 p-0 sm:p-0">
       <MarketplaceOperationsHeader
@@ -245,7 +271,7 @@ export default function MarketplaceOperations() {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" role="status">
             {health.map((source) => (
               <span key={source.source} className="inline-flex items-center gap-1.5">
-                <span className={cn('h-2 w-2 rounded-full', source.error ? 'bg-rose-500' : source.source === 'shopee' ? 'bg-[#EE4D2D]' : 'bg-[#111817]')} />
+                <span className={cn('h-2 w-2 rounded-full', source.error ? 'bg-destructive' : source.source === 'shopee' ? 'marketplace-channel-shopee-dot' : 'marketplace-channel-tiktok-dot')} />
                 <strong className="font-medium text-foreground">{sourceLabel(source.source)}</strong>
                 <span>{source.error || `${source.total} ออเดอร์ · ซิงก์ล่าสุด ${timestamp(source.last_synced_at)}`}</span>
               </span>
@@ -255,9 +281,9 @@ export default function MarketplaceOperations() {
         actions={
           <>
             <MarketplaceOperationsHelp channel="Marketplace" signalLabel="Webhook" />
-            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => openSourceTools('diagnostics')}><CheckCircle2 className="h-3.5 w-3.5" />ตรวจระบบ</Button>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => openSourceTools('auto')}><Settings2 className="h-3.5 w-3.5" />Auto SML</Button>
-            <Button size="sm" className="h-8 gap-1.5" onClick={() => void load()} disabled={loading}><RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />รีเฟรช</Button>
+            <Button variant="outline" size="sm" className="h-10 gap-1.5 sm:h-8" onClick={() => openSourceTools('diagnostics')} disabled={!canOpenSourceTools} aria-describedby={!canOpenSourceTools ? 'marketplace-source-tools-help' : undefined}><CheckCircle2 className="h-3.5 w-3.5" />ตรวจระบบ</Button>
+            <Button variant="outline" size="sm" className="h-10 gap-1.5 sm:h-8" onClick={() => openSourceTools('auto')} disabled={!canOpenSourceTools} aria-describedby={!canOpenSourceTools ? 'marketplace-source-tools-help' : undefined}><Settings2 className="h-3.5 w-3.5" />Auto SML</Button>
+            <Button size="sm" className="h-10 gap-1.5 sm:h-8" onClick={refresh} disabled={loading}><RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />รีเฟรช</Button>
           </>
         }
       />
@@ -265,22 +291,27 @@ export default function MarketplaceOperations() {
       {partialErrors.length > 0 && (
         <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>แสดงข้อมูลไม่ครบ</AlertTitle><AlertDescription>{partialErrors.map((entry) => `${sourceLabel(entry.source as Channel)}: ${entry.message}`).join(' · ')}</AlertDescription></Alert>
       )}
+      {summaryError && (
+        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>สถานะ Marketplace ยังไม่ครบ</AlertTitle><AlertDescription className="flex flex-wrap items-center justify-between gap-3"><span>{summaryError}</span><Button size="sm" variant="outline" onClick={() => void loadSummary()}>ลองใหม่</Button></AlertDescription></Alert>
+      )}
       {error && (
         <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>โหลดข้อมูลไม่สำเร็จ</AlertTitle><AlertDescription className="flex items-center justify-between gap-3">{error}<Button size="sm" variant="outline" onClick={() => void load()}>ลองใหม่</Button></AlertDescription></Alert>
       )}
 
       <Tabs value={view} onValueChange={(value) => updateQuery({ view: value, cursor: null })}>
-        <TabsList className="h-9">{viewTabs.map((tab) => <TabsTrigger key={tab.value} value={tab.value} className="px-3 text-xs sm:text-sm">{tab.label}</TabsTrigger>)}</TabsList>
+        <TabsList className="h-10">{viewTabs.map((tab) => <TabsTrigger key={tab.value} value={tab.value} className="min-h-9 px-3 text-xs sm:text-sm">{tab.label}</TabsTrigger>)}</TabsList>
       </Tabs>
 
       <section className="rounded-lg border bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b p-3">
           <div className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="h-9 pl-8" placeholder="ค้นหาเลขออเดอร์ ร้าน หรือเลขเอกสาร" value={search} onChange={(event) => updateQuery({ q: event.target.value, cursor: null })} />
+            <Input id="marketplace-order-search" type="search" aria-label="ค้นหาเลขออเดอร์ ร้าน หรือเลขเอกสาร" className="h-10 pl-8" placeholder="ค้นหาเลขออเดอร์ ร้าน หรือเลขเอกสาร" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} onKeyDown={(event) => {
+              if (event.key === 'Enter') updateQuery({ q: searchDraft, cursor: null })
+            }} />
           </div>
           <Select value={channel} onValueChange={(value) => updateQuery({ channel: value, shop_id: null, cursor: null })}>
-            <SelectTrigger className="h-9 w-[150px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger aria-label="กรองตามช่องทาง Marketplace" className="h-10 w-[150px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">ทุกช่องทาง</SelectItem>
               {availableSources.includes('shopee') && <SelectItem value="shopee">Shopee</SelectItem>}
@@ -295,14 +326,14 @@ export default function MarketplaceOperations() {
             const [source, selectedID] = value.split(':', 2)
             updateQuery({ channel: source, shop_id: selectedID, cursor: null })
           }}>
-            <SelectTrigger className="h-9 w-[190px]"><SelectValue placeholder="ทุกร้าน" /></SelectTrigger>
+            <SelectTrigger aria-label="กรองตามร้าน Marketplace" className="h-10 w-[190px]"><SelectValue placeholder="ทุกร้าน" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">ทุกร้าน</SelectItem>
               {(summary?.shops ?? []).filter((shop) => channel === 'all' || shop.source === channel).map((shop) => <SelectItem key={`${shop.source}:${shop.shop_id}`} value={`${shop.source}:${shop.shop_id}`}>{sourceLabel(shop.source)} · {text(shop.name, shop.shop_id)}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={status} onValueChange={(value) => updateQuery({ status: value, cursor: null })}>
-            <SelectTrigger className="h-9 w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger aria-label="กรองตามสถานะ Marketplace" className="h-10 w-[170px]"><SelectValue /></SelectTrigger>
             <SelectContent>{statusOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
           </Select>
           <DateRangePicker
@@ -311,7 +342,7 @@ export default function MarketplaceOperations() {
             onFromChange={(value) => updateDateRange({ from: value, to })}
             onToChange={(value) => updateDateRange({ from, to: value })}
             onRangeChange={updateDateRange}
-            className="h-9 w-full sm:w-[250px]"
+            className="h-10 w-full sm:w-[250px]"
             title="ช่วงเวลาที่อัปเดตคำสั่งซื้อ"
             description="กรองตามเวลาที่ Marketplace แจ้งสถานะล่าสุดให้ Nexflow"
             clearLabel="ล้างช่วงเวลา"
@@ -320,9 +351,10 @@ export default function MarketplaceOperations() {
 
         {loading ? <MarketplaceRowsSkeleton /> : rows.length === 0 ? <EmptyMarketplaceQueue view={view} channel={channel} /> : <MarketplaceRows rows={rows} />}
 
-        {(hasMore || loadingMore) && <div className="flex justify-center border-t p-3"><Button variant="outline" size="sm" className="gap-1.5" disabled={loadingMore} onClick={() => void load(nextCursor, true)}>{loadingMore ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}โหลดรายการเพิ่ม</Button></div>}
+        {(hasMore || loadingMore) && <div className="flex justify-center border-t p-3"><Button variant="outline" size="sm" className="h-10 gap-1.5 sm:h-8" disabled={loadingMore} onClick={() => void load(nextCursor, true)}>{loadingMore ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="h-3.5 w-3.5" />}โหลดรายการเพิ่ม</Button></div>}
       </section>
       {selectedShop && <p className="text-xs text-muted-foreground">กำลังดูร้าน {selectedShop.name}; การตั้งค่า Auto SML และตรวจระบบจะทำกับร้านนี้เท่านั้น</p>}
+      {!canOpenSourceTools && <p id="marketplace-source-tools-help" className="text-xs text-muted-foreground">เลือกช่องทางและร้าน 1 ร้านก่อนใช้ “ตรวจระบบ” หรือ “Auto SML”</p>}
     </div>
   )
 }
@@ -335,7 +367,7 @@ function MarketplaceRows({ rows }: { rows: MarketplaceRow[] }) {
 }
 
 function ChannelBadge({ source }: { source: Exclude<Channel, 'all'> }) {
-  return <Badge className={cn('h-6 border px-2 text-[11px] text-white', source === 'shopee' ? 'border-[#EE4D2D] bg-[#EE4D2D]' : 'border-[#111817] bg-[#111817]')}>{sourceLabel(source)}</Badge>
+  return <Badge className={cn('h-6 border px-2 text-[11px]', source === 'shopee' ? 'marketplace-channel-shopee' : 'marketplace-channel-tiktok')}>{sourceLabel(source)}</Badge>
 }
 
 function MarketplaceTableRow({ row }: { row: MarketplaceRow }) {
@@ -357,12 +389,20 @@ function DocumentCell({ row, state }: { row: MarketplaceRow; state: ReturnType<t
 }
 
 function RowAction({ row }: { row: MarketplaceRow }) {
-  if (row.work_state === 'cancel_document_needed' || row.work_state === 'cancel_failed') {
-    return <Button asChild size="sm" className="h-8 gap-1.5"><Link to={legacyActionPath(row)}>ตรวจยกเลิก<ExternalLink className="h-3.5 w-3.5" /></Link></Button>
+  const action = row.available_actions[0] ?? (row.document_path ? 'open_document' : 'view_details')
+  const source = sourceLabel(row.source)
+  if (action === 'open_document' && row.document_path) {
+    return <Button asChild size="sm" variant="outline" className="h-10 gap-1.5 sm:h-8"><Link to={row.document_path} aria-label={`เปิดเอกสาร Nexflow ของคำสั่งซื้อ ${row.order_id}`}><FileText className="h-3.5 w-3.5" />เอกสาร</Link></Button>
   }
-  if (row.document_path) return <Button asChild size="sm" variant="outline" className="h-8 gap-1.5"><Link to={row.document_path}><FileText className="h-3.5 w-3.5" />เอกสาร</Link></Button>
-  if (row.work_state === 'complete') return <Button asChild size="sm" variant="outline" className="h-8 gap-1.5"><Link to={legacyActionPath(row)}>รายละเอียด<ExternalLink className="h-3.5 w-3.5" /></Link></Button>
-  return <Button asChild size="sm" className="h-8 gap-1.5"><Link to={legacyActionPath(row)}>ดำเนินการ<ExternalLink className="h-3.5 w-3.5" /></Link></Button>
+  const meta = action === 'review_cancellation'
+    ? { label: 'ตรวจเอกสารยกเลิก', title: `เปิดงานยกเลิก ${source} ของคำสั่งซื้อ ${row.order_id}` }
+    : action === 'review_document'
+      ? { label: row.source === 'tiktok' ? 'ตรวจและสร้างเอกสาร' : 'เปิดคำสั่งซื้อ', title: `เปิดคำสั่งซื้อ ${source} ${row.order_id} เพื่อตรวจข้อมูลล่าสุด` }
+      : action === 'open_document'
+        ? { label: 'เปิดเอกสาร', title: `เปิดงาน ${source} ของคำสั่งซื้อ ${row.order_id}` }
+        : { label: 'ดูรายละเอียด', title: `เปิดรายละเอียด ${source} ของคำสั่งซื้อ ${row.order_id}` }
+  const primary = action === 'review_document' || action === 'review_cancellation'
+  return <Button asChild size="sm" variant={primary ? 'default' : 'outline'} className="h-10 gap-1.5 sm:h-8"><Link to={legacyActionPath(row)} title={meta.title} aria-label={meta.title}>{meta.label}<ExternalLink className="h-3.5 w-3.5" /></Link></Button>
 }
 
 function MarketplaceRowsSkeleton() {
