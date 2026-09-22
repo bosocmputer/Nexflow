@@ -565,23 +565,34 @@ export interface DashboardStats {
   nextstep_marketplace?: NextStepMarketplaceState
 }
 
-export interface DashboardWorkSummary {
-  documents: {
-    shopee: number
-    tiktok: number
+export interface DashboardMonitorSummary {
+  flow: DashboardFlowPlatform[]
+  backlog: {
+    awaiting_document: number
+    awaiting_sml: number
+    failed_sml: number
   }
-  sml: {
-    needs_review: number
-    ready_to_send: number
-    failed: number
-    active_bulk_jobs: number
-  }
-  stock: {
-    needs_dry_run: number
-    paused: number
-    auto_enabled: number
-  }
-  mapping_pending: number
+  stock: DashboardStockUnit[]
+  checked_at: string
+}
+
+export interface DashboardFlowPlatform {
+  platform: PlatformKey
+  incoming_count: number
+  incoming_amount: number
+  bills_created_count: number
+  bills_created_amount: number
+  sml_sent_count: number
+  sml_sent_amount: number
+}
+
+export interface DashboardStockUnit {
+  unit_code: string
+  pool_count: number
+  sml_available_qty: number
+  shopee_target_qty: number
+  tiktok_target_qty: number
+  last_preview_at?: string
 }
 
 export type PlatformKey = 'shopee' | 'lazada' | 'tiktok'

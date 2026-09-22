@@ -1,8 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ArrowRight, BarChart3, Boxes, ClipboardCheck, FilePlus2, ReceiptText, RefreshCw, Send, Store } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BarChart3, ReceiptText, RefreshCw, Store } from 'lucide-react'
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -18,7 +21,7 @@ import { DateRangePicker } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
 import { ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_SHOP_API } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
-import type { DashboardStats, DashboardWorkSummary, NextStepMarketplaceState, PlatformKey, PlatformSalesStat } from '@/types'
+import type { DashboardFlowPlatform, DashboardMonitorSummary, DashboardStats, NextStepMarketplaceState, PlatformKey, PlatformSalesStat } from '@/types'
 
 type SetupStatus = {
   ready: boolean
@@ -119,9 +122,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [statsError, setStatsError] = useState(false)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
-  const [workSummary, setWorkSummary] = useState<DashboardWorkSummary | null>(null)
-  const [workSummaryLoading, setWorkSummaryLoading] = useState(true)
-  const [workSummaryError, setWorkSummaryError] = useState(false)
+  const [monitorSummary, setMonitorSummary] = useState<DashboardMonitorSummary | null>(null)
+  const [monitorLoading, setMonitorLoading] = useState(true)
+  const [monitorError, setMonitorError] = useState(false)
   const [dateRange, setDateRange] = useState<DashboardDateRange>(() => ({
     from: searchParams.get('from_date') || initialDateRange.from,
     to: searchParams.get('to_date') || initialDateRange.to,
@@ -205,24 +208,25 @@ export default function Dashboard() {
 
   useEffect(() => {
     let active = true
-    setWorkSummaryLoading(true)
+    if (!dateRangeReady) return
+    setMonitorLoading(true)
     client
-      .get<DashboardWorkSummary>('/api/dashboard/work-summary')
+      .get<DashboardMonitorSummary>('/api/dashboard/monitor-summary', { params: { from_date: dateRange.from, to_date: dateRange.to } })
       .then((response) => {
         if (!active) return
-        setWorkSummary(response.data)
-        setWorkSummaryError(false)
+        setMonitorSummary(response.data)
+        setMonitorError(false)
       })
       .catch(() => {
         if (!active) return
-        setWorkSummary(null)
-        setWorkSummaryError(true)
+        setMonitorSummary(null)
+        setMonitorError(true)
       })
       .finally(() => {
-        if (active) setWorkSummaryLoading(false)
+        if (active) setMonitorLoading(false)
       })
     return () => { active = false }
-  }, [refreshTick])
+  }, [dateRange.from, dateRange.to, dateRangeReady, refreshTick])
 
   const smlSetupIssue = setupStatus?.steps?.find((step) => step.key === 'instance' && !step.ready)
 
@@ -245,10 +249,11 @@ export default function Dashboard() {
         </Card>
       )}
 
-      <DashboardWorkQueue
-        summary={workSummary}
-        loading={workSummaryLoading}
-        error={workSummaryError}
+      <ExecutiveMonitor
+        summary={monitorSummary}
+        loading={monitorLoading}
+        error={monitorError}
+        range={dateRange}
         onRefresh={refreshStats}
       />
 
@@ -267,137 +272,80 @@ export default function Dashboard() {
   )
 }
 
-function DashboardWorkQueue({
-  summary,
-  loading,
-  error,
-  onRefresh,
-}: {
-  summary: DashboardWorkSummary | null
+function ExecutiveMonitor({ summary, loading, error, range, onRefresh }: {
+  summary: DashboardMonitorSummary | null
   loading: boolean
   error: boolean
+  range: DashboardDateRange
   onRefresh: () => void
 }) {
-  const smlAttention = (summary?.sml.needs_review ?? 0) + (summary?.sml.ready_to_send ?? 0) + (summary?.sml.failed ?? 0) + (summary?.sml.active_bulk_jobs ?? 0)
-  const stockAttention = (summary?.stock.needs_dry_run ?? 0) + (summary?.stock.paused ?? 0)
-  const rows = [
-    {
-      key: 'shopee-documents',
-      icon: FilePlus2,
-      title: 'รอสร้างเอกสาร Shopee',
-      value: summary?.documents.shopee ?? 0,
-      detail: 'ตรวจรายการ Shopee ก่อนสร้างเอกสาร Nexflow',
-      to: ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/sale-invoices',
-      tone: undefined,
-    },
-    {
-      key: 'tiktok-documents',
-      icon: FilePlus2,
-      title: 'รอสร้างเอกสาร TikTok Shop',
-      value: summary?.documents.tiktok ?? 0,
-      detail: 'ตรวจข้อมูลก่อนสร้างเอกสาร Nexflow',
-      to: ENABLE_TIKTOK_SHOP_API ? '/tiktok-shop-operations' : '/import/tiktok',
-      tone: undefined,
-    },
-    {
-      key: 'sml',
-      icon: Send,
-      title: 'ส่ง SML',
-      value: smlAttention,
-      detail: smlWorkDetail(summary),
-      to: '/sale-invoices',
-      tone: (summary?.sml.failed ?? 0) > 0 ? 'danger' : undefined,
-    },
-    {
-      key: 'mapping',
-      icon: ClipboardCheck,
-      title: 'จับคู่สินค้า Marketplace',
-      value: summary?.mapping_pending ?? 0,
-      detail: (summary?.mapping_pending ?? 0) > 0 ? 'จับคู่สินค้า SML ก่อนสร้างเอกสารหรือเปิดควบคุมสต๊อก' : 'สินค้า Marketplace ที่ใช้งานอยู่จับคู่แล้ว',
-      to: '/marketplace-aliases',
-      tone: undefined,
-    },
-    {
-      key: 'stock',
-      icon: Boxes,
-      title: 'ควบคุมสต๊อก Marketplace',
-      value: stockAttention,
-      detail: stockWorkDetail(summary),
-      to: '/settings/marketplace-stock',
-      tone: (summary?.stock.paused ?? 0) > 0 ? 'danger' : undefined,
-    },
-  ] as const
-
+  const flowData = flowChartData(summary?.flow ?? [])
+  const flowTotals = flowStageTotals(summary?.flow ?? [])
+  const stockData = (summary?.stock ?? []).map((item) => ({
+    name: item.unit_code || 'ไม่ระบุหน่วย',
+    'SML พร้อมใช้': item.sml_available_qty,
+    Shopee: item.shopee_target_qty,
+    TikTok: item.tiktok_target_qty,
+  }))
+  const backlog = summary?.backlog
   return (
-    <section aria-label="งานที่ต้องดำเนินการ">
-      <Card className="border-border/70 shadow-sm">
-        <CardContent className="p-0">
-          <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold">งานที่ต้องดำเนินการ</h2>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">สรุปจากข้อมูลใน Nexflow เพื่อเลือกงานถัดไป ไม่ได้ตรวจ API ของ Marketplace ระหว่างเปิดหน้านี้</p>
+    <section className="space-y-3" aria-label="ภาพรวมการทำงาน Marketplace">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-balance">ภาพรวม Marketplace และสต๊อก</h1>
+          <p className="mt-1 text-sm text-muted-foreground">ดูปริมาณงานตั้งแต่ออเดอร์เข้า สร้าง Bill จนส่ง SML และดูสต๊อกจากผลตรวจล่าสุด</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />รีเฟรชข้อมูล
+        </Button>
+      </div>
+      {error ? <DashboardMonitorError /> : <>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,0.8fr)]">
+          <Card className="border-border/70 shadow-sm">
+            <CardHeader className="pb-2"><CardTitle className="text-base">การไหลของออเดอร์</CardTitle><p className="text-xs font-normal text-muted-foreground">{formatShortDate(range.from)} - {formatShortDate(range.to)} · แยกตามวันที่เกิดเหตุของแต่ละขั้น</p></CardHeader>
+            <CardContent className="h-[280px] pb-4">
+              <ResponsiveContainer width="100%" height="100%"><BarChart data={flowData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip formatter={(value: number) => `${formatCount(value)} ออเดอร์`} /><Legend /><Bar dataKey="Shopee" stackId="flow" fill={PLATFORM_META.shopee.color} radius={[3, 3, 0, 0]} /><Bar dataKey="TikTok" stackId="flow" fill="#111817" radius={[3, 3, 0, 0]} /><Bar dataKey="Lazada" stackId="flow" fill={PLATFORM_META.lazada.color} radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer>
+            </CardContent>
+          </Card>
+          <Card className="border-border/70 shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-base">ยอดรวมและงานค้าง</CardTitle><p className="text-xs font-normal text-muted-foreground">ยอดเงินตามช่วงวันที่, งานค้างนับจากสถานะปัจจุบัน</p></CardHeader><CardContent className="space-y-4">
+            <MonitorMoneyMetric label="มูลค่าออเดอร์เข้า" value={flowTotals.incoming} />
+            <MonitorMoneyMetric label="มูลค่า Bill ที่สร้าง" value={flowTotals.bills} />
+            <MonitorMoneyMetric label="มูลค่าส่ง SML แล้ว" value={flowTotals.sent} />
+            <div className="border-t pt-4">
+            <MonitorMetric label="รอสร้าง Bill" value={backlog?.awaiting_document ?? 0} suffix="ออเดอร์" tone="default" />
+            <MonitorMetric label="รอตรวจหรือส่ง SML" value={backlog?.awaiting_sml ?? 0} suffix="Bill" tone="default" />
+            <MonitorMetric label="ส่ง SML ไม่สำเร็จ" value={backlog?.failed_sml ?? 0} suffix="Bill" tone="danger" />
             </div>
-            <Button type="button" variant="ghost" size="sm" className="h-8 self-start" onClick={onRefresh} disabled={loading}>
-              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-              รีเฟรช
-            </Button>
-          </div>
-
-          {error ? (
-            <div className="flex items-start gap-2.5 px-4 py-4 text-sm">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-              <div>
-                <p className="font-medium">โหลดสรุปงานไม่สำเร็จ</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">ลองรีเฟรชอีกครั้ง หรือเปิดเมนูที่เกี่ยวข้องเพื่อทำงานต่อ</p>
-              </div>
-            </div>
-          ) : (
-            <div className="divide-y">
-              {rows.map((row) => {
-                const Icon = row.icon
-                return (
-                  <Link key={row.key} to={row.to} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-background text-muted-foreground group-hover:text-foreground">
-                      <Icon className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium">{row.title}</span>
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{loading ? 'กำลังโหลด…' : row.detail}</span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      <Badge variant="outline" className={cn('min-w-8 justify-center tabular-nums', row.tone === 'danger' && 'border-destructive/30 bg-destructive/10 text-destructive')}>
-                        {loading ? '—' : formatCount(row.value)}
-                      </Badge>
-                      <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-                    </span>
-                  </Link>
-                )
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent></Card>
+        </div>
+        <Card className="border-border/70 shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-base">สต๊อก Marketplace</CardTitle><p className="text-xs font-normal text-muted-foreground">SML พร้อมใช้และยอดเป้าหมายล่าสุดที่ตั้งไปแต่ละช่องทาง, ไม่เรียก SML ระหว่างเปิด Dashboard</p></CardHeader><CardContent>{stockData.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">ยังไม่มีผลตรวจสต๊อกในกลุ่ม Marketplace</p> : <div className="h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={stockData} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}><CartesianGrid vertical={false} strokeDasharray="3 3" /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip /><Legend /><Bar dataKey="SML พร้อมใช้" fill="#0f766e" radius={[3, 3, 0, 0]} /><Bar dataKey="Shopee" fill={PLATFORM_META.shopee.color} radius={[3, 3, 0, 0]} /><Bar dataKey="TikTok" fill="#111817" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></div>}</CardContent></Card>
+      </>}
     </section>
   )
 }
 
-function smlWorkDetail(summary: DashboardWorkSummary | null) {
-  const values = [
-    summary?.sml.needs_review ? `ต้องตรวจ ${formatCount(summary.sml.needs_review)}` : '',
-    summary?.sml.ready_to_send ? `พร้อมส่ง ${formatCount(summary.sml.ready_to_send)}` : '',
-    summary?.sml.failed ? `ส่งไม่สำเร็จ ${formatCount(summary.sml.failed)}` : '',
-    summary?.sml.active_bulk_jobs ? `กำลังส่ง ${formatCount(summary.sml.active_bulk_jobs)} งาน` : '',
-  ].filter(Boolean)
-  return values.join(' · ') || 'ไม่มีเอกสารที่ต้องส่งหรือตรวจ'
+function DashboardMonitorError() { return <Card className="border-warning/35 bg-warning/[0.07] shadow-sm"><CardContent className="flex items-start gap-2.5 p-4"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" /><div><p className="text-sm font-semibold">โหลดข้อมูลภาพรวมไม่สำเร็จ</p><p className="mt-0.5 text-xs text-muted-foreground">ลองรีเฟรชอีกครั้ง ข้อมูลออเดอร์และการส่ง SML เดิมไม่ได้รับผลกระทบ</p></div></CardContent></Card> }
+
+function MonitorMetric({ label, value, suffix, tone }: { label: string; value: number; suffix: string; tone: 'default' | 'danger' }) { return <div className="flex items-end justify-between gap-4 border-b pb-3 last:border-0 last:pb-0"><span className="text-sm text-muted-foreground">{label}</span><span className={cn('text-2xl font-semibold tabular-nums', tone === 'danger' && value > 0 && 'text-destructive')}>{formatCount(value)} <span className="text-xs font-medium text-muted-foreground">{suffix}</span></span></div> }
+
+function MonitorMoneyMetric({ label, value }: { label: string; value: number }) { return <div className="flex items-end justify-between gap-4"><span className="text-sm text-muted-foreground">{label}</span><span className="text-base font-semibold tabular-nums">{formatCurrency(value, true)}</span></div> }
+
+function flowChartData(flow: DashboardFlowPlatform[]) {
+  const byPlatform = new Map(flow.map((item) => [item.platform, item]))
+  const value = (platform: PlatformKey, key: keyof Pick<DashboardFlowPlatform, 'incoming_count' | 'bills_created_count' | 'sml_sent_count'>) => Number(byPlatform.get(platform)?.[key] ?? 0)
+  return [
+    { name: 'ออเดอร์เข้า', Shopee: value('shopee', 'incoming_count'), TikTok: value('tiktok', 'incoming_count'), Lazada: value('lazada', 'incoming_count') },
+    { name: 'สร้าง Bill', Shopee: value('shopee', 'bills_created_count'), TikTok: value('tiktok', 'bills_created_count'), Lazada: value('lazada', 'bills_created_count') },
+    { name: 'ส่ง SML แล้ว', Shopee: value('shopee', 'sml_sent_count'), TikTok: value('tiktok', 'sml_sent_count'), Lazada: value('lazada', 'sml_sent_count') },
+  ]
 }
 
-function stockWorkDetail(summary: DashboardWorkSummary | null) {
-  const values = [
-    summary?.stock.needs_dry_run ? `รอตรวจ ${formatCount(summary.stock.needs_dry_run)} กลุ่ม` : '',
-    summary?.stock.paused ? `หยุดไว้ ${formatCount(summary.stock.paused)} กลุ่ม` : '',
-    summary?.stock.auto_enabled ? `อัตโนมัติ ${formatCount(summary.stock.auto_enabled)} กลุ่ม` : '',
-  ].filter(Boolean)
-  return values.join(' · ') || 'ยังไม่มีกลุ่มสต๊อกที่ต้องดูแล'
+function flowStageTotals(flow: DashboardFlowPlatform[]) {
+  return flow.reduce((total, item) => ({
+    incoming: total.incoming + Number(item.incoming_amount || 0),
+    bills: total.bills + Number(item.bills_created_amount || 0),
+    sent: total.sent + Number(item.sml_sent_amount || 0),
+  }), { incoming: 0, bills: 0, sent: 0 })
 }
 
 function PlatformSalesOverview({
@@ -1338,9 +1286,10 @@ function formatTrendDate(value: string): string {
 
 function defaultDashboardDateRange(): DashboardDateRange {
   const today = new Date()
-  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1)
+  const thirtyDaysAgo = new Date(today)
+  thirtyDaysAgo.setDate(today.getDate() - 29)
   return {
-    from: formatDateInput(firstDay),
+    from: formatDateInput(thirtyDaysAgo),
     to: formatDateInput(today),
   }
 }

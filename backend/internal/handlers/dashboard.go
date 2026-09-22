@@ -81,6 +81,25 @@ func (h *DashboardHandler) WorkSummary(c *gin.Context) {
 	})
 }
 
+// MonitorSummary returns the persisted executive dashboard view. It never
+// calls Shopee, TikTok, or SML: stock values are explicitly the last completed
+// dry-run snapshot rather than a live balance.
+func (h *DashboardHandler) MonitorSummary(c *gin.Context) {
+	summary, err := h.billRepo.DashboardMonitorSummaryForDateRange(
+		c.Request.Context(), strings.TrimSpace(c.Query("from_date")), strings.TrimSpace(c.Query("to_date")),
+	)
+	if err != nil {
+		if errors.Is(err, repository.ErrInvalidDashboardDateRange) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		h.log.Error("DashboardMonitorSummary", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "load dashboard monitor summary"})
+		return
+	}
+	c.JSON(http.StatusOK, summary)
+}
+
 // SetConfigStatus sets config flags for the settings status endpoint
 func (h *DashboardHandler) SetConfigStatus(line, sml bool) {
 	h.lineConfigured = line
