@@ -7,6 +7,7 @@ import client from '@/api/client'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
 import { MarketplaceOperationsHelp } from '@/components/marketplace/MarketplaceOperationsHelp'
+import { InputChannelBadge } from '@/components/marketplace/InputChannelBadge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -175,6 +176,18 @@ export default function MarketplaceOperations() {
     updateQuery({ from: range.from, to: range.to, cursor: null })
   }, [updateQuery])
 
+  const updateView = useCallback((nextView: string) => {
+    setParams((current) => {
+      const next = new URLSearchParams(current)
+      // "all" is a real view value. Unlike ordinary filters it must remain
+      // in the URL, otherwise the default view falls back to "work" again.
+      if (nextView === 'work') next.delete('view')
+      else next.set('view', nextView)
+      next.delete('cursor')
+      return next
+    }, { replace: true })
+  }, [setParams])
+
   const load = useCallback(async (cursor = '', append = false) => {
     const request = ++sequence.current
     activeRequest.current?.abort()
@@ -298,7 +311,7 @@ export default function MarketplaceOperations() {
         <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>โหลดข้อมูลไม่สำเร็จ</AlertTitle><AlertDescription className="flex items-center justify-between gap-3">{error}<Button size="sm" variant="outline" onClick={() => void load()}>ลองใหม่</Button></AlertDescription></Alert>
       )}
 
-      <Tabs value={view} onValueChange={(value) => updateQuery({ view: value, cursor: null })}>
+      <Tabs value={view} onValueChange={updateView}>
         <TabsList className="h-10">{viewTabs.map((tab) => <TabsTrigger key={tab.value} value={tab.value} className="min-h-9 px-3 text-xs sm:text-sm">{tab.label}</TabsTrigger>)}</TabsList>
       </Tabs>
 
@@ -367,7 +380,7 @@ function MarketplaceRows({ rows }: { rows: MarketplaceRow[] }) {
 }
 
 function ChannelBadge({ source }: { source: Exclude<Channel, 'all'> }) {
-  return <Badge className={cn('h-6 border px-2 text-[11px]', source === 'shopee' ? 'marketplace-channel-shopee' : 'marketplace-channel-tiktok')}>{sourceLabel(source)}</Badge>
+  return <InputChannelBadge channel={source === 'shopee' ? 'shopee' : 'tiktok_shop'} />
 }
 
 function MarketplaceTableRow({ row }: { row: MarketplaceRow }) {

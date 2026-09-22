@@ -42,7 +42,7 @@ test('places TikTok Shop read-only orders in orders and documents with its own p
   assert.ok(orders)
   assert.equal(orders.menuKey, 'tiktok_shop_operations')
   assert.equal(orders.to, '/tiktok-shop-operations')
-  assert.match(orders.hint, /Snapshot/)
+  assert.match(orders.hint, /Webhook/)
 })
 
 test('adds a TikTok cancellation shortcut that reuses the TikTok operations permission', () => {
@@ -64,6 +64,16 @@ test('activates only one TikTok sidebar entry for the cancelled filter', () => {
   assert.equal(isNavItemActive(cancellations, '/tiktok-shop-operations', ''), false)
   assert.equal(isNavItemActive(orders, '/tiktok-shop-operations', '?status_group=cancelled'), false)
   assert.equal(isNavItemActive(cancellations, '/tiktok-shop-operations', '?status_group=cancelled'), true)
+})
+
+test('keeps Marketplace navigation active during an internal source-specific action', () => {
+  const items = NAV_GROUPS.flatMap((group) => group.items)
+  const marketplace = items.find((item) => item.label === 'คำสั่งซื้อ Marketplace')
+
+  assert.ok(marketplace)
+  assert.equal(isNavItemActive(marketplace, '/tiktok-shop-operations', '?legacy_action=1&shop_id=7494619203789490654&order_id=583201434243138991'), true)
+  assert.equal(isNavItemActive(marketplace, '/shopee-operations', '?legacy_action=1&shop_id=264993963&order=260826C78TFM12'), true)
+  assert.equal(isNavItemActive(marketplace, '/tiktok-shop-operations', '?shop_id=7494619203789490654'), false)
 })
 
 test('keeps TikTok Shop stock beside Shopee stock with its own permission and feature gate', () => {

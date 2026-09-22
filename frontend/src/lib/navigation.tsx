@@ -191,6 +191,18 @@ export function firstVisibleNavPath(userOrRole?: User | string | null): string {
 
 export function isNavItemActive(item: NavItem | undefined, pathname: string, search: string): boolean {
   if (!item) return false
+  const currentParams = new URLSearchParams(search)
+
+  // A row in the unified queue hands off to the mature source-specific screen
+  // for its confirmed write flow. Keep the single visible Marketplace menu
+  // selected during that internal hand-off so the operator does not lose
+  // navigation context.
+  if (
+    item.to === '/marketplace-operations'
+    && currentParams.get('legacy_action') === '1'
+    && (pathname === '/shopee-operations' || pathname === '/tiktok-shop-operations')
+  ) return true
+
   const [itemPath, itemSearch = ''] = item.to.split('?', 2)
   const pathMatches = item.end
     ? pathname === itemPath
@@ -198,7 +210,7 @@ export function isNavItemActive(item: NavItem | undefined, pathname: string, sea
   if (!pathMatches) return false
 
   const itemStatusGroup = new URLSearchParams(itemSearch).get('status_group')
-  const currentStatusGroup = new URLSearchParams(search).get('status_group')
+  const currentStatusGroup = currentParams.get('status_group')
   if (itemStatusGroup) return currentStatusGroup === itemStatusGroup
   if (itemPath === '/shopee-operations' || itemPath === '/tiktok-shop-operations') return currentStatusGroup !== 'cancelled'
   return true
