@@ -85,6 +85,10 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'ซิงก์สต๊อก TikTok Shop' }],
   },
   {
+    pattern: '/settings/marketplace-stock',
+    crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'ควบคุมสต๊อก Marketplace' }],
+  },
+  {
     pattern: '/settings/instance',
     crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ข้อมูลร้านและการเชื่อมต่อ' }],
   },

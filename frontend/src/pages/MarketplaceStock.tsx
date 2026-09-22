@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ShelfPicker, WarehousePicker } from '@/pages/BillDetail/components/WarehousePicker'
 import { cn } from '@/lib/utils'
 import { permissionForMenu } from '@/lib/navigation'
 import { useAuthStore } from '@/store/auth'
@@ -193,7 +194,42 @@ function LoadingRows() { return <div className="space-y-3" aria-label="กำล
 function SettingsDialog({ open, settings, saving, onOpenChange, onSave }: { open: boolean; settings: Settings; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (settings: Settings) => void }) {
   const [draft, setDraft] = useState(settings)
   useEffect(() => { if (open) setDraft(settings) }, [open, settings])
-  return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}><DialogContent><DialogHeader><DialogTitle>แหล่งสต๊อก SML และกันชน</DialogTitle><DialogDescription>การเปลี่ยนคลังหรือกันชนจะหยุดทุกกลุ่มไว้ก่อน เพื่อให้ตรวจสอบและ dry-run ใหม่</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="warehouse">คลัง SML</Label><Input id="warehouse" value={draft.warehouse_code} onChange={(event) => setDraft({ ...draft, warehouse_code: event.target.value })} /></div><div className="space-y-1"><Label htmlFor="location">พื้นที่เก็บ</Label><Input id="location" value={draft.location_code} onChange={(event) => setDraft({ ...draft, location_code: event.target.value })} /></div><div className="space-y-1"><Label htmlFor="buffer">กันสต๊อกเริ่มต้น (%)</Label><Input id="buffer" type="number" min="0" max="100" value={draft.default_buffer_pct} onChange={(event) => setDraft({ ...draft, default_buffer_pct: Number(event.target.value) })} /></div><label className="flex items-center gap-2 pt-6 text-sm"><Switch checked={draft.kill_switch_enabled} onCheckedChange={(checked) => setDraft({ ...draft, kill_switch_enabled: checked })} />หยุดส่งสต๊อกทั้งร้าน</label></div><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={() => onSave(draft)} disabled={saving || !draft.warehouse_code || !draft.location_code}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ยืนยันบันทึก</Button></DialogFooter></DialogContent></Dialog>
+  return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>แหล่งสต๊อก SML และกันชน</DialogTitle>
+        <DialogDescription>เลือกคลังและพื้นที่เก็บจาก SML เพื่อป้องกันรหัสผิด การเปลี่ยนค่าเหล่านี้จะหยุดทุกกลุ่มไว้ก่อน เพื่อให้ตรวจสอบและ dry-run ใหม่</DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label>คลัง SML</Label>
+          <WarehousePicker
+            value={draft.warehouse_code}
+            disabled={saving}
+            onChange={(warehouse) => setDraft((current) => ({ ...current, warehouse_code: warehouse.code, location_code: '' }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label>พื้นที่เก็บ</Label>
+          <ShelfPicker
+            warehouseCode={draft.warehouse_code}
+            value={draft.location_code}
+            disabled={saving}
+            onChange={(shelf) => setDraft((current) => ({ ...current, location_code: shelf.code }))}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="buffer">กันสต๊อกเริ่มต้น (%)</Label>
+          <Input id="buffer" type="number" min="0" max="100" value={draft.default_buffer_pct} onChange={(event) => setDraft({ ...draft, default_buffer_pct: Number(event.target.value) })} />
+        </div>
+        <label className="flex items-center gap-2 pt-6 text-sm"><Switch checked={draft.kill_switch_enabled} onCheckedChange={(checked) => setDraft({ ...draft, kill_switch_enabled: checked })} />หยุดส่งสต๊อกทั้งร้าน</label>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button>
+        <Button onClick={() => onSave(draft)} disabled={saving || !draft.warehouse_code || !draft.location_code}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ยืนยันบันทึก</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 }
 
 function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: { open: boolean; candidates: Candidate[]; saving: boolean; onOpenChange: (open: boolean) => void; onCreate: (input: { smlItem: string; smlUnit: string; mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => void }) {
@@ -206,9 +242,10 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
     return [...grouped.entries()].map(([key, members]) => ({
       key,
       smlItem: members[0]?.sml_item_code ?? '',
+      smlItemName: members[0]?.sml_item_name ?? '',
       smlUnit: members[0]?.sml_unit_code ?? '',
       members,
-      searchableText: [members[0]?.sml_item_code, members[0]?.sml_unit_code, ...members.flatMap((member) => [member.product_name, member.variant_name])].join(' ').toLocaleLowerCase(),
+      searchableText: [members[0]?.sml_item_code, members[0]?.sml_item_name, members[0]?.sml_unit_code, ...members.flatMap((member) => [member.product_name, member.variant_name])].join(' ').toLocaleLowerCase(),
     }))
   }, [candidates])
   const [groupKey, setGroupKey] = useState('')
@@ -258,7 +295,7 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
           <DialogTitle>ยืนยันสร้างกลุ่มสต๊อกแบบร่าง</DialogTitle>
           <DialogDescription>ตรวจทานรายการนี้ก่อนบันทึก ระบบจะยังไม่ส่งหรือเขียนสต๊อกไป Marketplace</DialogDescription>
         </DialogHeader>
-        <Alert><Info className="h-4 w-4" /><AlertTitle>{groupKey.replace('|', ' · ')}</AlertTitle><AlertDescription>{summary}<br />ขั้นต่อไปต้องกด Dry-run เพื่ออ่านยอด SML ก่อน จึงจะมีสิทธิ์สั่งซิงก์ด้วยมือ</AlertDescription></Alert>
+        <Alert><Info className="h-4 w-4" /><AlertTitle>{selectedGroupLabel(groups, groupKey)}</AlertTitle><AlertDescription>{summary}<br />ขั้นต่อไปต้องกด Dry-run เพื่ออ่านยอด SML ก่อน จึงจะมีสิทธิ์สั่งซิงก์ด้วยมือ</AlertDescription></Alert>
         <DialogFooter>
           <Button variant="outline" onClick={() => setReviewingCreate(false)} disabled={saving}>กลับไปแก้ไข</Button>
           <Button onClick={confirmCreatePool} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}สร้างแบบร่าง</Button>
@@ -270,7 +307,7 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
         </DialogHeader>
         {groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4">
           <div className="space-y-1"><Label htmlFor="marketplace-stock-group-search">ค้นหาสินค้า SML หรือชื่อสินค้า Marketplace</Label><Input id="marketplace-stock-group-search" value={groupSearch} onChange={(event) => setGroupSearch(event.target.value)} placeholder="เช่น AH-0029 หรือ สีชมพู" /></div>
-          <div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{visibleGroups.map((group) => <SelectItem key={group.key} value={group.key}>{group.smlItem} · {group.smlUnit} · {group.members.length} SKU</SelectItem>)}</SelectContent></Select>{visibleGroups.length === 0 && <p className="text-xs text-destructive">ไม่พบสินค้าในคำค้นหา ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p>}</div>
+          <div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{visibleGroups.map((group) => <SelectItem key={group.key} value={group.key}>{selectedGroupLabel([group], group.key)} · {group.members.length} SKU</SelectItem>)}</SelectContent></Select>{visibleGroups.length === 0 && <p className="text-xs text-destructive">ไม่พบสินค้าในคำค้นหา ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p>}</div>
           <div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>
           {mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}
           <div className="space-y-2"><Label>SKU ในกลุ่ม</Label><p className="text-xs text-muted-foreground">เลือกเฉพาะ SKU ที่ต้องการควบคุม เมื่อเลือกหรือเอาออก ระบบจะกระจายโควตาของ SKU ที่เลือกใหม่ให้รวม 100%.</p>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => toggleMember(index, checked === true)} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div>
@@ -280,6 +317,12 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
       </>}
     </DialogContent>
   </Dialog>
+}
+
+function selectedGroupLabel(groups: Array<{ key: string; smlItem: string; smlItemName: string; smlUnit: string }>, key: string) {
+  const group = groups.find((candidate) => candidate.key === key)
+  if (!group) return key.replace('|', ' · ')
+  return [group.smlItem, group.smlItemName || 'ยังไม่พบชื่อสินค้า SML', group.smlUnit].join(' · ')
 }
 
 function thaiPause(value: string) {
