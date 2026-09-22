@@ -418,6 +418,7 @@ func main() {
 	aliasH := handlers.NewMarketplaceAliasHandler(aliasRepo, catalogRepo, auditLogRepo, cfg.MarketplaceGroupedUIEnabled, logger)
 	settingsH := handlers.NewSettingsHandler(platformRepo, logger)
 	instanceSettingsH := handlers.NewInstanceSettingsHandler(appSettingsRepo, auditLogRepo, cfg, logger)
+	marketplaceOperationsH := handlers.NewMarketplaceOperationsHandler(db, cfg, logger)
 	smlCapabilityClient := sml.NewGatewayCapabilityClient(sml.PartyConfig{
 		BaseURL: cfg.ShopeeSMLURL, GUID: cfg.ShopeeSMLGUID, Provider: cfg.ShopeeSMLProvider,
 		ConfigFile: cfg.ShopeeSMLConfigFile, Database: cfg.ShopeeSMLDatabase,
@@ -666,6 +667,8 @@ func main() {
 		api.PUT("/tiktok-shop-api/order-sync-settings/:shop_id", middleware.RequireRole("admin"), tiktokAPIH.UpdateOrderSyncSetting)
 		api.GET("/tiktok-shop-api/products", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListProductCatalog)
 		api.POST("/tiktok-shop-api/products/catalog-sync", middleware.RequireRole("admin"), tiktokAPIH.SyncProductCatalog)
+		api.GET("/marketplace-operations", middleware.RequireRole("admin", "staff"), marketplaceOperationsH.List)
+		api.GET("/marketplace-operations/summary", middleware.RequireRole("admin", "staff"), marketplaceOperationsH.Summary)
 		api.GET("/shopee-settlements", middleware.RequireRole("admin", "staff"), shopeeH.ListSettlementRuns)
 		api.GET("/shopee-settlements/counts", middleware.RequireRole("admin", "staff"), shopeeH.SettlementRunCounts)
 		api.POST("/shopee-settlements/preview", middleware.RequireRole("admin", "staff"), shopeeH.CreateSettlementPreview)

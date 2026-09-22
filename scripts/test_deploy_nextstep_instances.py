@@ -40,6 +40,10 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             "VITE_ENABLE_TIKTOK_SHOP_API: ${VITE_ENABLE_TIKTOK_SHOP_API:-false}",
             rendered,
         )
+        self.assertIn(
+            "VITE_ENABLE_MARKETPLACE_OPERATIONS: ${VITE_ENABLE_MARKETPLACE_OPERATIONS:-false}",
+            rendered,
+        )
 
     def test_instance_override_adds_tiktok_network_only_for_enabled_tenant(self) -> None:
         disabled = deploy.render_instance_override(self.make_target())

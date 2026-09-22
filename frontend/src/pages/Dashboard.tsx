@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
-import { ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_SHOP_API } from '@/lib/featureFlags'
+import { ENABLE_MARKETPLACE_OPERATIONS, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_SHOP_API } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 import type { DashboardStats, NextStepMarketplaceState, PlatformKey, PlatformSalesStat } from '@/types'
 
@@ -76,7 +76,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
     icon: '/shopee2.svg',
     color: '#ee4d2d',
     softClass: 'bg-[#fff1eb] text-[#9f2f16] border-[#f3c4b6]',
-    to: ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee',
+    to: ENABLE_MARKETPLACE_OPERATIONS ? '/marketplace-operations?channel=shopee' : ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee',
   },
   lazada: {
     key: 'lazada',
@@ -92,7 +92,7 @@ const PLATFORM_META: Record<PlatformKey, PlatformMeta> = {
     icon: '/tiktok2.png',
     color: 'hsl(var(--foreground))',
     softClass: 'bg-muted text-foreground border-border',
-    to: ENABLE_TIKTOK_SHOP_API ? '/tiktok-shop-operations' : '/import/tiktok',
+    to: ENABLE_MARKETPLACE_OPERATIONS ? '/marketplace-operations?channel=tiktok' : ENABLE_TIKTOK_SHOP_API ? '/tiktok-shop-operations' : '/import/tiktok',
   },
 }
 
@@ -344,7 +344,7 @@ function PlatformSalesOverview({
               </div>
             </div>
             <Button asChild size="sm" variant="outline">
-              <Link to={ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee'}>เปิด Shopee</Link>
+              <Link to={ENABLE_MARKETPLACE_OPERATIONS ? '/marketplace-operations?channel=shopee' : ENABLE_SHOPEE_REALTIME_OPS ? '/shopee-operations' : '/import/shopee'}>เปิด Shopee</Link>
             </Button>
           </CardContent>
         </Card>

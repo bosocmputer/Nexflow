@@ -25,6 +25,7 @@ import {
 import {
   ENABLE_LAZADA_EXCEL,
   ENABLE_LINE_MYSHOP,
+  ENABLE_MARKETPLACE_OPERATIONS,
   ENABLE_MARKETPLACE_STOCK,
   ENABLE_SALES_ORDERS,
   ENABLE_SHOPEE_EXCEL,
@@ -69,6 +70,7 @@ const STAFF_DEFAULT_MENU_KEYS = new Set([
   'nextstep_marketplace',
   'shopee_operations',
   'tiktok_shop_operations',
+  'marketplace_operations',
   'sale_invoices',
   'sales_orders',
   'marketplace_aliases',
@@ -103,10 +105,11 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'ออเดอร์และเอกสาร',
     items: [
-      { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
-      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'คิวงานแบบเรียลไทม์จาก TikTok Webhook พร้อมซิงก์สำรอง', enabled: ENABLE_TIKTOK_SHOP_API },
-      { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
-      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations?status_group=cancelled', label: 'เอกสารยกเลิก TikTok Shop', icon: RotateCcw, hint: 'ออเดอร์ TikTok ที่ยกเลิกและสถานะใบขายเดิมใน SML', enabled: ENABLE_TIKTOK_SHOP_API },
+      { menuKey: 'marketplace_operations', to: '/marketplace-operations', label: 'คำสั่งซื้อ Marketplace', icon: ListOrdered, hint: 'คิวงาน Shopee และ TikTok Shop ที่ต้องดำเนินการ', enabled: ENABLE_MARKETPLACE_OPERATIONS },
+      { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS && !ENABLE_MARKETPLACE_OPERATIONS },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'คิวงานแบบเรียลไทม์จาก TikTok Webhook พร้อมซิงก์สำรอง', enabled: ENABLE_TIKTOK_SHOP_API && !ENABLE_MARKETPLACE_OPERATIONS },
+      { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS && !ENABLE_MARKETPLACE_OPERATIONS },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations?status_group=cancelled', label: 'เอกสารยกเลิก TikTok Shop', icon: RotateCcw, hint: 'ออเดอร์ TikTok ที่ยกเลิกและสถานะใบขายเดิมใน SML', enabled: ENABLE_TIKTOK_SHOP_API && !ENABLE_MARKETPLACE_OPERATIONS },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'bulk_send_jobs', to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },

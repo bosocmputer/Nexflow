@@ -32,6 +32,11 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
   const tiktokOperationsChip = isTikTokCancellationQueue
     ? 'เอกสารยกเลิก TikTok Shop'
     : 'คำสั่งซื้อ TikTok Shop'
+  const isMarketplaceCancellationQueue = location.pathname.startsWith('/marketplace-operations')
+    && new URLSearchParams(location.search).get('view') === 'cancelled'
+  const marketplaceOperationsChip = isMarketplaceCancellationQueue
+    ? 'เอกสารยกเลิก / คืนสินค้า Marketplace'
+    : 'คำสั่งซื้อ Marketplace'
 
   const routeChip =
     location.pathname.startsWith('/sale-invoices')
@@ -44,6 +49,8 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
         ? 'นำเข้า Shopee'
         : location.pathname.startsWith('/nextstep-marketplace')
           ? 'NextStep Marketplace'
+        : location.pathname.startsWith('/marketplace-operations')
+          ? marketplaceOperationsChip
         : location.pathname.startsWith('/shopee-operations')
           ? shopeeOperationsChip
           : location.pathname.startsWith('/tiktok-shop-operations')

@@ -589,6 +589,30 @@ func TestMigration106AddsDormantDurableTikTokReviewedCancellation(t *testing.T) 
 	}
 }
 
+func TestMigration114AddsOnlyReadModelIndexesAndUnifiedMenuPermission(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/114_marketplace_operations.sql")
+	if err != nil {
+		t.Fatalf("read migration 114: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"shopee_order_snapshots_marketplace_operations_idx",
+		"tiktok_shop_order_snapshots_marketplace_operations_idx",
+		"insert into user_menu_permissions",
+		"marketplace_operations",
+		"on conflict",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 114 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column", "update ", "enabled = true"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 114 contains unsafe statement %q", forbidden)
+		}
+	}
+}
+
 func TestChannelDefaultConstraintMigrationsRemainReplaySafe(t *testing.T) {
 	entries, err := migrationFS.ReadDir("migrations")
 	if err != nil {

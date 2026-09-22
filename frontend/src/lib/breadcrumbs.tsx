@@ -47,6 +47,10 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'คำสั่งซื้อ TikTok Shop' }],
   },
   {
+    pattern: '/marketplace-operations',
+    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'คำสั่งซื้อ Marketplace' }],
+  },
+  {
     pattern: '/import/tiktok',
     crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'TikTok Excel' }],
   },

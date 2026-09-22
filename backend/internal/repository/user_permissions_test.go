@@ -20,6 +20,9 @@ func TestDefaultMenuPermissionsForRole(t *testing.T) {
 	if !permissionForKey(admin, "tiktok_shop_operations").CanView {
 		t.Fatal("admin should see TikTok Shop operations")
 	}
+	if !permissionForKey(admin, "marketplace_operations").CanView {
+		t.Fatal("admin should see unified Marketplace operations")
+	}
 	if permission := permissionForKey(admin, "tiktok_shop_stock"); !permission.CanView || !permission.CanUpdate {
 		t.Fatalf("admin should view and update TikTok Shop stock workspace: %+v", permission)
 	}
@@ -39,6 +42,9 @@ func TestDefaultMenuPermissionsForRole(t *testing.T) {
 	}
 	if !permissionForKey(staff, "tiktok_shop_operations").CanView {
 		t.Fatal("staff should see read-only TikTok Shop operations by default")
+	}
+	if !permissionForKey(staff, "marketplace_operations").CanView {
+		t.Fatal("staff should see unified Marketplace operations by default")
 	}
 	if permissionForKey(staff, "tiktok_shop_stock").CanView {
 		t.Fatal("staff should not see TikTok Shop stock workspace by default")

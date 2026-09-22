@@ -105,6 +105,7 @@ type Config struct {
 	TikTokShopLineEligibleAfter         time.Time
 	TikTokShopInAppEnabled              bool
 	TikTokShopInAppEligibleAfter        time.Time
+	MarketplaceOperationsEnabled        bool
 	ShopeeRealtimeOpsEnabled            bool
 	ShopeeAdvancedDropoffEnabled        bool
 	ShopeeShippingActionsEnabled        bool
@@ -240,6 +241,7 @@ func Load() *Config {
 		TikTokShopLineEligibleAfter:         tikTokShopLineNotificationsEligibleAfter,
 		TikTokShopInAppEnabled:              tikTokShopInAppNotificationsEnabled,
 		TikTokShopInAppEligibleAfter:        tikTokShopInAppNotificationsEligibleAfter,
+		MarketplaceOperationsEnabled:        getEnvBool("MARKETPLACE_OPERATIONS_ENABLED", false),
 		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
 		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
 		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
