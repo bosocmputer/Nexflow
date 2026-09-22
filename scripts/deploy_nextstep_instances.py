@@ -330,6 +330,7 @@ def render_instance_override(target: Target, *, include_tiktok_gateway: bool = F
         "    build:\n"
         "      args:\n"
         "        VITE_ENABLE_TIKTOK_SHOP_API: ${VITE_ENABLE_TIKTOK_SHOP_API:-false}\n"
+        "        VITE_ENABLE_MARKETPLACE_STOCK: ${VITE_ENABLE_MARKETPLACE_STOCK:-false}\n"
         "networks:\n"
         "  shopee_gateway:\n"
         f"    name: {GATEWAY_NETWORK}\n"
