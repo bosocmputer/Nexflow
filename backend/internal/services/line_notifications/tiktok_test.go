@@ -96,3 +96,76 @@ func TestEnqueueTikTokShopNewOrderUsesDurableRecipientDedupe(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTikTokShopAutoSMLMessagesAreDistinctAndPIIFree(t *testing.T) {
+	in := models.TikTokAutoSMLNotification{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586180035911386153",
+		BillID: "bill-123", SMLDocNo: "BF-INV26090001", Currency: "THB", TotalAmount: 307.49,
+		Items: []models.TikTokShopNewOrderNotificationItem{{ProductName: "สีเพ้นท์คิ้วมิวฟอร์ด", VariantName: "No.5 สีฟ้า", Quantity: 2}},
+	}
+	text := buildTikTokShopAutoSMLText("สร้างบิล SML จาก TikTok Shop สำเร็จ", in, "https://nexflow-aoy.nextstep-soft.com/sale-invoices/bill-123")
+	for _, want := range []string{
+		"สร้างบิล SML จาก TikTok Shop สำเร็จ", "ร้าน: henna_milkford", "Order ID: 586180035911386153",
+		"Bill ID: bill-123", "เลขเอกสาร SML: BF-INV26090001", "สีเพ้นท์คิ้วมิวฟอร์ด (No.5 สีฟ้า) x2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("TikTok Auto SML text missing %q:\n%s", want, text)
+		}
+	}
+	for _, forbidden := range []string{"buyer", "recipient", "phone", "address", "0900000000"} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Fatalf("TikTok Auto SML text leaked %q:\n%s", forbidden, text)
+		}
+	}
+
+	alt, flex := buildTikTokShopAutoSMLFlex("สร้างบิล SML จาก TikTok Shop สำเร็จ", "success", in)
+	if alt == "" || flex == nil {
+		t.Fatal("expected TikTok Auto SML Flex payload")
+	}
+	raw, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"TikTok Shop", "#111111", "#25F4EE", "BF-INV26090001", "ส่ง SML แล้ว"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("TikTok Auto SML Flex missing %q: %s", want, raw)
+		}
+	}
+}
+
+func TestEnqueueTikTokShopAutoSMLSuccessUsesDurableRecipientDedupe(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
+		WithArgs(
+			"tiktok_shop", "info", "สร้างบิล SML จาก TikTok Shop สำเร็จ", sqlmock.AnyArg(),
+			"https://nexflow-aoy.nextstep-soft.com/sale-invoices/bill-123",
+			"tiktok_shop_order", "7494619203789490654:586180035911386153",
+			"tiktok_shop:auto_sml:success:7494619203789490654:586180035911386153:BF-INV26090001",
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("delivery-1"))
+
+	svc := &Service{
+		repo:            repository.NewLineNotificationRepo(db),
+		publicBaseURL:   "https://nexflow-aoy.nextstep-soft.com",
+		richFlexEnabled: true,
+	}
+	inserted, err := svc.EnqueueTikTokShopAutoSMLSuccess(t.Context(), models.TikTokAutoSMLNotification{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586180035911386153",
+		BillID: "bill-123", SMLDocNo: "BF-INV26090001", Currency: "THB", TotalAmount: 307.49,
+	}, "")
+	if err != nil {
+		t.Fatalf("EnqueueTikTokShopAutoSMLSuccess: %v", err)
+	}
+	if inserted != 1 {
+		t.Fatalf("inserted=%d, want 1", inserted)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

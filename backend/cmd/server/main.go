@@ -371,6 +371,7 @@ func main() {
 	tiktokCancellationRepo := repository.NewTikTokCancellationRepo(db)
 	tiktokCancellationCoordinator := handlers.NewTikTokCancellationCoordinator(cfg, tiktokCancellationRepo, channelDefaultRepo, saleInvoiceCancelClient, billH, logger)
 	tiktokAutoSMLController := handlers.NewTikTokAutoSMLController(cfg, tiktokAutoSMLRepo, tiktokBillShadowService, tiktokReviewedBillService, billH, auditLogRepo, logger)
+	tiktokAutoSMLController.SetLineNotifier(lineNotificationSvc, tiktokConnectionStore)
 	tiktokLineObserver := tiktokshop.NewTikTokNewOrderLineObserver(
 		cfg.TikTokShopLineEnabled,
 		cfg.TikTokShopLineEligibleAfter,

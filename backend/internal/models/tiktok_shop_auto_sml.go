@@ -59,6 +59,23 @@ type TikTokAutoSMLJob struct {
 	UpdatedAt             time.Time
 }
 
+// TikTokAutoSMLNotification contains only the order and document evidence
+// required for an internal LINE notification. Buyer and shipment PII must not
+// be copied into this payload.
+type TikTokAutoSMLNotification struct {
+	ShopID       string
+	ShopName     string
+	OrderID      string
+	BillID       string
+	SMLDocNo     string
+	Currency     string
+	TotalAmount  float64
+	ItemCount    int
+	Items        []TikTokShopNewOrderNotificationItem
+	ErrorCode    string
+	ErrorMessage string
+}
+
 func TikTokAutoSMLAllowsStatus(status string) bool {
 	switch status {
 	case "AWAITING_COLLECTION", "IN_TRANSIT", "DELIVERED", "COMPLETED":

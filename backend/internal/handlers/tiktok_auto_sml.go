@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ const (
 	tikTokAutoSMLWorkerEvery = 5 * time.Second
 	tikTokAutoSMLLease       = 5 * time.Minute
 	tikTokAutoSMLBatchSize   = 2
+	tikTokAutoSMLMaxAttempts = 3
 )
 
 var tikTokAutoSMLBangkok = time.FixedZone("Asia/Bangkok", 7*60*60)
@@ -50,6 +52,16 @@ type TikTokAutoSMLWorkStore interface {
 	PauseForRouteChange(context.Context, string) error
 }
 
+type tikTokAutoSMLLineNotifier interface {
+	EnqueueTikTokShopAutoSMLSuccess(context.Context, models.TikTokAutoSMLNotification, string) (int, error)
+	EnqueueTikTokShopAutoSMLReview(context.Context, models.TikTokAutoSMLNotification, string) (int, error)
+	EnqueueTikTokShopAutoSMLFailure(context.Context, models.TikTokAutoSMLNotification, string) (int, error)
+}
+
+type tikTokAutoSMLShopLabelStore interface {
+	ActiveShopLabel(context.Context, string) (string, error)
+}
+
 type TikTokAutoSMLController struct {
 	cfg       *config.Config
 	repo      TikTokAutoSMLWorkStore
@@ -57,6 +69,8 @@ type TikTokAutoSMLController struct {
 	creator   TikTokShopReviewedBillCreator
 	billH     *BillHandler
 	audit     TikTokShopAuditLogger
+	line      tikTokAutoSMLLineNotifier
+	shops     tikTokAutoSMLShopLabelStore
 	logger    *zap.Logger
 }
 
@@ -65,6 +79,17 @@ func NewTikTokAutoSMLController(cfg *config.Config, repo TikTokAutoSMLWorkStore,
 		logger = zap.NewNop()
 	}
 	return &TikTokAutoSMLController{cfg: cfg, repo: repo, previewer: previewer, creator: creator, billH: billH, audit: audit, logger: logger}
+}
+
+// SetLineNotifier attaches the durable LINE outbox after all server services
+// are constructed. Notification delivery is intentionally not part of the
+// external SML write path: LINE failures must never retry or alter an SML job.
+func (c *TikTokAutoSMLController) SetLineNotifier(line tikTokAutoSMLLineNotifier, shops tikTokAutoSMLShopLabelStore) {
+	if c == nil {
+		return
+	}
+	c.line = line
+	c.shops = shops
 }
 
 func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context, shopID string, record tiktokshop.TikTokOrderSnapshotRecord) error {
@@ -198,6 +223,7 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		c.failTransient(ctx, job, "job_link_failed", "บันทึกการเชื่อมงานกับ Bill ไม่สำเร็จ")
 		return
 	}
+	job.BillID = &result.BillID
 	if c.billH == nil || c.billH.billRepo == nil {
 		c.failTransient(ctx, job, "bill_sender_unavailable", "ระบบส่ง Bill ไป SML ยังไม่พร้อม")
 		return
@@ -259,15 +285,22 @@ func (c *TikTokAutoSMLController) complete(ctx context.Context, job models.TikTo
 	}
 	if err := c.repo.MarkSucceeded(ctx, job.ID, bill.ID, docNo); err != nil {
 		c.logger.Warn("tiktok_auto_sml_mark_success_failed", zap.String("job_id", job.ID), zap.Error(err))
+		return
 	}
 	c.auditEvent("tiktok_auto_sml_succeeded", "info", job, map[string]interface{}{"bill_id": bill.ID, "sml_doc_no": docNo})
+	c.enqueueLine(ctx, "success", job, bill, "", "")
 }
 
 func (c *TikTokAutoSMLController) failTransient(ctx context.Context, job models.TikTokAutoSMLJob, code, message string) {
-	if err := c.repo.MarkTransientFailure(ctx, job.ID, code, message, 3); err != nil {
+	terminal := job.Attempts >= tikTokAutoSMLMaxAttempts
+	if err := c.repo.MarkTransientFailure(ctx, job.ID, code, message, tikTokAutoSMLMaxAttempts); err != nil {
 		c.logger.Warn("tiktok_auto_sml_record_failure_failed", zap.String("job_id", job.ID), zap.Error(err))
+		return
 	}
 	c.auditEvent("tiktok_auto_sml_retry_or_failed", "error", job, map[string]interface{}{"error_code": code, "error_message": message, "attempt": job.Attempts})
+	if terminal {
+		c.enqueueLine(ctx, "failure", job, c.findBill(ctx, job), code, message)
+	}
 }
 
 func (c *TikTokAutoSMLController) markNeedsReview(ctx context.Context, job models.TikTokAutoSMLJob, billID, code, message string) {
@@ -276,6 +309,11 @@ func (c *TikTokAutoSMLController) markNeedsReview(ctx context.Context, job model
 		return
 	}
 	c.auditEvent("tiktok_auto_sml_needs_review", "warning", job, map[string]interface{}{"bill_id": billID, "error_code": code, "error_message": message})
+	bill := c.findBill(ctx, job)
+	if bill == nil && billID != "" && c.billH != nil && c.billH.billRepo != nil {
+		bill, _ = c.billH.billRepo.FindByID(billID)
+	}
+	c.enqueueLine(ctx, "review", job, bill, code, message)
 }
 
 func (c *TikTokAutoSMLController) markCancelled(ctx context.Context, job models.TikTokAutoSMLJob, code, message string) {
@@ -284,6 +322,92 @@ func (c *TikTokAutoSMLController) markCancelled(ctx context.Context, job models.
 		return
 	}
 	c.auditEvent("tiktok_auto_sml_cancelled", "info", job, map[string]interface{}{"reason_code": code, "message": message})
+}
+
+func (c *TikTokAutoSMLController) findBill(ctx context.Context, job models.TikTokAutoSMLJob) *models.Bill {
+	if c == nil || c.billH == nil || c.billH.billRepo == nil || job.BillID == nil || strings.TrimSpace(*job.BillID) == "" {
+		return nil
+	}
+	bill, err := c.billH.billRepo.FindByID(strings.TrimSpace(*job.BillID))
+	if err != nil {
+		c.logger.Warn("tiktok_auto_sml_line_bill_load_failed", zap.String("job_id", job.ID), zap.Error(err))
+		return nil
+	}
+	return bill
+}
+
+func (c *TikTokAutoSMLController) enqueueLine(ctx context.Context, kind string, job models.TikTokAutoSMLJob, bill *models.Bill, code, message string) {
+	if c == nil || c.cfg == nil || !c.cfg.TikTokShopLineEnabled || c.line == nil {
+		return
+	}
+	shopName := ""
+	if c.shops != nil {
+		label, err := c.shops.ActiveShopLabel(ctx, job.ShopID)
+		if err != nil {
+			c.logger.Warn("tiktok_auto_sml_line_shop_label_failed", zap.String("shop_id", job.ShopID), zap.String("order_id", job.OrderID), zap.Error(err))
+		} else {
+			shopName = strings.TrimSpace(label)
+		}
+	}
+	notification := tikTokAutoSMLLineNotification(job, bill, shopName, code, message)
+	dedupeKey := fmt.Sprintf("tiktok_shop:auto_sml:%s:%s:%s", kind, strings.TrimSpace(job.ShopID), strings.TrimSpace(job.OrderID))
+	if notification.SMLDocNo != "" {
+		dedupeKey += ":" + notification.SMLDocNo
+	} else if notification.ErrorCode != "" {
+		dedupeKey += ":" + notification.ErrorCode
+	}
+	var err error
+	switch kind {
+	case "success":
+		_, err = c.line.EnqueueTikTokShopAutoSMLSuccess(ctx, notification, dedupeKey)
+	case "review":
+		_, err = c.line.EnqueueTikTokShopAutoSMLReview(ctx, notification, dedupeKey)
+	case "failure":
+		_, err = c.line.EnqueueTikTokShopAutoSMLFailure(ctx, notification, dedupeKey)
+	default:
+		return
+	}
+	if err != nil {
+		c.logger.Warn("tiktok_auto_sml_line_enqueue_failed", zap.String("kind", kind), zap.String("shop_id", job.ShopID), zap.String("order_id", job.OrderID), zap.Error(err))
+	}
+}
+
+func tikTokAutoSMLLineNotification(job models.TikTokAutoSMLJob, bill *models.Bill, shopName, code, message string) models.TikTokAutoSMLNotification {
+	notification := models.TikTokAutoSMLNotification{
+		ShopID:       strings.TrimSpace(job.ShopID),
+		ShopName:     strings.TrimSpace(shopName),
+		OrderID:      strings.TrimSpace(job.OrderID),
+		SMLDocNo:     strings.TrimSpace(job.SMLDocNo),
+		Currency:     "THB",
+		ErrorCode:    strings.TrimSpace(code),
+		ErrorMessage: strings.Join(strings.Fields(message), " "),
+	}
+	if bill == nil {
+		return notification
+	}
+	notification.BillID = strings.TrimSpace(bill.ID)
+	if bill.SMLDocNo != nil && strings.TrimSpace(*bill.SMLDocNo) != "" {
+		notification.SMLDocNo = strings.TrimSpace(*bill.SMLDocNo)
+	}
+	if bill.TotalAmount != nil {
+		notification.TotalAmount = *bill.TotalAmount
+	}
+	for _, item := range bill.Items {
+		if item.SourceSKU == models.TikTokShippingSourceSKU {
+			continue
+		}
+		name := strings.Join(strings.Fields(item.RawName), " ")
+		if name == "" {
+			continue
+		}
+		quantity := int(math.Round(item.Qty))
+		if quantity < 1 {
+			continue
+		}
+		notification.Items = append(notification.Items, models.TikTokShopNewOrderNotificationItem{ProductName: name, Quantity: quantity})
+	}
+	notification.ItemCount = len(notification.Items)
+	return notification
 }
 
 func (c *TikTokAutoSMLController) auditEvent(action, level string, job models.TikTokAutoSMLJob, detail map[string]interface{}) {

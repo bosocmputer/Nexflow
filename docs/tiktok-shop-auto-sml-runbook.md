@@ -55,6 +55,9 @@ For the single canary order, verify all of the following before wider use:
 - exactly one SML sale document exists and the Nexflow Bill stores its number;
 - the order row shows `ส่ง SML แล้ว (AUTO)`;
 - `/logs` shows queue, Bill/SML, and success milestones without buyer PII;
+- LINE shows a dark `TikTok Shop` card for the Auto SML result, distinct from
+  Shopee, with the Order ID, Bill ID, SML document number, and bounded product
+  list only;
 - no retry, duplicate, or severe backend error is present.
 
 Do not enable another shop or bulk rollout until this canary passes.
@@ -67,6 +70,12 @@ Do not enable another shop or bulk rollout until this canary passes.
   resuming writes a new cutoff and does not process old orders.
 - System failures use bounded retries at 1, 5, and 15 minutes. Three terminal
   failures pause the shop.
+- LINE sends one durable result per Auto SML outcome: success, needs-review, or
+  terminal failure. Intermediate retries do not notify LINE. Dedupe is scoped
+  to the TikTok shop, order, outcome, and its SML document/error evidence.
+- LINE content must not contain buyer name, recipient address, phone, email, or
+  shipment contact data. A LINE delivery failure is logged but never retries an
+  SML write or changes the Auto SML job result.
 - After correcting an actionable issue, use `ลอง Auto SML ใหม่` on that exact
   order. Retry refreshes the reviewed fingerprint but reuses the same durable
   job and any existing Bill.

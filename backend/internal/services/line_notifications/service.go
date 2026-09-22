@@ -139,6 +139,61 @@ func (s *Service) EnqueueTikTokShopNewOrder(ctx context.Context, in models.TikTo
 	})
 }
 
+func (s *Service) EnqueueTikTokShopAutoSMLSuccess(ctx context.Context, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
+	return s.enqueueTikTokShopAutoSML(ctx, "success", in, dedupeKey)
+}
+
+func (s *Service) EnqueueTikTokShopAutoSMLReview(ctx context.Context, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
+	return s.enqueueTikTokShopAutoSML(ctx, "review", in, dedupeKey)
+}
+
+func (s *Service) EnqueueTikTokShopAutoSMLFailure(ctx context.Context, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
+	return s.enqueueTikTokShopAutoSML(ctx, "failure", in, dedupeKey)
+}
+
+func (s *Service) enqueueTikTokShopAutoSML(ctx context.Context, kind string, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
+	if s == nil || s.repo == nil || strings.TrimSpace(in.ShopID) == "" || strings.TrimSpace(in.OrderID) == "" {
+		return 0, nil
+	}
+	title := "สร้างบิล SML จาก TikTok Shop สำเร็จ"
+	severity := "info"
+	if kind == "review" {
+		title, severity = "ออเดอร์ TikTok Shop ต้องตรวจสอบก่อนส่ง SML", "warning"
+	} else if kind == "failure" {
+		title, severity = "ส่งออเดอร์ TikTok Shop เข้า SML ไม่สำเร็จ", "error"
+	}
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		dedupeKey = fmt.Sprintf("tiktok_shop:auto_sml:%s:%s:%s", kind, strings.TrimSpace(in.ShopID), strings.TrimSpace(in.OrderID))
+		if docNo := strings.TrimSpace(in.SMLDocNo); docNo != "" {
+			dedupeKey += ":" + docNo
+		} else if code := strings.TrimSpace(in.ErrorCode); code != "" {
+			dedupeKey += ":" + code
+		}
+	}
+	actionURL := tikTokShopAutoSMLActionURL(s.publicBaseURL, in)
+	message := buildTikTokShopAutoSMLText(title, in, actionURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := buildTikTokShopAutoSMLFlex(title, kind, in); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText, flexPayload, payloadVersion = alt, raw, 1
+			} else if s.logger != nil {
+				s.logger.Warn("line TikTok Shop Auto SML flex marshal failed", zap.String("shop_id", in.ShopID), zap.String("order_id", in.OrderID), zap.Error(err))
+			}
+		}
+	}
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source: "tiktok_shop", Severity: severity, Title: title,
+		Body:      strings.Join(filterNonEmpty([]string{strings.TrimSpace(in.ShopName), "Order ID " + strings.TrimSpace(in.OrderID), strings.TrimSpace(in.SMLDocNo), strings.TrimSpace(in.ErrorMessage)}), " · "),
+		ActionURL: actionURL, EntityType: "tiktok_shop_order", EntityID: strings.TrimSpace(in.ShopID) + ":" + strings.TrimSpace(in.OrderID),
+		DedupeKey: dedupeKey, MessageText: message, AltText: altText,
+		FlexPayload: flexPayload, PayloadVersion: payloadVersion,
+	})
+}
+
 func (s *Service) EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error) {
 	if s == nil || s.repo == nil || snap == nil {
 		return 0, nil
@@ -667,6 +722,7 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 	title := "มีออเดอร์ TikTok Shop ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, shop, amount}), " · ")
 	body := []map[string]any{
+		tikTokShopFlexHeader("ออเดอร์ใหม่"),
 		flexText(title, "lg", "bold", "#0F172A", "", true),
 		flexText(shop, "sm", "", "#64748B", "", true),
 	}
@@ -695,6 +751,115 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 	return alt, map[string]any{
 		"type": "bubble", "size": "mega",
 		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
+	}
+}
+
+func buildTikTokShopAutoSMLText(title string, in models.TikTokAutoSMLNotification, actionURL string) string {
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if currency == "" {
+		currency = "THB"
+	}
+	parts := []string{
+		title,
+		"ร้าน: " + fallbackDash(strings.TrimSpace(in.ShopName)),
+		"Order ID: " + fallbackDash(strings.TrimSpace(in.OrderID)),
+	}
+	if in.TotalAmount != 0 {
+		parts = append(parts, "ยอดรวม: "+formatLineMoneyValue(in.TotalAmount)+" "+currency)
+	}
+	if billID := strings.TrimSpace(in.BillID); billID != "" {
+		parts = append(parts, "Bill ID: "+billID)
+	}
+	if docNo := strings.TrimSpace(in.SMLDocNo); docNo != "" {
+		parts = append(parts, "เลขเอกสาร SML: "+docNo)
+	}
+	if items := tikTokShopProductLines(in.Items, tikTokShopNotificationItemLimit); len(items) > 0 {
+		parts = append(parts, "สินค้า:")
+		parts = append(parts, items...)
+	}
+	if message := compactWhitespace(in.ErrorMessage); message != "" {
+		parts = append(parts, "ต้องดำเนินการ: "+truncateRunes(message, 240))
+	}
+	if actionURL != "" {
+		parts = append(parts, "เปิดใน Nexflow: "+actionURL)
+	}
+	return strings.Join(filterNonEmpty(parts), "\n")
+}
+
+func buildTikTokShopAutoSMLFlex(title, kind string, in models.TikTokAutoSMLNotification) (string, map[string]any) {
+	shop := strings.TrimSpace(in.ShopName)
+	if shop == "" {
+		shop = "shop_id " + strings.TrimSpace(in.ShopID)
+	}
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if currency == "" {
+		currency = "THB"
+	}
+	statusLabel, accent := "ส่ง SML แล้ว", "#16A34A"
+	if kind == "review" {
+		statusLabel, accent = "ต้องตรวจสอบ", "#D97706"
+	} else if kind == "failure" {
+		statusLabel, accent = "ส่ง SML ไม่สำเร็จ", "#DC2626"
+	}
+	alt := strings.Join(filterNonEmpty([]string{title, shop, strings.TrimSpace(in.OrderID), strings.TrimSpace(in.SMLDocNo)}), " · ")
+	body := []map[string]any{
+		tikTokShopFlexHeader(statusLabel),
+		flexText(title, "lg", "bold", "#0F172A", "", true),
+		flexText(shop, "sm", "", "#64748B", "", true),
+	}
+	if in.TotalAmount != 0 {
+		body = append(body, flexAmountRow("ยอดรวม", formatLineMoneyValue(in.TotalAmount)+" "+currency, accent))
+	}
+	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
+		{Label: "Order ID", Value: strings.TrimSpace(in.OrderID)},
+		{Label: "Bill ID", Value: strings.TrimSpace(in.BillID)},
+		{Label: "เลขเอกสาร SML", Value: strings.TrimSpace(in.SMLDocNo)},
+	})
+	if items := tikTokShopProductLines(in.Items, tikTokShopNotificationItemLimit); len(items) > 0 {
+		body = append(body,
+			map[string]any{"type": "separator", "margin": "md"},
+			flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+		)
+		for _, item := range items {
+			body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
+		}
+	}
+	if message := compactWhitespace(in.ErrorMessage); message != "" {
+		body = append(body,
+			map[string]any{"type": "separator", "margin": "md"},
+			flexText("สิ่งที่ต้องทำ", "sm", "bold", accent, "md", true),
+			flexText(truncateRunes(message, 240), "sm", "", "#0F172A", "", true),
+		)
+	}
+	body = append(body, flexText("ไม่มีชื่อผู้รับ เบอร์โทร หรือที่อยู่ในข้อความแจ้งเตือน", "xs", "", "#94A3B8", "md", true))
+	return alt, map[string]any{
+		"type": "bubble", "size": "mega",
+		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
+	}
+}
+
+func tikTokShopAutoSMLActionURL(publicBaseURL string, in models.TikTokAutoSMLNotification) string {
+	if billID := strings.TrimSpace(in.BillID); billID != "" {
+		path := "/sale-invoices/" + url.PathEscape(billID)
+		base := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
+		if base == "" {
+			return path
+		}
+		return base + path
+	}
+	return TikTokShopOrderActionURL(publicBaseURL, in.OrderID)
+}
+
+// tikTokShopFlexHeader makes TikTok Shop messages visibly distinct from Shopee
+// while retaining the shared, compact Flex layout used across Nexflow.
+func tikTokShopFlexHeader(eventLabel string) map[string]any {
+	return map[string]any{
+		"type": "box", "layout": "horizontal", "alignItems": "center", "justifyContent": "space-between",
+		"backgroundColor": "#111111", "cornerRadius": "md", "paddingAll": "10px",
+		"contents": []map[string]any{
+			{"type": "text", "text": "TikTok Shop", "size": "sm", "weight": "bold", "color": "#FFFFFF", "flex": 3, "wrap": true},
+			{"type": "text", "text": strings.TrimSpace(eventLabel), "size": "xs", "weight": "bold", "color": "#25F4EE", "align": "end", "flex": 2, "wrap": true},
+		},
 	}
 }
 
