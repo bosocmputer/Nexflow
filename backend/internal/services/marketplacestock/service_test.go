@@ -29,12 +29,35 @@ func (f *serviceStoreFake) StartPreview(context.Context, string, PreviewRequest,
 }
 func (f *serviceStoreFake) CompletePreview(context.Context, PreviewResult) error { return nil }
 func (f *serviceStoreFake) FailPreview(context.Context, string, string) error    { return nil }
+func (f *serviceStoreFake) UpdateAuto(context.Context, string, AutoUpdate, string) (*Pool, error) {
+	return &Pool{}, nil
+}
+func (f *serviceStoreFake) QueueSync(context.Context, string, SyncRequest, string) (*Run, error) {
+	return &Run{}, nil
+}
+func (f *serviceStoreFake) Run(context.Context, string) (*Run, error) { return &Run{}, nil }
 
 type previewStoreFake struct {
 	serviceStoreFake
 	plan      PreviewPlan
 	completed *PreviewResult
 	failed    bool
+}
+
+func TestQueueSyncRejectsWhenWriteRuntimeGateIsClosed(t *testing.T) {
+	_, err := NewService(&serviceStoreFake{}).QueueSync(context.Background(), "pool-1", SyncRequest{
+		ExpectedConfigVersion: 1, ConfirmAction: "SYNC_MARKETPLACE_STOCK_POOL",
+	}, "user-1")
+	if err != ErrWriteDisabled {
+		t.Fatalf("QueueSync() error=%v, want %v", err, ErrWriteDisabled)
+	}
+}
+
+func TestUpdateAutoRequiresDedicatedConfirmation(t *testing.T) {
+	_, err := NewService(&serviceStoreFake{}).WithWriteEnabled(true).UpdateAuto(context.Background(), "pool-1", AutoUpdate{Enabled: true, ExpectedConfigVersion: 1}, "user-1")
+	if err != ErrConfirmationRequired {
+		t.Fatalf("UpdateAuto() error=%v, want %v", err, ErrConfirmationRequired)
+	}
 }
 
 func (f *previewStoreFake) StartPreview(_ context.Context, _ string, _ PreviewRequest, _ string) (*PreviewPlan, error) {

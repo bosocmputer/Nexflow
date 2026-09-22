@@ -16,13 +16,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { permissionForMenu } from '@/lib/navigation'
 import { useAuthStore } from '@/store/auth'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 
 type Source = 'shopee' | 'tiktok'
 type Mode = 'quota' | 'shared'
 
 interface Settings { warehouse_code: string; location_code: string; default_buffer_pct: number; kill_switch_enabled: boolean; config_version: number }
-interface Member { id: string; source: Source; account_key: string; external_product_id: string; external_sku_id: string; marketplace_alias_id?: string; product_name: string; variant_name: string; unit_factor: number; allocation_pct: number; enabled: boolean; last_target_qty?: number; last_actual_qty?: number; last_error?: string }
-interface Pool { id: string; sml_item_code: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_error?: string; members: Member[] }
+interface Member { id: string; source: Source; account_key: string; external_product_id: string; external_sku_id: string; external_warehouse_id?: string; marketplace_alias_id?: string; product_name: string; variant_name: string; unit_factor: number; allocation_pct: number; enabled: boolean; last_target_qty?: number; last_actual_qty?: number; last_error?: string }
+interface Pool { id: string; sml_item_code: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; kill_switch_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_error?: string; members: Member[] }
 interface Overview { available: boolean; settings: Settings; pools: Pool[] }
 interface Candidate extends Omit<Member, 'id' | 'last_target_qty' | 'last_actual_qty' | 'last_error'> { sml_item_code: string; sml_unit_code: string }
 interface PreviewResult { run_id: string; sml_available_qty: number; reservation_qty: number; usable_qty: number; buffer_qty: number; distributable_qty: number; expires_at: string; lines: { member_id: string; target_qty: number; status: string; message?: string }[] }
@@ -46,6 +47,8 @@ export default function MarketplaceStock() {
   const [saving, setSaving] = useState(false)
   const [previewingPoolID, setPreviewingPoolID] = useState('')
   const [previews, setPreviews] = useState<Record<string, PreviewResult>>({})
+  const [actioningPoolID, setActioningPoolID] = useState('')
+  const [confirmAction, setConfirmAction] = useState<{ pool: Pool; kind: 'auto-on' | 'auto-off' | 'sync' } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -106,6 +109,27 @@ export default function MarketplaceStock() {
     } catch (cause) { setError(messageOf(cause, 'ตรวจยอดจาก SML ไม่สำเร็จ')) } finally { setPreviewingPoolID('') }
   }
 
+  const updateAuto = async (pool: Pool, enabled: boolean) => {
+    setActioningPoolID(pool.id); setError(''); setNotice('')
+    try {
+      await client.put(`/api/settings/marketplace-stock/pools/${pool.id}/auto`, {
+        enabled, expected_config_version: pool.config_version,
+        confirm_action: enabled ? 'ENABLE_MARKETPLACE_STOCK_AUTO' : 'DISABLE_MARKETPLACE_STOCK_AUTO',
+      })
+      setNotice(enabled ? 'เปิด Auto แล้ว ระบบจะตรวจทุก 5 นาทีหลังผ่าน pilot' : 'ปิด Auto แล้ว งานใหม่จะไม่ถูกส่งออก')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'เปลี่ยนสถานะ Auto ไม่สำเร็จ')) } finally { setActioningPoolID('') }
+  }
+
+  const queueSync = async (pool: Pool) => {
+    setActioningPoolID(pool.id); setError(''); setNotice('')
+    try {
+      await client.post(`/api/settings/marketplace-stock/pools/${pool.id}/sync`, { expected_config_version: pool.config_version, confirm_action: 'SYNC_MARKETPLACE_STOCK_POOL' })
+      setNotice('รับงานซิงก์แล้ว ระบบจะทำงานในคิวและตรวจผลจริงหลังส่ง')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'สั่งซิงก์สต๊อกไม่สำเร็จ')) } finally { setActioningPoolID('') }
+  }
+
   return (
     <main className="space-y-4 p-4 sm:p-6" aria-busy={loading}>
       <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
@@ -133,12 +157,18 @@ export default function MarketplaceStock() {
       <Tabs value={tab} onValueChange={(value) => setTab(value as 'all' | Source)}>
         <TabsList aria-label="กรองช่องทาง"><TabsTrigger value="all">ทั้งหมด</TabsTrigger><TabsTrigger value="shopee">Shopee</TabsTrigger><TabsTrigger value="tiktok">TikTok Shop</TabsTrigger></TabsList>
         <TabsContent value={tab} className="space-y-3">
-          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} canOperate={canOperate} preview={previews[pool.id]} previewing={previewingPoolID === pool.id} onPreview={() => void previewPool(pool)} />)}
+          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} canManage={canManage} canOperate={canOperate} preview={previews[pool.id]} previewing={previewingPoolID === pool.id} actioning={actioningPoolID === pool.id} onPreview={() => void previewPool(pool)} onAuto={(enabled) => setConfirmAction({ pool, kind: enabled ? 'auto-on' : 'auto-off' })} onSync={() => setConfirmAction({ pool, kind: 'sync' })} />)}
         </TabsContent>
       </Tabs>
 
       {data && <SettingsDialog open={settingsOpen} settings={data.settings} saving={saving} onOpenChange={setSettingsOpen} onSave={saveSettings} />}
       <CreatePoolDialog open={createOpen} candidates={candidates} saving={saving} onOpenChange={setCreateOpen} onCreate={createPool} />
+      <ConfirmDialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && setConfirmAction(null)}
+        title={confirmAction?.kind === 'auto-on' ? 'เปิดส่งสต๊อกอัตโนมัติหรือไม่?' : confirmAction?.kind === 'auto-off' ? 'ปิดส่งสต๊อกอัตโนมัติหรือไม่?' : 'ส่งงานซิงก์สต๊อกด้วยมือหรือไม่?'}
+        description={confirmAction?.kind === 'auto-on' ? 'ระบบจะเริ่มเฉพาะงานใหม่หลังจากผ่าน dry-run และการซิงก์ด้วยมือสำเร็จแล้ว ไม่ส่งย้อนหลัง' : confirmAction?.kind === 'auto-off' ? 'งานที่ยังไม่เริ่มจะถูกยกเลิก แต่งานที่เริ่มเขียนแล้วอาจทำต่อจนตรวจ read-back เสร็จ เพื่อไม่ให้ยอดค้างกลางทาง' : 'ระบบจะอ่าน SML และยอด Marketplace ล่าสุดอีกครั้งก่อนเขียน แล้วอ่านกลับทุก SKU ที่เปลี่ยน'}
+        confirmLabel={confirmAction?.kind === 'auto-on' ? 'เปิด Auto' : confirmAction?.kind === 'auto-off' ? 'ปิด Auto' : 'ยืนยันส่งงาน'}
+        variant={confirmAction?.kind === 'auto-off' ? 'destructive' : 'default'}
+        onConfirm={async () => { if (!confirmAction) return; if (confirmAction.kind === 'sync') await queueSync(confirmAction.pool); else await updateAuto(confirmAction.pool, confirmAction.kind === 'auto-on') }} />
     </main>
   )
 }
@@ -147,9 +177,9 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-lg font-semibold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>
 }
 
-function PoolCard({ pool, canOperate, preview, previewing, onPreview }: { pool: Pool; canOperate: boolean; preview?: PreviewResult; previewing: boolean; onPreview: () => void }) {
+function PoolCard({ pool, canManage, canOperate, preview, previewing, actioning, onPreview, onAuto, onSync }: { pool: Pool; canManage: boolean; canOperate: boolean; preview?: PreviewResult; previewing: boolean; actioning: boolean; onPreview: () => void; onAuto: (enabled: boolean) => void; onSync: () => void }) {
   const channels = [...new Set(pool.members.map((member) => member.source))]
-  return <Card><CardHeader className="gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="text-base">{pool.sml_item_code} <span className="font-normal text-muted-foreground">· {pool.sml_unit_code}</span></CardTitle><CardDescription className="mt-1">{pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · กันสต๊อก {pool.buffer_pct_override ?? 'ค่าเริ่มต้น'}%</CardDescription></div><div className="flex flex-wrap gap-2"><Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge><Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge>{canOperate && pool.status !== 'paused' && <Button variant="outline" size="sm" onClick={onPreview} disabled={previewing}><RefreshCw className={cn('mr-2 h-4 w-4', previewing && 'animate-spin')} />ตรวจ SML</Button>}</div></CardHeader><CardContent className="grid gap-2 p-4 pt-0 sm:grid-cols-2">{pool.members.map((member) => <div key={member.id} className="rounded-md border px-3 py-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{sourceLabel[member.source]}</span><span className="text-muted-foreground">{pool.allocation_mode === 'quota' ? `${member.allocation_pct}%` : 'ยอดร่วม'}</span></div><p className="mt-1 truncate text-muted-foreground" title={[member.product_name, member.variant_name].filter(Boolean).join(' · ')}>{[member.product_name, member.variant_name].filter(Boolean).join(' · ') || 'ยังไม่มีชื่อสินค้า'}</p>{member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}</div>)}</CardContent>{preview && <div className="border-t bg-muted/30 px-4 py-3 text-sm"><p className="font-medium">แผนจาก SML: พร้อมใช้ {preview.usable_qty} {pool.sml_unit_code} · กันชน {preview.buffer_qty} · ส่งออกได้ {preview.distributable_qty}</p><p className="mt-1 text-xs text-muted-foreground">หัก reservation {preview.reservation_qty} แล้ว; แผนหมดอายุใน 60 วินาที และยังไม่ได้อ่านหรือเขียนยอด Marketplace</p><div className="mt-2 flex flex-wrap gap-2">{preview.lines.map((line) => <Badge key={line.member_id} variant="outline">SKU → {line.target_qty}</Badge>)}</div></div>}{pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}{channels.length === 0 && <div className="border-t px-4 py-2 text-xs text-muted-foreground">ยังไม่มี SKU ในกลุ่มนี้</div>}</Card>
+  return <Card><CardHeader className="gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="text-base">{pool.sml_item_code} <span className="font-normal text-muted-foreground">· {pool.sml_unit_code}</span></CardTitle><CardDescription className="mt-1">{pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · กันสต๊อก {pool.buffer_pct_override ?? 'ค่าเริ่มต้น'}%</CardDescription></div><div className="flex flex-wrap items-center gap-2"><Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge><Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge>{canOperate && pool.status !== 'paused' && <Button variant="outline" size="sm" onClick={onPreview} disabled={previewing || actioning}><RefreshCw className={cn('mr-2 h-4 w-4', previewing && 'animate-spin')} />ตรวจ SML</Button>}{canOperate && !pool.dry_run_required && pool.status !== 'paused' && <Button size="sm" onClick={onSync} disabled={actioning}>ซิงก์ด้วยมือ</Button>}{canManage && <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs"><Switch checked={pool.auto_enabled} onCheckedChange={onAuto} disabled={actioning || pool.dry_run_required || pool.kill_switch_enabled} /><span>ส่งอัตโนมัติ</span></label>}</div></CardHeader><CardContent className="grid gap-2 p-4 pt-0 sm:grid-cols-2">{pool.members.map((member) => <div key={member.id} className="rounded-md border px-3 py-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{sourceLabel[member.source]}</span><span className="text-muted-foreground">{pool.allocation_mode === 'quota' ? `${member.allocation_pct}%` : 'ยอดร่วม'}</span></div><p className="mt-1 truncate text-muted-foreground" title={[member.product_name, member.variant_name].filter(Boolean).join(' · ')}>{[member.product_name, member.variant_name].filter(Boolean).join(' · ') || 'ยังไม่มีชื่อสินค้า'}</p>{member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}</div>)}</CardContent>{preview && <div className="border-t bg-muted/30 px-4 py-3 text-sm"><p className="font-medium">แผนจาก SML: พร้อมใช้ {preview.usable_qty} {pool.sml_unit_code} · กันชน {preview.buffer_qty} · ส่งออกได้ {preview.distributable_qty}</p><p className="mt-1 text-xs text-muted-foreground">หัก reservation {preview.reservation_qty} แล้ว; แผนหมดอายุใน 60 วินาที และยังไม่ได้อ่านหรือเขียนยอด Marketplace</p><div className="mt-2 flex flex-wrap gap-2">{preview.lines.map((line) => <Badge key={line.member_id} variant="outline">SKU → {line.target_qty}</Badge>)}</div></div>}{pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}{channels.length === 0 && <div className="border-t px-4 py-2 text-xs text-muted-foreground">ยังไม่มี SKU ในกลุ่มนี้</div>}</Card>
 }
 
 function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) { return <Card><CardContent className="flex flex-col items-center px-6 py-12 text-center"><Boxes className="h-9 w-9 text-muted-foreground" /><h2 className="mt-3 font-semibold">ยังไม่มีกลุ่มสต๊อก</h2><p className="mt-1 max-w-md text-sm text-muted-foreground">เริ่มจากจับคู่สินค้า Marketplace กับสินค้า SML ให้พร้อม แล้วสร้างกลุ่มเพื่อเลือกว่าจะแบ่งโควตาหรือใช้สต๊อกร่วม</p>{canManage && <Button className="mt-4" onClick={onCreate}>สร้างกลุ่มสต๊อก</Button>}</CardContent></Card> }

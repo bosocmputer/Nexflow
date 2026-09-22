@@ -18,6 +18,8 @@ var (
 	ErrPoolPaused            = errors.New("marketplace stock pool is paused")
 	ErrGlobalKillSwitch      = errors.New("marketplace stock kill switch is enabled")
 	ErrPreviewAlreadyRunning = errors.New("marketplace stock preview is already running")
+	ErrWriteDisabled         = errors.New("marketplace stock writes are disabled")
+	ErrDryRunRequired        = errors.New("marketplace stock needs a fresh dry-run")
 )
 
 type Store interface {
@@ -29,6 +31,9 @@ type Store interface {
 	StartPreview(context.Context, string, PreviewRequest, string) (*PreviewPlan, error)
 	CompletePreview(context.Context, PreviewResult) error
 	FailPreview(context.Context, string, string) error
+	UpdateAuto(context.Context, string, AutoUpdate, string) (*Pool, error)
+	QueueSync(context.Context, string, SyncRequest, string) (*Run, error)
+	Run(context.Context, string) (*Run, error)
 }
 
 type balanceClient interface {
@@ -36,9 +41,19 @@ type balanceClient interface {
 }
 
 type Service struct {
-	store Store
-	now   func() time.Time
-	sml   balanceClient
+	store        Store
+	now          func() time.Time
+	sml          balanceClient
+	writeEnabled bool
+}
+
+// WithWriteEnabled is a runtime hard gate. It is deliberately independent
+// from UI/role controls so a deploy cannot accidentally begin external writes.
+func (s *Service) WithWriteEnabled(enabled bool) *Service {
+	if s != nil {
+		s.writeEnabled = enabled
+	}
+	return s
 }
 
 func (s *Service) WithSML(client balanceClient) *Service {
@@ -99,6 +114,46 @@ func (s *Service) UpdateSettings(ctx context.Context, input SettingsUpdate, user
 		return nil, ErrConfirmationRequired
 	}
 	return s.store.UpdateSettings(ctx, input, userID)
+}
+
+func (s *Service) UpdateAuto(ctx context.Context, poolID string, input AutoUpdate, userID string) (*Pool, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(poolID) == "" || strings.TrimSpace(userID) == "" || input.ExpectedConfigVersion < 1 {
+		return nil, ErrInvalidPoolInput
+	}
+	want := "DISABLE_MARKETPLACE_STOCK_AUTO"
+	if input.Enabled {
+		want = "ENABLE_MARKETPLACE_STOCK_AUTO"
+	}
+	if strings.TrimSpace(input.ConfirmAction) != want {
+		return nil, ErrConfirmationRequired
+	}
+	if input.Enabled && !s.writeEnabled {
+		return nil, ErrWriteDisabled
+	}
+	return s.store.UpdateAuto(ctx, poolID, input, userID)
+}
+
+// QueueSync only creates a durable job. It never calls a Marketplace API in a
+// request handler. The worker claims the job, re-reads SML and Marketplace,
+// then records a read-back for every changed SKU.
+func (s *Service) QueueSync(ctx context.Context, poolID string, input SyncRequest, userID string) (*Run, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(poolID) == "" || strings.TrimSpace(userID) == "" || input.ExpectedConfigVersion < 1 {
+		return nil, ErrInvalidPoolInput
+	}
+	if strings.TrimSpace(input.ConfirmAction) != "SYNC_MARKETPLACE_STOCK_POOL" {
+		return nil, ErrConfirmationRequired
+	}
+	if !s.writeEnabled {
+		return nil, ErrWriteDisabled
+	}
+	return s.store.QueueSync(ctx, poolID, input, userID)
+}
+
+func (s *Service) Run(ctx context.Context, runID string) (*Run, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(runID) == "" {
+		return nil, ErrInvalidPoolInput
+	}
+	return s.store.Run(ctx, runID)
 }
 
 // PreviewPool creates an immutable, read-only SML plan. It never calls a

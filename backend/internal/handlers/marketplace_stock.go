@@ -150,6 +150,67 @@ func (h *MarketplaceStockHandler) PreviewPool(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *MarketplaceStockHandler) UpdateAuto(c *gin.Context) {
+	if !h.checkEnabled(c) || !h.requirePermission(c, "update") {
+		return
+	}
+	poolID := strings.TrimSpace(c.Param("pool_id"))
+	if !uuidPattern.MatchString(poolID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id ไม่ถูกต้อง"})
+		return
+	}
+	var request marketplacestock.AutoUpdate
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลการส่งสต๊อกอัตโนมัติไม่ถูกต้อง"})
+		return
+	}
+	result, err := h.service.UpdateAuto(c.Request.Context(), poolID, request, c.GetString("user_id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *MarketplaceStockHandler) QueueSync(c *gin.Context) {
+	if !h.checkEnabled(c) || !h.requirePermission(c, "create") {
+		return
+	}
+	poolID := strings.TrimSpace(c.Param("pool_id"))
+	if !uuidPattern.MatchString(poolID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pool_id ไม่ถูกต้อง"})
+		return
+	}
+	var request marketplacestock.SyncRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลการส่งสต๊อกไม่ถูกต้อง"})
+		return
+	}
+	result, err := h.service.QueueSync(c.Request.Context(), poolID, request, c.GetString("user_id"))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+func (h *MarketplaceStockHandler) Run(c *gin.Context) {
+	if !h.checkEnabled(c) || !h.requirePermission(c, "view") {
+		return
+	}
+	runID := strings.TrimSpace(c.Param("run_id"))
+	if !uuidPattern.MatchString(runID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "run_id ไม่ถูกต้อง"})
+		return
+	}
+	result, err := h.service.Run(c.Request.Context(), runID)
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *MarketplaceStockHandler) checkEnabled(c *gin.Context) bool {
 	if h != nil && h.enabled && h.service != nil {
 		return true
@@ -206,6 +267,10 @@ func (h *MarketplaceStockHandler) fail(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "ระบบถูกหยุดชั่วคราวโดยผู้ดูแล จึงยังตรวจหรือส่งสต๊อกไม่ได้"})
 	case errors.Is(err, marketplacestock.ErrPoolPaused):
 		c.JSON(http.StatusConflict, gin.H{"error": "กลุ่มสต๊อกถูกพักไว้ กรุณาตรวจการตั้งค่าแล้วบันทึกใหม่"})
+	case errors.Is(err, marketplacestock.ErrDryRunRequired):
+		c.JSON(http.StatusConflict, gin.H{"error": "กรุณาตรวจ SML ใหม่ก่อนส่งสต๊อก"})
+	case errors.Is(err, marketplacestock.ErrWriteDisabled):
+		c.JSON(http.StatusConflict, gin.H{"error": "ร้านนี้ยังไม่เปิดการเขียนสต๊อก Marketplace เพื่อความปลอดภัย"})
 	case errors.Is(err, marketplacestock.ErrPreviewAlreadyRunning):
 		c.JSON(http.StatusConflict, gin.H{"error": "กำลังตรวจสต๊อกกลุ่มนี้อยู่ กรุณารอผลก่อน"})
 	default:

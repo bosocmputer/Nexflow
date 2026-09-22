@@ -456,7 +456,7 @@ func main() {
 	stockrecalc.NewWorker(billRepo, appSettingsRepo, cfg, stockSMLClient, logger).Start(appCtx)
 	shopeeStockH := handlers.NewShopeeStockHandler(stockService, aliasRepo, auditLogRepo, logger)
 	marketplaceStockH := handlers.NewMarketplaceStockHandler(
-		marketplacestock.NewService(marketplacestock.NewPostgresStore(db)).WithSML(stockSMLClient),
+		marketplacestock.NewService(marketplacestock.NewPostgresStore(db)).WithSML(stockSMLClient).WithWriteEnabled(cfg.MarketplaceStockWriteEnabled),
 		cfg.MarketplaceStockControlEnabled,
 		userRepo,
 	)
@@ -626,6 +626,9 @@ func main() {
 		api.POST("/settings/marketplace-stock/pools", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.CreatePool)
 		api.PUT("/settings/marketplace-stock/pools/:pool_id", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.UpdatePool)
 		api.POST("/settings/marketplace-stock/pools/:pool_id/preview", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.PreviewPool)
+		api.PUT("/settings/marketplace-stock/pools/:pool_id/auto", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.UpdateAuto)
+		api.POST("/settings/marketplace-stock/pools/:pool_id/sync", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.QueueSync)
+		api.GET("/settings/marketplace-stock/runs/:run_id", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.Run)
 		api.PUT("/settings/marketplace-stock", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.UpdateSettings)
 		api.GET("/settings/shopee-settlement-defaults", middleware.RequireRole("admin", "staff"), shopeeH.GetSettlementDefaults)
 		api.PUT("/settings/shopee-settlement-defaults", middleware.RequireRole("admin"), shopeeH.UpdateSettlementDefaults)

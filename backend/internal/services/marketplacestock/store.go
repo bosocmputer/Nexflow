@@ -31,8 +31,8 @@ func (s *PostgresStore) Overview(ctx context.Context) (*Overview, error) {
 	}
 
 	rows, err := s.db.QueryContext(ctx, `SELECT id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
-		shared_risk_acknowledged,status,auto_enabled,dry_run_required,paused_reason,config_version,
-		last_preview_at,last_success_at,last_error,updated_at
+		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
+		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at
 		FROM marketplace_stock_pools ORDER BY updated_at DESC,id`)
 	if err != nil {
 		return nil, fmt.Errorf("list marketplace stock pools: %w", err)
@@ -137,8 +137,8 @@ func (s *PostgresStore) UpdatePool(ctx context.Context, poolID string, input Poo
 		paused_reason='configuration_changed',config_version=config_version+1,last_error='',updated_by=$7,updated_at=NOW()
 		WHERE id=$1::uuid AND config_version=$8
 		RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
-		shared_risk_acknowledged,status,auto_enabled,dry_run_required,paused_reason,config_version,
-		last_preview_at,last_success_at,last_error,updated_at`,
+		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
+		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at`,
 		poolID, input.SMLItemCode, input.SMLUnitCode, input.AllocationMode, input.BufferPctOverride,
 		input.SharedRiskAcknowledged, userID, input.ExpectedConfigVersion,
 	).Scan(poolScanner(&updated)...)
@@ -237,8 +237,8 @@ func (s *PostgresStore) StartPreview(ctx context.Context, poolID string, input P
 		return nil, ErrInvalidPoolInput
 	}
 	err = tx.QueryRowContext(ctx, `SELECT id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
-		shared_risk_acknowledged,status,auto_enabled,dry_run_required,paused_reason,config_version,
-		last_preview_at,last_success_at,last_error,updated_at
+		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
+		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at
 		FROM marketplace_stock_pools WHERE id=$1::uuid FOR UPDATE`, poolID).Scan(poolScanner(&plan.Pool)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrConfigVersionConflict
@@ -342,7 +342,8 @@ func (s *PostgresStore) CompletePreview(ctx context.Context, result PreviewResul
 		summary=$3::jsonb,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, result.RunID, len(result.Lines), summary); err != nil {
 		return err
 	}
-	updated, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET last_preview_at=NOW(),last_error='',updated_at=NOW()
+	updated, err := tx.ExecContext(ctx, `UPDATE marketplace_stock_pools SET status=CASE WHEN status='draft' THEN 'ready' ELSE status END,
+		dry_run_required=false,last_preview_at=NOW(),last_error='',updated_at=NOW()
 		WHERE id=$1::uuid AND config_version=$2`, poolID, configVersion)
 	if err != nil {
 		return err
@@ -386,14 +387,120 @@ func (s *PostgresStore) FailPreview(ctx context.Context, runID, message string) 
 	return tx.Commit()
 }
 
+func (s *PostgresStore) UpdateAuto(ctx context.Context, poolID string, input AutoUpdate, userID string) (*Pool, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("marketplace stock store is not configured")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var pool Pool
+	if input.Enabled {
+		err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_pools
+			SET auto_enabled=true,status='active',paused_reason='',config_version=config_version+1,updated_by=$2::uuid,updated_at=NOW()
+			WHERE id=$1::uuid AND config_version=$3 AND status='ready' AND dry_run_required=false
+			AND kill_switch_enabled=false AND last_success_at IS NOT NULL
+			RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
+			shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
+			last_preview_at,last_success_at,last_schedule_at,last_error,updated_at`, poolID, userID, input.ExpectedConfigVersion).Scan(poolScanner(&pool)...)
+	} else {
+		err = tx.QueryRowContext(ctx, `UPDATE marketplace_stock_pools
+			SET auto_enabled=false,status='paused',paused_reason='auto_disabled_by_admin',config_version=config_version+1,updated_by=$2::uuid,updated_at=NOW()
+			WHERE id=$1::uuid AND config_version=$3
+			RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
+			shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
+			last_preview_at,last_success_at,last_schedule_at,last_error,updated_at`, poolID, userID, input.ExpectedConfigVersion).Scan(poolScanner(&pool)...)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConfigVersionConflict
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update marketplace stock auto: %w", err)
+	}
+	if err := insertAudit(ctx, tx, "marketplace_stock_auto_"+map[bool]string{true: "enabled", false: "disabled"}[input.Enabled], poolID, userID, map[string]any{"config_version": pool.ConfigVersion}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &pool, nil
+}
+
+func (s *PostgresStore) QueueSync(ctx context.Context, poolID string, input SyncRequest, userID string) (*Run, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("marketplace stock store is not configured")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var status string
+	var dryRunRequired, globalKill, poolKill bool
+	var version int64
+	err = tx.QueryRowContext(ctx, `SELECT p.status,p.dry_run_required,s.kill_switch_enabled,p.kill_switch_enabled,p.config_version
+		FROM marketplace_stock_pools p JOIN marketplace_stock_settings s ON s.singleton=true
+		WHERE p.id=$1::uuid FOR UPDATE`, poolID).Scan(&status, &dryRunRequired, &globalKill, &poolKill, &version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConfigVersionConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	if globalKill {
+		return nil, ErrGlobalKillSwitch
+	}
+	if poolKill || status == "paused" {
+		return nil, ErrPoolPaused
+	}
+	if version != input.ExpectedConfigVersion {
+		return nil, ErrConfigVersionConflict
+	}
+	if dryRunRequired || (status != "ready" && status != "active") {
+		return nil, ErrDryRunRequired
+	}
+	var run Run
+	err = tx.QueryRowContext(ctx, `INSERT INTO marketplace_stock_runs(pool_id,trigger_source,run_type,status,config_version,requested_by)
+		VALUES($1::uuid,'manual','sync','queued',$2,$3::uuid)
+		ON CONFLICT (pool_id) WHERE status IN ('queued','running') DO UPDATE SET updated_at=marketplace_stock_runs.updated_at
+		RETURNING id::text,pool_id::text,trigger_source,run_type,status,config_version,total_count,changed_count,blocked_count,error_count,error_message,plan_expires_at,started_at,finished_at`, poolID, version, userID).Scan(runScanner(&run)...)
+	if err != nil {
+		return nil, fmt.Errorf("queue marketplace stock sync: %w", err)
+	}
+	if err := insertAudit(ctx, tx, "marketplace_stock_sync_queued", poolID, userID, map[string]any{"run_id": run.ID, "config_version": version}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (s *PostgresStore) Run(ctx context.Context, runID string) (*Run, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("marketplace stock store is not configured")
+	}
+	var run Run
+	err := s.db.QueryRowContext(ctx, `SELECT id::text,pool_id::text,trigger_source,run_type,status,config_version,total_count,changed_count,blocked_count,error_count,error_message,plan_expires_at,started_at,finished_at FROM marketplace_stock_runs WHERE id=$1::uuid`, runID).Scan(runScanner(&run)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConfigVersionConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
 func insertPool(ctx context.Context, tx *sql.Tx, input PoolInput, userID string) (*Pool, error) {
 	pool := &Pool{}
 	err := tx.QueryRowContext(ctx, `INSERT INTO marketplace_stock_pools
 		(sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override,shared_risk_acknowledged,created_by,updated_by)
 		VALUES($1,$2,$3,$4,$5,$6,$6)
 		RETURNING id::text,sml_item_code,sml_unit_code,allocation_mode,buffer_pct_override::float8,
-		shared_risk_acknowledged,status,auto_enabled,dry_run_required,paused_reason,config_version,
-		last_preview_at,last_success_at,last_error,updated_at`,
+		shared_risk_acknowledged,status,auto_enabled,kill_switch_enabled,schedule_interval_seconds,dry_run_required,paused_reason,config_version,
+		last_preview_at,last_success_at,last_schedule_at,last_error,updated_at`,
 		input.SMLItemCode, input.SMLUnitCode, input.AllocationMode, input.BufferPctOverride, input.SharedRiskAcknowledged, userID,
 	).Scan(poolScanner(pool)...)
 	if err != nil {
@@ -428,7 +535,7 @@ func (s *PostgresStore) listMembers(ctx context.Context) (map[string][]Member, e
 	return out, rows.Err()
 }
 
-const memberSelect = `SELECT pool_id::text,id::text,source,account_key,external_product_id,external_sku_id,
+const memberSelect = `SELECT pool_id::text,id::text,source,account_key,external_product_id,external_sku_id,external_warehouse_id,
 	COALESCE(marketplace_alias_id::text,''),product_name,variant_name,unit_factor::float8,allocation_pct::float8,
 	enabled,last_catalog_seen_at,last_target_qty,last_actual_qty,last_error
 	FROM marketplace_stock_pool_members`
@@ -461,13 +568,13 @@ func upsertPoolMembers(ctx context.Context, tx *sql.Tx, poolID string, inputs []
 			aliasID = input.AliasID
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO marketplace_stock_pool_members
-			(pool_id,source,account_key,external_product_id,external_sku_id,marketplace_alias_id,product_name,variant_name,unit_factor,allocation_pct,enabled)
-			VALUES($1::uuid,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11)
+			(pool_id,source,account_key,external_product_id,external_sku_id,external_warehouse_id,marketplace_alias_id,product_name,variant_name,unit_factor,allocation_pct,enabled)
+			VALUES($1::uuid,$2,$3,$4,$5,$6,$7::uuid,$8,$9,$10,$11,$12)
 			ON CONFLICT (source,account_key,external_product_id,external_sku_id) DO UPDATE
-			SET pool_id=EXCLUDED.pool_id,marketplace_alias_id=EXCLUDED.marketplace_alias_id,product_name=EXCLUDED.product_name,
+			SET pool_id=EXCLUDED.pool_id,external_warehouse_id=EXCLUDED.external_warehouse_id,marketplace_alias_id=EXCLUDED.marketplace_alias_id,product_name=EXCLUDED.product_name,
 			variant_name=EXCLUDED.variant_name,unit_factor=EXCLUDED.unit_factor,allocation_pct=EXCLUDED.allocation_pct,
 			enabled=EXCLUDED.enabled,last_error='',updated_at=NOW()`,
-			poolID, input.Source, input.AccountKey, input.ExternalProductID, input.ExternalSKUID, aliasID,
+			poolID, input.Source, input.AccountKey, input.ExternalProductID, input.ExternalSKUID, input.ExternalWarehouseID, aliasID,
 			input.ProductName, input.VariantName, input.UnitFactor, input.AllocationPct, input.Enabled,
 		)
 		if err != nil {
@@ -487,16 +594,22 @@ func scanPool(row rowScanner) (Pool, error) {
 
 func poolScanner(pool *Pool) []any {
 	return []any{&pool.ID, &pool.SMLItemCode, &pool.SMLUnitCode, &pool.AllocationMode, &pool.BufferPctOverride,
-		&pool.SharedRiskAcknowledged, &pool.Status, &pool.AutoEnabled, &pool.DryRunRequired, &pool.PausedReason,
-		&pool.ConfigVersion, &pool.LastPreviewAt, &pool.LastSuccessAt, &pool.LastError, &pool.UpdatedAt}
+		&pool.SharedRiskAcknowledged, &pool.Status, &pool.AutoEnabled, &pool.KillSwitch, &pool.ScheduleIntervalSeconds, &pool.DryRunRequired, &pool.PausedReason,
+		&pool.ConfigVersion, &pool.LastPreviewAt, &pool.LastSuccessAt, &pool.LastScheduleAt, &pool.LastError, &pool.UpdatedAt}
 }
 
 func scanMember(row rowScanner, poolID *string) (Member, error) {
 	member := Member{}
-	err := row.Scan(poolID, &member.ID, &member.Source, &member.AccountKey, &member.ExternalProductID, &member.ExternalSKUID,
+	err := row.Scan(poolID, &member.ID, &member.Source, &member.AccountKey, &member.ExternalProductID, &member.ExternalSKUID, &member.ExternalWarehouseID,
 		&member.AliasID, &member.ProductName, &member.VariantName, &member.UnitFactor, &member.AllocationPct,
 		&member.Enabled, &member.LastCatalogSeenAt, &member.LastTargetQty, &member.LastActualQty, &member.LastError)
 	return member, err
+}
+
+func runScanner(run *Run) []any {
+	return []any{&run.ID, &run.PoolID, &run.TriggerSource, &run.RunType, &run.Status, &run.ConfigVersion,
+		&run.TotalCount, &run.ChangedCount, &run.BlockedCount, &run.ErrorCount, &run.ErrorMessage,
+		&run.PlanExpiresAt, &run.StartedAt, &run.FinishedAt}
 }
 
 func insertAudit(ctx context.Context, tx *sql.Tx, action, targetID, userID string, detail map[string]any) error {
