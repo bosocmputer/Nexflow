@@ -68,6 +68,8 @@ type Config struct {
 	MarketplaceUnitCatalogEnabled       bool
 	MarketplaceConversionMode           string
 	MarketplaceReservationLedgerEnabled bool
+	MarketplaceStockControlEnabled      bool
+	MarketplaceStockWriteEnabled        bool
 	SMLStockAvailabilityMode            string
 	SMLStockSourceFingerprint           string
 	SMLDocumentProfileMode              string
@@ -208,6 +210,8 @@ func Load() *Config {
 		SMLStockSourceFingerprint:           strings.TrimSpace(getEnv("SML_STOCK_SOURCE_FINGERPRINT", "")),
 		SMLDocumentProfileMode:              documentProfileMode,
 		SMLDocumentProfileRouteModes:        documentProfileRouteModes,
+		MarketplaceStockControlEnabled:      getEnvBool("MARKETPLACE_STOCK_CONTROL_ENABLED", false),
+		MarketplaceStockWriteEnabled:        getEnvBool("MARKETPLACE_STOCK_WRITE_ENABLED", false),
 		ShopeeOpenAPIEnabled:                getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
 		ShopeeOpenAPIEnv:                    getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
 		ShopeeOpenAPIBaseURL:                getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
