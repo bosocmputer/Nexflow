@@ -233,7 +233,10 @@ func (w *SyncWorker) syncTikTok(ctx context.Context, member Member, target int64
 	if shopID == "" {
 		return "blocked", 0, 0, "invalid_shop", "ไม่พบรหัสร้าน TikTok Shop"
 	}
-	read, err := w.tiktok.SearchInventory(ctx, tiktokshop.GatewayInventorySearchRequest{ShopID: shopID, Search: tiktokshop.InventorySearchRequest{ProductIDs: []string{member.ExternalProductID}, SKUIDs: []string{member.ExternalSKUID}}})
+	// TikTok accepts product IDs or SKU IDs for inventory search, never both.
+	// A stock member is SKU-granular, so the exact SKU is the authoritative
+	// lookup identity before both the write and the read-back.
+	read, err := w.tiktok.SearchInventory(ctx, tiktokshop.GatewayInventorySearchRequest{ShopID: shopID, Search: tiktokshop.InventorySearchRequest{SKUIDs: []string{member.ExternalSKUID}}})
 	if err != nil {
 		return "failed", 0, 0, "inventory_read_failed", "อ่านยอด TikTok Shop ก่อนส่งไม่สำเร็จ"
 	}
@@ -252,7 +255,7 @@ func (w *SyncWorker) syncTikTok(ctx context.Context, member Member, target int64
 	if len(write.Errors) > 0 {
 		return "failed", previous, 0, "inventory_item_rejected", "TikTok Shop ปฏิเสธ SKU นี้"
 	}
-	readBack, err := w.tiktok.SearchInventory(ctx, tiktokshop.GatewayInventorySearchRequest{ShopID: shopID, Search: tiktokshop.InventorySearchRequest{ProductIDs: []string{member.ExternalProductID}, SKUIDs: []string{member.ExternalSKUID}}})
+	readBack, err := w.tiktok.SearchInventory(ctx, tiktokshop.GatewayInventorySearchRequest{ShopID: shopID, Search: tiktokshop.InventorySearchRequest{SKUIDs: []string{member.ExternalSKUID}}})
 	if err != nil {
 		return "failed", previous, 0, "read_back_failed", "อ่านผลหลังส่ง TikTok Shop ไม่สำเร็จ"
 	}
