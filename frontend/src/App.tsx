@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
-import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_STOCK } from './lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_MARKETPLACE_STOCK, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_STOCK } from './lib/featureFlags'
 import { canViewMenu, firstVisibleNavPath } from './lib/navigation'
 
 const Login = lazy(() => import('./pages/Login'))
@@ -32,6 +32,7 @@ const Showcase = lazy(() => import('./pages/Showcase'))
 const SetupCenter = lazy(() => import('./pages/SetupCenter'))
 const ShopeeStock = lazy(() => import('./pages/ShopeeStock'))
 const TikTokShopStock = lazy(() => import('./pages/TikTokShopStock'))
+const MarketplaceStock = lazy(() => import('./pages/MarketplaceStock'))
 const MarketplaceAliases = lazy(() => import('./pages/MarketplaceAliases'))
 
 const routeFallback = <div className="p-6 text-sm text-muted-foreground">กำลังโหลด...</div>
@@ -125,8 +126,9 @@ export default function App() {
           <Route path="settings/email" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><RequireMenu menuKey="shopee_connections"><ShopeeConnections /></RequireMenu></RequireAdmin>} />
           <Route path="settings/tiktok-shop" element={ENABLE_TIKTOK_SHOP_API ? <RequireAdmin><RequireMenu menuKey="tiktok_shop_connections"><TikTokShopConnections /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
-          <Route path="settings/shopee-stock" element={<RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu>} />
-          <Route path="settings/tiktok-shop-stock" element={ENABLE_TIKTOK_SHOP_STOCK ? <RequireMenu menuKey="tiktok_shop_stock"><TikTokShopStock /></RequireMenu> : <Navigate to="/settings/tiktok-shop" replace />} />
+          <Route path="settings/marketplace-stock" element={ENABLE_MARKETPLACE_STOCK ? <RequireMenu menuKey="marketplace_stock"><MarketplaceStock /></RequireMenu> : <Navigate to="/settings/shopee-stock" replace />} />
+          <Route path="settings/shopee-stock" element={ENABLE_MARKETPLACE_STOCK ? <Navigate to="/settings/marketplace-stock" replace /> : <RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu>} />
+          <Route path="settings/tiktok-shop-stock" element={ENABLE_MARKETPLACE_STOCK ? <Navigate to="/settings/marketplace-stock" replace /> : ENABLE_TIKTOK_SHOP_STOCK ? <RequireMenu menuKey="tiktok_shop_stock"><TikTokShopStock /></RequireMenu> : <Navigate to="/settings/tiktok-shop" replace />} />
           <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><RequireMenu menuKey="line_myshop"><LineMyShopSettings /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
           <Route path="settings/channels" element={<RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu>} />
           <Route path="settings/instance" element={<RequireAdmin><RequireMenu menuKey="instance_settings"><InstanceSettings /></RequireMenu></RequireAdmin>} />

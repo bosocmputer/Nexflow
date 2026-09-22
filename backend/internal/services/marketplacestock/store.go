@@ -61,6 +61,41 @@ func (s *PostgresStore) Overview(ctx context.Context) (*Overview, error) {
 	return overview, nil
 }
 
+func (s *PostgresStore) Candidates(ctx context.Context, source string) ([]Candidate, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("marketplace stock store is not configured")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id::text,a.source,a.account_key,a.external_item_id,a.external_variant_id,
+		COALESCE(NULLIF(a.source_product_name,''),a.raw_name),a.source_variant_name,a.item_code,a.unit_code,
+		a.quantity_multiplier::float8
+		FROM marketplace_item_aliases a
+		LEFT JOIN marketplace_stock_pool_members m ON m.marketplace_alias_id=a.id AND m.enabled=true
+		WHERE a.is_active=true AND a.source IN ('shopee','tiktok')
+		  AND ($1='' OR a.source=$1)
+		  AND a.conversion_status='ready' AND a.sales_enabled=true
+		  AND a.item_code<>'' AND a.unit_code<>''
+		  AND a.external_item_id<>'' AND a.external_variant_id<>''
+		  AND m.id IS NULL
+		ORDER BY a.item_code,a.unit_code,a.source,a.source_product_name,a.source_variant_name,a.id
+		LIMIT 500`, source)
+	if err != nil {
+		return nil, fmt.Errorf("list marketplace stock candidates: %w", err)
+	}
+	defer rows.Close()
+	result := []Candidate{}
+	for rows.Next() {
+		candidate := Candidate{}
+		if err := rows.Scan(&candidate.AliasID, &candidate.Source, &candidate.AccountKey, &candidate.ExternalProductID,
+			&candidate.ExternalSKUID, &candidate.ProductName, &candidate.VariantName, &candidate.SMLItemCode,
+			&candidate.SMLUnitCode, &candidate.UnitFactor); err != nil {
+			return nil, err
+		}
+		candidate.Enabled = true
+		result = append(result, candidate)
+	}
+	return result, rows.Err()
+}
+
 func (s *PostgresStore) CreatePool(ctx context.Context, input PoolInput, userID string) (*Pool, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("marketplace stock store is not configured")

@@ -1,0 +1,160 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Boxes, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, RefreshCw, Settings2 } from 'lucide-react'
+
+import client from '@/api/client'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/store/auth'
+
+type Source = 'shopee' | 'tiktok'
+type Mode = 'quota' | 'shared'
+
+interface Settings { warehouse_code: string; location_code: string; default_buffer_pct: number; kill_switch_enabled: boolean; config_version: number }
+interface Member { id: string; source: Source; account_key: string; external_product_id: string; external_sku_id: string; marketplace_alias_id?: string; product_name: string; variant_name: string; unit_factor: number; allocation_pct: number; enabled: boolean; last_target_qty?: number; last_actual_qty?: number; last_error?: string }
+interface Pool { id: string; sml_item_code: string; sml_unit_code: string; allocation_mode: Mode; buffer_pct_override?: number; shared_risk_acknowledged: boolean; status: 'draft' | 'ready' | 'paused' | 'active'; auto_enabled: boolean; dry_run_required: boolean; paused_reason?: string; config_version: number; last_error?: string; members: Member[] }
+interface Overview { available: boolean; settings: Settings; pools: Pool[] }
+interface Candidate extends Omit<Member, 'id' | 'last_target_qty' | 'last_actual_qty' | 'last_error'> { sml_item_code: string; sml_unit_code: string }
+
+const sourceLabel: Record<Source, string> = { shopee: 'Shopee', tiktok: 'TikTok Shop' }
+const poolStatus: Record<Pool['status'], string> = { draft: 'รอตั้งค่า', ready: 'พร้อมตรวจ', paused: 'หยุดชั่วคราว', active: 'เปิดใช้งาน' }
+
+export default function MarketplaceStock() {
+  const user = useAuthStore((state) => state.user)
+  const canManage = user?.role === 'admin'
+  const [data, setData] = useState<Overview | null>(null)
+  const [tab, setTab] = useState<'all' | Source>('all')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('')
+    try {
+      const response = await client.get<Overview>('/api/settings/marketplace-stock')
+      setData(response.data)
+    } catch (cause) {
+      setError(messageOf(cause, 'โหลดหน้าควบคุมสต๊อกไม่สำเร็จ'))
+    } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const filteredPools = useMemo(() => (data?.pools ?? []).filter((pool) => tab === 'all' || pool.members.some((member) => member.source === tab)), [data?.pools, tab])
+  const activePools = data?.pools.filter((pool) => pool.status === 'active' && pool.auto_enabled).length ?? 0
+
+  const openCreate = async () => {
+    setError(''); setNotice('')
+    try {
+      const response = await client.get<{ data: Candidate[] }>('/api/settings/marketplace-stock/candidates')
+      setCandidates(response.data.data ?? [])
+      setCreateOpen(true)
+    } catch (cause) { setError(messageOf(cause, 'โหลดรายการสินค้าที่พร้อมตั้งค่าสต๊อกไม่สำเร็จ')) }
+  }
+
+  const saveSettings = async (draft: Settings) => {
+    if (!data) return
+    setSaving(true); setError(''); setNotice('')
+    try {
+      await client.put('/api/settings/marketplace-stock', { ...draft, expected_config_version: data.settings.config_version, confirm_action: 'UPDATE_MARKETPLACE_STOCK_SETTINGS' })
+      setSettingsOpen(false); setNotice('บันทึกแหล่งสต๊อกแล้ว ทุกกลุ่มถูกหยุดไว้ให้ตรวจสอบใหม่ก่อนเปิดใช้งาน')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'บันทึกแหล่งสต๊อกไม่สำเร็จ')) } finally { setSaving(false) }
+  }
+
+  const createPool = async (input: { smlItem: string; smlUnit: string; mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => {
+    setSaving(true); setError(''); setNotice('')
+    try {
+      await client.post('/api/settings/marketplace-stock/pools', {
+        sml_item_code: input.smlItem, sml_unit_code: input.smlUnit, allocation_mode: input.mode,
+        shared_risk_acknowledged: input.sharedAcknowledged,
+        members: input.members.map(({ sml_item_code: _item, sml_unit_code: _unit, ...member }) => member),
+      })
+      setCreateOpen(false); setNotice('สร้างกลุ่มสต๊อกแบบร่างแล้ว ขั้นต่อไปคือกดตรวจสอบก่อนเปิดซิงก์จริง')
+      await load()
+    } catch (cause) { setError(messageOf(cause, 'สร้างกลุ่มสต๊อกไม่สำเร็จ')) } finally { setSaving(false) }
+  }
+
+  return (
+    <main className="space-y-4 p-4 sm:p-6" aria-busy={loading}>
+      <header className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-semibold">ควบคุมสต๊อก Marketplace</h1><Badge variant="outline">AOY</Badge></div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">SML เป็นยอดกลาง ระบบจะคำนวณยอดพร้อมขายแล้วส่งยอดไป Shopee และ TikTok Shop ตามนโยบายของแต่ละกลุ่มสินค้า</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />รีเฟรช</Button>
+          {canManage && <><Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}><Settings2 className="mr-2 h-4 w-4" />แหล่งสต๊อก</Button><Button size="sm" onClick={() => void openCreate()}><PackagePlus className="mr-2 h-4 w-4" />สร้างกลุ่ม</Button></>}
+        </div>
+      </header>
+
+      {error && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>ดำเนินการไม่สำเร็จ</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+      {notice && <Alert><CheckCircle2 className="h-4 w-4 text-success" /><AlertTitle>บันทึกแล้ว</AlertTitle><AlertDescription>{notice}</AlertDescription></Alert>}
+      {!canManage && <Alert><Info className="h-4 w-4" /><AlertTitle>โหมดติดตามผล</AlertTitle><AlertDescription>ผู้ดูแลระบบกำหนดนโยบายและเปิดการซิงก์อัตโนมัติ พนักงานสามารถตรวจสถานะและผลการทำงานได้จากหน้านี้</AlertDescription></Alert>}
+      {data?.settings.kill_switch_enabled && <Alert variant="destructive"><CircleOff className="h-4 w-4" /><AlertTitle>หยุดส่งสต๊อกทั้งร้านอยู่</AlertTitle><AlertDescription>งานที่ยังไม่เริ่มจะไม่ส่งยอดออกไป Marketplace จนกว่าผู้ดูแลจะเปิดระบบอีกครั้ง</AlertDescription></Alert>}
+
+      <section className="grid gap-3 sm:grid-cols-3" aria-label="ภาพรวมการควบคุมสต๊อก">
+        <Metric label="แหล่งสต๊อก SML" value={data?.settings.warehouse_code ? `${data.settings.warehouse_code} / ${data.settings.location_code}` : 'ยังไม่ได้เลือก'} detail="ใช้ร่วมกันทั้ง Shopee และ TikTok" />
+        <Metric label="กันสต๊อกเริ่มต้น" value={data ? `${data.settings.default_buffer_pct}%` : '—'} detail="ปรับเฉพาะกลุ่มสินค้าได้" />
+        <Metric label="เปิด Auto แล้ว" value={`${activePools} กลุ่ม`} detail="กลุ่มใหม่เริ่มปิดเสมอ" />
+      </section>
+
+      <Tabs value={tab} onValueChange={(value) => setTab(value as 'all' | Source)}>
+        <TabsList aria-label="กรองช่องทาง"><TabsTrigger value="all">ทั้งหมด</TabsTrigger><TabsTrigger value="shopee">Shopee</TabsTrigger><TabsTrigger value="tiktok">TikTok Shop</TabsTrigger></TabsList>
+        <TabsContent value={tab} className="space-y-3">
+          {loading ? <LoadingRows /> : filteredPools.length === 0 ? <EmptyState canManage={canManage} onCreate={() => void openCreate()} /> : filteredPools.map((pool) => <PoolCard key={pool.id} pool={pool} />)}
+        </TabsContent>
+      </Tabs>
+
+      {data && <SettingsDialog open={settingsOpen} settings={data.settings} saving={saving} onOpenChange={setSettingsOpen} onSave={saveSettings} />}
+      <CreatePoolDialog open={createOpen} candidates={candidates} saving={saving} onOpenChange={setCreateOpen} onCreate={createPool} />
+    </main>
+  )
+}
+
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-lg font-semibold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>
+}
+
+function PoolCard({ pool }: { pool: Pool }) {
+  const channels = [...new Set(pool.members.map((member) => member.source))]
+  return <Card><CardHeader className="gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="text-base">{pool.sml_item_code} <span className="font-normal text-muted-foreground">· {pool.sml_unit_code}</span></CardTitle><CardDescription className="mt-1">{pool.allocation_mode === 'quota' ? 'แบ่งโควตาตามสัดส่วนที่กำหนด' : 'ใช้สต๊อกร่วมทุกช่องทาง'} · กันสต๊อก {pool.buffer_pct_override ?? 'ค่าเริ่มต้น'}%</CardDescription></div><div className="flex flex-wrap gap-2"><Badge variant={pool.status === 'active' ? 'default' : 'secondary'}>{poolStatus[pool.status]}</Badge><Badge variant="outline">{pool.auto_enabled ? 'Auto ทุก 5 นาที' : 'Auto ปิด'}</Badge></div></CardHeader><CardContent className="grid gap-2 p-4 pt-0 sm:grid-cols-2">{pool.members.map((member) => <div key={member.id} className="rounded-md border px-3 py-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{sourceLabel[member.source]}</span><span className="text-muted-foreground">{pool.allocation_mode === 'quota' ? `${member.allocation_pct}%` : 'ยอดร่วม'}</span></div><p className="mt-1 truncate text-muted-foreground" title={[member.product_name, member.variant_name].filter(Boolean).join(' · ')}>{[member.product_name, member.variant_name].filter(Boolean).join(' · ') || 'ยังไม่มีชื่อสินค้า'}</p>{member.last_error && <p className="mt-1 text-xs text-destructive">ต้องตรวจ: {member.last_error}</p>}</div>)}</CardContent>{pool.paused_reason && <div className="border-t px-4 py-2 text-xs text-warning">หยุดชั่วคราว: {thaiPause(pool.paused_reason)}</div>}{channels.length === 0 && <div className="border-t px-4 py-2 text-xs text-muted-foreground">ยังไม่มี SKU ในกลุ่มนี้</div>}</Card>
+}
+
+function EmptyState({ canManage, onCreate }: { canManage: boolean; onCreate: () => void }) { return <Card><CardContent className="flex flex-col items-center px-6 py-12 text-center"><Boxes className="h-9 w-9 text-muted-foreground" /><h2 className="mt-3 font-semibold">ยังไม่มีกลุ่มสต๊อก</h2><p className="mt-1 max-w-md text-sm text-muted-foreground">เริ่มจากจับคู่สินค้า Marketplace กับสินค้า SML ให้พร้อม แล้วสร้างกลุ่มเพื่อเลือกว่าจะแบ่งโควตาหรือใช้สต๊อกร่วม</p>{canManage && <Button className="mt-4" onClick={onCreate}>สร้างกลุ่มสต๊อก</Button>}</CardContent></Card> }
+function LoadingRows() { return <div className="space-y-3" aria-label="กำลังโหลด"><div className="h-28 animate-pulse rounded-md bg-muted" /><div className="h-28 animate-pulse rounded-md bg-muted" /></div> }
+
+function SettingsDialog({ open, settings, saving, onOpenChange, onSave }: { open: boolean; settings: Settings; saving: boolean; onOpenChange: (open: boolean) => void; onSave: (settings: Settings) => void }) {
+  const [draft, setDraft] = useState(settings)
+  useEffect(() => { if (open) setDraft(settings) }, [open, settings])
+  return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}><DialogContent><DialogHeader><DialogTitle>แหล่งสต๊อก SML และกันชน</DialogTitle><DialogDescription>การเปลี่ยนคลังหรือกันชนจะหยุดทุกกลุ่มไว้ก่อน เพื่อให้ตรวจสอบและ dry-run ใหม่</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="warehouse">คลัง SML</Label><Input id="warehouse" value={draft.warehouse_code} onChange={(event) => setDraft({ ...draft, warehouse_code: event.target.value })} /></div><div className="space-y-1"><Label htmlFor="location">พื้นที่เก็บ</Label><Input id="location" value={draft.location_code} onChange={(event) => setDraft({ ...draft, location_code: event.target.value })} /></div><div className="space-y-1"><Label htmlFor="buffer">กันสต๊อกเริ่มต้น (%)</Label><Input id="buffer" type="number" min="0" max="100" value={draft.default_buffer_pct} onChange={(event) => setDraft({ ...draft, default_buffer_pct: Number(event.target.value) })} /></div><label className="flex items-center gap-2 pt-6 text-sm"><Switch checked={draft.kill_switch_enabled} onCheckedChange={(checked) => setDraft({ ...draft, kill_switch_enabled: checked })} />หยุดส่งสต๊อกทั้งร้าน</label></div><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={() => onSave(draft)} disabled={saving || !draft.warehouse_code || !draft.location_code}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ยืนยันบันทึก</Button></DialogFooter></DialogContent></Dialog>
+}
+
+function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: { open: boolean; candidates: Candidate[]; saving: boolean; onOpenChange: (open: boolean) => void; onCreate: (input: { smlItem: string; smlUnit: string; mode: Mode; sharedAcknowledged: boolean; members: Candidate[] }) => void }) {
+  const groups = useMemo(() => [...new Map(candidates.map((candidate) => [`${candidate.sml_item_code}|${candidate.sml_unit_code}`, candidate])).entries()], [candidates])
+  const [groupKey, setGroupKey] = useState('')
+  const [mode, setMode] = useState<Mode>('quota')
+  const [sharedAcknowledged, setSharedAcknowledged] = useState(false)
+  const [members, setMembers] = useState<Candidate[]>([])
+  useEffect(() => { if (open) { const first = groups[0]?.[0] ?? ''; setGroupKey(first); setMode('quota'); setSharedAcknowledged(false); setMembers(first ? candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === first) : []) } }, [open, candidates, groups])
+  const changeGroup = (value: string) => { setGroupKey(value); setMembers(candidates.filter((candidate) => `${candidate.sml_item_code}|${candidate.sml_unit_code}` === value)) }
+  const total = members.filter((member) => member.enabled).reduce((sum, member) => sum + member.allocation_pct, 0)
+  const submit = () => { const [smlItem, smlUnit] = groupKey.split('|', 2); if (smlItem && smlUnit) onCreate({ smlItem, smlUnit, mode, sharedAcknowledged, members }) }
+  return <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>สร้างกลุ่มสต๊อก Marketplace</DialogTitle><DialogDescription>เลือก SKU ที่จับคู่กับสินค้า SML เดียวกันแล้ว ระบบจะเริ่มเป็นแบบร่าง ยังไม่ส่งสต๊อกจริง</DialogDescription></DialogHeader>{groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4"><div className="space-y-1"><Label>สินค้าและหน่วย SML</Label><Select value={groupKey} onValueChange={changeGroup}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{groups.map(([key, item]) => <SelectItem key={key} value={key}>{item.sml_item_code} · {item.sml_unit_code}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>{mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}<div className="space-y-2"><Label>SKU ในกลุ่ม</Label>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => setMembers((current) => current.map((value, i) => i === index ? { ...value, enabled: checked === true } : value))} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div></div>}<DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={submit} disabled={saving || !groupKey || members.filter((member) => member.enabled).length === 0 || (mode === 'quota' && total > 100) || (mode === 'shared' && !sharedAcknowledged)}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}สร้างแบบร่าง</Button></DialogFooter></DialogContent></Dialog>
+}
+
+function thaiPause(value: string) { return value === 'configuration_changed' ? 'การตั้งค่ากลุ่มเปลี่ยน' : value === 'stock_source_changed' ? 'แหล่งสต๊อก SML เปลี่ยน' : value }
+function messageOf(cause: unknown, fallback: string) { const error = cause as { response?: { data?: { error?: string } }; message?: string }; return error?.response?.data?.error || error?.message || fallback }

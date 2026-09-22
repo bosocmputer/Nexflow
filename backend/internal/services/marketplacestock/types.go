@@ -55,6 +55,15 @@ type Overview struct {
 	CheckedAt time.Time `json:"checked_at"`
 }
 
+// Candidate is a Product Master mapping eligible to be added to a draft pool.
+// It is local data only; catalog freshness is checked again before any future
+// external stock write.
+type Candidate struct {
+	MemberInput
+	SMLItemCode string `json:"sml_item_code"`
+	SMLUnitCode string `json:"sml_unit_code"`
+}
+
 type PoolInput struct {
 	SMLItemCode            string         `json:"sml_item_code"`
 	SMLUnitCode            string         `json:"sml_unit_code"`

@@ -34,6 +34,18 @@ func (h *MarketplaceStockHandler) Overview(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *MarketplaceStockHandler) Candidates(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	result, err := h.service.Candidates(c.Request.Context(), strings.TrimSpace(c.Query("source")))
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
 func (h *MarketplaceStockHandler) CreatePool(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return

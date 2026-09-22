@@ -8,6 +8,9 @@ import (
 type serviceStoreFake struct{ createCalls int }
 
 func (f *serviceStoreFake) Overview(context.Context) (*Overview, error) { return &Overview{}, nil }
+func (f *serviceStoreFake) Candidates(context.Context, string) ([]Candidate, error) {
+	return []Candidate{}, nil
+}
 func (f *serviceStoreFake) CreatePool(_ context.Context, input PoolInput, _ string) (*Pool, error) {
 	f.createCalls++
 	return &Pool{SMLItemCode: input.SMLItemCode}, nil

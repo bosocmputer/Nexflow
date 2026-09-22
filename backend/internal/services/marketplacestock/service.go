@@ -17,6 +17,7 @@ var (
 
 type Store interface {
 	Overview(context.Context) (*Overview, error)
+	Candidates(context.Context, string) ([]Candidate, error)
 	CreatePool(context.Context, PoolInput, string) (*Pool, error)
 	UpdatePool(context.Context, string, PoolUpdate, string) (*Pool, error)
 	UpdateSettings(context.Context, SettingsUpdate, string) (*Settings, error)
@@ -36,6 +37,13 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 		return nil, errors.New("marketplace stock is not configured")
 	}
 	return s.store.Overview(ctx)
+}
+
+func (s *Service) Candidates(ctx context.Context, source string) ([]Candidate, error) {
+	if s == nil || s.store == nil || (source != "" && source != "shopee" && source != "tiktok") {
+		return nil, ErrInvalidPoolInput
+	}
+	return s.store.Candidates(ctx, source)
 }
 
 func (s *Service) CreatePool(ctx context.Context, input PoolInput, userID string) (*Pool, error) {

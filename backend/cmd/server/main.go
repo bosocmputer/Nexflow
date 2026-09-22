@@ -621,6 +621,7 @@ func main() {
 		api.PUT("/settings/shopee-stock/:shop_id/shared-pool", middleware.RequireRole("admin"), shopeeStockH.UpdateSharedPool)
 		api.PUT("/settings/shopee-stock/:shop_id/mappings/:item_id/:model_id", middleware.RequireRole("admin"), shopeeStockH.UpdateMapping)
 		api.GET("/settings/marketplace-stock", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.Overview)
+		api.GET("/settings/marketplace-stock/candidates", middleware.RequireRole("admin", "staff", "viewer"), marketplaceStockH.Candidates)
 		api.POST("/settings/marketplace-stock/pools", middleware.RequireRole("admin"), marketplaceStockH.CreatePool)
 		api.PUT("/settings/marketplace-stock/pools/:pool_id", middleware.RequireRole("admin"), marketplaceStockH.UpdatePool)
 		api.PUT("/settings/marketplace-stock", middleware.RequireRole("admin"), marketplaceStockH.UpdateSettings)
