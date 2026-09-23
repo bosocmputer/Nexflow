@@ -268,6 +268,7 @@ export interface Bill {
   bill_type: string
   source: string
   source_account_key?: string
+  source_account_name?: string
   status: BillStatus
   document_route?: string
   raw_data?: Record<string, unknown> | null

@@ -573,8 +573,8 @@ function MarketplaceShopLine({ bill }: { bill: Bill }) {
     : rawString(raw, 'tiktok_shop_id') || sourceAccountShopID(bill.source_account_key)
   if (!shopID) return null
   const label = isShopee
-    ? rawString(raw, 'shopee_shop_label') || 'Shopee shop'
-    : rawString(raw, 'tiktok_shop_name') || 'TikTok Shop'
+    ? rawString(raw, 'shopee_shop_label') || bill.source_account_name || 'Shopee shop'
+    : rawString(raw, 'tiktok_shop_name') || bill.source_account_name || 'TikTok Shop'
   const appearance = isShopee
     ? 'border-orange-200 bg-orange-50 text-orange-700'
     : 'border-[#111817]/20 bg-[#111817]/10 text-[#111817]'

@@ -10,6 +10,7 @@ type Bill struct {
 	BillType                string             `json:"bill_type"`
 	Source                  string             `json:"source"`
 	SourceAccountKey        string             `json:"source_account_key"`
+	SourceAccountName       string             `json:"source_account_name,omitempty"`
 	Status                  string             `json:"status"`
 	DocumentRoute           string             `json:"document_route"`
 	RawData                 json.RawMessage    `json:"raw_data,omitempty"`
