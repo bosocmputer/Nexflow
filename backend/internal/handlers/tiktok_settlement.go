@@ -183,19 +183,22 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 		h.error(c, 403, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
 		return
 	}
-	created, usedAllStatusFallback, err := h.importStatements(c.Request.Context(), req.ShopID, from, to, c.GetString("user_id"), c.GetString("user_email"))
+	importResult, err := h.importStatements(c.Request.Context(), req.ShopID, from, to, c.GetString("user_id"), c.GetString("user_email"))
 	if err != nil {
 		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err)})
 		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
 		return
 	}
 	_, _ = h.db.ExecContext(c.Request.Context(), `UPDATE tiktok_shop_settlement_settings SET last_import_at=NOW(),updated_at=NOW() WHERE shop_id=$1`, req.ShopID)
-	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": created, "all_status_fallback": usedAllStatusFallback})
+	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": importResult.count, "all_status_fallback": importResult.usedAllStatusFallback, "unavailable_statuses": importResult.unavailableStatuses})
 	message := "ดึง Statement แล้ว ระบบตรวจเทียบกับใบขาย SML เรียบร้อย"
-	if usedAllStatusFallback {
+	if importResult.usedAllStatusFallback {
 		message = "ดึง Statement ครบแล้ว โดยใช้รายการรวมทุกสถานะหลัง TikTok ไม่ตอบการกรองสถานะย่อย"
 	}
-	c.JSON(http.StatusAccepted, gin.H{"imported_count": created, "message": message})
+	if len(importResult.unavailableStatuses) > 0 {
+		message = "ดึง Statement ที่ TikTok แจ้งว่าโอนแล้วแล้ว แต่ TikTok ยังตอบสถานะรอโอน/โอนไม่สำเร็จไม่ได้ในขณะนี้ จึงยังไม่แสดงสองสถานะดังกล่าว"
+	}
+	c.JSON(http.StatusAccepted, gin.H{"imported_count": importResult.count, "partial": len(importResult.unavailableStatuses) > 0, "unavailable_statuses": importResult.unavailableStatuses, "message": message})
 }
 
 func (h *TikTokSettlementHandler) List(c *gin.Context) {
@@ -453,20 +456,34 @@ func (h *TikTokSettlementHandler) UpdateSettings(c *gin.Context) {
 	c.JSON(200, gin.H{"data": s})
 }
 
-func (h *TikTokSettlementHandler) importStatements(ctx context.Context, shop string, from, to time.Time, userID, email string) (int, bool, error) {
+type tikTokSettlementImportResult struct {
+	count                 int
+	usedAllStatusFallback bool
+	unavailableStatuses   []tiktokshop.StatementStatus
+}
+
+func (h *TikTokSettlementHandler) importStatements(ctx context.Context, shop string, from, to time.Time, userID, email string) (tikTokSettlementImportResult, error) {
 	imported := make(map[string]struct{})
-	for _, status := range []tiktokshop.StatementStatus{tiktokshop.StatementStatusPaid, tiktokshop.StatementStatusProcessing, tiktokshop.StatementStatusFailed} {
+	statuses := []tiktokshop.StatementStatus{tiktokshop.StatementStatusPaid, tiktokshop.StatementStatusProcessing, tiktokshop.StatementStatusFailed}
+	paidLoaded := false
+	for index, status := range statuses {
 		if err := h.importStatementPages(ctx, shop, from, to, status, userID, email, imported); err != nil {
 			if !shouldUseAllTikTokStatementStatuses(err) {
-				return len(imported), false, err
+				return tikTokSettlementImportResult{}, err
 			}
 			if fallbackErr := h.importStatementPages(ctx, shop, from, to, "", userID, email, imported); fallbackErr != nil {
-				return len(imported), true, fallbackErr
+				if shouldCompleteTikTokSettlementPaidOnlyImport(status, paidLoaded, fallbackErr) {
+					return tikTokSettlementImportResult{count: len(imported), unavailableStatuses: append([]tiktokshop.StatementStatus(nil), statuses[index:]...)}, nil
+				}
+				return tikTokSettlementImportResult{}, fallbackErr
 			}
-			return len(imported), true, nil
+			return tikTokSettlementImportResult{count: len(imported), usedAllStatusFallback: true}, nil
+		}
+		if status == tiktokshop.StatementStatusPaid {
+			paidLoaded = true
 		}
 	}
-	return len(imported), false, nil
+	return tikTokSettlementImportResult{count: len(imported)}, nil
 }
 
 func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop string, from, to time.Time, status tiktokshop.StatementStatus, userID, email string, imported map[string]struct{}) error {
@@ -497,6 +514,15 @@ func shouldUseAllTikTokStatementStatuses(err error) bool {
 	}
 	return gatewayErr.Code == "internal_error" || gatewayErr.Code == "tiktok_api_error"
 }
+
+// TikTok PAID is the only status eligible for settlement reconciliation. When
+// PAID has been read successfully, a retryable upstream failure for an
+// informational status may complete as a visibly partial import. Permission,
+// rate-limit, and PAID failures stay fail-closed.
+func shouldCompleteTikTokSettlementPaidOnlyImport(status tiktokshop.StatementStatus, paidLoaded bool, err error) bool {
+	return paidLoaded && status != tiktokshop.StatementStatusPaid && shouldUseAllTikTokStatementStatuses(err)
+}
+
 func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop string, s tiktokshop.Statement, requestID, userID, email string) error {
 	label, connectionID, err := h.connection(ctx, shop)
 	if err != nil {

@@ -48,3 +48,19 @@ func TestTikTokSettlementAllStatusFallbackOnlyHandlesRetryableUpstreamFilterFail
 		t.Fatal("rate limits must wait for the next manual import, not amplify traffic")
 	}
 }
+
+func TestTikTokSettlementAllowsPaidOnlyImportWhenNonPaidStatusesAreUnavailable(t *testing.T) {
+	upstreamFailure := &tiktokshop.GatewayError{Code: "internal_error", Retryable: true}
+	if !shouldCompleteTikTokSettlementPaidOnlyImport(tiktokshop.StatementStatusProcessing, true, upstreamFailure) {
+		t.Fatal("expected a successful PAID import to remain usable when TikTok cannot return informational PROCESSING statements")
+	}
+	if shouldCompleteTikTokSettlementPaidOnlyImport(tiktokshop.StatementStatusPaid, true, upstreamFailure) {
+		t.Fatal("PAID must never be treated as optional because it is settlement evidence")
+	}
+	if shouldCompleteTikTokSettlementPaidOnlyImport(tiktokshop.StatementStatusFailed, false, upstreamFailure) {
+		t.Fatal("non-PAID statuses cannot be skipped before PAID was read successfully")
+	}
+	if shouldCompleteTikTokSettlementPaidOnlyImport(tiktokshop.StatementStatusProcessing, true, &tiktokshop.GatewayError{Code: "permission_denied", Retryable: false}) {
+		t.Fatal("permission errors must remain visible instead of returning a partial import")
+	}
+}
