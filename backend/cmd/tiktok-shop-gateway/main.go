@@ -67,6 +67,12 @@ func main() {
 	if err != nil {
 		logger.Fatal("tiktok_gateway_product_client_invalid", zap.Error(err))
 	}
+	financeClient, err := tiktokshop.NewFinanceClient(tiktokshop.FinanceClientConfig{
+		BaseURL: config.TikTokShopBaseURL, AppKey: config.AppKey, AppSecret: config.AppSecret, HTTPClient: externalClient,
+	})
+	if err != nil {
+		logger.Fatal("tiktok_gateway_finance_client_invalid", zap.Error(err))
+	}
 	eventClient, err := tiktokshop.NewEventClient(tiktokshop.EventClientConfig{
 		BaseURL: config.TikTokShopBaseURL, AppKey: config.AppKey, AppSecret: config.AppSecret, HTTPClient: externalClient,
 	})
@@ -101,6 +107,10 @@ func main() {
 	if err != nil {
 		logger.Fatal("tiktok_gateway_product_service_invalid", zap.Error(err))
 	}
+	financeService, err := tiktokgateway.NewFinanceService(tokenService, financeClient)
+	if err != nil {
+		logger.Fatal("tiktok_gateway_finance_service_invalid", zap.Error(err))
+	}
 	webhookConfigService, err := tiktokgateway.NewWebhookConfigService(tokenService, eventClient)
 	if err != nil {
 		logger.Fatal("tiktok_gateway_webhook_config_service_invalid", zap.Error(err))
@@ -122,6 +132,7 @@ func main() {
 	tiktokgateway.NewHandler(oauthService, verifier, repository, config, logger,
 		tiktokgateway.WithOrderGatewayService(orderService),
 		tiktokgateway.WithProductGatewayService(productService),
+		tiktokgateway.WithFinanceGatewayService(financeService),
 		tiktokgateway.WithWebhookReceiver(repository),
 		tiktokgateway.WithWebhookConfigService(webhookConfigService),
 	).Register(router)

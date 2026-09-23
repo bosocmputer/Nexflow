@@ -210,7 +210,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   }, [open, row, selectedDestination])
 
   useEffect(() => {
-    if (!open || !row || row.channel !== 'shopee_settlement' || row.bill_type !== 'ar_receipt') return
+    if (!open || !row || (row.channel !== 'shopee_settlement' && row.channel !== 'tiktok_settlement') || row.bill_type !== 'ar_receipt') return
     let cancelled = false
     setSettlementMastersLoading(true)
     Promise.all([
@@ -238,7 +238,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   if (!row) return null
 
   const isPurchase = row.bill_type === 'purchase'
-  const isSettlement = row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt'
+  const isSettlement = (row.channel === 'shopee_settlement' || row.channel === 'tiktok_settlement') && row.bill_type === 'ar_receipt'
   const isShopeePurchase = row.channel === 'shopee_shipped' && row.bill_type === 'purchase'
   const isMarketplaceSaleShipping =
     row.bill_type === 'sale' && (
@@ -558,10 +558,10 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
               <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
                 <div>
                   <div className="text-xs font-semibold text-foreground">
-                    ตั้งค่ารับชำระ Shopee
+                    ตั้งค่ารับชำระ {row.channel === 'tiktok_settlement' ? 'TikTok Shop' : 'Shopee'}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    ใช้ค่าจาก SML master จริงสำหรับเมนูรับชำระหนี้. ส่วนต่าง Shopee เว้นว่างได้ตอนตั้งค่า
+                    ใช้ค่าจาก SML master จริงสำหรับเมนูรับชำระหนี้. ค่าใช้จ่าย Marketplace เว้นว่างได้ตอนตั้งค่า
                     แต่ถ้ารอบส่งมีส่วนต่าง ระบบจะบังคับเลือกก่อนส่งจริง
                   </p>
                 </div>
@@ -590,7 +590,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
                     </Select>
                     <p className="text-[11px] text-muted-foreground">
                       {passbookCodeTrimmed
-                        ? 'ค่าที่เลือกนี้จะถูกบันทึกเป็นบัญชีรับเงินจริงสำหรับรับชำระ Shopee'
+                        ? `ค่าที่เลือกนี้จะถูกบันทึกเป็นบัญชีรับเงินจริงสำหรับรับชำระ ${row.channel === 'tiktok_settlement' ? 'TikTok Shop' : 'Shopee'}`
                         : 'รายการในช่องนี้เป็นตัวเลือกจาก SML ยังไม่ใช่ค่าที่บันทึก จนกว่าจะเลือกแล้วกดบันทึก'}
                     </p>
                   </div>

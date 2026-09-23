@@ -29,6 +29,8 @@ const (
 	GatewayProductDetailPath                = "/internal/v1/tiktok-shop/products/detail"
 	GatewayInventorySearchPath              = "/internal/v1/tiktok-shop/inventory/search"
 	GatewayInventoryUpdatePath              = "/internal/v1/tiktok-shop/inventory/update"
+	GatewayFinanceStatementsPath            = "/internal/v1/tiktok-shop/finance/statements"
+	GatewayFinanceStatementTransactionsPath = "/internal/v1/tiktok-shop/finance/statement-transactions"
 	maxGatewayResponseSize                  = 8 << 20
 )
 
@@ -135,6 +137,17 @@ type GatewayInventoryUpdateRequest struct {
 	Update    UpdateInventoryRequest `json:"update"`
 }
 
+type GatewayFinanceStatementsRequest struct {
+	ShopID string                  `json:"shop_id"`
+	Search SearchStatementsRequest `json:"search"`
+}
+type GatewayFinanceStatementTransactionsRequest struct {
+	ShopID      string `json:"shop_id"`
+	StatementID string `json:"statement_id"`
+	PageToken   string `json:"page_token,omitempty"`
+	PageSize    int    `json:"page_size"`
+}
+
 type GatewayOrderSearchResponse struct {
 	UpstreamRequestID string  `json:"upstream_request_id"`
 	NextPageToken     string  `json:"next_page_token"`
@@ -177,6 +190,25 @@ type GatewayInventorySearchResponse struct {
 type GatewayInventoryUpdateResponse struct {
 	UpstreamRequestID string                 `json:"upstream_request_id"`
 	Errors            []InventoryUpdateError `json:"errors"`
+}
+
+type GatewayFinanceStatementsResponse struct {
+	UpstreamRequestID string      `json:"upstream_request_id"`
+	NextPageToken     string      `json:"next_page_token"`
+	TotalCount        int64       `json:"total_count"`
+	Statements        []Statement `json:"statements"`
+}
+type GatewayFinanceStatementTransactionsResponse struct {
+	Currency                 string `json:"currency"`
+	UpstreamRequestID        string `json:"upstream_request_id"`
+	NextPageToken            string `json:"next_page_token"`
+	TotalCount               int64  `json:"total_count"`
+	TotalSettlementAmount    string `json:"total_settlement_amount"`
+	TotalReserveAmount       string `json:"total_reserve_amount"`
+	TotalSettlementBreakdown struct {
+		TotalAdjustmentAmount string `json:"total_adjustment_amount"`
+	} `json:"total_settlement_breakdown"`
+	Transactions []StatementTransaction `json:"transactions"`
 }
 
 type GatewayError struct {
@@ -394,6 +426,42 @@ func (c *GatewayClient) UpdateInventory(ctx context.Context, input GatewayInvent
 	}
 	if output.Errors == nil {
 		output.Errors = []InventoryUpdateError{}
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) SearchFinanceStatements(ctx context.Context, input GatewayFinanceStatementsRequest) (*GatewayFinanceStatementsResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	if input.ShopID == "" || input.Search.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayFinanceStatementsResponse
+	if err := c.call(ctx, GatewayFinanceStatementsPath, input, &output); err != nil {
+		return nil, err
+	}
+	if err := validateStatements(output.Statements); err != nil || output.TotalCount < int64(len(output.Statements)) {
+		return nil, ErrInvalidOrderResponse
+	}
+	if output.Statements == nil {
+		output.Statements = []Statement{}
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) GetFinanceStatementTransactions(ctx context.Context, input GatewayFinanceStatementTransactionsRequest) (*GatewayFinanceStatementTransactionsResponse, error) {
+	input.ShopID, input.StatementID = strings.TrimSpace(input.ShopID), strings.TrimSpace(input.StatementID)
+	if input.ShopID == "" || input.StatementID == "" || input.PageSize < 1 || input.PageSize > 100 {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayFinanceStatementTransactionsResponse
+	if err := c.call(ctx, GatewayFinanceStatementTransactionsPath, input, &output); err != nil {
+		return nil, err
+	}
+	if err := validateStatementTransactions(output.Transactions); err != nil || output.TotalCount < int64(len(output.Transactions)) {
+		return nil, ErrInvalidOrderResponse
+	}
+	if output.Transactions == nil {
+		output.Transactions = []StatementTransaction{}
 	}
 	return &output, nil
 }

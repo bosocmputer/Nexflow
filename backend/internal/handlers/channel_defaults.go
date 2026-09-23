@@ -257,7 +257,8 @@ func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
 		in.ShippingItemCode = ""
 		in.ShippingItemUnitCode = ""
 	}
-	if in.Channel != "shopee_settlement" || in.BillType != "ar_receipt" {
+	isSettlement := (in.Channel == "shopee_settlement" || in.Channel == "tiktok_settlement") && in.BillType == "ar_receipt"
+	if !isSettlement {
 		in.PassbookCode = ""
 		in.PassbookName = ""
 		in.BankCode = ""
@@ -287,7 +288,7 @@ func normalizeAndValidateChannelDefault(in *models.ChannelDefaultUpsert) error {
 			return fmt.Errorf("กรุณาเลือกรูปแบบเอกสารรับชำระ (screen_code=EE)")
 		}
 		if strings.TrimSpace(in.PassbookCode) == "" {
-			return fmt.Errorf("กรุณาเลือกบัญชีรับเงินสำหรับรับชำระ Shopee")
+			return fmt.Errorf("กรุณาเลือกบัญชีรับเงินสำหรับรับชำระ Marketplace")
 		}
 		if strings.TrimSpace(in.DocPrefix) == "" {
 			in.DocPrefix = strings.TrimSpace(in.DocFormatCode)
@@ -507,7 +508,7 @@ func supportsConfiguredShippingItem(channel, billType string) bool {
 // nonsensical pairs (shopee_shipped is purchase-only, etc.).
 func validChannelBillTypeCombo(channel, billType string) bool {
 	switch channel {
-	case "shopee_settlement":
+	case "shopee_settlement", "tiktok_settlement":
 		return billType == "ar_receipt"
 	case "shopee_shipped":
 		return billType == "purchase"

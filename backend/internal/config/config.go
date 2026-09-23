@@ -99,6 +99,8 @@ type Config struct {
 	TikTokShopReviewedBillEnabled       bool
 	TikTokShopSMLSendEnabled            bool
 	TikTokShopAutoSMLEnabled            bool
+	TikTokShopFinanceEnabled            bool
+	TikTokShopSettlementSMLEnabled      bool
 	TikTokShopSMLCancelDocumentsEnabled bool
 	TikTokShopCancelWebhookEnabled      bool
 	TikTokShopLineEnabled               bool
@@ -235,6 +237,8 @@ func Load() *Config {
 		TikTokShopReviewedBillEnabled:       getEnvBool("TIKTOK_SHOP_REVIEWED_BILL_ENABLED", false),
 		TikTokShopSMLSendEnabled:            getEnvBool("TIKTOK_SHOP_SML_SEND_ENABLED", false),
 		TikTokShopAutoSMLEnabled:            getEnvBool("TIKTOK_SHOP_AUTO_SML_ENABLED", false),
+		TikTokShopFinanceEnabled:            getEnvBool("TIKTOK_SHOP_FINANCE_ENABLED", false),
+		TikTokShopSettlementSMLEnabled:      getEnvBool("TIKTOK_SHOP_SETTLEMENT_SML_ENABLED", false),
 		TikTokShopSMLCancelDocumentsEnabled: getEnvBool("TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED", false),
 		TikTokShopCancelWebhookEnabled:      getEnvBool("TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED", false),
 		TikTokShopLineEnabled:               tikTokShopLineNotificationsEnabled,

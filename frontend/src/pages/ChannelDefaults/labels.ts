@@ -16,6 +16,7 @@ export type ChannelKey =
   | 'tiktok_shop_cancel'
   | 'manual'
   | 'shopee_settlement'
+  | 'tiktok_settlement'
   | 'line_myshop'
 
 export type ChannelBillType = 'sale' | 'purchase' | 'ar_receipt'
@@ -246,7 +247,7 @@ export function destinationKindFor(
 ): EndpointKind {
   const lower = (override || '').toLowerCase()
   const format = docFormatCode.trim().toUpperCase()
-  if (channel === 'shopee_settlement' || billType === 'ar_receipt' || lower.includes('ar/receipts')) return 'arreceipt'
+  if (channel === 'shopee_settlement' || channel === 'tiktok_settlement' || billType === 'ar_receipt' || lower.includes('ar/receipts')) return 'arreceipt'
   if ((lower.includes('sale-orders') && lower.includes('/void')) || lower.includes('saleordercancel') || format === 'SSC') return 'saleordercancel'
   if (lower.includes('/void') || lower.includes('saleinvoicecancel') || format === 'SIC') return 'saleinvoicecancel'
   if (channel === 'shopee_realtime_cancel' || lower.includes('creditnote') || lower.includes('/cancel')) return 'creditnote'
@@ -274,5 +275,6 @@ export const CHANNEL_LABELS: Record<ChannelKey, string> = {
   tiktok_shop_cancel: 'คำสั่งซื้อ TikTok Shop ที่ยกเลิก',
   manual: 'Manual',
   shopee_settlement: 'Shopee รับชำระหนี้',
+  tiktok_settlement: 'TikTok Shop รับชำระหนี้',
   line_myshop: 'LINE MyShop',
 }

@@ -56,6 +56,11 @@ type ProductGatewayService interface {
 	UpdateInventory(context.Context, string, string, string, tiktokshop.UpdateInventoryRequest) (*InventoryUpdateResult, error)
 }
 
+type FinanceGatewayService interface {
+	SearchStatements(context.Context, string, string, tiktokshop.SearchStatementsRequest) (*FinanceStatementsResult, error)
+	GetStatementTransactions(context.Context, string, string, string, string, int) (*FinanceTransactionsResult, error)
+}
+
 type WebhookGatewayConfigService interface {
 	ConfigureOrderStatus(context.Context, string, string, string) (*WebhookConfigResult, error)
 	ConfigureCancellationStatus(context.Context, string, string, string) (*WebhookConfigResult, error)
@@ -75,6 +80,10 @@ func WithProductGatewayService(service ProductGatewayService) HandlerOption {
 	}
 }
 
+func WithFinanceGatewayService(service FinanceGatewayService) HandlerOption {
+	return func(handler *Handler) { handler.finance = service }
+}
+
 func WithWebhookReceiver(receiver WebhookReceiver) HandlerOption {
 	return func(handler *Handler) {
 		handler.webhooks = receiver
@@ -91,6 +100,7 @@ type Handler struct {
 	service       OAuthGatewayService
 	orders        OrderGatewayService
 	products      ProductGatewayService
+	finance       FinanceGatewayService
 	webhooks      WebhookReceiver
 	webhookConfig WebhookGatewayConfigService
 	verifier      InternalRequestVerifier
@@ -149,6 +159,17 @@ type inventoryUpdateRequest struct {
 	Update    tiktokshop.UpdateInventoryRequest `json:"update"`
 }
 
+type financeStatementsRequest struct {
+	ShopID string                             `json:"shop_id"`
+	Search tiktokshop.SearchStatementsRequest `json:"search"`
+}
+type financeTransactionsRequest struct {
+	ShopID      string `json:"shop_id"`
+	StatementID string `json:"statement_id"`
+	PageToken   string `json:"page_token,omitempty"`
+	PageSize    int    `json:"page_size"`
+}
+
 func NewHandler(service OAuthGatewayService, verifier InternalRequestVerifier, audit APILogRecorder, config Config, logger *zap.Logger, options ...HandlerOption) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -178,6 +199,8 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(tiktokshop.GatewayProductDetailPath, h.GetProduct)
 	router.POST(tiktokshop.GatewayInventorySearchPath, h.SearchInventory)
 	router.POST(tiktokshop.GatewayInventoryUpdatePath, h.UpdateInventory)
+	router.POST(tiktokshop.GatewayFinanceStatementsPath, h.SearchFinanceStatements)
+	router.POST(tiktokshop.GatewayFinanceStatementTransactionsPath, h.GetFinanceStatementTransactions)
 }
 
 func (h *Handler) SearchProducts(c *gin.Context) {
@@ -471,6 +494,122 @@ func (h *Handler) SearchOrders(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// SearchFinanceStatements is intentionally an explicit, signed action.  The
+// tenant application never invokes it while rendering a page.
+func (h *Handler) SearchFinanceStatements(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "finance_statement_search", statusCode, startedAt, errorCode, requestID) }()
+	if h.finance == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, "ระบบข้อมูลการเงิน TikTok Shop ยังไม่พร้อม", true, requestID)
+		return
+	}
+	var input financeStatementsRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || input.Search.Validate() != nil {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_finance_request"
+		h.respondError(c, statusCode, errorCode, "ข้อมูล Statement TikTok Shop ไม่ถูกต้อง", false, requestID)
+		return
+	}
+	result, err := h.finance.SearchStatements(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
+	if err != nil {
+		statusCode, errorCode = financeErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), financeErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), true, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func (h *Handler) GetFinanceStatementTransactions(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() {
+		h.record(c, identity, "finance_statement_transactions", statusCode, startedAt, errorCode, requestID)
+	}()
+	if h.finance == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, "ระบบข้อมูลการเงิน TikTok Shop ยังไม่พร้อม", true, requestID)
+		return
+	}
+	var input financeTransactionsRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || strings.TrimSpace(input.StatementID) == "" || input.PageSize < 1 || input.PageSize > 100 {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_finance_request"
+		h.respondError(c, statusCode, errorCode, "ข้อมูลรายการใน Statement TikTok Shop ไม่ถูกต้อง", false, requestID)
+		return
+	}
+	result, err := h.finance.GetStatementTransactions(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.StatementID), input.PageToken, input.PageSize)
+	if err != nil {
+		statusCode, errorCode = financeErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), financeErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), true, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func financeErrorMessage(code string) string {
+	switch code {
+	case "reconnect_required", "token_expired", "invalid_token":
+		return "สิทธิ์ TikTok Shop หมดอายุ กรุณาเชื่อมต่อร้านใหม่ก่อนตรวจรับชำระ"
+	case "scope_unavailable", "permission_denied":
+		return "ยังไม่ได้เปิดสิทธิ์ Finance Information ของ TikTok Shop กรุณาตรวจ App Review และเชื่อมต่อร้านใหม่"
+	case "rate_limited":
+		return "TikTok Shop กำลังจำกัดการเรียกข้อมูล กรุณาลองใหม่ภายหลัง"
+	case "upstream_unavailable", "gateway_not_ready":
+		return "TikTok Shop ยังไม่พร้อมให้บริการ กรุณาลองใหม่ภายหลัง"
+	default:
+		return "ดึงข้อมูลรับชำระจาก TikTok Shop ไม่สำเร็จ กรุณาลองใหม่หรือแจ้งผู้ดูแลระบบ"
+	}
+}
+
+func financeErrorMeta(err error) (int, string) {
+	var apiError *tiktokshop.APIError
+	switch {
+	case errors.Is(err, tiktokshop.ErrInvalidOrderInput):
+		return http.StatusBadRequest, "invalid_finance_request"
+	case errors.Is(err, sql.ErrNoRows):
+		return http.StatusNotFound, "connection_not_found"
+	case errors.Is(err, ErrRefreshTokenExpired), errors.Is(err, ErrInvalidTokenCredential), errors.Is(err, ErrInvalidTokenRefresh):
+		return http.StatusConflict, "reconnect_required"
+	case errors.Is(err, ErrTokenServiceNotConfigured), errors.Is(err, ErrFinanceServiceNotConfigured):
+		return http.StatusServiceUnavailable, "gateway_not_ready"
+	case errors.As(err, &apiError):
+		switch apiError.Code {
+		case http.StatusUnauthorized:
+			return http.StatusConflict, "reconnect_required"
+		case http.StatusForbidden:
+			return http.StatusForbidden, "permission_denied"
+		case http.StatusTooManyRequests:
+			return http.StatusTooManyRequests, "rate_limited"
+		default:
+			return http.StatusBadGateway, "tiktok_api_error"
+		}
+	default:
+		return http.StatusInternalServerError, "internal_error"
+	}
+}
+
+func financeErrorRetryable(code string) bool {
+	return code == "gateway_not_ready" || code == "rate_limited" || code == "tiktok_api_error" || code == "internal_error"
 }
 
 func (h *Handler) GetOrderDetails(c *gin.Context) {

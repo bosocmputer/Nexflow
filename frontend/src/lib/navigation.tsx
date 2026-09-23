@@ -31,7 +31,7 @@ import {
   ENABLE_SHOPEE_REALTIME_OPS,
   ENABLE_TIKTOK_EXCEL,
   ENABLE_TIKTOK_SHOP_API,
-  ENABLE_TIKTOK_SHOP_STOCK,
+  ENABLE_TIKTOK_SHOP_STOCK, ENABLE_TIKTOK_SHOP_FINANCE,
 } from '@/lib/featureFlags'
 import type { User, UserMenuPermission } from '@/types'
 
@@ -78,6 +78,7 @@ const STAFF_DEFAULT_MENU_KEYS = new Set([
   'import_lazada',
   'import_tiktok',
   'shopee_settlements',
+  'tiktok_settlements',
   'catalog',
   'logs',
 ])
@@ -120,6 +121,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'import_lazada', to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
       { menuKey: 'import_tiktok', to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
       { menuKey: 'shopee_settlements', to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },
+      { menuKey: 'tiktok_settlements', to: '/tiktok-settlements', label: 'รับชำระ TikTok Shop', icon: ReceiptText, hint: 'Statement และรับชำระหนี้ที่ตรวจแล้ว', enabled: ENABLE_TIKTOK_SHOP_FINANCE && ENABLE_SALES_ORDERS },
     ],
   },
   {

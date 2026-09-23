@@ -37,6 +37,7 @@ var menuPermissionDefaults = []menuPermissionDefault{
 	{"import_lazada", true, true, false, false, true, true, false, false, false, false, false, false},
 	{"import_tiktok", true, true, false, false, true, true, false, false, false, false, false, false},
 	{"shopee_settlements", true, true, true, false, true, true, true, false, false, false, false, false},
+	{"tiktok_settlements", true, true, true, false, true, true, true, false, false, false, false, false},
 	{"catalog", true, true, true, true, true, true, true, false, true, false, false, false},
 	{"shopee_stock", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"tiktok_shop_stock", true, false, true, false, false, false, false, false, false, false, false, false},

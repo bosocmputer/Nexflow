@@ -21,5 +21,6 @@ ALTER TABLE channel_defaults
     'tiktok_shop_cancel',
     'manual',
     'shopee_settlement',
+    'tiktok_settlement',
     'line_myshop'
   ));

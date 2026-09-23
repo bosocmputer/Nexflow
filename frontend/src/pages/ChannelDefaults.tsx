@@ -21,7 +21,7 @@ import {
 import { DataTable } from '@/components/common/DataTable'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
-import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API } from '@/lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_FINANCE } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
@@ -62,6 +62,9 @@ const SALES_CHANNEL_SLOTS: Array<{
   ...(ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee_settlement' as ChannelKey, bill_type: 'ar_receipt' as const }]
     : []),
+  ...(ENABLE_TIKTOK_SHOP_FINANCE && ENABLE_SALES_ORDERS
+    ? [{ channel: 'tiktok_settlement' as ChannelKey, bill_type: 'ar_receipt' as const }]
+    : []),
 ]
 
 function visibleChannelSlots() {
@@ -75,6 +78,9 @@ function displayChannelLabel(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type
 function workMenuFor(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type' | 'endpoint' | 'doc_format_code'>) {
   if (row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt') {
     return { label: 'รับชำระหนี้', to: '/shopee-settlements' }
+  }
+  if (row.channel === 'tiktok_settlement' && row.bill_type === 'ar_receipt') {
+    return { label: 'รับชำระ TikTok Shop', to: '/tiktok-settlements' }
   }
   if (row.channel === 'shopee_realtime' && row.bill_type === 'sale') {
     return { label: 'คำสั่งซื้อ Shopee', to: '/shopee-operations' }
@@ -113,6 +119,9 @@ function channelPurpose(row: Pick<ChannelDefaultRow, 'channel' | 'bill_type'>) {
   }
   if (row.channel === 'shopee_settlement' && row.bill_type === 'ar_receipt') {
     return 'รอบถอนเงิน Shopee สำหรับรับชำระหนี้'
+  }
+  if (row.channel === 'tiktok_settlement' && row.bill_type === 'ar_receipt') {
+    return 'Statement ที่ TikTok Shop แจ้งว่าโอนแล้ว รอเจ้าหน้าที่ยืนยันก่อนสร้างรับชำระหนี้'
   }
   if (row.channel === 'line_myshop' && row.bill_type === 'sale') {
     return 'ออเดอร์จาก LINE MyShop webhook/polling แยกจาก LINE OA chat'
@@ -308,7 +317,7 @@ export default function ChannelDefaults() {
   }, [rows])
 
   const isRouteUnset = (r: ChannelDefaultRow) => {
-    if (r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt') {
+    if ((r.channel === 'shopee_settlement' || r.channel === 'tiktok_settlement') && r.bill_type === 'ar_receipt') {
       return !r.endpoint || !r.doc_format_code || !r.passbook_code
     }
     const baseUnset = !r.endpoint || !r.doc_format_code || !r.doc_prefix || !r.doc_running_format
@@ -333,14 +342,14 @@ export default function ChannelDefaults() {
   const settlementRoute = tableRows.find((r) => r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt')
 
   const configSummary = (r: ChannelDefaultRow) => {
-    if (r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt') {
+    if ((r.channel === 'shopee_settlement' || r.channel === 'tiktok_settlement') && r.bill_type === 'ar_receipt') {
       return (
         <div className="space-y-0.5 text-xs">
           <div className={r.passbook_code ? 'text-foreground' : 'text-warning'}>
             บัญชีรับเงิน: {r.passbook_code ? `${r.passbook_code}${r.passbook_name ? ` · ${r.passbook_name}` : ''}` : 'ยังไม่ตั้งค่า'}
           </div>
           <div className={r.expense_code ? 'text-muted-foreground' : 'text-muted-foreground'}>
-            ส่วนต่าง Shopee: {r.expense_code ? `${r.expense_code}${r.expense_name ? ` · ${r.expense_name}` : ''}` : 'ยังไม่ตั้งค่า'}
+            ค่าใช้จ่าย {r.channel === 'tiktok_settlement' ? 'TikTok Shop' : 'Shopee'}: {r.expense_code ? `${r.expense_code}${r.expense_name ? ` · ${r.expense_name}` : ''}` : 'ยังไม่ตั้งค่า'}
           </div>
         </div>
       )

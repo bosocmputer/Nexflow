@@ -16,6 +16,9 @@ export const ENABLE_TIKTOK_EXCEL =
 export const ENABLE_TIKTOK_SHOP_API =
   import.meta.env.VITE_ENABLE_TIKTOK_SHOP_API === 'true'
 
+export const ENABLE_TIKTOK_SHOP_FINANCE =
+  ENABLE_TIKTOK_SHOP_API && import.meta.env.VITE_ENABLE_TIKTOK_SHOP_FINANCE === 'true'
+
 export const ENABLE_MARKETPLACE_OPERATIONS =
   import.meta.env.VITE_ENABLE_MARKETPLACE_OPERATIONS === 'true'
 
