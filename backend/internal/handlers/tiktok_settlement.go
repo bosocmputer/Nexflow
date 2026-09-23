@@ -230,6 +230,10 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 	}
 	importResult, err := h.importStatements(c.Request.Context(), req.ShopID, from, to, c.GetString("user_id"), c.GetString("user_email"))
 	if err != nil {
+		h.logger.Warn("tiktok_settlement_import_failed",
+			zap.String("shop_id", req.ShopID),
+			zap.String("error_type", fmt.Sprintf("%T", err)),
+			zap.Error(err))
 		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err)})
 		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
 		return
