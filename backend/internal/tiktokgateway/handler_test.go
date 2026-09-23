@@ -107,6 +107,24 @@ func (f *handlerFinanceServiceFake) GetStatementTransactions(context.Context, st
 	return nil, errors.New("not implemented in this handler test")
 }
 
+func TestFinanceFailureMetadataKeepsOnlyUpstreamCodeAndRequestID(t *testing.T) {
+	code, requestID := financeFailureMetadata(fmt.Errorf("statement transactions: %w", &tiktokshop.APIError{
+		Code:      105003,
+		RequestID: "tiktok-request-id",
+		Message:   "must not be logged or exposed",
+	}))
+	if code != 105003 || requestID != "tiktok-request-id" {
+		t.Fatalf("code=%d request_id=%q", code, requestID)
+	}
+	code, requestID = financeFailureMetadata(errors.New("unstructured failure"))
+	if code != 0 || requestID != "" {
+		t.Fatalf("code=%d request_id=%q", code, requestID)
+	}
+	if got := safeFinanceUpstreamRequestID(strings.Repeat("a", 129)); len(got) != 128 {
+		t.Fatalf("request ID length=%d", len(got))
+	}
+}
+
 type handlerWebhookConfigServiceFake struct {
 	result                  *WebhookConfigResult
 	err                     error
