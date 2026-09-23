@@ -19,16 +19,41 @@ func TestTikTokSettlementImportRequestBindsSnakeCaseJSON(t *testing.T) {
 	}
 }
 
-func TestTikTokSettlementPreflightUsesPaidStatements(t *testing.T) {
+func TestTikTokSettlementPreflightUsesAllStatementStatuses(t *testing.T) {
 	from := time.Date(2026, 9, 22, 0, 0, 0, 0, tikTokSettlementBangkok)
 	to := from.Add(24 * time.Hour)
 	request := tikTokSettlementPreflightSearch(from, to)
 
-	if request.StatementStatus != tiktokshop.StatementStatusPaid || request.PageSize != 1 {
+	if request.StatementStatus != "" || request.PageSize != 1 {
 		t.Fatalf("preflight request = %#v", request)
 	}
 	if request.StatementTimeGE != from.Unix() || request.StatementTimeLT != to.Unix() {
 		t.Fatalf("preflight range = %#v", request)
+	}
+}
+
+func TestTikTokStatementImportSearchUsesAllStatuses(t *testing.T) {
+	from := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 9, 24, 0, 0, 1, 0, time.UTC)
+	request := tikTokStatementImportSearch(from, to, "next-page")
+
+	if request.StatementStatus != "" || request.PageSize != 100 || request.PageToken != "next-page" {
+		t.Fatalf("import request = %#v", request)
+	}
+	if request.StatementTimeGE != from.Unix() || request.StatementTimeLT != to.Unix() {
+		t.Fatalf("import range = %#v", request)
+	}
+}
+
+func TestParseTikTokStatementImportRangeUsesNextUTCDay(t *testing.T) {
+	from, to, err := parseTikTokStatementImportRange("2026-09-01", "2026-09-23")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFrom := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	wantTo := time.Date(2026, 9, 24, 0, 0, 1, 0, time.UTC)
+	if !from.Equal(wantFrom) || !to.Equal(wantTo) {
+		t.Fatalf("range = %v to %v, want %v to %v", from, to, wantFrom, wantTo)
 	}
 }
 

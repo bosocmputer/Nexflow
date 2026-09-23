@@ -202,7 +202,6 @@ func tikTokSettlementPreflightSearch(from, to time.Time) tiktokshop.SearchStatem
 		PageSize:        1,
 		StatementTimeGE: from.Unix(),
 		StatementTimeLT: to.Unix(),
-		StatementStatus: tiktokshop.StatementStatusPaid,
 	}
 }
 
@@ -217,7 +216,7 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 		return
 	}
 	req.ShopID = strings.TrimSpace(req.ShopID)
-	from, to, err := parseTikTokSettlementRange(req.DateFrom, req.DateTo)
+	from, to, err := parseTikTokStatementImportRange(req.DateFrom, req.DateTo)
 	if req.ShopID == "" || err != nil {
 		h.error(c, 400, "invalid_range", firstNonEmpty(errorText(err), "กรุณาเลือกร้าน TikTok Shop"))
 		return
@@ -236,12 +235,12 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 		return
 	}
 	_, _ = h.db.ExecContext(c.Request.Context(), `UPDATE tiktok_shop_settlement_settings SET last_import_at=NOW(),updated_at=NOW() WHERE shop_id=$1`, req.ShopID)
-	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": importResult.count})
-	message := "ดึง Statement แล้ว ระบบตรวจเทียบกับใบขาย SML เรียบร้อย"
+	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": importResult.count, "paid_count": importResult.paidCount, "processing_count": importResult.processingCount, "failed_count": importResult.failedCount})
+	message := fmt.Sprintf("ดึง Statement %d รายการ: จ่ายแล้ว %d · กำลังดำเนินการ %d · ไม่สำเร็จ %d", importResult.count, importResult.paidCount, importResult.processingCount, importResult.failedCount)
 	if importResult.count == 0 {
 		message = "ไม่พบ Statement ที่ TikTok API คืนมาในช่วงที่เลือก ระบบยังไม่ได้สร้าง RC"
 	}
-	c.JSON(http.StatusAccepted, gin.H{"imported_count": importResult.count, "message": message})
+	c.JSON(http.StatusAccepted, gin.H{"imported_count": importResult.count, "paid_count": importResult.paidCount, "processing_count": importResult.processingCount, "failed_count": importResult.failedCount, "message": message})
 }
 
 // SearchWithdrawals is a controlled, read-only UAT surface for TikTok's
@@ -418,27 +417,18 @@ func (h *TikTokSettlementHandler) List(c *gin.Context) {
 			return
 		}
 	}
-	for _, filter := range []struct {
-		raw    string
-		column string
-		end    bool
-	}{{raw: c.Query("date_from"), column: ">=", end: false}, {raw: c.Query("date_to"), column: "<", end: true}} {
-		if strings.TrimSpace(filter.raw) == "" {
-			continue
-		}
-		date, err := time.ParseInLocation("2006-01-02", filter.raw, tikTokSettlementBangkok)
+	dateFrom, dateTo := strings.TrimSpace(c.Query("date_from")), strings.TrimSpace(c.Query("date_to"))
+	if dateFrom != "" || dateTo != "" {
+		from, to, err := parseTikTokStatementImportRange(dateFrom, dateTo)
 		if err != nil {
-			h.error(c, http.StatusBadRequest, "invalid_date", "ช่วงวันที่ไม่ถูกต้อง")
+			h.error(c, http.StatusBadRequest, "invalid_date", errorText(err))
 			return
 		}
-		if filter.end {
-			date = date.AddDate(0, 0, 1)
-		}
-		args = append(args, date)
-		where += fmt.Sprintf(" AND COALESCE(payment_time,statement_time) %s $%d", filter.column, len(args))
+		args = append(args, from, to)
+		where += fmt.Sprintf(" AND COALESCE(statement_time,payment_time) >= $%d AND COALESCE(statement_time,payment_time) < $%d", len(args)-1, len(args))
 	}
 	args = append(args, limit)
-	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT r.id::text,r.shop_id,r.shop_label,r.statement_id,r.payment_id,r.payment_status,r.currency,r.payment_time,r.statement_time,r.total_settlement_amount,r.invoice_amount_total,r.fee_amount_total,r.shipping_amount_total,r.adjustment_amount_total,r.refund_amount_total,r.reserve_amount_total,r.status,r.config_version,r.route_config_version,r.rc_doc_no,r.error_msg,r.anomaly_reason,r.created_at,r.updated_at,COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=r.id),0) FROM tiktok_settlement_runs r `+where+fmt.Sprintf(" ORDER BY r.payment_time DESC NULLS LAST,r.created_at DESC LIMIT $%d", len(args)), args...)
+	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT r.id::text,r.shop_id,r.shop_label,r.statement_id,r.payment_id,r.payment_status,r.currency,r.payment_time,r.statement_time,r.total_settlement_amount,r.invoice_amount_total,r.fee_amount_total,r.shipping_amount_total,r.adjustment_amount_total,r.refund_amount_total,r.reserve_amount_total,r.status,r.config_version,r.route_config_version,r.rc_doc_no,r.error_msg,r.anomaly_reason,r.created_at,r.updated_at,COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=r.id),0) FROM tiktok_settlement_runs r `+where+fmt.Sprintf(" ORDER BY r.statement_time DESC NULLS LAST,r.payment_time DESC NULLS LAST,r.created_at DESC LIMIT $%d", len(args)), args...)
 	if err != nil {
 		h.error(c, 500, "list_failed", "โหลด Statement TikTok Shop ไม่สำเร็จ")
 		return
@@ -643,21 +633,45 @@ func (h *TikTokSettlementHandler) UpdateSettings(c *gin.Context) {
 }
 
 type tikTokSettlementImportResult struct {
-	count int
+	count           int
+	paidCount       int
+	processingCount int
+	failedCount     int
 }
 
 func (h *TikTokSettlementHandler) importStatements(ctx context.Context, shop string, from, to time.Time, userID, email string) (tikTokSettlementImportResult, error) {
-	imported := make(map[string]struct{})
-	if err := h.importStatementPages(ctx, shop, from, to, tiktokshop.StatementStatusPaid, userID, email, imported); err != nil {
+	imported := make(map[string]tiktokshop.StatementStatus)
+	if err := h.importStatementPages(ctx, shop, from, to, userID, email, imported); err != nil {
 		return tikTokSettlementImportResult{}, err
 	}
-	return tikTokSettlementImportResult{count: len(imported)}, nil
+	result := tikTokSettlementImportResult{count: len(imported)}
+	for _, status := range imported {
+		switch status {
+		case tiktokshop.StatementStatusPaid:
+			result.paidCount++
+		case tiktokshop.StatementStatusProcessing:
+			result.processingCount++
+		case tiktokshop.StatementStatusFailed:
+			result.failedCount++
+		}
+	}
+	return result, nil
 }
 
-func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop string, from, to time.Time, status tiktokshop.StatementStatus, userID, email string, imported map[string]struct{}) error {
+func tikTokStatementImportSearch(from, to time.Time, pageToken string) tiktokshop.SearchStatementsRequest {
+	return tiktokshop.SearchStatementsRequest{
+		PageSize:        100,
+		PageToken:       pageToken,
+		StatementTimeGE: from.Unix(),
+		StatementTimeLT: to.Unix(),
+		// Omit payment_status: TikTok's documented default is every status.
+	}
+}
+
+func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop string, from, to time.Time, userID, email string, imported map[string]tiktokshop.StatementStatus) error {
 	token := ""
 	for page := 0; page < tikTokSettlementMaxPages; page++ {
-		r, err := h.gateway.SearchFinanceStatements(ctx, tiktokshop.GatewayFinanceStatementsRequest{ShopID: shop, Search: tiktokshop.SearchStatementsRequest{PageSize: 100, PageToken: token, StatementTimeGE: from.Unix(), StatementTimeLT: to.Unix(), StatementStatus: status}})
+		r, err := h.gateway.SearchFinanceStatements(ctx, tiktokshop.GatewayFinanceStatementsRequest{ShopID: shop, Search: tikTokStatementImportSearch(from, to, token)})
 		if err != nil {
 			return err
 		}
@@ -665,7 +679,7 @@ func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop
 			if err := h.upsertStatement(ctx, shop, statement, r.UpstreamRequestID, userID, email); err != nil {
 				return err
 			}
-			imported[statement.StatementID] = struct{}{}
+			imported[statement.StatementID] = statement.Status
 		}
 		token = strings.TrimSpace(r.NextPageToken)
 		if token == "" {
@@ -1132,6 +1146,29 @@ func parseTikTokSettlementRange(fromRaw, toRaw string) (time.Time, time.Time, er
 	}
 	return from, to, nil
 }
+
+// parseTikTokStatementImportRange accepts business transaction dates and turns
+// them into TikTok's UTC Statement-generation window. TikTok generates the
+// Statement for a transaction day at 00:00 UTC on the following day.
+func parseTikTokStatementImportRange(fromRaw, toRaw string) (time.Time, time.Time, error) {
+	fromRaw, toRaw = strings.TrimSpace(fromRaw), strings.TrimSpace(toRaw)
+	if fromRaw == "" || toRaw == "" {
+		return time.Time{}, time.Time{}, errors.New("กรุณาเลือกช่วงวันที่รายการขาย")
+	}
+	fromDate, err := time.ParseInLocation("2006-01-02", fromRaw, time.UTC)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("วันที่เริ่มต้นต้องเป็น YYYY-MM-DD")
+	}
+	toDate, err := time.ParseInLocation("2006-01-02", toRaw, time.UTC)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("วันที่สิ้นสุดต้องเป็น YYYY-MM-DD")
+	}
+	if toDate.Before(fromDate) || toDate.Sub(fromDate) >= time.Duration(tikTokSettlementMaxDays)*24*time.Hour {
+		return time.Time{}, time.Time{}, fmt.Errorf("ช่วงวันที่ต้องไม่เกิน %d วัน", tikTokSettlementMaxDays)
+	}
+	return fromDate.AddDate(0, 0, 1), toDate.AddDate(0, 0, 1).Add(time.Second), nil
+}
+
 func financeErrorCode(err error) string {
 	var e *tiktokshop.GatewayError
 	if errors.As(err, &e) {

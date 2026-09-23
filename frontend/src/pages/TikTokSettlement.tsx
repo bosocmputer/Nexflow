@@ -66,6 +66,7 @@ type Run = {
   payment_status: string
   currency: string
   payment_time?: string
+  statement_time?: string
   total_settlement_amount: number
   invoice_amount_total: number
   fee_amount_total: number
@@ -100,7 +101,10 @@ type RouteSummary = {
 
 type ImportNotice = {
   message: string
-  partial: boolean
+  imported_count?: number
+  paid_count?: number
+  processing_count?: number
+  failed_count?: number
 }
 
 const money = (value?: number, currency = 'THB') => new Intl.NumberFormat('th-TH', {
@@ -121,6 +125,14 @@ const statusMeta: Record<string, { text: string; className: string }> = {
   unknown_result: { text: 'ต้องตรวจผล SML', className: 'bg-warning/15 text-warning' },
   superseded: { text: 'ข้อมูลใหม่กว่า', className: 'bg-muted text-muted-foreground' },
 }
+
+const paymentStatusText: Record<string, string> = {
+  PAID: 'TikTok จ่ายแล้ว',
+  PROCESSING: 'TikTok กำลังดำเนินการ',
+  FAILED: 'TikTok จ่ายไม่สำเร็จ',
+}
+
+const statementDate = (run: Pick<Run, 'statement_time' | 'payment_time'>) => run.statement_time || run.payment_time
 
 const tiktokStatementPresets: DateRangePreset[] = [
   {
@@ -387,8 +399,8 @@ export default function TikTokSettlement() {
                 setTo(range.to)
               }}
               presets={tiktokStatementPresets}
-              title="ช่วงวันที่ Statement"
-              description="ใช้ดึง Statement จาก TikTok และกรองร่าง RC ที่สร้างแล้ว"
+              title="ช่วงวันที่รายการขาย"
+              description="ระบบค้นหา Statement ที่ TikTok สร้างวันถัดไปตามเวลา UTC และแสดงทุกสถานะ"
               className="!h-8 w-full !min-w-0 text-xs sm:w-[260px]"
             />
             <Select value={runStatus} onValueChange={setRunStatus}>
@@ -416,11 +428,11 @@ export default function TikTokSettlement() {
           role="status"
           className={cn(
             'flex items-start justify-between gap-3 rounded-md border p-3 text-sm',
-            importNotice.partial ? 'border-warning/30 bg-warning/5 text-warning' : 'border-success/30 bg-success/5 text-success',
+            (importNotice.processing_count || importNotice.failed_count) ? 'border-warning/30 bg-warning/5 text-warning' : 'border-success/30 bg-success/5 text-success',
           )}
         >
           <div className="flex gap-2">
-            {importNotice.partial ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
+            {(importNotice.processing_count || importNotice.failed_count) ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
             <p>{importNotice.message}</p>
           </div>
           <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={() => setImportNotice(null)}>ปิด</Button>
@@ -434,7 +446,7 @@ export default function TikTokSettlement() {
             <table className="w-full text-sm">
               <thead className="border-b bg-muted/30 text-left text-muted-foreground">
                 <tr>
-                  <th className="p-3">หลักฐานรับเงิน / วันที่</th>
+                  <th className="p-3">Statement / วันที่สร้าง</th>
                   <th className="p-3">ร้าน</th>
                   <th className="p-3 text-right">ยอด TikTok / Order</th>
                   <th className="p-3">สถานะ</th>
@@ -447,7 +459,7 @@ export default function TikTokSettlement() {
                   <tr key={run.id} className="border-b last:border-0">
                     <td className="p-3">
                       <p className="font-medium">{evidenceTitle(run)}</p>
-                      <p className="text-xs text-muted-foreground">{run.payment_time ? dayjs(run.payment_time).format('DD/MM/YY HH:mm') : '-'}</p>
+                      <p className="text-xs text-muted-foreground">{statementDate(run) ? dayjs(statementDate(run)).format('DD/MM/YY HH:mm') : '-'}</p>
                     </td>
                     <td className="p-3">
                       <Badge className="border-[#111817] bg-[#111817] text-white hover:bg-[#111817]">TikTok</Badge>
@@ -459,6 +471,7 @@ export default function TikTokSettlement() {
                     </td>
                     <td className="p-3">
                       <Badge variant="secondary" className={statusMeta[run.status]?.className}>{statusMeta[run.status]?.text ?? run.status}</Badge>
+                      <p className="mt-1 text-xs text-muted-foreground">{paymentStatusText[run.payment_status] ?? run.payment_status}</p>
                       <p className="mt-1 max-w-[200px] truncate text-xs text-muted-foreground">{run.anomaly_reason || run.error_msg}</p>
                     </td>
                     <td className="p-3 font-mono text-xs">{run.rc_doc_no || '-'}</td>
@@ -481,6 +494,7 @@ export default function TikTokSettlement() {
                   <div className="min-w-0">
                     <p className="font-medium">{evidenceTitle(run)}</p>
                     <p className="mt-1 truncate text-xs text-muted-foreground">{run.shop_label} · {money(run.total_settlement_amount, run.currency)}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{paymentStatusText[run.payment_status] ?? run.payment_status}</p>
                   </div>
                   <Badge variant="secondary" className={statusMeta[run.status]?.className}>{statusMeta[run.status]?.text ?? run.status}</Badge>
                 </div>
@@ -490,7 +504,7 @@ export default function TikTokSettlement() {
 
           {!loading && runs.length === 0 && (
             <div className="p-10 text-center text-sm text-muted-foreground">
-              ยังไม่มี Statement ในช่วงนี้ เลือกร้านและช่วงวันที่ แล้วกด “ดึง Statement จาก TikTok” เพื่ออ่านออเดอร์จริงจาก TikTok Shop
+              ยังไม่มี Statement ในช่วงนี้ เลือกร้านและช่วงวันที่รายการขาย แล้วกด “ดึง Statement จาก TikTok” เพื่อดูสถานะจริงจาก TikTok Shop
             </div>
           )}
         </CardContent>
@@ -501,7 +515,9 @@ export default function TikTokSettlement() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" />{selected ? evidenceTitle(selected) : 'TikTok Statement'}</DialogTitle>
             <DialogDescription>
-              TikTok ระบุ Statement นี้เป็น PAID แล้ว ระบบดึงรายการออเดอร์จาก Statement โดยตรง โปรดตรวจข้อมูลและหลักฐานเงินเข้าจริงก่อนกดส่ง RC เข้า SML
+              {selected?.payment_status === 'PAID'
+                ? 'TikTok ระบุ Statement นี้เป็น PAID แล้ว ระบบดึงรายการออเดอร์จาก Statement โดยตรง โปรดตรวจข้อมูลและหลักฐานเงินเข้าจริงก่อนกดส่ง RC เข้า SML'
+                : `Statement นี้อยู่สถานะ ${paymentStatusText[selected?.payment_status || ''] ?? selected?.payment_status ?? '-'} ใช้ติดตามข้อมูลเท่านั้น และยังส่ง RC เข้า SML ไม่ได้`}
             </DialogDescription>
           </DialogHeader>
 
@@ -509,7 +525,7 @@ export default function TikTokSettlement() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <Metric label="ยอดใบขาย SML" value={money(selected.invoice_amount_total)} />
-                <Metric label="TikTok โอน" value={money(selected.total_settlement_amount)} />
+                <Metric label="ยอดใน Statement" value={money(selected.total_settlement_amount)} />
                 <Metric label="Fee / commission" value={money(selected.fee_amount_total)} />
                 <Metric label="Payment ID" value={selected.payment_id || '-'} />
               </div>
@@ -542,7 +558,7 @@ export default function TikTokSettlement() {
           )}
 
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => void reconcile()} disabled={!selected || selected.status === 'sent'}>ตรวจเทียบใหม่</Button>
+            <Button variant="outline" onClick={() => void reconcile()} disabled={!selected || selected.status === 'sent' || selected.payment_status !== 'PAID'}>ตรวจเทียบใหม่</Button>
             <Button onClick={() => setSendConfirmOpen(true)} disabled={sending || selected?.status !== 'ready' || !route?.configured}>
               <Send className="mr-2 h-4 w-4" />
               ยืนยันส่ง RC เข้า SML
