@@ -675,7 +675,6 @@ func main() {
 		api.POST("/tiktok-settlements/preflight", middleware.RequireRole("admin", "staff"), tiktokSettlementH.Preflight)
 		api.POST("/tiktok-settlements/import", middleware.RequireRole("admin", "staff"), tiktokSettlementH.Import)
 		api.POST("/tiktok-settlements/withdrawals/search", middleware.RequireRole("admin", "staff"), tiktokSettlementH.SearchWithdrawals)
-		api.POST("/tiktok-settlements/payments/search", middleware.RequireRole("admin", "staff"), tiktokSettlementH.SearchPayments)
 		api.POST("/tiktok-settlements/withdrawals/reconcile", middleware.RequireRole("admin", "staff"), tiktokSettlementH.ReconcileWithdrawal)
 		api.GET("/tiktok-settlements", middleware.RequireRole("admin", "staff"), tiktokSettlementH.List)
 		api.GET("/tiktok-settlements/counts", middleware.RequireRole("admin", "staff"), tiktokSettlementH.Counts)

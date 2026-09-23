@@ -113,17 +113,6 @@ type WithdrawalRound = {
   create_time: string
 }
 
-type PaymentEvidence = {
-  payment_id: string
-  amount?: string
-  currency?: string
-  status?: string
-  payment_time?: string
-  create_time?: string
-  order_count: number
-  statement_count: number
-}
-
 const money = (value?: number, currency = 'THB') => new Intl.NumberFormat('th-TH', {
   style: 'currency',
   currency: /^[A-Z]{3}$/.test(currency) ? currency : 'THB',
@@ -186,10 +175,6 @@ export default function TikTokSettlement() {
   const [withdrawals, setWithdrawals] = useState<WithdrawalRound[]>([])
   const [withdrawalsTruncated, setWithdrawalsTruncated] = useState(false)
   const [withdrawalLoading, setWithdrawalLoading] = useState(false)
-  const [paymentsOpen, setPaymentsOpen] = useState(false)
-  const [payments, setPayments] = useState<PaymentEvidence[]>([])
-  const [paymentsTruncated, setPaymentsTruncated] = useState(false)
-  const [paymentsLoading, setPaymentsLoading] = useState(false)
   const [from, setFrom] = useState(dayjs().subtract(14, 'day').format('YYYY-MM-DD'))
   const [to, setTo] = useState(dayjs().format('YYYY-MM-DD'))
   const [runStatus, setRunStatus] = useState('all')
@@ -265,29 +250,6 @@ export default function TikTokSettlement() {
       toast.error(error?.response?.data?.error?.message ?? 'ดึงรอบถอนเงิน TikTok Shop ไม่สำเร็จ')
     } finally {
       setWithdrawalLoading(false)
-    }
-  }
-
-  const inspectPayments = async () => {
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนตรวจข้อมูลรายได้')
-      return
-    }
-    setPaymentsLoading(true)
-    setPaymentsTruncated(false)
-    setPaymentsOpen(true)
-    try {
-      const response = await client.post<{ data: PaymentEvidence[]; has_more?: boolean }>(
-        '/api/tiktok-settlements/payments/search',
-        { shop_id: resolvedShopID, date_from: from, date_to: to },
-      )
-      setPayments(response.data.data ?? [])
-      setPaymentsTruncated(Boolean(response.data.has_more))
-    } catch (error: any) {
-      setPaymentsOpen(false)
-      toast.error(error?.response?.data?.error?.message ?? 'ดึงข้อมูลรายได้ TikTok Shop ไม่สำเร็จ')
-    } finally {
-      setPaymentsLoading(false)
     }
   }
 
@@ -378,7 +340,7 @@ export default function TikTokSettlement() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight text-foreground">รับชำระ TikTok Shop</h1>
               <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-strong">RC</code>
-              <p className="sr-only">เลือกรอบถอนเงิน TikTok Shop เพื่อตรวจออเดอร์ก่อนสร้างเอกสารรับชำระหนี้ใน SML</p>
+              <p className="sr-only">ดูหลักฐานรอบถอนเงิน TikTok Shop โดยระบบจะไม่สร้างเอกสารรับชำระหนี้จากยอดที่คาดเดา</p>
               <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
               <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
                 <ReceiptText className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
@@ -398,10 +360,6 @@ export default function TikTokSettlement() {
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={inspectWithdrawals}>
               <WalletCards className="h-4 w-4" />
               เลือกรอบถอนเงิน
-            </Button>
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={inspectPayments}>
-              <WalletCards className="h-4 w-4" />
-              ตรวจข้อมูลรายได้
             </Button>
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={preflight}>
               <CheckCircle2 className="h-4 w-4" />
@@ -622,7 +580,7 @@ export default function TikTokSettlement() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5" />รอบถอนเงิน TikTok Shop</DialogTitle>
             <DialogDescription>
-              แสดงเฉพาะรายการที่กดถอนเงินในช่วงวันที่เลือก รายการนี้ยังไม่ระบุออเดอร์ที่อยู่ในรอบถอน จึงต้องตรวจข้อมูลรายได้จาก TikTok ก่อนสร้าง RC
+              แสดงเฉพาะรายการที่กดถอนเงินในช่วงวันที่เลือก TikTok Shop ยังไม่เปิด API ที่บอกว่าออเดอร์ใดอยู่ในรอบถอนของตลาดไทย จึงยังสร้าง RC ตามรอบถอนไม่ได้ และระบบจะไม่เดาจากยอดเงินหรือวันเวลา
             </DialogDescription>
           </DialogHeader>
           {withdrawalLoading ? (
@@ -647,7 +605,7 @@ export default function TikTokSettlement() {
                     <div className="text-right">
                       <p className="font-medium tabular-nums">{money(Number(withdrawal.amount), withdrawal.currency)}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">{withdrawal.status}</p>
-                      <p className="mt-2 text-xs text-muted-foreground">{withdrawal.status === 'SUCCESS' ? 'รอตรวจความเชื่อมโยงจากข้อมูลรายได้' : 'ยังไม่สำเร็จ'}</p>
+                      <p className="mt-2 text-xs text-muted-foreground">{withdrawal.status === 'SUCCESS' ? 'TikTok ยังไม่ส่งรายการออเดอร์ของรอบนี้ผ่าน API' : 'ยังไม่สำเร็จ'}</p>
                     </div>
                   </div>
                 ))}
@@ -656,50 +614,6 @@ export default function TikTokSettlement() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setWithdrawalOpen(false)}>ปิด</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={paymentsOpen} onOpenChange={setPaymentsOpen}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5" />ข้อมูลรายได้ TikTok Shop</DialogTitle>
-            <DialogDescription>
-              เป็นขั้นตรวจข้อมูลจาก TikTok Shop เท่านั้น ยังไม่สร้าง RC และยังไม่ผูกยอดเข้ากับรอบถอนเงิน ระบบจะแสดงเฉพาะข้อมูลการเงินที่จำเป็นโดยไม่แสดงข้อมูลผู้ซื้อ
-            </DialogDescription>
-          </DialogHeader>
-          {paymentsLoading ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">กำลังดึงข้อมูลรายได้…</p>
-          ) : payments.length === 0 ? (
-            <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">ไม่พบข้อมูลรายได้ในช่วงวันที่เลือก</p>
-          ) : (
-            <div className="space-y-2">
-              {paymentsTruncated && (
-                <p className="rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning">แสดง 100 รายการแรกของช่วงวันที่เลือก กรุณาเลือกช่วงวันที่แคบลงเพื่อให้ตรวจครบ</p>
-              )}
-              <div className="overflow-hidden rounded-md border">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  <span>รหัสรายการ / วันที่</span><span className="text-right">ยอด / ความเชื่อมโยง</span>
-                </div>
-                {payments.map((payment) => (
-                  <div key={payment.payment_id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2.5 text-sm last:border-0">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{payment.payment_id}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {payment.payment_time || payment.create_time ? dayjs(payment.payment_time || payment.create_time).format('DD/MM/YY HH:mm') : 'TikTok ไม่ส่งวันเวลามา'}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-medium tabular-nums">{payment.amount ? money(Number(payment.amount), payment.currency) : 'TikTok ไม่ส่งยอดมา'}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">ออเดอร์ {payment.order_count} · Statement {payment.statement_count}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPaymentsOpen(false)}>ปิด</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
