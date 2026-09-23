@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dayjs from "dayjs";
 import {
   AlertTriangle,
@@ -36,6 +36,11 @@ import {
   DateRangePicker,
   type DateRangePreset,
 } from "@/components/common/DateRangePicker";
+import {
+  SMLSendProgressDialog,
+  type SMLSendProgressStatus,
+} from "@/components/common/SMLSendProgressDialog";
+import { suppressNotificationToast } from "@/lib/notification-toast-suppression";
 import {
   settlementDestinationLabel,
   settlementPrimaryActionLabel,
@@ -99,6 +104,13 @@ type ImportNotice = {
   paid_count?: number;
   processing_count?: number;
   failed_count?: number;
+};
+type SendProgress = {
+  open: boolean;
+  runID: string | null;
+  status: SMLSendProgressStatus;
+  docNo: string | null;
+  error: string | null;
 };
 
 const money = (value?: number, currency = "THB") =>
@@ -197,6 +209,13 @@ export default function TikTokSettlement() {
   const [sendConfirmOpen, setSendConfirmOpen] = useState(false);
   const [bankEvidenceConfirmed, setBankEvidenceConfirmed] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendProgress, setSendProgress] = useState<SendProgress>({
+    open: false,
+    runID: null,
+    status: "sending",
+    docNo: null,
+    error: null,
+  });
   const [importOpen, setImportOpen] = useState(false);
   const [importShopID, setImportShopID] = useState("");
   const [importFrom, setImportFrom] = useState(
@@ -217,7 +236,7 @@ export default function TikTokSettlement() {
     shops,
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     try {
@@ -256,7 +275,7 @@ export default function TikTokSettlement() {
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  };
+  }, [from, runStatus, shopID, to]);
   useEffect(() => {
     void load();
   }, [shopID, from, to, runStatus]);
@@ -329,24 +348,127 @@ export default function TikTokSettlement() {
   };
   const confirmSend = async () => {
     if (!selected || !bankEvidenceConfirmed) return;
+    const run = selected;
     setSending(true);
+    suppressNotificationToast({
+      source: "tiktok_settlement",
+      entity_type: "tiktok_settlement",
+      entity_id: run.id,
+    });
+    // Replace the confirmation surface before the irreversible request starts;
+    // there must never be a confirmation dialog underneath a result dialog.
+    setSendConfirmOpen(false);
+    setSelected(null);
+    setSendProgress({
+      open: true,
+      runID: run.id,
+      status: "sending",
+      docNo: null,
+      error: null,
+    });
     try {
-      await client.post(`/api/tiktok-settlements/${selected.id}/send`, {
+      await client.post(`/api/tiktok-settlements/${run.id}/send`, {
         confirm: "CONFIRM_TIKTOK_RC",
-        expected_config_version: String(selected.config_version),
+        expected_config_version: String(run.config_version),
       });
-      toast.success("เริ่มสร้างเอกสารใน SML แล้ว");
-      setSendConfirmOpen(false);
-      setSelected(null);
-      await load();
     } catch (error: any) {
-      toast.error(
-        error?.response?.data?.error?.message ?? "สร้างเอกสารใน SML ไม่สำเร็จ",
-      );
+      setSendProgress((current) => ({
+        ...current,
+        status: "error",
+        error:
+          error?.response?.data?.error?.message ??
+          "สร้างเอกสารใน SML ไม่สำเร็จ",
+      }));
     } finally {
       setSending(false);
     }
   };
+  useEffect(() => {
+    if (
+      !sendProgress.open ||
+      sendProgress.status !== "sending" ||
+      !sendProgress.runID
+    ) {
+      return;
+    }
+    let active = true;
+    let timer: number | undefined;
+    let attempts = 0;
+    const poll = async () => {
+      try {
+        const response = await client.get<{ data: Run }>(
+          `/api/tiktok-settlements/${sendProgress.runID}`,
+        );
+        if (!active) return;
+        const run = response.data.data;
+        if (run.status === "sent") {
+          setSendProgress((current) =>
+            current.runID === run.id
+              ? {
+                  ...current,
+                  status: "success",
+                  docNo: run.rc_doc_no ?? null,
+                  error: null,
+                }
+              : current,
+          );
+          void load();
+          return;
+        }
+        if (run.status === "failed") {
+          setSendProgress((current) =>
+            current.runID === run.id
+              ? {
+                  ...current,
+                  status: "error",
+                  error: run.error_msg ?? "สร้างเอกสารใน SML ไม่สำเร็จ",
+                }
+              : current,
+          );
+          void load();
+          return;
+        }
+        if (run.status === "unknown_result") {
+          setSendProgress((current) =>
+            current.runID === run.id
+              ? {
+                  ...current,
+                  status: "warning",
+                  docNo: run.rc_doc_no ?? null,
+                  error:
+                    run.anomaly_reason ??
+                    run.error_msg ??
+                    "ไม่สามารถยืนยันผลจาก SML ได้",
+                }
+              : current,
+          );
+          void load();
+          return;
+        }
+      } catch {
+        // The durable run remains the source of truth; use the bounded timeout
+        // below rather than showing transient network failures as a final result.
+      }
+      attempts += 1;
+      if (attempts >= 45) {
+        if (!active) return;
+        setSendProgress((current) => ({
+          ...current,
+          status: "warning",
+          error:
+            "ระบบยังยืนยันผลจาก SML ไม่ได้ กรุณาตรวจเอกสารใน SML ก่อนลองส่งซ้ำ",
+        }));
+        void load();
+        return;
+      }
+      if (active) timer = window.setTimeout(() => void poll(), 1200);
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [load, sendProgress.open, sendProgress.runID, sendProgress.status]);
   const detailActionLabel = settlementPrimaryActionLabel(
     selected?.status,
     route?.configured,
@@ -356,11 +478,6 @@ export default function TikTokSettlement() {
     <div className="space-y-4 p-0 sm:p-0">
       <header className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-            <span>นำเข้าและรับชำระ</span>
-            <ChevronRight className="h-3.5 w-3.5" />
-            <span>รับชำระ TikTok Shop</span>
-          </div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight">
               รับชำระ TikTok Shop
@@ -810,6 +927,19 @@ export default function TikTokSettlement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <SMLSendProgressDialog
+        open={sendProgress.open}
+        status={sendProgress.status}
+        docNo={sendProgress.docNo}
+        error={sendProgress.error}
+        onClose={() =>
+          setSendProgress((current) => ({
+            ...current,
+            open: false,
+            runID: null,
+          }))
+        }
+      />
     </div>
   );
 }

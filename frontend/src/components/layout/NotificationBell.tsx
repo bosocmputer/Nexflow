@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useAuth } from '@/hooks/useAuth'
 import { type ServerEventType, useEventsStore } from '@/lib/events-store'
 import { isOrderAlertNotification } from '@/lib/notification-alerts'
+import { shouldSuppressNotificationToast } from '@/lib/notification-toast-suppression'
 import { type AppNotification, type NotificationUnreadBySource, useNotificationsStore } from '@/lib/notifications-store'
 import { cn } from '@/lib/utils'
 
@@ -312,6 +313,7 @@ export function NotificationBell() {
       notificationRequestSeq.current += 1
       const nextUnread = Number(payload?.unread_count ?? useNotificationsStore.getState().unread + 1)
       upsertFromEvent(notification, nextUnread, payload?.unread_by_source)
+      if (shouldSuppressNotificationToast(notification)) return
       const opts = notification.body ? { description: notification.body } : undefined
       if (notification.severity === 'error') toast.error(notification.title, opts)
       else if (notification.severity === 'warning') toast.warning(notification.title, opts)

@@ -39,16 +39,23 @@ const (
 var tikTokSettlementBangkok = time.FixedZone("Asia/Bangkok", 7*60*60)
 
 type TikTokSettlementHandler struct {
-	db                *sql.DB
-	config            *config.Config
-	gateway           *tiktokshop.GatewayClient
-	routes            *repository.ChannelDefaultRepo
-	audit             *repository.AuditLogRepo
-	sml               *ShopeeImportHandler // shared SML proxy, never a Shopee route/default
-	notifications     *repository.NotificationRepo
-	lineNotifications *repository.LineNotificationRepo
-	broker            *events.Broker
-	logger            *zap.Logger
+	db                     *sql.DB
+	config                 *config.Config
+	gateway                *tiktokshop.GatewayClient
+	routes                 *repository.ChannelDefaultRepo
+	audit                  *repository.AuditLogRepo
+	sml                    *ShopeeImportHandler // shared SML proxy, never a Shopee route/default
+	notifications          *repository.NotificationRepo
+	lineNotifications      *repository.LineNotificationRepo
+	settlementLineNotifier tikTokSettlementLineNotifier
+	broker                 *events.Broker
+	logger                 *zap.Logger
+}
+
+// tikTokSettlementLineNotifier keeps the handler independent from the LINE
+// renderer. Notification delivery must never affect the receipt write.
+type tikTokSettlementLineNotifier interface {
+	EnqueueTikTokSettlementResult(context.Context, models.TikTokSettlementLineNotification, string) (int, error)
 }
 
 type tikTokSettlementImportRequest struct {
@@ -159,6 +166,15 @@ func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktoks
 		logger = zap.NewNop()
 	}
 	return &TikTokSettlementHandler{db: db, config: cfg, gateway: gateway, routes: routes, audit: audit, sml: smlBridge, notifications: notifications, lineNotifications: lineNotifications, broker: broker, logger: logger}
+}
+
+// SetLineNotifier attaches the shared durable LINE outbox after server
+// construction. Keeping the repo fallback preserves safe delivery if an older
+// bootstrap path has not injected the richer renderer yet.
+func (h *TikTokSettlementHandler) SetLineNotifier(notifier tikTokSettlementLineNotifier) {
+	if h != nil {
+		h.settlementLineNotifier = notifier
+	}
 }
 
 func (h *TikTokSettlementHandler) financeEnabled() bool {
@@ -1030,6 +1046,7 @@ func (h *TikTokSettlementHandler) sendRun(runID string, route *models.ChannelDef
 	// snapshot, stop immediately and require an operator to inspect SML.
 	if math.Abs(out.Data.InvoiceAmount-run.InvoiceAmountTotal) > 0.01 || math.Abs(out.Data.PayoutAmount-run.TotalSettlementAmount) > 0.01 {
 		message := "ยอด RC ที่ SML ตอบกลับไม่ตรงกับ Statement ต้องตรวจเอกสารก่อนลองใหม่"
+		run.RCDocNo = out.Data.DocNo
 		_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='unknown_result',rc_doc_no=$2,anomaly_reason=$3,lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, runID, out.Data.DocNo, message)
 		h.auditDirect(ctx, "tiktok_settlement_anomaly", userID, "warning", map[string]any{"run_id": runID, "statement_id": run.StatementID, "payment_id": run.PaymentID, "rc_doc_no": out.Data.DocNo, "reason": "sml_amount_mismatch"})
 		h.notifySettlementResult(ctx, run, "warning", "ต้องตรวจยอด RC TikTok Shop", message, "unknown_result")
@@ -1053,6 +1070,7 @@ func (h *TikTokSettlementHandler) sendRun(runID string, route *models.ChannelDef
 		return
 	}
 	h.auditDirect(ctx, "tiktok_settlement_sent", userID, "info", map[string]any{"run_id": runID, "statement_id": run.StatementID, "payment_id": run.PaymentID, "rc_doc_no": out.Data.DocNo, "order_count": len(items)})
+	run.RCDocNo = out.Data.DocNo
 	h.notifySettlementResult(ctx, run, "success", "ส่ง RC TikTok Shop แล้ว", "สร้างรับชำระหนี้ใน SML เลขที่ "+out.Data.DocNo, "sent")
 }
 
@@ -1077,7 +1095,17 @@ func (h *TikTokSettlementHandler) notifySettlementResult(ctx context.Context, ru
 		return
 	}
 	dedupe := "tiktok:settlement:" + entityID + ":" + strings.TrimSpace(outcome)
-	if h.lineNotifications != nil {
+	if h.settlementLineNotifier != nil {
+		_, err := h.settlementLineNotifier.EnqueueTikTokSettlementResult(ctx, models.TikTokSettlementLineNotification{
+			RunID: run.ID, ShopID: run.ShopID, ShopName: run.ShopLabel,
+			StatementID: run.StatementID, PaymentID: run.PaymentID, Currency: run.Currency,
+			TotalAmount: run.TotalSettlementAmount, OrderCount: run.ItemCount,
+			RCDocNo: run.RCDocNo, Outcome: outcome, ErrorMessage: body,
+		}, dedupe)
+		if err != nil && h.logger != nil {
+			h.logger.Warn("enqueue TikTok settlement LINE notification failed", zap.String("run_id", entityID), zap.Error(err))
+		}
+	} else if h.lineNotifications != nil {
 		_, err := h.lineNotifications.Enqueue(ctx, models.LineNotificationMessageInput{
 			Source: "tiktok_settlement", Severity: severity, Title: title,
 			Body: body, ActionURL: "/tiktok-settlements", EntityType: "tiktok_settlement", EntityID: entityID,
