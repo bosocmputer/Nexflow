@@ -648,12 +648,13 @@ func (h *Handler) GetFinanceStatementTransactions(c *gin.Context) {
 	result, err := h.finance.GetStatementTransactions(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.StatementID), input.PageToken, input.PageSize)
 	if err != nil {
 		statusCode, errorCode = financeErrorMeta(err)
-		upstreamCode, upstreamRequestID := financeFailureMetadata(err)
+		upstreamCode, upstreamRequestID, upstreamCategory := financeFailureMetadata(err)
 		h.logger.Warn("tiktok_gateway_finance_statement_transactions_failed",
 			zap.String("tenant", identityTenant(identity)),
 			zap.String("error_code", errorCode),
 			zap.Int("upstream_code", upstreamCode),
 			zap.String("upstream_request_id", safeFinanceUpstreamRequestID(upstreamRequestID)),
+			zap.String("upstream_error_category", upstreamCategory),
 		)
 		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), financeErrorRetryable(errorCode), requestID)
 		return
@@ -711,12 +712,12 @@ func financeErrorMeta(err error) (int, string) {
 // financeFailureMetadata intentionally exposes only TikTok's numeric error
 // code and request ID.  These are enough for Partner Center escalation and do
 // not include tokens, financial payloads, or buyer data.
-func financeFailureMetadata(err error) (int, string) {
+func financeFailureMetadata(err error) (int, string, string) {
 	var apiError *tiktokshop.APIError
 	if errors.As(err, &apiError) && apiError != nil {
-		return apiError.Code, strings.TrimSpace(apiError.RequestID)
+		return apiError.Code, strings.TrimSpace(apiError.RequestID), strings.TrimSpace(apiError.Message)
 	}
-	return 0, ""
+	return 0, "", ""
 }
 
 func safeFinanceUpstreamRequestID(value string) string {

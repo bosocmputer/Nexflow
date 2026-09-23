@@ -63,6 +63,15 @@ func TestSearchStatementsRequestAcceptsLiveSettledStatus(t *testing.T) {
 	}
 }
 
+func TestFinanceAPIErrorMessageCategoryDoesNotKeepRawUpstreamMessage(t *testing.T) {
+	if got := financeAPIErrorMessageCategory("The version name is invalid; seller@example.com"); got != "invalid_api_version" {
+		t.Fatalf("category=%q", got)
+	}
+	if got := financeAPIErrorMessageCategory("unrecognized sensitive text"); got != "upstream_rejected" {
+		t.Fatalf("category=%q", got)
+	}
+}
+
 func TestFinanceClientUsesOfficialAllStatusDefaultWhenStatusIsOmitted(t *testing.T) {
 	now := time.Unix(1_725_000_000, 0)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

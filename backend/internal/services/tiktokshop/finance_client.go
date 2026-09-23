@@ -475,7 +475,7 @@ func (c *FinanceClient) do(ctx context.Context, method, path string, query url.V
 			if apiCode == 0 && (response.StatusCode < 200 || response.StatusCode >= 300) {
 				apiCode = response.StatusCode
 			}
-			return requestID, &APIError{Code: apiCode, RequestID: requestID, Message: "TikTok Shop rejected the finance request"}
+			return requestID, &APIError{Code: apiCode, RequestID: requestID, Message: financeAPIErrorMessageCategory(payload.Message)}
 		}
 		if len(payload.Data) == 0 {
 			return requestID, fmt.Errorf("TikTok Shop finance response is missing data: %w", ErrInvalidOrderResponse)
@@ -492,6 +492,34 @@ func (c *FinanceClient) do(ctx context.Context, method, path string, query url.V
 		return requestID, nil
 	}
 	return "", ErrInvalidOrderResponse
+}
+
+// financeAPIErrorMessageCategory keeps provider diagnostics useful without
+// persisting or surfacing arbitrary upstream text. TikTok reuses some numeric
+// codes, so the bounded category is needed to distinguish a version mismatch
+// from credentials or a required shop identifier.
+func financeAPIErrorMessageCategory(message string) string {
+	message = strings.ToLower(strings.TrimSpace(message))
+	switch {
+	case strings.Contains(message, "version"):
+		return "invalid_api_version"
+	case strings.Contains(message, "signature"):
+		return "invalid_signature"
+	case strings.Contains(message, "x-tts-access-token"), strings.Contains(message, "access_token"):
+		return "invalid_access_token"
+	case strings.Contains(message, "app_key"):
+		return "invalid_app_key"
+	case strings.Contains(message, "timestamp"):
+		return "invalid_timestamp"
+	case strings.Contains(message, "shop_cipher"):
+		return "invalid_shop_cipher"
+	case strings.Contains(message, "scope"), strings.Contains(message, "permission"), strings.Contains(message, "access denied"):
+		return "permission_denied"
+	case strings.Contains(message, "not found"), strings.Contains(message, "does not exist"):
+		return "resource_not_found"
+	default:
+		return "upstream_rejected"
+	}
 }
 
 func financeRetryDelay(retryAfter string, attempt int) time.Duration {
