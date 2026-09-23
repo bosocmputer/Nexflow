@@ -84,6 +84,12 @@ func TestTikTokSettlementAmountOrZero(t *testing.T) {
 	}
 }
 
+func TestSafeTikTokSettlementErrorReasonIsBounded(t *testing.T) {
+	if got := safeTikTokSettlementErrorReason(errors.New(strings.Repeat("x", 181))); len(got) != 180 {
+		t.Fatalf("length=%d", len(got))
+	}
+}
+
 func TestParseTikTokSettlementRangeDefaultsAndCapsWindow(t *testing.T) {
 	from, to, err := parseTikTokSettlementRange("2026-09-01", "2026-09-15")
 	if err != nil || from.Location() != tikTokSettlementBangkok || to.Sub(from) != 15*24*time.Hour {

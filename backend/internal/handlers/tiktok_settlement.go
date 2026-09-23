@@ -234,7 +234,7 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 			zap.String("shop_id", req.ShopID),
 			zap.String("error_type", fmt.Sprintf("%T", err)),
 			zap.Error(err))
-		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err), "failure_stage": tikTokSettlementImportFailureStage(err)})
+		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err), "failure_stage": tikTokSettlementImportFailureStage(err), "error_reason": safeTikTokSettlementErrorReason(err)})
 		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
 		return
 	}
@@ -1222,6 +1222,17 @@ func tikTokSettlementImportFailureStage(err error) string {
 	default:
 		return "unknown"
 	}
+}
+
+func safeTikTokSettlementErrorReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	value := strings.TrimSpace(err.Error())
+	if len(value) > 180 {
+		return value[:180]
+	}
+	return value
 }
 
 func financeThaiError(err error) string {
