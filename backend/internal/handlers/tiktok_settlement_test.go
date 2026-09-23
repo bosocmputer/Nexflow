@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,21 @@ func TestParseTikTokStatementImportRangeUsesNextUTCDay(t *testing.T) {
 	wantTo := time.Date(2026, 9, 24, 0, 0, 1, 0, time.UTC)
 	if !from.Equal(wantFrom) || !to.Equal(wantTo) {
 		t.Fatalf("range = %v to %v, want %v to %v", from, to, wantFrom, wantTo)
+	}
+}
+
+func TestTikTokSettlementImportFailureStage(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want string
+	}{
+		{errors.New("read_statement_page: unavailable"), "read_statement_page"},
+		{errors.New("store_statement: database unavailable"), "store_statement"},
+		{errors.New("other"), "unknown"},
+	} {
+		if got := tikTokSettlementImportFailureStage(test.err); got != test.want {
+			t.Fatalf("stage=%q want=%q", got, test.want)
+		}
 	}
 }
 

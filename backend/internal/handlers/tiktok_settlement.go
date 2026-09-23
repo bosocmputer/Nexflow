@@ -234,7 +234,7 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 			zap.String("shop_id", req.ShopID),
 			zap.String("error_type", fmt.Sprintf("%T", err)),
 			zap.Error(err))
-		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err)})
+		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err), "failure_stage": tikTokSettlementImportFailureStage(err)})
 		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
 		return
 	}
@@ -677,11 +677,11 @@ func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop
 	for page := 0; page < tikTokSettlementMaxPages; page++ {
 		r, err := h.gateway.SearchFinanceStatements(ctx, tiktokshop.GatewayFinanceStatementsRequest{ShopID: shop, Search: tikTokStatementImportSearch(from, to, token)})
 		if err != nil {
-			return err
+			return fmt.Errorf("read_statement_page: %w", err)
 		}
 		for _, statement := range r.Statements {
 			if err := h.upsertStatement(ctx, shop, statement, r.UpstreamRequestID, userID, email); err != nil {
-				return err
+				return fmt.Errorf("store_statement: %w", err)
 			}
 			imported[statement.StatementID] = statement.Status
 		}
@@ -1180,6 +1180,22 @@ func financeErrorCode(err error) string {
 	}
 	return "gateway_request_failed"
 }
+
+func tikTokSettlementImportFailureStage(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	switch {
+	case strings.HasPrefix(message, "read_statement_page:"):
+		return "read_statement_page"
+	case strings.HasPrefix(message, "store_statement:"):
+		return "store_statement"
+	default:
+		return "unknown"
+	}
+}
+
 func financeThaiError(err error) string {
 	switch financeErrorCode(err) {
 	case "reconnect_required", "token_expired", "invalid_token":
