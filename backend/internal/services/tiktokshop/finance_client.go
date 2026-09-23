@@ -469,8 +469,14 @@ func (c *FinanceClient) do(ctx context.Context, method, path string, query url.V
 			}
 			return requestID, &APIError{Code: apiCode, RequestID: requestID, Message: "TikTok Shop rejected the finance request"}
 		}
-		if len(payload.Data) == 0 || string(payload.Data) == "null" || output == nil {
-			return requestID, ErrInvalidOrderResponse
+		if len(payload.Data) == 0 {
+			return requestID, fmt.Errorf("TikTok Shop finance response is missing data: %w", ErrInvalidOrderResponse)
+		}
+		if string(payload.Data) == "null" {
+			return requestID, fmt.Errorf("TikTok Shop finance response has null data: %w", ErrInvalidOrderResponse)
+		}
+		if output == nil {
+			return requestID, fmt.Errorf("TikTok Shop finance output is unavailable: %w", ErrInvalidOrderResponse)
 		}
 		if err := json.Unmarshal(payload.Data, output); err != nil {
 			return requestID, fmt.Errorf("decode TikTok Shop finance data: %w", err)
