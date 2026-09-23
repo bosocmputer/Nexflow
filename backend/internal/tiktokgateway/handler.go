@@ -531,6 +531,11 @@ func (h *Handler) SearchFinanceStatements(c *gin.Context) {
 	}
 	result, err := h.finance.SearchStatements(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
 	if err != nil {
+		h.logger.Warn("tiktok_gateway_finance_statement_search_failed",
+			zap.String("tenant", identity.Tenant),
+			zap.String("shop_id", strings.TrimSpace(input.ShopID)),
+			zap.String("error_type", fmt.Sprintf("%T", err)),
+			zap.Error(err))
 		statusCode, errorCode = financeErrorMeta(err)
 		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), financeErrorRetryable(errorCode), requestID)
 		return
