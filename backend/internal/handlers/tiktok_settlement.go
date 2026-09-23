@@ -759,6 +759,14 @@ func tikTokSettlementAmountOrZero(value string) string {
 	return "0"
 }
 
+func tikTokStatementTransactionWithZeroOptionalAmounts(value tiktokshop.StatementTransaction) tiktokshop.StatementTransaction {
+	value.FeeAmount = tikTokSettlementAmountOrZero(value.FeeAmount)
+	value.ShippingAmount = tikTokSettlementAmountOrZero(value.ShippingAmount)
+	value.AdjustmentAmount = tikTokSettlementAmountOrZero(value.AdjustmentAmount)
+	value.ReserveAmount = tikTokSettlementAmountOrZero(value.ReserveAmount)
+	return value
+}
+
 // PAID is documented for Statements, while AOY's live response currently uses
 // SETTLED.  Both mean TikTok has completed its platform-side settlement; they
 // are not a substitute for the operator's bank-evidence confirmation before
@@ -802,6 +810,11 @@ func (h *TikTokSettlementHandler) fetchAndReconcile(ctx context.Context, runID, 
 		return err
 	}
 	for index, v := range transactions {
+		// TikTok omits optional transaction components when they are zero. The
+		// accounting schema intentionally uses NUMERIC, so normalize those empty
+		// optional values before both persisting the snapshot and binding SQL.
+		// settlement_amount itself remains required Finance evidence.
+		v = tikTokStatementTransactionWithZeroOptionalAmounts(v)
 		snapshot, _ := json.Marshal(v)
 		orderID := firstNonEmpty(strings.TrimSpace(v.OrderID), strings.TrimSpace(v.AssociatedOrderID))
 		if orderID == "" {

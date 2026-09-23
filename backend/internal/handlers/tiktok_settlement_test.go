@@ -84,6 +84,22 @@ func TestTikTokSettlementAmountOrZero(t *testing.T) {
 	}
 }
 
+func TestTikTokStatementTransactionWithZeroOptionalAmounts(t *testing.T) {
+	transaction := tikTokStatementTransactionWithZeroOptionalAmounts(tiktokshop.StatementTransaction{
+		SettlementAmount: "222.30",
+		FeeAmount:        " ",
+		ShippingAmount:   "",
+		AdjustmentAmount: " 0.50 ",
+		ReserveAmount:    "",
+	})
+	if transaction.SettlementAmount != "222.30" {
+		t.Fatalf("settlement amount must remain required evidence: %q", transaction.SettlementAmount)
+	}
+	if transaction.FeeAmount != "0" || transaction.ShippingAmount != "0" || transaction.AdjustmentAmount != "0.50" || transaction.ReserveAmount != "0" {
+		t.Fatalf("transaction=%+v", transaction)
+	}
+}
+
 func TestTikTokStatementSettlementReadyAcceptsDocumentedAndLiveStatuses(t *testing.T) {
 	for _, status := range []tiktokshop.StatementStatus{
 		tiktokshop.StatementStatusPaid,
