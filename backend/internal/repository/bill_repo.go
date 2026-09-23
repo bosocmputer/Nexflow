@@ -339,7 +339,7 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 	if useCursor {
 		queryLimit = limit + 1
 	}
-	query := `SELECT b.id, b.bill_type, b.source, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
+	query := `SELECT b.id, b.bill_type, b.source, b.source_account_key, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
 	                 b.anomalies, b.error_msg, b.created_at, b.sent_at,
 	                 b.archived_at, b.archived_by, b.archive_reason,
 	                 COALESCE(SUM(GREATEST(COALESCE(bi.gross_amount, bi.qty * COALESCE(bi.price, 0)) - COALESCE(bi.discount_amount, 0), 0)), 0) AS total_amount,
@@ -352,7 +352,7 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 	          FROM bills b
 	          LEFT JOIN bill_items bi ON bi.bill_id = b.id
 	          ` + where + `
-		          GROUP BY b.id, b.bill_type, b.source, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
+	          GROUP BY b.id, b.bill_type, b.source, b.source_account_key, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
 		                   b.anomalies, b.error_msg, b.created_at, b.sent_at, b.archived_at, b.archived_by, b.archive_reason
 		          ORDER BY ` + billOrderBy(f, useCursor) +
 		fmt.Sprintf(" LIMIT $%d", argN)
@@ -374,7 +374,7 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 		var anomaliesRaw []byte
 		var itemCount int
 		if err := rows.Scan(
-			&b.ID, &b.BillType, &b.Source, &b.Status, &b.DocumentRoute, &b.RawData, &b.SMLDocNo, &b.AIConfidence,
+			&b.ID, &b.BillType, &b.Source, &b.SourceAccountKey, &b.Status, &b.DocumentRoute, &b.RawData, &b.SMLDocNo, &b.AIConfidence,
 			&anomaliesRaw, &b.ErrorMsg, &b.CreatedAt, &b.SentAt, &b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason,
 			&b.TotalAmount, &itemCount, &b.ShopeeRealtimeLinked,
 		); err != nil {

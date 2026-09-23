@@ -148,7 +148,7 @@ export default function BillTable({
             return (
               <div className="flex min-w-0 flex-col gap-1.5">
                 <BillInputChannelBadge bill={b} />
-                <ShopeeShopLine bill={b} />
+                <MarketplaceShopLine bill={b} />
                 <EmailGroupLine bill={b} />
                 {inbox && (
                   <span className="max-w-[180px] truncate text-[11px] text-muted-foreground" title={inbox}>
@@ -305,7 +305,7 @@ function MobileBillCard({
         {isShopeeSalesBill(bill) && <ShopeeSalesSummary bill={bill} />}
         <div className="flex flex-wrap items-center gap-1.5">
           <BillInputChannelBadge bill={bill} />
-          <ShopeeShopLine bill={bill} />
+          <MarketplaceShopLine bill={bill} />
           <EmailGroupLine bill={bill} />
         </div>
       </div>
@@ -562,14 +562,25 @@ function EmailGroupLine({ bill }: { bill: Bill }) {
   )
 }
 
-function ShopeeShopLine({ bill }: { bill: Bill }) {
+function MarketplaceShopLine({ bill }: { bill: Bill }) {
   const raw = bill.raw_data
-  const shopID = rawString(raw, 'shopee_shop_id')
+  const isShopee = bill.source === 'shopee'
+  const isTikTokShop = bill.source === 'tiktok' && rawString(raw, 'flow') === 'tiktok_shop_api_reviewed'
+  if (!isShopee && !isTikTokShop) return null
+
+  const shopID = isShopee
+    ? rawString(raw, 'shopee_shop_id')
+    : rawString(raw, 'tiktok_shop_id') || sourceAccountShopID(bill.source_account_key)
   if (!shopID) return null
-  const label = rawString(raw, 'shopee_shop_label') || 'Shopee shop'
+  const label = isShopee
+    ? rawString(raw, 'shopee_shop_label') || 'Shopee shop'
+    : rawString(raw, 'tiktok_shop_name') || 'TikTok Shop'
+  const appearance = isShopee
+    ? 'border-orange-200 bg-orange-50 text-orange-700'
+    : 'border-[#111817]/20 bg-[#111817]/10 text-[#111817]'
   return (
     <div
-      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[11px] leading-4 text-orange-700"
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] leading-4 ${appearance}`}
       title={`${label} · shop_id=${shopID}`}
     >
       <Store className="h-3 w-3 shrink-0" />
@@ -577,6 +588,11 @@ function ShopeeShopLine({ bill }: { bill: Bill }) {
       <span className="hidden shrink-0 font-mono sm:inline">· {shopID}</span>
     </div>
   )
+}
+
+function sourceAccountShopID(sourceAccountKey?: string) {
+  const value = sourceAccountKey?.trim() ?? ''
+  return value.startsWith('shop:') ? value.slice('shop:'.length) : ''
 }
 
 function ShopeeSalesSummary({ bill }: { bill: Bill }) {
