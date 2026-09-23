@@ -127,6 +127,7 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
   { pattern: '/logs', crumbs: [{ label: 'ดูแลระบบ' }, { label: 'ประวัติการทำงาน' }] },
   { pattern: '/bulk-send-jobs', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'งานส่งเข้า SML' }] },
   { pattern: '/shopee-settlements', crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'รับชำระ Shopee' }] },
+  { pattern: '/tiktok-settlements', crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'รับชำระ TikTok Shop' }] },
 ]
 
 interface CtxValue {

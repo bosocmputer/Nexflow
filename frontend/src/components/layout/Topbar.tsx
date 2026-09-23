@@ -49,6 +49,8 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
         ? 'นำเข้า Shopee'
         : location.pathname.startsWith('/nextstep-marketplace')
           ? 'NextStep Marketplace'
+        : location.pathname.startsWith('/tiktok-settlements')
+          ? 'รับชำระ TikTok Shop'
         : location.pathname.startsWith('/marketplace-operations')
           ? marketplaceOperationsChip
         : location.pathname.startsWith('/shopee-operations')
