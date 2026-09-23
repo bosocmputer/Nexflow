@@ -1,13 +1,106 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/xuri/excelize/v2"
+
 	"nexflow/internal/services/tiktokshop"
 )
+
+func TestParseTikTokIncomeExportKeepsWithdrawalAndOrdersSeparate(t *testing.T) {
+	f := excelize.NewFile()
+	orders := "รายละเอียดคำสั่งซื้อ"
+	f.SetSheetName(f.GetSheetName(0), orders)
+	writeTikTokIncomeRow(t, f, orders, 1, []string{
+		"หมายเลขคำสั่งซื้อ/การปรับ", "ประเภทธุรกรรม", "เวลาที่สร้างคำสั่งซื้อ", "เวลาที่ชำระคำสั่งซื้อ", "สกุลเงิน", "ยอดการชำระเงินทั้งหมด", "รายได้ทั้งหมด", "ยอดรวมเงินคืนหลังหักส่วนลดจากผู้ขาย", "ค่าธรรมเนียมทั้งหมด", "ยอดรวมค่าจัดส่งที่ร้านค้าจ่ายจริง",
+	})
+	writeTikTokIncomeRow(t, f, orders, 2, []string{"ORDER-1", "คำสั่งซื้อ", "2026/09/20", "2026/09/21", "THB", "80.00", "100.00", "0", "-20.00", "0"})
+	writeTikTokIncomeRow(t, f, orders, 3, []string{"ORDER-2", "คำสั่งซื้อ", "2026/09/20", "2026/09/21", "THB", "100.00", "120.00", "0", "-20.00", "0"})
+	report, err := f.NewSheet("รายงาน")
+	if err != nil || report == -1 {
+		t.Fatalf("new report sheet: %v", err)
+	}
+	if err := f.SetCellValue("รายงาน", "B2", "ยอดการชำระเงินทั้งหมด"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellValue("รายงาน", "F2", "180.00"); err != nil {
+		t.Fatal(err)
+	}
+	withdrawals, err := f.NewSheet("บันทึกการถอน")
+	if err != nil || withdrawals == -1 {
+		t.Fatalf("new withdrawals sheet: %v", err)
+	}
+	writeTikTokIncomeRow(t, f, "บันทึกการถอน", 1, []string{"ประเภทธุรกรรม", "ID อ้างอิง", "เวลาส่งคำขอ", "จำนวน", "สถานะ", "เวลาที่สำเร็จ", "บัญชีธนาคาร"})
+	writeTikTokIncomeRow(t, f, "บันทึกการถอน", 2, []string{"Earnings", "WITHDRAW-1", "2026/09/22", "180.00", "Transferred", "2026/09/22", "/"})
+
+	var buf bytes.Buffer
+	if err := f.Write(&buf); err != nil {
+		t.Fatal(err)
+	}
+	export, err := parseTikTokIncomeExport(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("parse income export: %v", err)
+	}
+	if len(export.Orders) != 2 || export.OrderPaymentTotalCents != 18_000 || export.ReportPaymentTotalCents != 18_000 {
+		t.Fatalf("export totals = %#v", export)
+	}
+	if len(export.Withdrawals) != 1 || export.Withdrawals[0].ID != "WITHDRAW-1" {
+		t.Fatalf("withdrawals = %#v", export.Withdrawals)
+	}
+	selection, err := export.SelectWithdrawal("WITHDRAW-1")
+	if err != nil {
+		t.Fatalf("select withdrawal: %v", err)
+	}
+	if !selection.RequiresOperatorAttestation || selection.CanCreateReceipt {
+		t.Fatalf("selection must require bank/operator evidence, got %#v", selection)
+	}
+}
+
+func TestTikTokIncomeExportBlocksReceiptWhenTotalsDoNotProveOneWithdrawalScope(t *testing.T) {
+	export := tikTokIncomeExport{
+		Currency:                "THB",
+		OrderPaymentTotalCents:  18_000,
+		ReportPaymentTotalCents: 18_000,
+		Orders:                  []tikTokIncomeOrder{{OrderID: "ORDER-1", Currency: "THB", PaymentCents: 18_000}},
+		Withdrawals:             []tikTokIncomeWithdrawal{{ID: "WITHDRAW-1", AmountCents: 17_999, Status: "Transferred", Currency: "THB"}},
+	}
+	selection, err := export.SelectWithdrawal("WITHDRAW-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.CanCreateReceipt || !strings.Contains(selection.BlockReason, "ไม่ตรง") {
+		t.Fatalf("mismatched withdrawal must block receipt, got %#v", selection)
+	}
+}
+
+func TestParseTikTokIncomeExportRequiresAllFinanceSheets(t *testing.T) {
+	f := excelize.NewFile()
+	var buf bytes.Buffer
+	if err := f.Write(&buf); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseTikTokIncomeExport(bytes.NewReader(buf.Bytes())); err == nil || !strings.Contains(err.Error(), "รายละเอียดคำสั่งซื้อ") {
+		t.Fatalf("missing finance sheets error = %v", err)
+	}
+}
+
+func writeTikTokIncomeRow(t *testing.T, f *excelize.File, sheet string, row int, values []string) {
+	t.Helper()
+	for col, value := range values {
+		cell, err := excelize.CoordinatesToCellName(col+1, row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.SetCellValue(sheet, cell, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestTikTokSettlementImportRequestBindsSnakeCaseJSON(t *testing.T) {
 	var request tikTokSettlementImportRequest
