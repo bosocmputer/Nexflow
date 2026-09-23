@@ -453,9 +453,11 @@ export default function TikTokSettlement() {
             <SettlementMetricChip label="ผิดพลาด" value={counts.failed ?? 0} tone="danger" />
             <input
               ref={incomeFileRef}
-              className="sr-only"
+              className="hidden"
               type="file"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              tabIndex={-1}
+              aria-hidden="true"
               onChange={(event) => void previewIncomeExport(event.target.files?.[0])}
             />
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={() => incomeFileRef.current?.click()} disabled={incomeLoading}>
