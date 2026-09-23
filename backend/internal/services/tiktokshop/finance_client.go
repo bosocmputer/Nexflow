@@ -31,6 +31,7 @@ type StatementStatus string
 
 const (
 	StatementStatusPaid       StatementStatus = "PAID"
+	StatementStatusSettled    StatementStatus = "SETTLED"
 	StatementStatusProcessing StatementStatus = "PROCESSING"
 	StatementStatusFailed     StatementStatus = "FAILED"
 )
@@ -528,7 +529,7 @@ func (input *SearchStatementsRequest) Validate() error {
 	}
 	input.PageToken = strings.TrimSpace(input.PageToken)
 	switch input.StatementStatus {
-	case "", StatementStatusPaid, StatementStatusProcessing, StatementStatusFailed:
+	case "", StatementStatusPaid, StatementStatusSettled, StatementStatusProcessing, StatementStatusFailed:
 	default:
 		return ErrInvalidOrderInput
 	}

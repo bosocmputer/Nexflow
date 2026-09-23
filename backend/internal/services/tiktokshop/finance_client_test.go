@@ -51,6 +51,18 @@ func TestFinanceClientRejectsInvalidRange(t *testing.T) {
 	}
 }
 
+func TestSearchStatementsRequestAcceptsLiveSettledStatus(t *testing.T) {
+	request := SearchStatementsRequest{
+		PageSize:        1,
+		StatementTimeGE: 1,
+		StatementTimeLT: 2,
+		StatementStatus: StatementStatusSettled,
+	}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("SETTLED must be accepted from the live TikTok Statement response: %v", err)
+	}
+}
+
 func TestFinanceClientUsesOfficialAllStatusDefaultWhenStatusIsOmitted(t *testing.T) {
 	now := time.Unix(1_725_000_000, 0)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

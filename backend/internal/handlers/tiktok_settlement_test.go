@@ -84,6 +84,26 @@ func TestTikTokSettlementAmountOrZero(t *testing.T) {
 	}
 }
 
+func TestTikTokStatementSettlementReadyAcceptsDocumentedAndLiveStatuses(t *testing.T) {
+	for _, status := range []tiktokshop.StatementStatus{
+		tiktokshop.StatementStatusPaid,
+		tiktokshop.StatementStatusSettled,
+	} {
+		if !tikTokStatementIsSettlementReady(status) {
+			t.Fatalf("status %q must be reconciliation-ready", status)
+		}
+	}
+	for _, status := range []tiktokshop.StatementStatus{
+		tiktokshop.StatementStatusProcessing,
+		tiktokshop.StatementStatusFailed,
+		"",
+	} {
+		if tikTokStatementIsSettlementReady(status) {
+			t.Fatalf("status %q must remain blocked", status)
+		}
+	}
+}
+
 func TestSafeTikTokSettlementErrorReasonIsBounded(t *testing.T) {
 	if got := safeTikTokSettlementErrorReason(errors.New(strings.Repeat("x", 181))); len(got) != 180 {
 		t.Fatalf("length=%d", len(got))

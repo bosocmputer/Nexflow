@@ -240,7 +240,7 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 	}
 	_, _ = h.db.ExecContext(c.Request.Context(), `UPDATE tiktok_shop_settlement_settings SET last_import_at=NOW(),updated_at=NOW() WHERE shop_id=$1`, req.ShopID)
 	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": importResult.count, "paid_count": importResult.paidCount, "processing_count": importResult.processingCount, "failed_count": importResult.failedCount})
-	message := fmt.Sprintf("ดึง Statement %d รายการ: จ่ายแล้ว %d · กำลังดำเนินการ %d · ไม่สำเร็จ %d", importResult.count, importResult.paidCount, importResult.processingCount, importResult.failedCount)
+	message := fmt.Sprintf("ดึง Statement %d รายการ: TikTok ยืนยัน settlement แล้ว %d · กำลังดำเนินการ %d · ไม่สำเร็จ %d", importResult.count, importResult.paidCount, importResult.processingCount, importResult.failedCount)
 	if importResult.count == 0 {
 		message = "ไม่พบ Statement ที่ TikTok API คืนมาในช่วงที่เลือก ระบบยังไม่ได้สร้าง RC"
 	}
@@ -413,7 +413,7 @@ func (h *TikTokSettlementHandler) List(c *gin.Context) {
 	}
 	if paymentStatus := strings.TrimSpace(c.Query("payment_status")); paymentStatus != "" {
 		switch paymentStatus {
-		case string(tiktokshop.StatementStatusPaid), string(tiktokshop.StatementStatusProcessing), string(tiktokshop.StatementStatusFailed), "BANK_CONFIRMED":
+		case string(tiktokshop.StatementStatusPaid), string(tiktokshop.StatementStatusSettled), string(tiktokshop.StatementStatusProcessing), string(tiktokshop.StatementStatusFailed), "BANK_CONFIRMED":
 			args = append(args, paymentStatus)
 			where += fmt.Sprintf(" AND payment_status=$%d", len(args))
 		default:
@@ -651,7 +651,7 @@ func (h *TikTokSettlementHandler) importStatements(ctx context.Context, shop str
 	result := tikTokSettlementImportResult{count: len(imported)}
 	for _, status := range imported {
 		switch status {
-		case tiktokshop.StatementStatusPaid:
+		case tiktokshop.StatementStatusPaid, tiktokshop.StatementStatusSettled:
 			result.paidCount++
 		case tiktokshop.StatementStatusProcessing:
 			result.processingCount++
@@ -744,7 +744,7 @@ func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop stri
 	if err != nil {
 		return fmt.Errorf("save_snapshot: %w", err)
 	}
-	if s.Status == tiktokshop.StatementStatusPaid {
+	if tikTokStatementIsSettlementReady(s.Status) {
 		if err := h.fetchAndReconcile(ctx, runID, shop, s.StatementID); err != nil {
 			return fmt.Errorf("reconcile_statement: %w", err)
 		}
@@ -757,6 +757,14 @@ func tikTokSettlementAmountOrZero(value string) string {
 		return normalized
 	}
 	return "0"
+}
+
+// PAID is documented for Statements, while AOY's live response currently uses
+// SETTLED.  Both mean TikTok has completed its platform-side settlement; they
+// are not a substitute for the operator's bank-evidence confirmation before
+// the RC write.
+func tikTokStatementIsSettlementReady(status tiktokshop.StatementStatus) bool {
+	return status == tiktokshop.StatementStatusPaid || status == tiktokshop.StatementStatusSettled
 }
 
 func (h *TikTokSettlementHandler) fetchAndReconcile(ctx context.Context, runID, shop, statementID string) error {
@@ -833,8 +841,8 @@ func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string
 		return err
 	}
 	run.ConfigVersion, run.RouteConfigVersion = settingVersion, routeVersion
-	if run.PaymentStatus != "PAID" && run.PaymentStatus != "BANK_CONFIRMED" {
-		_, err = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='needs_review',error_msg='Statement ยังไม่อยู่ในสถานะ PAID',updated_at=NOW() WHERE id=$1::uuid`, runID)
+	if !tikTokStatementIsSettlementReady(tiktokshop.StatementStatus(run.PaymentStatus)) && run.PaymentStatus != "BANK_CONFIRMED" {
+		_, err = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='needs_review',error_msg='Statement ยังไม่อยู่ในสถานะที่ TikTok ยืนยัน settlement',updated_at=NOW() WHERE id=$1::uuid`, runID)
 		return err
 	}
 	items := run.Items

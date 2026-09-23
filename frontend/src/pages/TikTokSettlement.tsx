@@ -128,6 +128,7 @@ const statusMeta: Record<string, { text: string; className: string }> = {
 
 const paymentStatusText: Record<string, string> = {
   PAID: 'TikTok จ่ายแล้ว',
+  SETTLED: 'TikTok ยืนยัน settlement แล้ว',
   PROCESSING: 'TikTok กำลังดำเนินการ',
   FAILED: 'TikTok จ่ายไม่สำเร็จ',
 }
@@ -515,8 +516,8 @@ export default function TikTokSettlement() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" />{selected ? evidenceTitle(selected) : 'TikTok Statement'}</DialogTitle>
             <DialogDescription>
-              {selected?.payment_status === 'PAID'
-                ? 'TikTok ระบุ Statement นี้เป็น PAID แล้ว ระบบดึงรายการออเดอร์จาก Statement โดยตรง โปรดตรวจข้อมูลและหลักฐานเงินเข้าจริงก่อนกดส่ง RC เข้า SML'
+              {selected && ['PAID', 'SETTLED'].includes(selected.payment_status)
+                ? 'TikTok ยืนยัน Statement นี้ว่าทำ settlement แล้ว ระบบดึงรายการออเดอร์จาก Statement โดยตรง โปรดตรวจข้อมูลและหลักฐานเงินเข้าจริงก่อนกดส่ง RC เข้า SML'
                 : `Statement นี้อยู่สถานะ ${paymentStatusText[selected?.payment_status || ''] ?? selected?.payment_status ?? '-'} ใช้ติดตามข้อมูลเท่านั้น และยังส่ง RC เข้า SML ไม่ได้`}
             </DialogDescription>
           </DialogHeader>
@@ -558,7 +559,7 @@ export default function TikTokSettlement() {
           )}
 
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => void reconcile()} disabled={!selected || selected.status === 'sent' || selected.payment_status !== 'PAID'}>ตรวจเทียบใหม่</Button>
+            <Button variant="outline" onClick={() => void reconcile()} disabled={!selected || selected.status === 'sent' || !['PAID', 'SETTLED'].includes(selected.payment_status)}>ตรวจเทียบใหม่</Button>
             <Button onClick={() => setSendConfirmOpen(true)} disabled={sending || selected?.status !== 'ready' || !route?.configured}>
               <Send className="mr-2 h-4 w-4" />
               ยืนยันส่ง RC เข้า SML
@@ -609,7 +610,7 @@ export default function TikTokSettlement() {
         open={sendConfirmOpen}
         onOpenChange={setSendConfirmOpen}
         title="ยืนยันสร้าง RC เข้า SML"
-        description={selected ? `TikTok ระบุว่า Statement ${evidenceTitle(selected)} เป็น PAID แล้ว\n${selected.items?.length ?? selected.item_count ?? 0} คำสั่งซื้อ · ยอด TikTok ${money(selected.total_settlement_amount, selected.currency)}\nรูปแบบ RC: ${route?.doc_format_code || '-'} · บัญชีรับเงิน: ${route?.passbook_name || route?.passbook_code || '-'}\nค่าใช้จ่าย TikTok: ${route?.expense_name || route?.expense_code || '-'}\n\nโปรดตรวจหลักฐานเงินเข้าจริงก่อนยืนยัน การยืนยันนี้จะสร้างเอกสารรับชำระหนี้ใน SML และไม่มี Auto RC` : ''}
+        description={selected ? `TikTok ระบุว่า Statement ${evidenceTitle(selected)} ทำ settlement แล้ว\n${selected.items?.length ?? selected.item_count ?? 0} คำสั่งซื้อ · ยอด TikTok ${money(selected.total_settlement_amount, selected.currency)}\nรูปแบบ RC: ${route?.doc_format_code || '-'} · บัญชีรับเงิน: ${route?.passbook_name || route?.passbook_code || '-'}\nค่าใช้จ่าย TikTok: ${route?.expense_name || route?.expense_code || '-'}\n\nโปรดตรวจหลักฐานเงินเข้าจริงก่อนยืนยัน การยืนยันนี้จะสร้างเอกสารรับชำระหนี้ใน SML และไม่มี Auto RC` : ''}
         confirmLabel="ยืนยันส่ง RC"
         onConfirm={confirmSend}
       />
