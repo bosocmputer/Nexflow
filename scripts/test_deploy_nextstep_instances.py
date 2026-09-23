@@ -41,6 +41,10 @@ class DeployNextstepInstancesTest(unittest.TestCase):
             rendered,
         )
         self.assertIn(
+            "VITE_ENABLE_TIKTOK_SHOP_FINANCE: ${VITE_ENABLE_TIKTOK_SHOP_FINANCE:-false}",
+            rendered,
+        )
+        self.assertIn(
             "VITE_ENABLE_MARKETPLACE_OPERATIONS: ${VITE_ENABLE_MARKETPLACE_OPERATIONS:-false}",
             rendered,
         )
@@ -234,6 +238,7 @@ class DeployNextstepInstancesTest(unittest.TestCase):
         self.assertIn("TIKTOK_SHOP_OPEN_API_ENABLED=false", rendered)
         self.assertIn("TIKTOK_SHOP_GATEWAY_TENANT=aoy", rendered)
         self.assertIn("VITE_ENABLE_TIKTOK_SHOP_API=false", rendered)
+        self.assertIn("VITE_ENABLE_TIKTOK_SHOP_FINANCE=false", rendered)
         self.assertIn("SML_SET_PRODUCT_EXPANSION_ENABLED=false", rendered)
         self.assertNotIn("aoy-password", rendered)
 
