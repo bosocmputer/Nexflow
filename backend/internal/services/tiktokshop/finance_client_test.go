@@ -204,6 +204,12 @@ func TestFinanceClientRetriesRateLimitAndPropagatesStatementTransactionCurrency(
 		if r.URL.Path != "/finance/202501/statements/statement-1/statement_transactions" {
 			t.Fatalf("path=%q", r.URL.Path)
 		}
+		if got := r.URL.Query().Get("sort_field"); got != "order_create_time" {
+			t.Fatalf("sort_field=%q", got)
+		}
+		if got := r.URL.Query().Get("shop_cipher"); got != "cipher" {
+			t.Fatalf("shop_cipher=%q", got)
+		}
 		if attempts == 1 {
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)

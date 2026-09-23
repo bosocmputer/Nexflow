@@ -393,6 +393,9 @@ func (c *FinanceClient) getTransactions(ctx context.Context, accessToken, shopCi
 	}
 	query := c.baseQuery(shopCipher)
 	query.Set("page_size", strconv.Itoa(pageSize))
+	// Required by Get Transactions by Statement v202501. TikTok can return the
+	// generic 36009004 validation code when it is omitted.
+	query.Set("sort_field", "order_create_time")
 	if strings.TrimSpace(pageToken) != "" {
 		query.Set("page_token", strings.TrimSpace(pageToken))
 	}
