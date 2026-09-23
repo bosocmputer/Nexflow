@@ -21,6 +21,8 @@ import (
 const (
 	maxDeliveryAttempts = 3
 	defaultWorkerEvery  = 15 * time.Second
+	shopeeFlexBaseColor = "#EE4D2D"
+	tikTokFlexBaseColor = "#111817"
 )
 
 var shopeeLineTimeLocation = mustLoadShopeeLineTimeLocation()
@@ -359,6 +361,7 @@ func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotificat
 		shop = fmt.Sprintf("shop_id %d", in.ShopID)
 	}
 	body := []map[string]any{
+		flexMarketplaceSourceChip("Shopee", shopeeFlexBaseColor),
 		flexText(title, "lg", "bold", "#0F172A", "", true),
 		flexText(shop, "sm", "", "#64748B", "", true),
 	}
@@ -373,7 +376,7 @@ func buildShopeeAutoSMLFlex(title, kind string, in models.ShopeeAutoSMLNotificat
 	if items := shopeeAutoSMLProductLines(in, autoSMLNotificationItemLimit); len(items) > 0 {
 		body = append(body,
 			map[string]any{"type": "separator", "margin": "md"},
-			flexText("รายการสินค้า", "sm", "bold", "#334155", "md", true),
+			flexText("สินค้า", "sm", "bold", "#334155", "md", true),
 		)
 		for _, item := range items {
 			body = append(body, flexText(item, "sm", "", "#0F172A", "", true))
@@ -722,14 +725,12 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 	title := "ออเดอร์ TikTok Shop ใหม่"
 	alt := strings.Join(filterNonEmpty([]string{title, shop, amount}), " · ")
 	body := []map[string]any{
-		tikTokShopFlexHeader("ออเดอร์ใหม่"),
+		flexMarketplaceSourceChip("TikTok Shop", tikTokFlexBaseColor),
 		flexText(title, "lg", "bold", "#0F172A", "", true),
 		flexText(shop, "sm", "", "#64748B", "", true),
 	}
 	if amount != "" {
-		// The compact black total keeps TikTok identifiable without adding a
-		// second alert colour; success/review/failure colours remain semantic.
-		body = append(body, flexAmountRow("ยอดลูกค้าชำระ", amount+" "+currency, "#111111"))
+		body = append(body, flexAmountRow("ยอดลูกค้าชำระ", amount+" "+currency, tikTokFlexBaseColor))
 	}
 	createdAt := ""
 	if !in.CreatedAt.IsZero() {
@@ -798,15 +799,15 @@ func buildTikTokShopAutoSMLFlex(title, kind string, in models.TikTokAutoSMLNotif
 	if currency == "" {
 		currency = "THB"
 	}
-	statusLabel, accent := "ส่ง SML แล้ว", "#16A34A"
+	accent := "#16A34A"
 	if kind == "review" {
-		statusLabel, accent = "ต้องตรวจสอบ", "#D97706"
+		accent = "#D97706"
 	} else if kind == "failure" {
-		statusLabel, accent = "ส่ง SML ไม่สำเร็จ", "#DC2626"
+		accent = "#DC2626"
 	}
 	alt := strings.Join(filterNonEmpty([]string{title, shop, strings.TrimSpace(in.OrderID), strings.TrimSpace(in.SMLDocNo)}), " · ")
 	body := []map[string]any{
-		tikTokShopFlexHeader(statusLabel),
+		flexMarketplaceSourceChip("TikTok Shop", tikTokFlexBaseColor),
 		flexText(title, "lg", "bold", "#0F172A", "", true),
 		flexText(shop, "sm", "", "#64748B", "", true),
 	}
@@ -815,8 +816,6 @@ func buildTikTokShopAutoSMLFlex(title, kind string, in models.TikTokAutoSMLNotif
 	}
 	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{
 		{Label: "Order ID", Value: strings.TrimSpace(in.OrderID)},
-	})
-	body = appendFlexSection(body, "เอกสาร", []flexKVRow{
 		{Label: "Bill ID", Value: strings.TrimSpace(in.BillID)},
 		{Label: "เลขเอกสาร SML", Value: strings.TrimSpace(in.SMLDocNo)},
 	})
@@ -832,8 +831,8 @@ func buildTikTokShopAutoSMLFlex(title, kind string, in models.TikTokAutoSMLNotif
 	if message := compactWhitespace(in.ErrorMessage); message != "" {
 		body = append(body,
 			map[string]any{"type": "separator", "margin": "md"},
-			flexText("สิ่งที่ต้องทำ", "sm", "bold", accent, "md", true),
-			flexText(truncateRunes(message, 240), "sm", "", "#0F172A", "", true),
+			flexText("สิ่งที่ต้องดำเนินการ", "sm", "bold", "#334155", "md", true),
+			flexText(truncateRunes(message, 240), "sm", "", accent, "", true),
 		)
 	}
 	return alt, map[string]any{
@@ -854,15 +853,20 @@ func tikTokShopAutoSMLActionURL(publicBaseURL string, in models.TikTokAutoSMLNot
 	return TikTokShopOrderActionURL(publicBaseURL, in.OrderID)
 }
 
-// tikTokShopFlexHeader makes TikTok Shop messages visibly distinct from Shopee
-// while retaining the shared, compact Flex layout used across Nexflow.
-func tikTokShopFlexHeader(eventLabel string) map[string]any {
+// flexMarketplaceSourceChip mirrors the compact Marketplace channel tag in
+// Nexflow. It keeps the Flex hierarchy identical between channels while the
+// base color alone identifies the source.
+func flexMarketplaceSourceChip(label, color string) map[string]any {
 	return map[string]any{
-		"type": "box", "layout": "horizontal", "alignItems": "center", "justifyContent": "space-between",
-		"backgroundColor": "#111111", "cornerRadius": "md", "paddingAll": "10px",
+		"type": "box", "layout": "horizontal",
 		"contents": []map[string]any{
-			{"type": "text", "text": "TikTok Shop", "size": "sm", "weight": "bold", "color": "#FFFFFF", "flex": 3, "wrap": true},
-			{"type": "text", "text": strings.TrimSpace(eventLabel), "size": "xs", "weight": "bold", "color": "#25F4EE", "align": "end", "flex": 2, "wrap": true},
+			{
+				"type": "box", "layout": "vertical", "flex": 0,
+				"backgroundColor": firstNonEmpty(color, "#334155"), "cornerRadius": "sm", "paddingAll": "6px",
+				"contents": []map[string]any{
+					{"type": "text", "text": fallbackDash(label), "size": "xs", "weight": "bold", "color": "#FFFFFF", "wrap": true},
+				},
+			},
 		},
 	}
 }
@@ -1033,6 +1037,7 @@ func BuildShopeeNewOrderLineFlex(job models.LineNotificationDeliveryJob) (string
 	}
 
 	bodyContents := []map[string]any{
+		flexMarketplaceSourceChip("Shopee", shopeeFlexBaseColor),
 		{
 			"type":   "text",
 			"text":   title,
@@ -1066,7 +1071,7 @@ func BuildShopeeNewOrderLineFlex(job models.LineNotificationDeliveryJob) (string
 					"text":   amount,
 					"size":   "xl",
 					"weight": "bold",
-					"color":  "#2563EB",
+					"color":  shopeeFlexBaseColor,
 					"align":  "end",
 					"flex":   2,
 				},
@@ -1161,9 +1166,10 @@ func BuildShopeeNewOrderRichLineFlexWithPayment(snap *models.ShopeeOrderSnapshot
 	}
 
 	body := []map[string]any{
+		flexMarketplaceSourceChip("Shopee", shopeeFlexBaseColor),
 		flexText(title, "lg", "bold", "#0F172A", "", true),
 		flexText(fallbackDash(shop), "sm", "", "#64748B", "", true),
-		flexAmountRow("ยอดลูกค้าชำระ", amountLabel, "#2563EB"),
+		flexAmountRow("ยอดลูกค้าชำระ", amountLabel, shopeeFlexBaseColor),
 	}
 	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{
 		{"Order SN", orderSN},

@@ -53,9 +53,14 @@ func TestBuildTikTokShopNewOrderMessagesAreBoundedAndPIIFree(t *testing.T) {
 	if strings.Contains(string(raw), "ไม่มีชื่อผู้รับ") {
 		t.Fatalf("TikTok Flex must omit privacy boilerplate while remaining PII-free: %s", raw)
 	}
-	for _, want := range []string{"ออเดอร์ TikTok Shop ใหม่", "henna_milkford", "586030483469993439", "คำสั่งซื้อ", "การชำระเงิน", "สินค้า"} {
+	for _, want := range []string{"TikTok Shop", "#111817", "ออเดอร์ TikTok Shop ใหม่", "henna_milkford", "586030483469993439", "คำสั่งซื้อ", "การชำระเงิน", "สินค้า"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("TikTok Flex missing %q: %s", want, raw)
+		}
+	}
+	for _, removed := range []string{"#111111", "#25F4EE"} {
+		if strings.Contains(string(raw), removed) {
+			t.Fatalf("TikTok Flex retained the removed full-width header color %q: %s", removed, raw)
 		}
 	}
 }
@@ -129,9 +134,14 @@ func TestTikTokShopAutoSMLMessagesAreDistinctAndPIIFree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"TikTok Shop", "#111111", "#25F4EE", "BF-INV26090001", "ส่ง SML แล้ว", "คำสั่งซื้อ", "เอกสาร", "สินค้า"} {
+	for _, want := range []string{"TikTok Shop", "#111817", "BF-INV26090001", "สร้างบิล SML จาก TikTok Shop สำเร็จ", "คำสั่งซื้อ", "สินค้า"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("TikTok Auto SML Flex missing %q: %s", want, raw)
+		}
+	}
+	for _, removed := range []string{"#111111", "#25F4EE", "\"เอกสาร\""} {
+		if strings.Contains(string(raw), removed) {
+			t.Fatalf("TikTok Auto SML Flex retained obsolete header or split section %q: %s", removed, raw)
 		}
 	}
 	if strings.Contains(string(raw), "ไม่มีชื่อผู้รับ") {

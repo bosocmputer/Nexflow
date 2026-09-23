@@ -105,7 +105,7 @@ func TestBuildShopeeAutoSMLMessagesAreOperationalAndOmitBuyerPII(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal auto SML flex: %v", err)
 	}
-	for _, want := range []string{"รายการสินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2", "ค่าจัดส่งเข้า SML", "15.00 บาท · AH-0061 · 1 ชิ้น"} {
+	for _, want := range []string{"Shopee", "#EE4D2D", "สินค้า", "สีเพ้นคิ้วเฮนน่า (3.น้ำตาลดำ) x2", "ค่าจัดส่งเข้า SML", "15.00 บาท · AH-0061 · 1 ชิ้น"} {
 		if !strings.Contains(string(buf), want) {
 			t.Fatalf("auto SML flex missing %q: %s", want, buf)
 		}
@@ -370,6 +370,8 @@ func TestBuildShopeeNewOrderLineFlexContainsReadableSalesDetails(t *testing.T) {
 	}
 	body := string(buf)
 	for _, want := range []string{
+		"Shopee",
+		"#EE4D2D",
 		"ออเดอร์ Shopee ใหม่",
 		"Henna.milkford",
 		"165.00",
@@ -423,6 +425,8 @@ func TestBuildShopeeNewOrderRichLineFlexShowsPaymentShippingAndOmitsPII(t *testi
 	}
 	body := string(buf)
 	for _, want := range []string{
+		"Shopee",
+		"#EE4D2D",
 		"ยอดลูกค้าชำระ",
 		"Credit Card/Debit Card",
 		"ค่าส่งประมาณการ",
