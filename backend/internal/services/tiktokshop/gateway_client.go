@@ -461,8 +461,14 @@ func (c *GatewayClient) SearchFinanceStatements(ctx context.Context, input Gatew
 	if err := c.call(ctx, GatewayFinanceStatementsPath, input, &output); err != nil {
 		return nil, err
 	}
-	if err := validateStatements(output.Statements); err != nil || output.TotalCount < int64(len(output.Statements)) {
-		return nil, ErrInvalidOrderResponse
+	if err := validateStatements(output.Statements); err != nil {
+		return nil, fmt.Errorf("validate TikTok Shop gateway statements: %w", err)
+	}
+	// TikTok may return a stale total_count while still returning valid rows.
+	// The cursor and validated rows govern pagination; normalize the display
+	// count instead of hiding financial evidence from the tenant.
+	if output.TotalCount < int64(len(output.Statements)) {
+		output.TotalCount = int64(len(output.Statements))
 	}
 	if output.Statements == nil {
 		output.Statements = []Statement{}

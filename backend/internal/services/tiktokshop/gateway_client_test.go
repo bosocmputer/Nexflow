@@ -76,6 +76,21 @@ func TestGatewayClientRejectsInvalidBaseURLAsNotConfigured(t *testing.T) {
 	}
 }
 
+func TestGatewayClientKeepsTikTokStatementsWhenGatewayCountIsStale(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != GatewayFinanceStatementsPath {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"tts-statement","total_count":0,"statements":[{"id":"statement-1","payment_status":"PROCESSING","currency":"THB","statement_time":1725000000,"settlement_amount":"0.00"}]}}`))
+	}))
+	defer server.Close()
+	client := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, Tenant: "aoy", SharedSecret: "tenant-secret", HTTPClient: server.Client()})
+	result, err := client.SearchFinanceStatements(context.Background(), GatewayFinanceStatementsRequest{ShopID: "shop-1", Search: SearchStatementsRequest{PageSize: 1, StatementTimeGE: 1, StatementTimeLT: 2}})
+	if err != nil || len(result.Statements) != 1 || result.TotalCount != 1 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func TestGatewayClientReadsOrdersThroughTenantScopedGateway(t *testing.T) {
 	now := time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
