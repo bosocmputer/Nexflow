@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
-  Download,
   ReceiptText,
   RefreshCw,
   Send,
@@ -112,6 +111,12 @@ type WithdrawalRound = {
   currency: string
   status: string
   create_time: string
+}
+
+type WithdrawalReconciliation = {
+  withdrawal: WithdrawalRound
+  candidates: Run[]
+  message: string
 }
 
 const money = (value?: number, currency = 'THB') => new Intl.NumberFormat('th-TH', {
@@ -231,26 +236,6 @@ export default function TikTokSettlement() {
     }
   }
 
-  const importStatements = async () => {
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนดึง Statement')
-      return
-    }
-    try {
-      const response = await client.post<{ imported_count: number; partial?: boolean; message?: string }>(
-        '/api/tiktok-settlements/import',
-        { shop_id: resolvedShopID, date_from: from, date_to: to },
-      )
-      const message = response.data.message ?? 'ดึง Statement แล้ว'
-      setImportNotice({ message, partial: Boolean(response.data.partial) })
-      if (response.data.partial) toast.warning(message)
-      else toast.success(message)
-      await load()
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'ดึง Statement ไม่สำเร็จ')
-    }
-  }
-
   const inspectWithdrawals = async () => {
     if (!resolvedShopID) {
       toast.error('กรุณาเลือกร้านก่อนดูรอบถอนเงิน')
@@ -269,6 +254,30 @@ export default function TikTokSettlement() {
     } catch (error: any) {
       setWithdrawalOpen(false)
       toast.error(error?.response?.data?.error?.message ?? 'ดึงรอบถอนเงิน TikTok Shop ไม่สำเร็จ')
+    } finally {
+      setWithdrawalLoading(false)
+    }
+  }
+
+  const reconcileWithdrawal = async (withdrawal: WithdrawalRound) => {
+    if (!resolvedShopID) return
+    setWithdrawalLoading(true)
+    try {
+      const response = await client.post<{ data: WithdrawalReconciliation }>(
+        '/api/tiktok-settlements/withdrawals/reconcile',
+        { shop_id: resolvedShopID, withdrawal_id: withdrawal.withdrawal_id, date_from: from, date_to: to },
+      )
+      const result = response.data.data
+      setImportNotice({ message: result.message, partial: result.candidates.length !== 1 })
+      await load()
+      if (result.candidates.length === 1) {
+        setWithdrawalOpen(false)
+        await open(result.candidates[0])
+        return
+      }
+      toast.warning(result.message)
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error?.message ?? 'ตรวจออเดอร์จากรอบถอนเงินไม่สำเร็จ')
     } finally {
       setWithdrawalLoading(false)
     }
@@ -361,7 +370,7 @@ export default function TikTokSettlement() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight text-foreground">รับชำระ TikTok Shop</h1>
               <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-strong">RC</code>
-              <p className="sr-only">ตรวจ Statement ที่ TikTok แจ้งว่าโอนแล้วก่อนสร้างเอกสารรับชำระหนี้ใน SML</p>
+              <p className="sr-only">เลือกรอบถอนเงิน TikTok Shop เพื่อตรวจออเดอร์ก่อนสร้างเอกสารรับชำระหนี้ใน SML</p>
               <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
               <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
                 <ReceiptText className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
@@ -378,13 +387,9 @@ export default function TikTokSettlement() {
             <SettlementMetricChip label="ส่งแล้ว" value={counts.sent ?? 0} tone="success" />
             <SettlementMetricChip label="ต้องตรวจ" value={counts.needs_review ?? 0} tone="warning" />
             <SettlementMetricChip label="ผิดพลาด" value={counts.failed ?? 0} tone="danger" />
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={importStatements}>
-              <Download className="h-4 w-4" />
-              ดึง Statement
-            </Button>
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={inspectWithdrawals}>
+            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={inspectWithdrawals}>
               <WalletCards className="h-4 w-4" />
-              ดูรอบถอนเงิน
+              เลือกรอบถอนเงิน
             </Button>
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={preflight}>
               <CheckCircle2 className="h-4 w-4" />
@@ -427,8 +432,8 @@ export default function TikTokSettlement() {
                 setTo(range.to)
               }}
               presets={tiktokStatementPresets}
-              title="วันที่ TikTok แจ้งว่าโอน"
-              description="กรอง Statement ตามวันที่ TikTok ระบุการชำระเงิน"
+              title="ช่วงวันที่รอบถอนเงิน"
+              description="ใช้ค้นหารอบถอนเงินและตรวจรายการที่เกี่ยวข้อง"
               className="!h-8 w-full !min-w-0 text-xs sm:w-[260px]"
             />
             <Select value={paymentStatus} onValueChange={setPaymentStatus}>
@@ -611,7 +616,7 @@ export default function TikTokSettlement() {
           {withdrawalLoading ? (
             <p className="py-6 text-center text-sm text-muted-foreground">กำลังดึงรอบถอนเงิน…</p>
           ) : withdrawals.length === 0 ? (
-            <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">ไม่พบรายการกดถอนเงินในช่วงวันที่เลือก</p>
+              <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">ไม่พบรายการกดถอนเงินในช่วงวันที่เลือก</p>
           ) : (
             <div className="space-y-2">
               {withdrawalsTruncated && (
@@ -630,6 +635,9 @@ export default function TikTokSettlement() {
                     <div className="text-right">
                       <p className="font-medium tabular-nums">{money(Number(withdrawal.amount), withdrawal.currency)}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">{withdrawal.status}</p>
+                      <Button className="mt-2 h-7" size="sm" disabled={withdrawalLoading || withdrawal.status !== 'SUCCESS'} onClick={() => void reconcileWithdrawal(withdrawal)}>
+                        ดูออเดอร์
+                      </Button>
                     </div>
                   </div>
                 ))}
