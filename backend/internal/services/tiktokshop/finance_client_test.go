@@ -70,6 +70,22 @@ func TestFinanceClientUsesOfficialAllStatusDefaultWhenStatusIsOmitted(t *testing
 	}
 }
 
+func TestFinanceClientKeepsValidatedStatementsWhenTikTokCountIsStale(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"request_id":"stale-count","data":{"total_count":0,"statements":[{"id":"statement-1","payment_status":"PROCESSING","currency":"THB","statement_time":1725000000,"settlement_amount":"0.00"}]}}`))
+	}))
+	defer server.Close()
+	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: server.URL, AppKey: "key", AppSecret: "secret", HTTPClient: server.Client(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _, err := client.SearchStatements(context.Background(), "token", "cipher", SearchStatementsRequest{PageSize: 1, StatementTimeGE: now.Add(-time.Hour).Unix(), StatementTimeLT: now.Unix()})
+	if err != nil || len(result.Statements) != 1 || result.TotalCount != 1 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func TestFinanceClientSearchesWithdrawalRoundsWithoutSensitivePayoutFields(t *testing.T) {
 	now := time.Unix(1_725_000_000, 0)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

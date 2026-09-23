@@ -301,8 +301,12 @@ func (c *FinanceClient) SearchStatements(ctx context.Context, accessToken, shopC
 	if err := validateStatements(output.Statements); err != nil {
 		return nil, requestID, fmt.Errorf("validate TikTok Shop statements: %w", err)
 	}
+	// TikTok has returned Statement rows with total_count=0 in production.  The
+	// cursor and the validated rows are the source of truth; treating a stale
+	// aggregate as a fatal error would silently hide financial evidence.  Keep a
+	// coherent local count without inventing a row or a future page.
 	if output.TotalCount < int64(len(output.Statements)) {
-		return nil, requestID, fmt.Errorf("TikTok Shop statement total is smaller than returned rows: %w", ErrInvalidOrderResponse)
+		output.TotalCount = int64(len(output.Statements))
 	}
 	if output.Statements == nil {
 		output.Statements = []Statement{}
