@@ -45,13 +45,13 @@ type tikTokIncomeOrder struct {
 }
 
 type tikTokIncomeWithdrawal struct {
-	ID          string
-	Type        string
-	RequestedAt string
-	AmountCents int64
-	Status      string
-	CompletedAt string
-	Currency    string
+	ID          string `json:"withdrawal_id"`
+	Type        string `json:"type"`
+	RequestedAt string `json:"requested_at"`
+	AmountCents int64  `json:"amount_cents"`
+	Status      string `json:"status"`
+	CompletedAt string `json:"completed_at"`
+	Currency    string `json:"currency"`
 }
 
 type tikTokIncomeWithdrawalSelection struct {
@@ -137,7 +137,16 @@ func validateTikTokIncomeReceiptAttestation(export tikTokIncomeExport, withdrawa
 	if strings.TrimSpace(confirmation) != tikTokIncomeBankReceiptConfirmation {
 		return fmt.Errorf("กรุณายืนยันว่าเงินเข้าบัญชีจริงและไฟล์นี้เป็นรายละเอียดของรอบถอนที่เลือก")
 	}
+	seenOrders := make(map[string]struct{}, len(export.Orders))
 	for _, order := range export.Orders {
+		orderID := strings.TrimSpace(order.OrderID)
+		if orderID == "" {
+			return fmt.Errorf("ไฟล์มีคำสั่งซื้อที่ไม่มีเลขอ้างอิง")
+		}
+		if _, exists := seenOrders[orderID]; exists {
+			return fmt.Errorf("ไฟล์มีคำสั่งซื้อ %s ซ้ำ จึงต้องตรวจไฟล์ก่อนสร้าง RC", orderID)
+		}
+		seenOrders[orderID] = struct{}{}
 		if !tikTokIncomeIsOrderTransaction(order.TransactionType) {
 			return fmt.Errorf("ไฟล์มีรายการ %q ที่ไม่ใช่คำสั่งซื้อ เช่น การปรับยอดหรือคืนเงิน", strings.TrimSpace(order.TransactionType))
 		}

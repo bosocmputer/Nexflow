@@ -70,6 +70,8 @@ export const ACTION_META: Record<string, ActionMeta> = {
   tiktok_settlement_preflight_failed: { label: 'ตรวจระบบรับชำระ TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_settlement_import_completed: { label: 'ดึง Statement TikTok Shop แล้ว', emoji: '📥', tone: 'info' },
   tiktok_settlement_import_failed: { label: 'ดึง Statement TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
+  tiktok_income_export_previewed: { label: 'ตรวจไฟล์รายได้ TikTok Shop แล้ว', emoji: '📄', tone: 'info' },
+  tiktok_income_export_receipt_candidate_created: { label: 'สร้างร่างรับชำระ TikTok จากไฟล์รายได้แล้ว', emoji: '🧾', tone: 'info' },
   tiktok_settlement_withdrawal_search_completed: { label: 'ดึงรอบถอนเงิน TikTok Shop แล้ว', emoji: '💳', tone: 'info' },
   tiktok_settlement_withdrawal_search_failed: { label: 'ดึงรอบถอนเงิน TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_settlement_reconciled: { label: 'ตรวจเทียบ Statement TikTok Shop แล้ว', emoji: '🔎', tone: 'info' },

@@ -109,6 +109,54 @@ func TestValidateTikTokIncomeReceiptAttestationRejectsUnconfirmedOrNonOrderRows(
 	}
 }
 
+func TestValidateTikTokIncomeReceiptAttestationRejectsDuplicateOrder(t *testing.T) {
+	export := tikTokIncomeExport{
+		Currency:                "THB",
+		OrderPaymentTotalCents:  8_000,
+		ReportPaymentTotalCents: 8_000,
+		Orders: []tikTokIncomeOrder{
+			{OrderID: "ORDER-1", TransactionType: "คำสั่งซื้อ", Currency: "THB", PaymentCents: 4_000},
+			{OrderID: "ORDER-1", TransactionType: "คำสั่งซื้อ", Currency: "THB", PaymentCents: 4_000},
+		},
+		Withdrawals: []tikTokIncomeWithdrawal{{ID: "WITHDRAW-1", AmountCents: 8_000, Status: "Transferred", Currency: "THB"}},
+	}
+	if err := validateTikTokIncomeReceiptAttestation(export, "WITHDRAW-1", tikTokIncomeBankReceiptConfirmation); err == nil || !strings.Contains(err.Error(), "ซ้ำ") {
+		t.Fatalf("duplicate order must block receipt: %v", err)
+	}
+}
+
+func TestTikTokIncomeCentsDecimalPreservesExactCents(t *testing.T) {
+	for _, test := range []struct {
+		cents int64
+		want  string
+	}{{0, "0.00"}, {123, "1.23"}, {-123, "-1.23"}} {
+		if got := tikTokIncomeCentsDecimal(test.cents); got != test.want {
+			t.Fatalf("tikTokIncomeCentsDecimal(%d) = %q, want %q", test.cents, got, test.want)
+		}
+	}
+}
+
+func TestTikTokIncomePreviewIsUserScopedOneTimeAndExpires(t *testing.T) {
+	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	h := &TikTokSettlementHandler{}
+	preview := &tikTokIncomePendingPreview{export: &tikTokIncomeExport{}, userID: "user-a", createdAt: now}
+	if !h.storeIncomePreview("preview-1", preview, now) {
+		t.Fatal("store preview")
+	}
+	if _, ok := h.consumeIncomePreview("preview-1", "user-b", now); ok {
+		t.Fatal("different user must not consume preview")
+	}
+	if _, ok := h.consumeIncomePreview("preview-1", "user-a", now); ok {
+		t.Fatal("preview must be one-time even after invalid user attempt")
+	}
+	if !h.storeIncomePreview("preview-2", preview, now) {
+		t.Fatal("store second preview")
+	}
+	if _, ok := h.consumeIncomePreview("preview-2", "user-a", now.Add(tikTokIncomePreviewTTL+time.Second)); ok {
+		t.Fatal("expired preview must not be consumed")
+	}
+}
+
 func writeTikTokIncomeRow(t *testing.T, f *excelize.File, sheet string, row int, values []string) {
 	t.Helper()
 	for col, value := range values {

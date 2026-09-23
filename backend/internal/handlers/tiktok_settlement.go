@@ -6,6 +6,7 @@ package handlers
 // render and never sends a partial statement.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -13,11 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,6 +52,8 @@ type TikTokSettlementHandler struct {
 	lineNotifications *repository.LineNotificationRepo
 	broker            *events.Broker
 	logger            *zap.Logger
+	pendingIncomeMu   sync.Mutex
+	pendingIncome     map[string]*tikTokIncomePendingPreview
 }
 
 type tikTokSettlementImportRequest struct {
@@ -153,11 +158,33 @@ type tikTokSettlementPaymentView struct {
 	ObservedFields []string `json:"observed_fields,omitempty"`
 }
 
+const (
+	tikTokIncomePreviewTTL     = 15 * time.Minute
+	tikTokIncomeMaxFileBytes   = 20 * 1024 * 1024
+	tikTokIncomeMaxPreviews    = 16
+	tikTokIncomeEvidencePrefix = "income-export:"
+)
+
+type tikTokIncomePendingPreview struct {
+	export    *tikTokIncomeExport
+	shopID    string
+	userID    string
+	fileHash  string
+	createdAt time.Time
+}
+
+type tikTokIncomeReceiptConfirmRequest struct {
+	PreviewToken   string `json:"preview_token"`
+	WithdrawalID   string `json:"withdrawal_id"`
+	BankReceivedAt string `json:"bank_received_at"`
+	Confirmation   string `json:"confirmation"`
+}
+
 func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktokshop.GatewayClient, routes *repository.ChannelDefaultRepo, audit *repository.AuditLogRepo, smlBridge *ShopeeImportHandler, notifications *repository.NotificationRepo, lineNotifications *repository.LineNotificationRepo, broker *events.Broker, logger *zap.Logger) *TikTokSettlementHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &TikTokSettlementHandler{db: db, config: cfg, gateway: gateway, routes: routes, audit: audit, sml: smlBridge, notifications: notifications, lineNotifications: lineNotifications, broker: broker, logger: logger}
+	return &TikTokSettlementHandler{db: db, config: cfg, gateway: gateway, routes: routes, audit: audit, sml: smlBridge, notifications: notifications, lineNotifications: lineNotifications, broker: broker, logger: logger, pendingIncome: make(map[string]*tikTokIncomePendingPreview)}
 }
 
 func (h *TikTokSettlementHandler) financeEnabled() bool {
@@ -186,15 +213,15 @@ func (h *TikTokSettlementHandler) Preflight(c *gin.Context) {
 		return
 	}
 	to, from := time.Now(), time.Now().Add(-24*time.Hour)
-	result, err := h.gateway.SearchFinanceStatements(c.Request.Context(), tiktokshop.GatewayFinanceStatementsRequest{ShopID: shopID, Search: tiktokshop.SearchStatementsRequest{PageSize: 1, StatementTimeGE: from.Unix(), StatementTimeLT: to.Unix(), StatementStatus: tiktokshop.StatementStatusPaid}})
+	result, err := h.gateway.SearchFinanceWithdrawals(c.Request.Context(), tiktokshop.GatewayFinanceWithdrawalsRequest{ShopID: shopID, Search: tiktokshop.SearchWithdrawalsRequest{PageSize: 1, CreateTimeGE: from.Unix(), CreateTimeLT: to.Unix()}})
 	if err != nil {
 		h.auditEvent(c, "tiktok_settlement_preflight_failed", "error", map[string]any{"shop_id": shopID, "error_code": financeErrorCode(err)})
 		h.error(c, http.StatusBadGateway, financeErrorCode(err), financeThaiError(err))
 		return
 	}
 	_, _ = h.db.ExecContext(c.Request.Context(), `UPDATE tiktok_shop_settlement_settings SET last_successful_preflight_at=NOW(),updated_at=NOW() WHERE shop_id=$1`, shopID)
-	h.auditEvent(c, "tiktok_settlement_preflight_completed", "info", map[string]any{"shop_id": shopID, "result_count": len(result.Statements), "request_id": safeRequestID(result.UpstreamRequestID)})
-	c.JSON(200, gin.H{"data": gin.H{"status": "ready", "message": "พร้อมใช้: เชื่อมต่อข้อมูลการเงิน TikTok Shop ได้", "statement_count": len(result.Statements)}})
+	h.auditEvent(c, "tiktok_settlement_preflight_completed", "info", map[string]any{"shop_id": shopID, "result_count": len(result.Withdrawals), "request_id": safeRequestID(result.UpstreamRequestID)})
+	c.JSON(200, gin.H{"data": gin.H{"status": "ready", "message": "พร้อมใช้: เชื่อมต่อข้อมูลรอบถอนเงิน TikTok Shop ได้", "withdrawal_count": len(result.Withdrawals)}})
 }
 
 func (h *TikTokSettlementHandler) Import(c *gin.Context) {
@@ -236,6 +263,165 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 		message = "ดึง Statement ที่ TikTok แจ้งว่าโอนแล้วแล้ว แต่ TikTok ยังตอบสถานะรอโอน/โอนไม่สำเร็จไม่ได้ในขณะนี้ จึงยังไม่แสดงสองสถานะดังกล่าว"
 	}
 	c.JSON(http.StatusAccepted, gin.H{"imported_count": importResult.count, "partial": len(importResult.unavailableStatuses) > 0, "unavailable_statuses": importResult.unavailableStatuses, "message": message})
+}
+
+// PreviewIncomeExport parses an official Seller Center Income export locally.
+// It deliberately stores no raw workbook and writes no finance/SML record. The
+// result expires, is user-scoped, and requires an explicit bank attestation in
+// the next step because TikTok does not expose withdrawal membership in TH.
+func (h *TikTokSettlementHandler) PreviewIncomeExport(c *gin.Context) {
+	if !h.financeEnabled() {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, tikTokIncomeMaxFileBytes)
+	shopID := strings.TrimSpace(c.PostForm("shop_id"))
+	if shopID == "" {
+		h.error(c, http.StatusBadRequest, "shop_required", "กรุณาเลือกร้าน TikTok Shop ก่อนนำเข้าไฟล์รายได้")
+		return
+	}
+	if ok, err := h.readEnabled(c.Request.Context(), shopID); err != nil {
+		h.error(c, http.StatusInternalServerError, "settings_read_failed", "อ่านการตั้งค่าร้านไม่สำเร็จ")
+		return
+	} else if !ok {
+		h.error(c, http.StatusForbidden, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		h.error(c, http.StatusBadRequest, "file_required", "กรุณาเลือกไฟล์ Excel รายได้จาก TikTok Shop")
+		return
+	}
+	if file.Size <= 0 || file.Size > tikTokIncomeMaxFileBytes || !strings.HasSuffix(strings.ToLower(strings.TrimSpace(file.Filename)), ".xlsx") {
+		h.error(c, http.StatusBadRequest, "invalid_file", "รองรับเฉพาะไฟล์ .xlsx จาก TikTok Shop ขนาดไม่เกิน 20 MB")
+		return
+	}
+	src, err := file.Open()
+	if err != nil {
+		h.error(c, http.StatusBadRequest, "file_open_failed", "เปิดไฟล์รายได้ TikTok ไม่สำเร็จ")
+		return
+	}
+	defer src.Close()
+	data, err := io.ReadAll(io.LimitReader(src, tikTokIncomeMaxFileBytes+1))
+	if err != nil || len(data) == 0 || len(data) > tikTokIncomeMaxFileBytes {
+		h.error(c, http.StatusBadRequest, "invalid_file", "อ่านไฟล์รายได้ TikTok ไม่สำเร็จ หรือไฟล์มีขนาดเกินกำหนด")
+		return
+	}
+	export, err := parseTikTokIncomeExport(bytes.NewReader(data))
+	if err != nil {
+		h.error(c, http.StatusUnprocessableEntity, "income_export_invalid", errorText(err))
+		return
+	}
+	fileHash := sha256.Sum256(data)
+	token, err := randomTikTokPreviewToken()
+	if err != nil {
+		h.error(c, http.StatusInternalServerError, "preview_unavailable", "สร้างตัวอย่างไฟล์ไม่สำเร็จ กรุณาลองใหม่")
+		return
+	}
+	if !h.storeIncomePreview(token, &tikTokIncomePendingPreview{
+		export: export, shopID: shopID, userID: c.GetString("user_id"),
+		fileHash: hex.EncodeToString(fileHash[:]), createdAt: time.Now(),
+	}, time.Now()) {
+		h.error(c, http.StatusTooManyRequests, "income_preview_limit", "มีการตรวจไฟล์รายได้ค้างอยู่มากเกินไป กรุณารอ 15 นาทีแล้วลองใหม่")
+		return
+	}
+	h.auditEvent(c, "tiktok_income_export_previewed", "info", map[string]any{
+		"shop_id": shopID, "order_count": len(export.Orders), "withdrawal_count": len(export.Withdrawals),
+	})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"preview_token": token, "currency": export.Currency,
+		"order_count": len(export.Orders), "order_payment_total": moneyFromCents(export.OrderPaymentTotalCents),
+		"report_payment_total": moneyFromCents(export.ReportPaymentTotalCents), "withdrawals": export.Withdrawals,
+		"message": "อ่านไฟล์แล้ว เลือกรอบถอนและยืนยันว่าเงินเข้าบัญชีจริงก่อนสร้างร่าง RC",
+	}})
+}
+
+// CreateIncomeReceiptCandidate persists an immutable, locally-attested RC
+// candidate. It does not call SML. A separate existing confirmed-send action
+// remains the only SML write path.
+func (h *TikTokSettlementHandler) CreateIncomeReceiptCandidate(c *gin.Context) {
+	if !h.financeEnabled() {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	var req tikTokIncomeReceiptConfirmRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลยืนยันรอบถอนเงินไม่ถูกต้อง")
+		return
+	}
+	pending, ok := h.consumeIncomePreview(req.PreviewToken, c.GetString("user_id"), time.Now())
+	if !ok {
+		h.error(c, http.StatusConflict, "preview_expired", "ตัวอย่างไฟล์หมดอายุหรือถูกใช้แล้ว กรุณาอัปโหลดใหม่")
+		return
+	}
+	if err := validateTikTokIncomeReceiptAttestation(*pending.export, req.WithdrawalID, req.Confirmation); err != nil {
+		h.error(c, http.StatusUnprocessableEntity, "income_receipt_blocked", errorText(err))
+		return
+	}
+	bankReceivedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(req.BankReceivedAt))
+	if err != nil || bankReceivedAt.After(time.Now().Add(5*time.Minute)) {
+		h.error(c, http.StatusBadRequest, "bank_received_at_invalid", "กรุณาระบุวันและเวลาที่เงินเข้าบัญชีจริง")
+		return
+	}
+	if ok, err := h.readEnabled(c.Request.Context(), pending.shopID); err != nil {
+		h.error(c, http.StatusInternalServerError, "settings_read_failed", "อ่านการตั้งค่าร้านไม่สำเร็จ")
+		return
+	} else if !ok {
+		h.error(c, http.StatusForbidden, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	withdrawal, _ := pending.export.SelectWithdrawal(req.WithdrawalID)
+	run, err := h.createIncomeExportRun(c.Request.Context(), pending, withdrawal.Withdrawal, bankReceivedAt, c.GetString("user_id"), c.GetString("user_email"))
+	if err != nil {
+		if strings.Contains(err.Error(), "already imported") {
+			h.error(c, http.StatusConflict, "withdrawal_already_imported", "รอบถอนนี้ถูกนำเข้าแล้ว ระบบจะไม่สร้างร่าง RC ซ้ำ")
+			return
+		}
+		h.logger.Warn("create TikTok income export receipt candidate failed", zap.String("shop_id", pending.shopID), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "income_receipt_create_failed", "สร้างร่าง RC จากไฟล์รายได้ไม่สำเร็จ")
+		return
+	}
+	h.auditEvent(c, "tiktok_income_export_receipt_candidate_created", "info", map[string]any{
+		"shop_id": pending.shopID, "withdrawal_id": withdrawal.Withdrawal.ID, "run_id": run.ID, "order_count": run.ItemCount,
+	})
+	c.JSON(http.StatusCreated, gin.H{"data": run, "message": "สร้างร่าง RC แล้ว กรุณาตรวจรายการก่อนกดยืนยันส่งเข้า SML"})
+}
+
+func (h *TikTokSettlementHandler) consumeIncomePreview(token, userID string, now time.Time) (*tikTokIncomePendingPreview, bool) {
+	h.pendingIncomeMu.Lock()
+	defer h.pendingIncomeMu.Unlock()
+	if h.pendingIncome == nil {
+		return nil, false
+	}
+	token = strings.TrimSpace(token)
+	pending, ok := h.pendingIncome[token]
+	delete(h.pendingIncome, token)
+	if !ok {
+		return nil, false
+	}
+	if pending == nil || pending.export == nil || pending.userID != strings.TrimSpace(userID) || now.Sub(pending.createdAt) > tikTokIncomePreviewTTL {
+		return nil, false
+	}
+	return pending, true
+}
+
+func (h *TikTokSettlementHandler) storeIncomePreview(token string, preview *tikTokIncomePendingPreview, now time.Time) bool {
+	h.pendingIncomeMu.Lock()
+	defer h.pendingIncomeMu.Unlock()
+	if h.pendingIncome == nil {
+		h.pendingIncome = make(map[string]*tikTokIncomePendingPreview)
+	}
+	for key, existing := range h.pendingIncome {
+		if existing == nil || now.Sub(existing.createdAt) > tikTokIncomePreviewTTL {
+			delete(h.pendingIncome, key)
+		}
+	}
+	if len(h.pendingIncome) >= tikTokIncomeMaxPreviews {
+		return false
+	}
+	h.pendingIncome[token] = preview
+	return true
 }
 
 // SearchWithdrawals is a controlled, read-only UAT surface for TikTok's
@@ -404,7 +590,7 @@ func (h *TikTokSettlementHandler) List(c *gin.Context) {
 	}
 	if paymentStatus := strings.TrimSpace(c.Query("payment_status")); paymentStatus != "" {
 		switch paymentStatus {
-		case string(tiktokshop.StatementStatusPaid), string(tiktokshop.StatementStatusProcessing), string(tiktokshop.StatementStatusFailed):
+		case string(tiktokshop.StatementStatusPaid), string(tiktokshop.StatementStatusProcessing), string(tiktokshop.StatementStatusFailed), "BANK_CONFIRMED":
 			args = append(args, paymentStatus)
 			where += fmt.Sprintf(" AND payment_status=$%d", len(args))
 		default:
@@ -805,6 +991,81 @@ func (h *TikTokSettlementHandler) fetchAndReconcile(ctx context.Context, runID, 
 	return h.reconcileRun(ctx, runID)
 }
 
+// createIncomeExportRun turns one operator-attested Income export into the
+// existing immutable settlement-run model. The input was validated before this
+// function is called; still, the database uniqueness constraint is the final
+// duplicate guard. This function only writes Nexflow's local reconciliation
+// snapshot and makes read-only SML candidate lookups through reconcileRun.
+func (h *TikTokSettlementHandler) createIncomeExportRun(ctx context.Context, pending *tikTokIncomePendingPreview, withdrawal tikTokIncomeWithdrawal, bankReceivedAt time.Time, userID, email string) (*tikTokSettlementRunView, error) {
+	if pending == nil || pending.export == nil {
+		return nil, errors.New("income preview unavailable")
+	}
+	label, connectionID, err := h.connection(ctx, pending.shopID)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := h.loadSettings(ctx, pending.shopID)
+	if err != nil {
+		return nil, err
+	}
+	settingVersion, _ := settings["config_version"].(int)
+	routeVersion := int64(0)
+	if route, routeErr := h.routes.Get("tiktok_settlement", "ar_receipt"); routeErr == nil && route != nil {
+		routeVersion = route.ConfigVersion
+	}
+
+	statementID := tikTokIncomeEvidencePrefix + strings.TrimSpace(withdrawal.ID)
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var runID string
+	err = tx.QueryRowContext(ctx, `INSERT INTO tiktok_settlement_runs(connection_id,shop_id,shop_label,statement_id,payment_id,payment_status,currency,payment_time,total_settlement_amount,fee_amount_total,shipping_amount_total,adjustment_amount_total,refund_amount_total,reserve_amount_total,content_hash,upstream_request_id,status,config_version,route_config_version,created_by,created_by_email,updated_at) VALUES($1::uuid,$2,$3,$4,$5,'BANK_CONFIRMED','THB',$6,$7::numeric,$8::numeric,$9::numeric,'0'::numeric,'0'::numeric,'0'::numeric,$10,'income_export_v1','reconciling',$11,$12,NULLIF($13,'')::uuid,$14,NOW()) ON CONFLICT(shop_id,statement_id) DO NOTHING RETURNING id::text`, connectionID, pending.shopID, label, statementID, withdrawal.ID, bankReceivedAt, tikTokIncomeCentsDecimal(pending.export.OrderPaymentTotalCents), tikTokIncomeCentsDecimal(sumTikTokIncomeCents(pending.export.Orders, func(order tikTokIncomeOrder) int64 { return order.FeeCents })), tikTokIncomeCentsDecimal(sumTikTokIncomeCents(pending.export.Orders, func(order tikTokIncomeOrder) int64 { return order.ShippingCents })), pending.fileHash, settingVersion, routeVersion, userID, email).Scan(&runID)
+	if err == sql.ErrNoRows {
+		return nil, errors.New("withdrawal already imported")
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, order := range pending.export.Orders {
+		snapshot, marshalErr := json.Marshal(map[string]any{
+			"source": "tiktok_income_export_v1", "transaction_type": strings.TrimSpace(order.TransactionType),
+			"payment_time": strings.TrimSpace(order.PaymentTime), "income_cents": order.IncomeCents,
+			"fee_cents": order.FeeCents, "shipping_cents": order.ShippingCents, "refund_cents": order.RefundCents,
+		})
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO tiktok_settlement_items(run_id,order_id,settlement_amount,fee_amount,shipping_amount,adjustment_amount,refund_amount,reserve_amount,currency,snapshot,updated_at) VALUES($1::uuid,$2,$3::numeric,$4::numeric,$5::numeric,'0'::numeric,'0'::numeric,'0'::numeric,'THB',$6::jsonb,NOW())`, runID, strings.TrimSpace(order.OrderID), tikTokIncomeCentsDecimal(order.PaymentCents), tikTokIncomeCentsDecimal(order.FeeCents), tikTokIncomeCentsDecimal(order.ShippingCents), snapshot); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	if err = h.reconcileRun(ctx, runID); err != nil {
+		return nil, err
+	}
+	return h.loadRun(ctx, runID, true)
+}
+
+func sumTikTokIncomeCents(orders []tikTokIncomeOrder, value func(tikTokIncomeOrder) int64) int64 {
+	var total int64
+	for _, order := range orders {
+		total += value(order)
+	}
+	return total
+}
+
+func tikTokIncomeCentsDecimal(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign, cents = "-", -cents
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
+}
+
 func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string) error {
 	run, err := h.loadRun(ctx, runID, true)
 	if err != nil {
@@ -826,7 +1087,7 @@ func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string
 		return err
 	}
 	run.ConfigVersion, run.RouteConfigVersion = settingVersion, routeVersion
-	if run.PaymentStatus != "PAID" {
+	if run.PaymentStatus != "PAID" && run.PaymentStatus != "BANK_CONFIRMED" {
 		_, err = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status=CASE WHEN payment_status='FAILED' THEN 'failed' ELSE 'needs_review' END,error_msg=CASE WHEN payment_status='FAILED' THEN 'TikTok Shop แจ้งว่าโอนไม่สำเร็จ' ELSE 'TikTok Shop ยังไม่แจ้งว่าโอนสำเร็จ' END,updated_at=NOW() WHERE id=$1::uuid`, runID)
 		return err
 	}
@@ -954,7 +1215,11 @@ func (h *TikTokSettlementHandler) sendRun(runID string, route *models.ChannelDef
 	if err := h.db.QueryRowContext(ctx, `SELECT doc_date_override FROM tiktok_settlement_runs WHERE id=$1::uuid`, runID).Scan(&override); err == nil && override.Valid {
 		docDate = override.Time.In(tikTokSettlementBangkok).Format("2006-01-02")
 	}
-	payload := map[string]any{"doc_date": docDate, "doc_time": time.Now().In(tikTokSettlementBangkok).Format("15:04"), "doc_format_code": route.DocFormatCode, "passbook_code": route.PassbookCode, "expense_code": route.ExpenseCode, "remark": fmt.Sprintf("TikTok Statement %s Payment %s", run.StatementID, run.PaymentID), "lines": lines}
+	remark := fmt.Sprintf("TikTok Statement %s Payment %s", run.StatementID, run.PaymentID)
+	if strings.HasPrefix(run.StatementID, tikTokIncomeEvidencePrefix) {
+		remark = fmt.Sprintf("TikTok Income Export Withdrawal %s; bank receipt confirmed", run.PaymentID)
+	}
+	payload := map[string]any{"doc_date": docDate, "doc_time": time.Now().In(tikTokSettlementBangkok).Format("15:04"), "doc_format_code": route.DocFormatCode, "passbook_code": route.PassbookCode, "expense_code": route.ExpenseCode, "remark": remark, "lines": lines}
 	var out struct {
 		Success bool                      `json:"success"`
 		Data    settlementReceiptResponse `json:"data"`
