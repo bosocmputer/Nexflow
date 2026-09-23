@@ -213,15 +213,24 @@ func (h *TikTokSettlementHandler) Preflight(c *gin.Context) {
 		return
 	}
 	to, from := time.Now(), time.Now().Add(-24*time.Hour)
-	result, err := h.gateway.SearchFinanceWithdrawals(c.Request.Context(), tiktokshop.GatewayFinanceWithdrawalsRequest{ShopID: shopID, Search: tiktokshop.SearchWithdrawalsRequest{Types: []tiktokshop.WithdrawalType{tiktokshop.WithdrawalTypeWithdraw}, PageSize: 1, CreateTimeGE: from.Unix(), CreateTimeLT: to.Unix()}})
+	result, err := h.gateway.SearchFinanceStatements(c.Request.Context(), tiktokshop.GatewayFinanceStatementsRequest{ShopID: shopID, Search: tikTokSettlementPreflightSearch(from, to)})
 	if err != nil {
 		h.auditEvent(c, "tiktok_settlement_preflight_failed", "error", map[string]any{"shop_id": shopID, "error_code": financeErrorCode(err)})
 		h.error(c, http.StatusBadGateway, financeErrorCode(err), financeThaiError(err))
 		return
 	}
 	_, _ = h.db.ExecContext(c.Request.Context(), `UPDATE tiktok_shop_settlement_settings SET last_successful_preflight_at=NOW(),updated_at=NOW() WHERE shop_id=$1`, shopID)
-	h.auditEvent(c, "tiktok_settlement_preflight_completed", "info", map[string]any{"shop_id": shopID, "result_count": len(result.Withdrawals), "request_id": safeRequestID(result.UpstreamRequestID)})
-	c.JSON(200, gin.H{"data": gin.H{"status": "ready", "message": "พร้อมใช้: เชื่อมต่อข้อมูลรอบถอนเงิน TikTok Shop ได้", "withdrawal_count": len(result.Withdrawals)}})
+	h.auditEvent(c, "tiktok_settlement_preflight_completed", "info", map[string]any{"shop_id": shopID, "result_count": len(result.Statements), "request_id": safeRequestID(result.UpstreamRequestID)})
+	c.JSON(200, gin.H{"data": gin.H{"status": "ready", "message": "พร้อมใช้: เชื่อมต่อ TikTok Statement และรายการคำสั่งซื้อได้", "statement_count": len(result.Statements)}})
+}
+
+func tikTokSettlementPreflightSearch(from, to time.Time) tiktokshop.SearchStatementsRequest {
+	return tiktokshop.SearchStatementsRequest{
+		PageSize:        1,
+		StatementTimeGE: from.Unix(),
+		StatementTimeLT: to.Unix(),
+		StatementStatus: tiktokshop.StatementStatusPaid,
+	}
 }
 
 func (h *TikTokSettlementHandler) Import(c *gin.Context) {

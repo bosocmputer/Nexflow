@@ -1,17 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import dayjs from 'dayjs'
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
-  FileSpreadsheet,
   ReceiptText,
   RefreshCw,
   Send,
   Settings2,
   Store,
-  WalletCards,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -19,7 +17,6 @@ import client from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -30,7 +27,6 @@ import {
 } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Input } from '@/components/ui/input'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DateRangePicker, type DateRangePreset } from '@/components/common/DateRangePicker'
 import { resolveTikTokSettlementShopID } from '@/lib/tiktok-settlement'
@@ -107,46 +103,12 @@ type ImportNotice = {
   partial: boolean
 }
 
-type WithdrawalRound = {
-  withdrawal_id: string
-  type: string
-  amount: string
-  currency: string
-  status: string
-  create_time: string
-}
-
-type IncomeWithdrawal = {
-  withdrawal_id: string
-  type: string
-  requested_at: string
-  amount_cents: number
-  status: string
-  completed_at: string
-  currency: string
-}
-
-type IncomePreview = {
-  preview_token: string
-  currency: string
-  order_count: number
-  order_payment_total: number
-  report_payment_total: number
-  withdrawals: IncomeWithdrawal[]
-  message: string
-}
-
 const money = (value?: number, currency = 'THB') => new Intl.NumberFormat('th-TH', {
   style: 'currency',
   currency: /^[A-Z]{3}$/.test(currency) ? currency : 'THB',
 }).format(Number(value ?? 0))
 
-const isIncomeExportRun = (run?: Pick<Run, 'statement_id'> | null) => Boolean(run?.statement_id?.startsWith('income-export:'))
-const evidenceTitle = (run: Pick<Run, 'statement_id' | 'payment_id'>) => (
-  isIncomeExportRun(run)
-    ? `ไฟล์รายได้ · รอบถอน ${run.payment_id || run.statement_id.replace('income-export:', '')}`
-    : run.statement_id
-)
+const evidenceTitle = (run: Pick<Run, 'statement_id'>) => run.statement_id
 
 const statusMeta: Record<string, { text: string; className: string }> = {
   importing: { text: 'กำลังดึงข้อมูล', className: 'bg-muted text-muted-foreground' },
@@ -201,18 +163,7 @@ export default function TikTokSettlement() {
   const [smlEnabled, setSmlEnabled] = useState(false)
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null)
-  const [withdrawalOpen, setWithdrawalOpen] = useState(false)
-  const [withdrawals, setWithdrawals] = useState<WithdrawalRound[]>([])
-  const [withdrawalsTruncated, setWithdrawalsTruncated] = useState(false)
-  const [withdrawalLoading, setWithdrawalLoading] = useState(false)
-  const incomeFileRef = useRef<HTMLInputElement>(null)
-  const [incomeOpen, setIncomeOpen] = useState(false)
-  const [incomePreview, setIncomePreview] = useState<IncomePreview | null>(null)
-  const [incomeLoading, setIncomeLoading] = useState(false)
-  const [selectedIncomeWithdrawalID, setSelectedIncomeWithdrawalID] = useState('')
-  const [bankReceivedAt, setBankReceivedAt] = useState('')
-  const [bankReceiptConfirmed, setBankReceiptConfirmed] = useState(false)
-  const [creatingIncomeCandidate, setCreatingIncomeCandidate] = useState(false)
+  const [importingStatements, setImportingStatements] = useState(false)
   const [from, setFrom] = useState(dayjs().subtract(14, 'day').format('YYYY-MM-DD'))
   const [to, setTo] = useState(dayjs().format('YYYY-MM-DD'))
   const [runStatus, setRunStatus] = useState('all')
@@ -266,86 +217,26 @@ export default function TikTokSettlement() {
     }
   }
 
-  const inspectWithdrawals = async () => {
+  const importStatements = async () => {
     if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนดูรอบถอนเงิน')
+      toast.error('กรุณาเลือกร้านก่อนดึง Statement')
       return
     }
-    setWithdrawalLoading(true)
-    setWithdrawalsTruncated(false)
-    setWithdrawalOpen(true)
+    setImportingStatements(true)
     try {
-      const response = await client.post<{ data: WithdrawalRound[]; has_more?: boolean; message?: string }>(
-        '/api/tiktok-settlements/withdrawals/search',
-        { shop_id: resolvedShopID, date_from: from, date_to: to },
-      )
-      setWithdrawals(response.data.data ?? [])
-      setWithdrawalsTruncated(Boolean(response.data.has_more))
-    } catch (error: any) {
-      setWithdrawalOpen(false)
-      toast.error(error?.response?.data?.error?.message ?? 'ดึงรอบถอนเงิน TikTok Shop ไม่สำเร็จ')
-    } finally {
-      setWithdrawalLoading(false)
-    }
-  }
-
-  const previewIncomeExport = async (file?: File) => {
-    if (!file) return
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนนำเข้าไฟล์รายได้')
-      return
-    }
-    setIncomeLoading(true)
-    try {
-      const form = new FormData()
-      form.append('shop_id', resolvedShopID)
-      form.append('file', file)
-      const response = await client.post<{ data: IncomePreview }>('/api/tiktok-settlements/income-exports/preview', form)
-      setIncomePreview(response.data.data)
-      setSelectedIncomeWithdrawalID('')
-      setBankReceivedAt('')
-      setBankReceiptConfirmed(false)
-      setIncomeOpen(true)
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'อ่านไฟล์รายได้ TikTok Shop ไม่สำเร็จ')
-    } finally {
-      setIncomeLoading(false)
-      if (incomeFileRef.current) incomeFileRef.current.value = ''
-    }
-  }
-
-  const createIncomeCandidate = async () => {
-    if (!incomePreview || !selectedIncomeWithdrawalID || !bankReceivedAt || !bankReceiptConfirmed) {
-      toast.error('กรุณาเลือกรอบถอน ระบุเวลาเงินเข้า และยืนยันข้อมูลก่อนสร้างร่าง RC')
-      return
-    }
-    setCreatingIncomeCandidate(true)
-    try {
-      const response = await client.post<{ data: Run }>('/api/tiktok-settlements/income-exports/receipt-candidates', {
-        preview_token: incomePreview.preview_token,
-        withdrawal_id: selectedIncomeWithdrawalID,
-        bank_received_at: dayjs(bankReceivedAt).toISOString(),
-        confirmation: 'CONFIRM_TIKTOK_BANK_RECEIPT',
+      const response = await client.post<ImportNotice>('/api/tiktok-settlements/import', {
+        shop_id: resolvedShopID,
+        date_from: from,
+        date_to: to,
       })
-      setIncomeOpen(false)
-      setIncomePreview(null)
+      setImportNotice(response.data)
       await load()
-      await open(response.data.data)
-      toast.success('สร้างร่าง RC แล้ว กรุณาตรวจรายการก่อนส่งเข้า SML')
     } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'สร้างร่าง RC จากไฟล์รายได้ไม่สำเร็จ')
+      toast.error(error?.response?.data?.error?.message ?? 'ดึง Statement จาก TikTok Shop ไม่สำเร็จ')
     } finally {
-      setCreatingIncomeCandidate(false)
+      setImportingStatements(false)
     }
   }
-
-  const selectedIncomeWithdrawal = incomePreview?.withdrawals.find((withdrawal) => withdrawal.withdrawal_id === selectedIncomeWithdrawalID)
-  const incomeTotalsMatch = Boolean(
-    incomePreview
-      && selectedIncomeWithdrawal
-      && incomePreview.order_payment_total === incomePreview.report_payment_total
-      && selectedIncomeWithdrawal.amount_cents === Math.round(incomePreview.order_payment_total * 100),
-  )
 
   const openSettings = async () => {
     if (!resolvedShopID) {
@@ -434,7 +325,7 @@ export default function TikTokSettlement() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight text-foreground">รับชำระ TikTok Shop</h1>
               <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-strong">RC</code>
-              <p className="sr-only">นำเข้าไฟล์รายได้ TikTok Shop แล้วเลือกรอบถอนเงินที่เงินเข้าบัญชีจริง ระบบจะไม่สร้างเอกสารรับชำระหนี้จากยอดที่คาดเดา</p>
+              <p className="sr-only">ดึง TikTok Statement เพื่ออ่านรายการคำสั่งซื้อจริง ตรวจเทียบกับเอกสารขาย แล้วให้พนักงานยืนยันส่ง RC เข้า SML ทีละ Statement</p>
               <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
               <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
                 <ReceiptText className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
@@ -451,22 +342,9 @@ export default function TikTokSettlement() {
             <SettlementMetricChip label="ส่งแล้ว" value={counts.sent ?? 0} tone="success" />
             <SettlementMetricChip label="ต้องตรวจ" value={counts.needs_review ?? 0} tone="warning" />
             <SettlementMetricChip label="ผิดพลาด" value={counts.failed ?? 0} tone="danger" />
-            <input
-              ref={incomeFileRef}
-              className="hidden"
-              type="file"
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              tabIndex={-1}
-              aria-hidden="true"
-              onChange={(event) => void previewIncomeExport(event.target.files?.[0])}
-            />
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={() => incomeFileRef.current?.click()} disabled={incomeLoading}>
-              <FileSpreadsheet className="h-4 w-4" />
-              {incomeLoading ? 'กำลังอ่านไฟล์…' : 'นำเข้าไฟล์รายได้'}
-            </Button>
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={inspectWithdrawals}>
-              <WalletCards className="h-4 w-4" />
-              ตรวจรอบถอนเงิน
+            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={() => void importStatements()} disabled={importingStatements}>
+              <ReceiptText className="h-4 w-4" />
+              {importingStatements ? 'กำลังดึง Statement…' : 'ดึง Statement จาก TikTok'}
             </Button>
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={preflight}>
               <CheckCircle2 className="h-4 w-4" />
@@ -509,8 +387,8 @@ export default function TikTokSettlement() {
                 setTo(range.to)
               }}
               presets={tiktokStatementPresets}
-              title="ช่วงวันที่รอบถอนเงิน"
-              description="ใช้ตรวจรอบถอนและกรองร่าง RC ที่สร้างแล้ว"
+              title="ช่วงวันที่ Statement"
+              description="ใช้ดึง Statement จาก TikTok และกรองร่าง RC ที่สร้างแล้ว"
               className="!h-8 w-full !min-w-0 text-xs sm:w-[260px]"
             />
             <Select value={runStatus} onValueChange={setRunStatus}>
@@ -612,7 +490,7 @@ export default function TikTokSettlement() {
 
           {!loading && runs.length === 0 && (
             <div className="p-10 text-center text-sm text-muted-foreground">
-              ยังไม่มีร่างรับชำระในช่วงนี้ กรุณานำเข้าไฟล์รายได้จาก TikTok Shop เมื่อเงินเข้าบัญชีจริงแล้ว
+              ยังไม่มี Statement ในช่วงนี้ เลือกร้านและช่วงวันที่ แล้วกด “ดึง Statement จาก TikTok” เพื่ออ่านออเดอร์จริงจาก TikTok Shop
             </div>
           )}
         </CardContent>
@@ -621,11 +499,9 @@ export default function TikTokSettlement() {
       <Dialog open={Boolean(selected)} onOpenChange={(openDialog) => !openDialog && setSelected(null)}>
         <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5" />{selected ? evidenceTitle(selected) : 'หลักฐานรับเงิน TikTok Shop'}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" />{selected ? evidenceTitle(selected) : 'TikTok Statement'}</DialogTitle>
             <DialogDescription>
-              {isIncomeExportRun(selected)
-                ? 'สร้างจากไฟล์รายได้ที่พนักงานยืนยันว่าเงินเข้าบัญชีแล้ว โปรดตรวจรายการก่อนกดส่ง RC เข้า SML'
-                : 'TikTok แจ้งว่าโอนแล้ว เป็นหลักฐานจากแพลตฟอร์ม ไม่ใช่การยืนยันจาก statement ธนาคาร'}
+              TikTok ระบุ Statement นี้เป็น PAID แล้ว ระบบดึงรายการออเดอร์จาก Statement โดยตรง โปรดตรวจข้อมูลและหลักฐานเงินเข้าจริงก่อนกดส่ง RC เข้า SML
             </DialogDescription>
           </DialogHeader>
 
@@ -675,131 +551,17 @@ export default function TikTokSettlement() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={incomeOpen} onOpenChange={(openDialog) => {
-        setIncomeOpen(openDialog)
-        if (!openDialog) setIncomePreview(null)
-      }}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><FileSpreadsheet className="h-5 w-5" />สร้างร่าง RC จากไฟล์รายได้</DialogTitle>
-            <DialogDescription>
-              เลือกรอบถอนที่อยู่ในไฟล์ และใช้เฉพาะเมื่อพนักงานเห็นเงินเข้าบัญชีจริงแล้ว ระบบตรวจยอดก่อนสร้างร่าง RC และจะไม่ส่ง SML ในขั้นตอนนี้
-            </DialogDescription>
-          </DialogHeader>
-          {incomePreview && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 rounded-md border bg-muted/20 p-3 text-sm sm:grid-cols-3">
-                <Metric label="คำสั่งซื้อในไฟล์" value={`${incomePreview.order_count} รายการ`} />
-                <Metric label="ยอดรายละเอียด" value={money(incomePreview.order_payment_total, incomePreview.currency)} />
-                <Metric label="ยอดสรุปรายงาน" value={money(incomePreview.report_payment_total, incomePreview.currency)} />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="income-withdrawal">รอบถอนเงินในไฟล์</label>
-                <Select value={selectedIncomeWithdrawalID} onValueChange={setSelectedIncomeWithdrawalID}>
-                  <SelectTrigger id="income-withdrawal">
-                    <SelectValue placeholder="เลือกรอบถอนเงินที่เงินเข้าบัญชีแล้ว" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {incomePreview.withdrawals.map((withdrawal) => (
-                      <SelectItem key={withdrawal.withdrawal_id} value={withdrawal.withdrawal_id}>
-                        {withdrawal.withdrawal_id} · {money(withdrawal.amount_cents / 100, withdrawal.currency)} · {withdrawal.status}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedIncomeWithdrawal && (
-                  <p className="text-xs text-muted-foreground">
-                    คำขอถอน {selectedIncomeWithdrawal.requested_at || '-'} · สำเร็จ {selectedIncomeWithdrawal.completed_at || '-'}
-                  </p>
-                )}
-              </div>
-              {selectedIncomeWithdrawal && !incomeTotalsMatch && (
-                <div className="flex gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-sm text-warning">
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                  ยอดรอบถอนต้องตรงกับยอดรายละเอียดและยอดสรุปรายงานทั้งชุด ระบบจึงจะสร้างร่าง RC ได้ กรุณาส่งออกไฟล์ในช่วงที่ตรงกับรอบถอนนี้
-                </div>
-              )}
-              <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="bank-received-at">วันและเวลาที่เงินเข้าบัญชีจริง</label>
-                <Input
-                  id="bank-received-at"
-                  type="datetime-local"
-                  value={bankReceivedAt}
-                  onChange={(event) => setBankReceivedAt(event.target.value)}
-                />
-              </div>
-              <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm">
-                <Checkbox checked={bankReceiptConfirmed} onCheckedChange={(checked) => setBankReceiptConfirmed(checked === true)} />
-                <span>
-                  ฉันยืนยันว่าเงินของรอบถอนนี้เข้าบัญชีจริงแล้ว และไฟล์รายได้นี้เป็นรายละเอียดของรอบถอนที่เลือก
-                  <span className="mt-1 block text-xs text-muted-foreground">การยืนยันนี้สร้างเพียงร่าง RC; ยังต้องตรวจและกดส่ง SML แยกต่างหาก</span>
-                </span>
-              </label>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIncomeOpen(false)}>ยกเลิก</Button>
-            <Button onClick={() => void createIncomeCandidate()} disabled={!incomeTotalsMatch || !bankReceivedAt || !bankReceiptConfirmed || creatingIncomeCandidate}>
-              {creatingIncomeCandidate ? 'กำลังสร้างร่าง…' : 'สร้างร่าง RC เพื่อ ตรวจสอบ'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={withdrawalOpen} onOpenChange={setWithdrawalOpen}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5" />รอบถอนเงิน TikTok Shop</DialogTitle>
-            <DialogDescription>
-              แสดงเฉพาะรายการที่กดถอนเงินในช่วงวันที่เลือก ใช้ตรวจเทียบกับไฟล์รายได้เท่านั้น TikTok Shop ยังไม่เปิด API ที่บอกว่าออเดอร์ใดอยู่ในรอบถอนของตลาดไทย และระบบจะไม่เดาจากยอดเงินหรือวันเวลา
-            </DialogDescription>
-          </DialogHeader>
-          {withdrawalLoading ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">กำลังดึงรอบถอนเงิน…</p>
-          ) : withdrawals.length === 0 ? (
-              <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">ไม่พบรายการกดถอนเงินในช่วงวันที่เลือก</p>
-          ) : (
-            <div className="space-y-2">
-              {withdrawalsTruncated && (
-                <p className="rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning">แสดง 100 รอบแรกของช่วงวันที่เลือก กรุณาเลือกช่วงวันที่แคบลงเพื่อให้ตรวจครบ</p>
-              )}
-              <div className="overflow-hidden rounded-md border">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  <span>รอบถอนเงิน / วันที่</span><span className="text-right">ยอด / สถานะ</span>
-                </div>
-                {withdrawals.map((withdrawal) => (
-                  <div key={withdrawal.withdrawal_id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2.5 text-sm last:border-0">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{withdrawal.withdrawal_id}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{withdrawal.type} · {dayjs(withdrawal.create_time).format('DD/MM/YY HH:mm')}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-medium tabular-nums">{money(Number(withdrawal.amount), withdrawal.currency)}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{withdrawal.status}</p>
-                      <p className="mt-2 text-xs text-muted-foreground">{withdrawal.status === 'SUCCESS' ? 'TikTok ยังไม่ส่งรายการออเดอร์ของรอบนี้ผ่าน API' : 'ยังไม่สำเร็จ'}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setWithdrawalOpen(false)}>ปิด</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>ตั้งค่ารับชำระ TikTok Shop</DialogTitle>
-            <DialogDescription>เปิดอ่านเพื่อตรวจรอบถอนเงินและนำเข้าไฟล์รายได้ ส่วนส่ง SML ยังคงต้องให้พนักงานกดยืนยันทีละร่าง RC</DialogDescription>
+            <DialogDescription>เปิดอ่านเพื่อดึง TikTok Statement และตรวจออเดอร์จริง ส่วนส่ง SML ยังคงต้องให้พนักงานกดยืนยันทีละร่าง RC</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium">อนุญาตอ่านข้อมูลการเงิน</p>
-                <p className="text-xs text-muted-foreground">ใช้กับตรวจระบบและตรวจรอบถอนเงินด้วยมือ</p>
+                <p className="text-xs text-muted-foreground">ใช้กับตรวจระบบและดึง TikTok Statement ด้วยมือ</p>
               </div>
               <Switch checked={readEnabled} onCheckedChange={setReadEnabled} />
             </div>
@@ -822,7 +584,7 @@ export default function TikTokSettlement() {
         open={settingsConfirmOpen}
         onOpenChange={setSettingsConfirmOpen}
         title="ยืนยันเปลี่ยนการตั้งค่าร้าน"
-        description={`ร้านนี้จะ${readEnabled ? '' : 'ไม่'}อนุญาตให้อ่านข้อมูลรอบถอนเงิน และ${smlEnabled ? '' : 'ไม่'}อนุญาตให้ส่ง RC เข้า SML\n\nการส่ง RC ยังต้องยืนยันทีละร่างเสมอ และไม่มี Auto RC`}
+        description={`ร้านนี้จะ${readEnabled ? '' : 'ไม่'}อนุญาตให้อ่าน TikTok Statement และ${smlEnabled ? '' : 'ไม่'}อนุญาตให้ส่ง RC เข้า SML\n\nการส่ง RC ยังต้องยืนยันทีละร่างเสมอ และไม่มี Auto RC`}
         confirmLabel="ยืนยันบันทึก"
         onConfirm={confirmSaveSettings}
       />
@@ -831,7 +593,7 @@ export default function TikTokSettlement() {
         open={sendConfirmOpen}
         onOpenChange={setSendConfirmOpen}
         title="ยืนยันสร้าง RC เข้า SML"
-        description={selected ? `${isIncomeExportRun(selected) ? `พนักงานยืนยันเงินเข้าบัญชีแล้วสำหรับ ${evidenceTitle(selected)}` : `TikTok แจ้งว่าโอนแล้วสำหรับ ${evidenceTitle(selected)}`}\n${selected.items?.length ?? selected.item_count ?? 0} คำสั่งซื้อ · ยอด TikTok ${money(selected.total_settlement_amount, selected.currency)}\nรูปแบบ RC: ${route?.doc_format_code || '-'} · บัญชีรับเงิน: ${route?.passbook_name || route?.passbook_code || '-'}\nค่าใช้จ่าย TikTok: ${route?.expense_name || route?.expense_code || '-'}\n\nการยืนยันนี้จะสร้างเอกสารรับชำระหนี้ใน SML และไม่มี Auto RC` : ''}
+        description={selected ? `TikTok ระบุว่า Statement ${evidenceTitle(selected)} เป็น PAID แล้ว\n${selected.items?.length ?? selected.item_count ?? 0} คำสั่งซื้อ · ยอด TikTok ${money(selected.total_settlement_amount, selected.currency)}\nรูปแบบ RC: ${route?.doc_format_code || '-'} · บัญชีรับเงิน: ${route?.passbook_name || route?.passbook_code || '-'}\nค่าใช้จ่าย TikTok: ${route?.expense_name || route?.expense_code || '-'}\n\nโปรดตรวจหลักฐานเงินเข้าจริงก่อนยืนยัน การยืนยันนี้จะสร้างเอกสารรับชำระหนี้ใน SML และไม่มี Auto RC` : ''}
         confirmLabel="ยืนยันส่ง RC"
         onConfirm={confirmSend}
       />

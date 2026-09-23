@@ -180,6 +180,19 @@ func TestTikTokSettlementImportRequestBindsSnakeCaseJSON(t *testing.T) {
 	}
 }
 
+func TestTikTokSettlementPreflightUsesPaidStatements(t *testing.T) {
+	from := time.Date(2026, 9, 22, 0, 0, 0, 0, tikTokSettlementBangkok)
+	to := from.Add(24 * time.Hour)
+	request := tikTokSettlementPreflightSearch(from, to)
+
+	if request.StatementStatus != tiktokshop.StatementStatusPaid || request.PageSize != 1 {
+		t.Fatalf("preflight request = %#v", request)
+	}
+	if request.StatementTimeGE != from.Unix() || request.StatementTimeLT != to.Unix() {
+		t.Fatalf("preflight range = %#v", request)
+	}
+}
+
 func TestParseTikTokSettlementRangeDefaultsAndCapsWindow(t *testing.T) {
 	from, to, err := parseTikTokSettlementRange("2026-09-01", "2026-09-15")
 	if err != nil || from.Location() != tikTokSettlementBangkok || to.Sub(from) != 15*24*time.Hour {
