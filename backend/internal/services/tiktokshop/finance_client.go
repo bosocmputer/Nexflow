@@ -560,7 +560,7 @@ func (input *SearchPaymentsRequest) Validate() error {
 
 func validateStatements(values []Statement) error {
 	if len(values) > 100 {
-		return ErrInvalidOrderResponse
+		return fmt.Errorf("statement response exceeds page limit: %w", ErrInvalidOrderResponse)
 	}
 	seen := map[string]struct{}{}
 	for i := range values {
@@ -569,11 +569,20 @@ func validateStatements(values []Statement) error {
 		v.PaymentID = strings.TrimSpace(v.PaymentID)
 		v.Currency = strings.ToUpper(strings.TrimSpace(v.Currency))
 		v.SettlementAmount = strings.TrimSpace(v.SettlementAmount)
-		if v.StatementID == "" || v.Currency == "" || v.SettlementAmount == "" || v.StatementTime <= 0 {
-			return ErrInvalidOrderResponse
+		if v.StatementID == "" {
+			return fmt.Errorf("statement response is missing id: %w", ErrInvalidOrderResponse)
+		}
+		if v.Currency == "" {
+			return fmt.Errorf("statement %q is missing currency: %w", v.StatementID, ErrInvalidOrderResponse)
+		}
+		if v.SettlementAmount == "" {
+			return fmt.Errorf("statement %q is missing settlement amount: %w", v.StatementID, ErrInvalidOrderResponse)
+		}
+		if v.StatementTime <= 0 {
+			return fmt.Errorf("statement %q is missing statement time: %w", v.StatementID, ErrInvalidOrderResponse)
 		}
 		if _, ok := seen[v.StatementID]; ok {
-			return ErrInvalidOrderResponse
+			return fmt.Errorf("statement response contains duplicate id: %w", ErrInvalidOrderResponse)
 		}
 		seen[v.StatementID] = struct{}{}
 	}
