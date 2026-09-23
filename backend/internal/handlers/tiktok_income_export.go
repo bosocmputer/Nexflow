@@ -18,6 +18,10 @@ const (
 	tikTokIncomeReportSheet      = "รายงาน"
 	tikTokIncomeWithdrawalsSheet = "บันทึกการถอน"
 	maxTikTokIncomeExportRows    = 10_000
+	// This is deliberately a fixed confirmation value.  The upload cannot
+	// prove withdrawal membership, so a caller must make an explicit
+	// accounting assertion before a future RC candidate is persisted.
+	tikTokIncomeBankReceiptConfirmation = "CONFIRM_TIKTOK_BANK_RECEIPT"
 )
 
 type tikTokIncomeExport struct {
@@ -120,6 +124,33 @@ func (e tikTokIncomeExport) SelectWithdrawal(id string) (tikTokIncomeWithdrawalS
 		return selection, nil
 	}
 	return tikTokIncomeWithdrawalSelection{}, fmt.Errorf("ไม่พบรอบถอนเงินที่เลือกในไฟล์")
+}
+
+func validateTikTokIncomeReceiptAttestation(export tikTokIncomeExport, withdrawalID, confirmation string) error {
+	selection, err := export.SelectWithdrawal(withdrawalID)
+	if err != nil {
+		return err
+	}
+	if selection.BlockReason != "" {
+		return fmt.Errorf("ยังสร้าง RC ไม่ได้: %s", selection.BlockReason)
+	}
+	if strings.TrimSpace(confirmation) != tikTokIncomeBankReceiptConfirmation {
+		return fmt.Errorf("กรุณายืนยันว่าเงินเข้าบัญชีจริงและไฟล์นี้เป็นรายละเอียดของรอบถอนที่เลือก")
+	}
+	for _, order := range export.Orders {
+		if !tikTokIncomeIsOrderTransaction(order.TransactionType) {
+			return fmt.Errorf("ไฟล์มีรายการ %q ที่ไม่ใช่คำสั่งซื้อ เช่น การปรับยอดหรือคืนเงิน", strings.TrimSpace(order.TransactionType))
+		}
+		if order.RefundCents != 0 {
+			return fmt.Errorf("ไฟล์มีเงินคืน จึงต้องตรวจเอกสารลดหนี้ก่อนสร้าง RC")
+		}
+	}
+	return nil
+}
+
+func tikTokIncomeIsOrderTransaction(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "คำสั่งซื้อ" || value == "order"
 }
 
 func parseTikTokIncomeOrders(f *excelize.File) ([]tikTokIncomeOrder, string, int64, error) {

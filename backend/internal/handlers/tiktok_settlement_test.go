@@ -89,6 +89,26 @@ func TestParseTikTokIncomeExportRequiresAllFinanceSheets(t *testing.T) {
 	}
 }
 
+func TestValidateTikTokIncomeReceiptAttestationRejectsUnconfirmedOrNonOrderRows(t *testing.T) {
+	export := tikTokIncomeExport{
+		Currency:                "THB",
+		OrderPaymentTotalCents:  8_000,
+		ReportPaymentTotalCents: 8_000,
+		Orders:                  []tikTokIncomeOrder{{OrderID: "ORDER-1", TransactionType: "คำสั่งซื้อ", Currency: "THB", PaymentCents: 8_000}},
+		Withdrawals:             []tikTokIncomeWithdrawal{{ID: "WITHDRAW-1", AmountCents: 8_000, Status: "Transferred", Currency: "THB"}},
+	}
+	if err := validateTikTokIncomeReceiptAttestation(export, "WITHDRAW-1", ""); err == nil || !strings.Contains(err.Error(), "ยืนยัน") {
+		t.Fatalf("missing confirmation error = %v", err)
+	}
+	if err := validateTikTokIncomeReceiptAttestation(export, "WITHDRAW-1", tikTokIncomeBankReceiptConfirmation); err != nil {
+		t.Fatalf("valid attestation rejected: %v", err)
+	}
+	export.Orders[0].TransactionType = "การปรับยอด"
+	if err := validateTikTokIncomeReceiptAttestation(export, "WITHDRAW-1", tikTokIncomeBankReceiptConfirmation); err == nil || !strings.Contains(err.Error(), "ปรับยอด") {
+		t.Fatalf("non-order row must block receipt: %v", err)
+	}
+}
+
 func writeTikTokIncomeRow(t *testing.T, f *excelize.File, sheet string, row int, values []string) {
 	t.Helper()
 	for col, value := range values {
