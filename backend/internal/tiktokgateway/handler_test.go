@@ -74,6 +74,23 @@ type handlerOrderServiceFake struct {
 	priceOrderID    string
 }
 
+type handlerFinanceServiceFake struct {
+	statementResult *FinanceStatementsResult
+	statementErr    error
+	tenant          string
+	shopID          string
+	searchInput     tiktokshop.SearchStatementsRequest
+}
+
+func (f *handlerFinanceServiceFake) SearchStatements(_ context.Context, tenant, shopID string, input tiktokshop.SearchStatementsRequest) (*FinanceStatementsResult, error) {
+	f.tenant, f.shopID, f.searchInput = tenant, shopID, input
+	return f.statementResult, f.statementErr
+}
+
+func (f *handlerFinanceServiceFake) GetStatementTransactions(context.Context, string, string, string, string, int) (*FinanceTransactionsResult, error) {
+	return nil, errors.New("not implemented in this handler test")
+}
+
 type handlerWebhookConfigServiceFake struct {
 	result                  *WebhookConfigResult
 	err                     error
@@ -160,6 +177,24 @@ func TestTikTokGatewayHandlerRejectsUnsignedInternalRequest(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, GatewayOAuthPath, strings.NewReader(`{}`)))
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "invalid_internal_auth") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
+func TestTikTokGatewayHandlerAllowsFinanceStatementRequestWithoutStatusFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	finance := &handlerFinanceServiceFake{statementResult: &FinanceStatementsResult{UpstreamRequestID: "safe-request", TotalCount: 0}}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil, Config{}, nil, WithFinanceGatewayService(finance))
+	router := gin.New()
+	handler.Register(router)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayFinanceStatementsPath, strings.NewReader(`{"shop_id":"7494619203789490654","search":{"page_size":100,"statement_time_ge":1758585600,"statement_time_lt":1758672000}}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if finance.tenant != "aoy" || finance.shopID != "7494619203789490654" || finance.searchInput.StatementStatus != "" {
+		t.Fatalf("finance request = %+v tenant=%q shop=%q", finance.searchInput, finance.tenant, finance.shopID)
 	}
 }
 
