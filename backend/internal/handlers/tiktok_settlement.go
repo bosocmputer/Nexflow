@@ -213,7 +213,7 @@ func (h *TikTokSettlementHandler) Preflight(c *gin.Context) {
 		return
 	}
 	to, from := time.Now(), time.Now().Add(-24*time.Hour)
-	result, err := h.gateway.SearchFinanceWithdrawals(c.Request.Context(), tiktokshop.GatewayFinanceWithdrawalsRequest{ShopID: shopID, Search: tiktokshop.SearchWithdrawalsRequest{PageSize: 1, CreateTimeGE: from.Unix(), CreateTimeLT: to.Unix()}})
+	result, err := h.gateway.SearchFinanceWithdrawals(c.Request.Context(), tiktokshop.GatewayFinanceWithdrawalsRequest{ShopID: shopID, Search: tiktokshop.SearchWithdrawalsRequest{Types: []tiktokshop.WithdrawalType{tiktokshop.WithdrawalTypeWithdraw}, PageSize: 1, CreateTimeGE: from.Unix(), CreateTimeLT: to.Unix()}})
 	if err != nil {
 		h.auditEvent(c, "tiktok_settlement_preflight_failed", "error", map[string]any{"shop_id": shopID, "error_code": financeErrorCode(err)})
 		h.error(c, http.StatusBadGateway, financeErrorCode(err), financeThaiError(err))
