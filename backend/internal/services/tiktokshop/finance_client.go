@@ -298,8 +298,11 @@ func (c *FinanceClient) SearchStatements(ctx context.Context, accessToken, shopC
 	if err != nil {
 		return nil, requestID, err
 	}
-	if err := validateStatements(output.Statements); err != nil || output.TotalCount < int64(len(output.Statements)) {
-		return nil, requestID, ErrInvalidOrderResponse
+	if err := validateStatements(output.Statements); err != nil {
+		return nil, requestID, fmt.Errorf("validate TikTok Shop statements: %w", err)
+	}
+	if output.TotalCount < int64(len(output.Statements)) {
+		return nil, requestID, fmt.Errorf("TikTok Shop statement total is smaller than returned rows: %w", ErrInvalidOrderResponse)
 	}
 	if output.Statements == nil {
 		output.Statements = []Statement{}
