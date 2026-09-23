@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -60,17 +61,12 @@ type tikTokSettlementWithdrawalSearchRequest struct {
 	DateFrom string `json:"date_from"`
 	DateTo   string `json:"date_to"`
 }
-
-// tikTokSettlementWithdrawalReconcileRequest deliberately keeps the same
-// bounded date window as the withdrawal search. TikTok does not offer a
-// withdrawal_id -> order endpoint, so the window is used only to retrieve
-// auditable PAID finance records; no date/amount match is treated as proof.
-type tikTokSettlementWithdrawalReconcileRequest struct {
-	ShopID       string `json:"shop_id"`
-	WithdrawalID string `json:"withdrawal_id"`
-	DateFrom     string `json:"date_from"`
-	DateTo       string `json:"date_to"`
+type tikTokSettlementPaymentSearchRequest struct {
+	ShopID   string `json:"shop_id"`
+	DateFrom string `json:"date_from"`
+	DateTo   string `json:"date_to"`
 }
+
 type tikTokSettlementSendRequest struct{ Confirm, ExpectedConfigVersion, DocDate, DocDateReason string }
 type tikTokSettlementSettingsRequest struct {
 	ReadEnabled           bool `json:"read_enabled"`
@@ -141,10 +137,20 @@ type tikTokSettlementWithdrawalView struct {
 	CreateTime   string `json:"create_time"`
 }
 
-type tikTokSettlementWithdrawalReconcileView struct {
-	Withdrawal tikTokSettlementWithdrawalView `json:"withdrawal"`
-	Candidates []tikTokSettlementRunView      `json:"candidates"`
-	Message    string                         `json:"message"`
+// tikTokSettlementPaymentView is a temporary read-only evidence surface. It
+// never returns an upstream payload wholesale: no buyer, address, token, or
+// bank information is exposed.  We need this bounded view to verify which
+// official relationship fields TikTok provides before designing the ledger.
+type tikTokSettlementPaymentView struct {
+	PaymentID      string   `json:"payment_id"`
+	Amount         string   `json:"amount,omitempty"`
+	Currency       string   `json:"currency,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	PaymentTime    string   `json:"payment_time,omitempty"`
+	CreateTime     string   `json:"create_time,omitempty"`
+	OrderCount     int      `json:"order_count"`
+	StatementCount int      `json:"statement_count"`
+	ObservedFields []string `json:"observed_fields,omitempty"`
 }
 
 func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktokshop.GatewayClient, routes *repository.ChannelDefaultRepo, audit *repository.AuditLogRepo, smlBridge *ShopeeImportHandler, notifications *repository.NotificationRepo, lineNotifications *repository.LineNotificationRepo, broker *events.Broker, logger *zap.Logger) *TikTokSettlementHandler {
@@ -294,94 +300,85 @@ func (h *TikTokSettlementHandler) SearchWithdrawals(c *gin.Context) {
 	})
 }
 
-// ReconcileWithdrawal is the withdrawal-first entry point for operators. It
-// refreshes TikTok's paid finance records and returns only exact-total local
-// candidates. A candidate is not silently linked to the withdrawal: TikTok's
-// withdrawal API does not expose that relationship. The operator must inspect
-// the returned orders and use the normal confirmed RC flow afterwards.
-func (h *TikTokSettlementHandler) ReconcileWithdrawal(c *gin.Context) {
+// SearchPayments is an explicit, manually-triggered discovery call for
+// TikTok's official payment/income records. It does not persist a ledger,
+// create a Statement, RC, or SML document, and it never matches a withdrawal
+// by amount or time.
+func (h *TikTokSettlementHandler) SearchPayments(c *gin.Context) {
 	if !h.financeEnabled() {
 		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
 		return
 	}
-	var req tikTokSettlementWithdrawalReconcileRequest
+	var req tikTokSettlementPaymentSearchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลรอบถอนเงินไม่ถูกต้อง")
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลค้นหารายการรายได้ไม่ถูกต้อง")
 		return
 	}
-	req.ShopID, req.WithdrawalID = strings.TrimSpace(req.ShopID), strings.TrimSpace(req.WithdrawalID)
+	req.ShopID = strings.TrimSpace(req.ShopID)
 	from, to, err := parseTikTokSettlementRange(req.DateFrom, req.DateTo)
-	if req.ShopID == "" || req.WithdrawalID == "" || err != nil {
-		h.error(c, http.StatusBadRequest, "invalid_range", firstNonEmpty(errorText(err), "กรุณาเลือกรอบถอนเงิน"))
+	if req.ShopID == "" || err != nil {
+		h.error(c, http.StatusBadRequest, "invalid_range", firstNonEmpty(errorText(err), "กรุณาเลือกร้าน TikTok Shop"))
 		return
 	}
 	if ok, err := h.readEnabled(c.Request.Context(), req.ShopID); err != nil {
-		h.error(c, 500, "settings_read_failed", "อ่านการตั้งค่าร้านไม่สำเร็จ")
+		h.error(c, http.StatusInternalServerError, "settings_read_failed", "อ่านการตั้งค่าร้านไม่สำเร็จ")
 		return
 	} else if !ok {
-		h.error(c, 403, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
+		h.error(c, http.StatusForbidden, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
 		return
 	}
-	withdrawals, err := h.gateway.SearchFinanceWithdrawals(c.Request.Context(), tiktokshop.GatewayFinanceWithdrawalsRequest{ShopID: req.ShopID, Search: tiktokshop.SearchWithdrawalsRequest{Types: []tiktokshop.WithdrawalType{tiktokshop.WithdrawalTypeWithdraw}, PageSize: 100, CreateTimeGE: from.Unix(), CreateTimeLT: to.Unix()}})
+	result, err := h.gateway.SearchFinancePayments(c.Request.Context(), tiktokshop.GatewayFinancePaymentsRequest{
+		ShopID: req.ShopID,
+		Search: tiktokshop.SearchPaymentsRequest{PageSize: 100, CreateTimeGE: from.Unix(), CreateTimeLT: to.Unix(), SortField: "create_time", SortOrder: "DESC"},
+	})
 	if err != nil {
-		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
+		h.auditEvent(c, "tiktok_settlement_payment_search_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err)})
+		h.error(c, http.StatusBadGateway, financeErrorCode(err), financeThaiError(err))
 		return
 	}
-	withdrawal, err := findTikTokWithdrawal(withdrawals.Withdrawals, req.WithdrawalID)
-	if err != nil {
-		h.error(c, http.StatusConflict, "withdrawal_not_ready", "รอบถอนเงินนี้ยังไม่สำเร็จหรือไม่อยู่ในช่วงวันที่เลือก")
-		return
-	}
-	if _, err := h.importStatements(c.Request.Context(), req.ShopID, from, to, c.GetString("user_id"), c.GetString("user_email")); err != nil {
-		h.auditEvent(c, "tiktok_settlement_withdrawal_reconcile_failed", "error", map[string]any{"shop_id": req.ShopID, "withdrawal_id": withdrawal.WithdrawalID, "error_code": financeErrorCode(err)})
-		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
-		return
-	}
-	amount, err := strconv.ParseFloat(strings.TrimSpace(withdrawal.Amount), 64)
-	if err != nil || amount <= 0 || strings.ToUpper(strings.TrimSpace(withdrawal.Currency)) != "THB" {
-		h.error(c, http.StatusConflict, "withdrawal_not_eligible", "รอบถอนเงินต้องเป็น THB และมียอดมากกว่า 0 ก่อนตรวจรายการ")
-		return
-	}
-	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT id::text FROM tiktok_settlement_runs WHERE shop_id=$1 AND payment_status='PAID' AND currency='THB' AND ABS(total_settlement_amount-$2::numeric)<=0.01 AND payment_time<=to_timestamp($3) ORDER BY payment_time DESC NULLS LAST,created_at DESC LIMIT 3`, req.ShopID, amount, withdrawal.CreateTime)
-	if err != nil {
-		h.error(c, 500, "candidate_lookup_failed", "ค้นหารายการรับชำระที่เกี่ยวข้องไม่สำเร็จ")
-		return
-	}
-	defer rows.Close()
-	candidates := []tikTokSettlementRunView{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			h.error(c, 500, "candidate_lookup_failed", "อ่านรายการรับชำระที่เกี่ยวข้องไม่สำเร็จ")
-			return
+	data := make([]tikTokSettlementPaymentView, 0, len(result.Payments))
+	fieldSet := map[string]struct{}{}
+	for _, payment := range result.Payments {
+		for _, field := range payment.ObservedFields {
+			fieldSet[field] = struct{}{}
 		}
-		run, err := h.loadRun(c.Request.Context(), id, true)
-		if err != nil {
-			h.error(c, 500, "candidate_lookup_failed", "อ่านรายการรับชำระที่เกี่ยวข้องไม่สำเร็จ")
-			return
+		view := tikTokSettlementPaymentView{
+			PaymentID:      strings.TrimSpace(payment.PaymentID),
+			Amount:         strings.TrimSpace(payment.Amount),
+			Currency:       strings.TrimSpace(payment.Currency),
+			Status:         strings.TrimSpace(payment.Status),
+			OrderCount:     len(payment.OrderIDs),
+			StatementCount: len(payment.StatementIDs),
+			ObservedFields: append([]string(nil), payment.ObservedFields...),
 		}
-		candidates = append(candidates, *run)
+		if payment.PaymentTime > 0 {
+			view.PaymentTime = time.Unix(payment.PaymentTime, 0).In(tikTokSettlementBangkok).Format(time.RFC3339)
+		}
+		if payment.CreateTime > 0 {
+			view.CreateTime = time.Unix(payment.CreateTime, 0).In(tikTokSettlementBangkok).Format(time.RFC3339)
+		}
+		data = append(data, view)
 	}
-	view := tikTokSettlementWithdrawalReconcileView{Withdrawal: tikTokSettlementWithdrawalView{WithdrawalID: withdrawal.WithdrawalID, Type: string(withdrawal.Type), Amount: withdrawal.Amount, Currency: withdrawal.Currency, Status: withdrawal.Status, CreateTime: time.Unix(withdrawal.CreateTime, 0).In(tikTokSettlementBangkok).Format(time.RFC3339)}, Candidates: candidates}
-	if len(candidates) == 1 {
-		view.Message = "พบชุดคำสั่งซื้อที่ยอดสุทธิตรงกับรอบถอนเงิน กรุณาตรวจรายการก่อนยืนยันส่ง RC"
-	} else if len(candidates) == 0 {
-		view.Message = "ยังไม่พบชุดคำสั่งซื้อที่ยอดสุทธิตรงกับรอบถอนเงิน ระบบจะไม่สร้าง RC"
-	} else {
-		view.Message = "พบมากกว่าหนึ่งชุดที่ยอดเท่ากัน กรุณาตรวจหลักฐาน TikTok เพิ่มเติม ระบบจะไม่เลือกแทน"
+	observed := make([]string, 0, len(fieldSet))
+	for field := range fieldSet {
+		observed = append(observed, field)
 	}
-	h.auditEvent(c, "tiktok_settlement_withdrawal_reconciled", "info", map[string]any{"shop_id": req.ShopID, "withdrawal_id": withdrawal.WithdrawalID, "candidate_count": len(candidates), "request_id": safeRequestID(withdrawals.UpstreamRequestID)})
-	c.JSON(http.StatusOK, gin.H{"data": view})
+	sort.Strings(observed)
+	h.auditEvent(c, "tiktok_settlement_payment_search_completed", "info", map[string]any{"shop_id": req.ShopID, "payment_count": len(data), "observed_field_count": len(observed), "request_id": safeRequestID(result.UpstreamRequestID)})
+	c.JSON(http.StatusOK, gin.H{
+		"data":            data,
+		"total":           result.TotalCount,
+		"has_more":        strings.TrimSpace(result.NextPageToken) != "",
+		"observed_fields": observed,
+		"message":         "แสดงรายการรายได้จาก TikTok Shop เพื่อตรวจความเชื่อมโยงกับออเดอร์เท่านั้น ยังไม่สร้าง RC และยังไม่ผูกกับรอบถอนเงิน",
+	})
 }
 
-func findTikTokWithdrawal(withdrawals []tiktokshop.Withdrawal, withdrawalID string) (*tiktokshop.Withdrawal, error) {
-	withdrawalID = strings.TrimSpace(withdrawalID)
-	for i := range withdrawals {
-		if strings.TrimSpace(withdrawals[i].WithdrawalID) == withdrawalID && strings.EqualFold(strings.TrimSpace(withdrawals[i].Status), "SUCCESS") {
-			return &withdrawals[i], nil
-		}
-	}
-	return nil, sql.ErrNoRows
+// ReconcileWithdrawal remains only as a safe response for a stale browser
+// release. The old amount-equality lookup was deliberately removed because it
+// could never prove an order belonged to a withdrawal.
+func (h *TikTokSettlementHandler) ReconcileWithdrawal(c *gin.Context) {
+	h.error(c, http.StatusGone, "withdrawal_reconciliation_replaced", "TikTok ยังไม่ยืนยันความสัมพันธ์ของรอบถอนกับออเดอร์ผ่าน API นี้ ระบบจึงไม่เดาจากยอดเงิน กรุณาใช้ตรวจข้อมูลรายได้ก่อน")
 }
 
 func (h *TikTokSettlementHandler) List(c *gin.Context) {

@@ -19,6 +19,7 @@ var (
 type TikTokFinanceReader interface {
 	SearchStatements(context.Context, string, string, tiktokshop.SearchStatementsRequest) (*tiktokshop.SearchStatementsResult, string, error)
 	SearchWithdrawals(context.Context, string, string, tiktokshop.SearchWithdrawalsRequest) (*tiktokshop.SearchWithdrawalsResult, string, error)
+	SearchPayments(context.Context, string, string, tiktokshop.SearchPaymentsRequest) (*tiktokshop.SearchPaymentsResult, string, error)
 	GetStatementTransactions(context.Context, string, string, string, string, int) (*tiktokshop.StatementTransactionsResult, string, error)
 }
 
@@ -50,6 +51,12 @@ type FinanceWithdrawalsResult struct {
 	NextPageToken     string                  `json:"next_page_token"`
 	TotalCount        int64                   `json:"total_count"`
 	Withdrawals       []tiktokshop.Withdrawal `json:"withdrawals"`
+}
+type FinancePaymentsResult struct {
+	UpstreamRequestID string               `json:"upstream_request_id"`
+	NextPageToken     string               `json:"next_page_token"`
+	TotalCount        int64                `json:"total_count"`
+	Payments          []tiktokshop.Payment `json:"payments"`
 }
 
 func NewFinanceService(credentials OrderCredentialProvider, finance TikTokFinanceReader) (*FinanceService, error) {
@@ -96,6 +103,26 @@ func (s *FinanceService) SearchWithdrawals(ctx context.Context, tenant, shopID s
 		return nil, tiktokshop.ErrInvalidOrderResponse
 	}
 	return &FinanceWithdrawalsResult{UpstreamRequestID: strings.TrimSpace(requestID), NextPageToken: result.NextPageToken, TotalCount: result.TotalCount, Withdrawals: append([]tiktokshop.Withdrawal(nil), result.Withdrawals...)}, nil
+}
+
+// SearchPayments is a read-only financial evidence lookup.  It deliberately
+// makes no statement, withdrawal, RC, or SML mutation.
+func (s *FinanceService) SearchPayments(ctx context.Context, tenant, shopID string, input tiktokshop.SearchPaymentsRequest) (*FinancePaymentsResult, error) {
+	if input.Validate() != nil {
+		return nil, tiktokshop.ErrInvalidOrderInput
+	}
+	credential, err := s.credential(ctx, tenant, shopID)
+	if err != nil {
+		return nil, err
+	}
+	result, requestID, err := s.finance.SearchPayments(ctx, credential.AccessToken, credential.ShopCipher, input)
+	if err != nil {
+		return nil, fmt.Errorf("search TikTok Shop payments: %w", err)
+	}
+	if result == nil {
+		return nil, tiktokshop.ErrInvalidOrderResponse
+	}
+	return &FinancePaymentsResult{UpstreamRequestID: strings.TrimSpace(requestID), NextPageToken: result.NextPageToken, TotalCount: result.TotalCount, Payments: append([]tiktokshop.Payment(nil), result.Payments...)}, nil
 }
 
 func (s *FinanceService) GetStatementTransactions(ctx context.Context, tenant, shopID, statementID, pageToken string, pageSize int) (*FinanceTransactionsResult, error) {

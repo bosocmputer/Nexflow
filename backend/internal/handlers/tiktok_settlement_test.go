@@ -64,16 +64,3 @@ func TestTikTokSettlementAllowsPaidOnlyImportWhenNonPaidStatusesAreUnavailable(t
 		t.Fatal("permission errors must remain visible instead of returning a partial import")
 	}
 }
-
-func TestFindTikTokWithdrawalRequiresAnExactSuccessfulWithdrawal(t *testing.T) {
-	withdrawal, err := findTikTokWithdrawal([]tiktokshop.Withdrawal{
-		{WithdrawalID: "other", Status: "SUCCESS", Currency: "THB", Amount: "1.00"},
-		{WithdrawalID: "target", Status: "SUCCESS", Currency: "THB", Amount: "2922.57"},
-	}, "target")
-	if err != nil || withdrawal.WithdrawalID != "target" {
-		t.Fatalf("withdrawal=%+v err=%v", withdrawal, err)
-	}
-	if _, err := findTikTokWithdrawal([]tiktokshop.Withdrawal{{WithdrawalID: "target", Status: "PROCESSING", Currency: "THB", Amount: "2922.57"}}, "target"); err == nil {
-		t.Fatal("a withdrawal that is not successful must not be an RC candidate")
-	}
-}

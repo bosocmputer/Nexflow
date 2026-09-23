@@ -31,6 +31,7 @@ const (
 	GatewayInventoryUpdatePath              = "/internal/v1/tiktok-shop/inventory/update"
 	GatewayFinanceStatementsPath            = "/internal/v1/tiktok-shop/finance/statements"
 	GatewayFinanceWithdrawalsPath           = "/internal/v1/tiktok-shop/finance/withdrawals"
+	GatewayFinancePaymentsPath              = "/internal/v1/tiktok-shop/finance/payments"
 	GatewayFinanceStatementTransactionsPath = "/internal/v1/tiktok-shop/finance/statement-transactions"
 	maxGatewayResponseSize                  = 8 << 20
 )
@@ -146,6 +147,10 @@ type GatewayFinanceWithdrawalsRequest struct {
 	ShopID string                   `json:"shop_id"`
 	Search SearchWithdrawalsRequest `json:"search"`
 }
+type GatewayFinancePaymentsRequest struct {
+	ShopID string                `json:"shop_id"`
+	Search SearchPaymentsRequest `json:"search"`
+}
 type GatewayFinanceStatementTransactionsRequest struct {
 	ShopID      string `json:"shop_id"`
 	StatementID string `json:"statement_id"`
@@ -208,6 +213,12 @@ type GatewayFinanceWithdrawalsResponse struct {
 	NextPageToken     string       `json:"next_page_token"`
 	TotalCount        int64        `json:"total_count"`
 	Withdrawals       []Withdrawal `json:"withdrawals"`
+}
+type GatewayFinancePaymentsResponse struct {
+	UpstreamRequestID string    `json:"upstream_request_id"`
+	NextPageToken     string    `json:"next_page_token"`
+	TotalCount        int64     `json:"total_count"`
+	Payments          []Payment `json:"payments"`
 }
 type GatewayFinanceStatementTransactionsResponse struct {
 	Currency                 string `json:"currency"`
@@ -473,6 +484,24 @@ func (c *GatewayClient) SearchFinanceWithdrawals(ctx context.Context, input Gate
 	}
 	if output.Withdrawals == nil {
 		output.Withdrawals = []Withdrawal{}
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) SearchFinancePayments(ctx context.Context, input GatewayFinancePaymentsRequest) (*GatewayFinancePaymentsResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	if input.ShopID == "" || input.Search.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayFinancePaymentsResponse
+	if err := c.call(ctx, GatewayFinancePaymentsPath, input, &output); err != nil {
+		return nil, err
+	}
+	if err := validatePayments(output.Payments); err != nil || output.TotalCount < int64(len(output.Payments)) {
+		return nil, ErrInvalidOrderResponse
+	}
+	if output.Payments == nil {
+		output.Payments = []Payment{}
 	}
 	return &output, nil
 }

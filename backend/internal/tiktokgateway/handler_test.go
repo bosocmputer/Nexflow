@@ -79,10 +79,13 @@ type handlerFinanceServiceFake struct {
 	statementErr     error
 	withdrawalResult *FinanceWithdrawalsResult
 	withdrawalErr    error
+	paymentResult    *FinancePaymentsResult
+	paymentErr       error
 	tenant           string
 	shopID           string
 	searchInput      tiktokshop.SearchStatementsRequest
 	withdrawalInput  tiktokshop.SearchWithdrawalsRequest
+	paymentInput     tiktokshop.SearchPaymentsRequest
 }
 
 func (f *handlerFinanceServiceFake) SearchStatements(_ context.Context, tenant, shopID string, input tiktokshop.SearchStatementsRequest) (*FinanceStatementsResult, error) {
@@ -93,6 +96,11 @@ func (f *handlerFinanceServiceFake) SearchStatements(_ context.Context, tenant, 
 func (f *handlerFinanceServiceFake) SearchWithdrawals(_ context.Context, tenant, shopID string, input tiktokshop.SearchWithdrawalsRequest) (*FinanceWithdrawalsResult, error) {
 	f.tenant, f.shopID, f.withdrawalInput = tenant, shopID, input
 	return f.withdrawalResult, f.withdrawalErr
+}
+
+func (f *handlerFinanceServiceFake) SearchPayments(_ context.Context, tenant, shopID string, input tiktokshop.SearchPaymentsRequest) (*FinancePaymentsResult, error) {
+	f.tenant, f.shopID, f.paymentInput = tenant, shopID, input
+	return f.paymentResult, f.paymentErr
 }
 
 func (f *handlerFinanceServiceFake) GetStatementTransactions(context.Context, string, string, string, string, int) (*FinanceTransactionsResult, error) {
@@ -221,6 +229,31 @@ func TestTikTokGatewayHandlerSearchesWithdrawalRoundsReadOnly(t *testing.T) {
 	}
 	if finance.tenant != "aoy" || finance.shopID != "7494619203789490654" || len(finance.withdrawalInput.Types) != 1 || finance.withdrawalInput.Types[0] != tiktokshop.WithdrawalTypeWithdraw {
 		t.Fatalf("finance request = %+v tenant=%q shop=%q", finance.withdrawalInput, finance.tenant, finance.shopID)
+	}
+}
+
+func TestTikTokGatewayHandlerSearchesPaymentsReadOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	finance := &handlerFinanceServiceFake{paymentResult: &FinancePaymentsResult{
+		UpstreamRequestID: "safe-request",
+		TotalCount:        1,
+		Payments:          []tiktokshop.Payment{{PaymentID: "payment-1", Amount: "100.00", Currency: "THB", OrderIDs: []string{"order-1"}}},
+	}}
+	handler := NewHandler(&handlerOAuthServiceFake{}, handlerVerifierFake{}, nil, Config{}, nil, WithFinanceGatewayService(finance))
+	router := gin.New()
+	handler.Register(router)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, tiktokshop.GatewayFinancePaymentsPath, strings.NewReader(`{"shop_id":"7494619203789490654","search":{"page_size":100,"create_time_ge":1758585600,"create_time_lt":1758672000,"sort_field":"create_time","sort_order":"DESC"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if finance.tenant != "aoy" || finance.shopID != "7494619203789490654" || finance.paymentInput.SortField != "create_time" || finance.paymentInput.SortOrder != "DESC" {
+		t.Fatalf("finance request = %+v tenant=%q shop=%q", finance.paymentInput, finance.tenant, finance.shopID)
+	}
+	if strings.Contains(response.Body.String(), "buyer") {
+		t.Fatalf("response leaked unknown field: %s", response.Body.String())
 	}
 }
 

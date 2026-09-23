@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 const (
 	PathFinanceStatements            = "/finance/202309/statements"
 	PathFinanceWithdrawals           = "/finance/202309/withdrawals"
+	PathFinancePayments              = "/finance/202605/payments"
 	PathFinanceStatementTransactions = "/finance/202501/statements/%s/statement_transactions"
 	PathFinanceOrderTransactions     = "/finance/202501/orders/%s/statement_transactions"
 	maxFinanceResponseSize           = 8 << 20
@@ -80,6 +82,18 @@ type SearchWithdrawalsRequest struct {
 	CreateTimeLT int64            `json:"create_time_lt,omitempty"`
 }
 
+// SearchPaymentsRequest mirrors TikTok Shop's Get Payments endpoint.  It is
+// deliberately read-only: a payment record is evidence of marketplace income,
+// not proof that it was included in a particular withdrawal.
+type SearchPaymentsRequest struct {
+	PageSize     int    `json:"page_size"`
+	PageToken    string `json:"page_token,omitempty"`
+	CreateTimeGE int64  `json:"create_time_ge,omitempty"`
+	CreateTimeLT int64  `json:"create_time_lt,omitempty"`
+	SortField    string `json:"sort_field"`
+	SortOrder    string `json:"sort_order,omitempty"`
+}
+
 type Statement struct {
 	StatementID      string          `json:"id"`
 	PaymentID        string          `json:"payment_id"`
@@ -118,6 +132,103 @@ type SearchWithdrawalsResult struct {
 	Withdrawals   []Withdrawal `json:"withdrawals"`
 	NextPageToken string       `json:"next_page_token,omitempty"`
 	TotalCount    int64        `json:"total_count,omitempty"`
+}
+
+// Payment retains only financial and identity fields that may be needed for a
+// later, explicit reconciliation.  Unknown fields are never retained, which
+// keeps buyer and payout data from crossing the Gateway boundary by accident.
+// ObservedFields contains field names only and helps us safely establish the
+// official response shape during AOY's read-only UAT.
+type Payment struct {
+	PaymentID      string   `json:"payment_id"`
+	Amount         string   `json:"amount,omitempty"`
+	Currency       string   `json:"currency,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	PaymentTime    int64    `json:"payment_time,omitempty"`
+	CreateTime     int64    `json:"create_time,omitempty"`
+	OrderIDs       []string `json:"order_ids,omitempty"`
+	StatementIDs   []string `json:"statement_ids,omitempty"`
+	ObservedFields []string `json:"-"`
+}
+
+// UnmarshalJSON accepts the documented and observed identity aliases without
+// preserving the original payload.  This protects against a future response
+// adding buyer or bank fields that Nexflow must not store or display.
+func (p *Payment) UnmarshalJSON(data []byte) error {
+	type paymentWire struct {
+		ID            string   `json:"id"`
+		PaymentID     string   `json:"payment_id"`
+		Amount        string   `json:"amount"`
+		Currency      string   `json:"currency"`
+		Status        string   `json:"status"`
+		PaymentStatus string   `json:"payment_status"`
+		PaymentTime   int64    `json:"payment_time"`
+		CreateTime    int64    `json:"create_time"`
+		OrderIDs      []string `json:"order_ids"`
+		StatementIDs  []string `json:"statement_ids"`
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var wire paymentWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	fields := make([]string, 0, len(raw))
+	for key := range raw {
+		key = strings.TrimSpace(key)
+		if len(key) > 64 || key == "" {
+			continue
+		}
+		fields = append(fields, key)
+	}
+	sort.Strings(fields)
+	if len(fields) > 40 {
+		fields = fields[:40]
+	}
+	p.PaymentID = strings.TrimSpace(wire.PaymentID)
+	if p.PaymentID == "" {
+		p.PaymentID = strings.TrimSpace(wire.ID)
+	}
+	p.Amount = strings.TrimSpace(wire.Amount)
+	p.Currency = strings.ToUpper(strings.TrimSpace(wire.Currency))
+	p.Status = strings.TrimSpace(wire.Status)
+	if p.Status == "" {
+		p.Status = strings.TrimSpace(wire.PaymentStatus)
+	}
+	p.PaymentTime = wire.PaymentTime
+	p.CreateTime = wire.CreateTime
+	p.OrderIDs = cleanFinanceIDs(wire.OrderIDs)
+	p.StatementIDs = cleanFinanceIDs(wire.StatementIDs)
+	p.ObservedFields = fields
+	return nil
+}
+
+func cleanFinanceIDs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	clean := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 128 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		clean = append(clean, value)
+		if len(clean) == 100 {
+			break
+		}
+	}
+	return clean
+}
+
+type SearchPaymentsResult struct {
+	Payments      []Payment `json:"payments"`
+	NextPageToken string    `json:"next_page_token,omitempty"`
+	TotalCount    int64     `json:"total_count,omitempty"`
 }
 
 type StatementTransaction struct {
@@ -225,6 +336,37 @@ func (c *FinanceClient) SearchWithdrawals(ctx context.Context, accessToken, shop
 	}
 	if output.Withdrawals == nil {
 		output.Withdrawals = []Withdrawal{}
+	}
+	return &output, requestID, nil
+}
+
+// SearchPayments calls TikTok Shop's read-only Get Payments endpoint.  It
+// intentionally returns no raw payload and makes no withdrawal or RC
+// inference; that association is only allowed after an official identifier is
+// present in the response.
+func (c *FinanceClient) SearchPayments(ctx context.Context, accessToken, shopCipher string, input SearchPaymentsRequest) (*SearchPaymentsResult, string, error) {
+	if c == nil || c.baseURL == nil || strings.TrimSpace(accessToken) == "" || strings.TrimSpace(shopCipher) == "" || input.Validate() != nil {
+		return nil, "", ErrInvalidOrderInput
+	}
+	query := c.baseQuery(shopCipher)
+	query.Set("page_size", strconv.Itoa(input.PageSize))
+	query.Set("create_time_ge", strconv.FormatInt(input.CreateTimeGE, 10))
+	query.Set("create_time_lt", strconv.FormatInt(input.CreateTimeLT, 10))
+	query.Set("sort_field", input.SortField)
+	query.Set("sort_order", input.SortOrder)
+	if input.PageToken != "" {
+		query.Set("page_token", input.PageToken)
+	}
+	var output SearchPaymentsResult
+	requestID, err := c.do(ctx, http.MethodGet, PathFinancePayments, query, nil, accessToken, &output)
+	if err != nil {
+		return nil, requestID, err
+	}
+	if err := validatePayments(output.Payments); err != nil || output.TotalCount < int64(len(output.Payments)) {
+		return nil, requestID, ErrInvalidOrderResponse
+	}
+	if output.Payments == nil {
+		output.Payments = []Payment{}
 	}
 	return &output, requestID, nil
 }
@@ -400,6 +542,22 @@ func (input *SearchWithdrawalsRequest) Validate() error {
 	return nil
 }
 
+func (input *SearchPaymentsRequest) Validate() error {
+	if input == nil || input.PageSize < 1 || input.PageSize > 100 || input.CreateTimeGE < 0 || input.CreateTimeLT < 0 || input.CreateTimeGE >= input.CreateTimeLT {
+		return ErrInvalidOrderInput
+	}
+	input.PageToken = strings.TrimSpace(input.PageToken)
+	input.SortField = strings.TrimSpace(input.SortField)
+	input.SortOrder = strings.ToUpper(strings.TrimSpace(input.SortOrder))
+	if input.SortField != "create_time" || (input.SortOrder != "" && input.SortOrder != "ASC" && input.SortOrder != "DESC") {
+		return ErrInvalidOrderInput
+	}
+	if input.SortOrder == "" {
+		input.SortOrder = "DESC"
+	}
+	return nil
+}
+
 func validateStatements(values []Statement) error {
 	if len(values) > 100 {
 		return ErrInvalidOrderResponse
@@ -445,6 +603,25 @@ func validateWithdrawals(values []Withdrawal) error {
 			return ErrInvalidOrderResponse
 		}
 		seen[v.WithdrawalID] = struct{}{}
+	}
+	return nil
+}
+
+func validatePayments(values []Payment) error {
+	if len(values) > 100 {
+		return ErrInvalidOrderResponse
+	}
+	seen := map[string]struct{}{}
+	for i := range values {
+		v := &values[i]
+		v.PaymentID = strings.TrimSpace(v.PaymentID)
+		if v.PaymentID == "" {
+			return ErrInvalidOrderResponse
+		}
+		if _, ok := seen[v.PaymentID]; ok {
+			return ErrInvalidOrderResponse
+		}
+		seen[v.PaymentID] = struct{}{}
 	}
 	return nil
 }

@@ -102,6 +102,53 @@ func TestFinanceClientSearchesWithdrawalRoundsWithoutSensitivePayoutFields(t *te
 	}
 }
 
+func TestFinanceClientSearchesPaymentsWithoutPreservingUnknownFields(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != PathFinancePayments {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		query := r.URL.Query()
+		provided := query.Get("sign")
+		query.Del("sign")
+		if query.Get("sort_field") != "create_time" || query.Get("sort_order") != "DESC" {
+			t.Fatalf("unexpected sort query: %s", query.Encode())
+		}
+		expected, err := SignRequest("secret", PathFinancePayments, query, nil, false)
+		if err != nil || provided != expected {
+			t.Fatalf("signature=%q expected=%q err=%v", provided, expected, err)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"request_id":"payments-request","data":{"total_count":1,"payments":[{"id":"payment-1","amount":"706.25","currency":"THB","status":"SUCCESS","create_time":1725000000,"order_ids":["order-1"],"buyer_name":"must-not-cross"}]}}`))
+	}))
+	defer server.Close()
+	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: server.URL, AppKey: "key", AppSecret: "secret", HTTPClient: server.Client(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, requestID, err := client.SearchPayments(context.Background(), "token", "cipher", SearchPaymentsRequest{PageSize: 1, CreateTimeGE: now.Add(-time.Hour).Unix(), CreateTimeLT: now.Unix(), SortField: "create_time"})
+	if err != nil || requestID != "payments-request" || len(result.Payments) != 1 {
+		t.Fatalf("result=%+v requestID=%q err=%v", result, requestID, err)
+	}
+	payment := result.Payments[0]
+	if payment.PaymentID != "payment-1" || payment.Amount != "706.25" || payment.Currency != "THB" || len(payment.OrderIDs) != 1 || payment.OrderIDs[0] != "order-1" {
+		t.Fatalf("payment=%+v", payment)
+	}
+	if len(payment.ObservedFields) == 0 || payment.ObservedFields[len(payment.ObservedFields)-1] != "status" {
+		t.Fatalf("observed fields=%v", payment.ObservedFields)
+	}
+}
+
+func TestFinanceClientRejectsInvalidPaymentSearch(t *testing.T) {
+	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: "https://example.test", AppKey: "key", AppSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = client.SearchPayments(context.Background(), "token", "cipher", SearchPaymentsRequest{PageSize: 1, CreateTimeGE: 2, CreateTimeLT: 3, SortField: "payment_time"})
+	if err == nil {
+		t.Fatal("expected invalid payment search")
+	}
+}
+
 func TestFinanceClientRejectsWithdrawalSearchWithoutARealRoundWindow(t *testing.T) {
 	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: "https://example.test", AppKey: "key", AppSecret: "secret"})
 	if err != nil {
