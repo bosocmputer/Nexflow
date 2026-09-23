@@ -73,6 +73,15 @@ func TestTikTokSettlementImportFailureStage(t *testing.T) {
 	}
 }
 
+func TestTikTokSettlementAmountOrZero(t *testing.T) {
+	if got := tikTokSettlementAmountOrZero(" "); got != "0" {
+		t.Fatalf("empty amount=%q", got)
+	}
+	if got := tikTokSettlementAmountOrZero(" 12.50 "); got != "12.50" {
+		t.Fatalf("amount=%q", got)
+	}
+}
+
 func TestParseTikTokSettlementRangeDefaultsAndCapsWindow(t *testing.T) {
 	from, to, err := parseTikTokSettlementRange("2026-09-01", "2026-09-15")
 	if err != nil || from.Location() != tikTokSettlementBangkok || to.Sub(from) != 15*24*time.Hour {

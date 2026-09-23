@@ -694,6 +694,14 @@ func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop
 }
 
 func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop string, s tiktokshop.Statement, requestID, userID, email string) error {
+	// TikTok may omit optional fee, shipping, adjustment, or refund fields.
+	// PostgreSQL NUMERIC columns cannot accept an empty string; an omitted
+	// optional component is accounting-neutral, while settlement_amount has
+	// already been validated by the Finance client as required evidence.
+	s.FeeAmount = tikTokSettlementAmountOrZero(s.FeeAmount)
+	s.ShippingAmount = tikTokSettlementAmountOrZero(s.ShippingAmount)
+	s.AdjustmentAmount = tikTokSettlementAmountOrZero(s.AdjustmentAmount)
+	s.RefundAmount = tikTokSettlementAmountOrZero(s.RefundAmount)
 	label, connectionID, err := h.connection(ctx, shop)
 	if err != nil {
 		return err
@@ -740,6 +748,13 @@ func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop stri
 		return h.fetchAndReconcile(ctx, runID, shop, s.StatementID)
 	}
 	return nil
+}
+
+func tikTokSettlementAmountOrZero(value string) string {
+	if normalized := strings.TrimSpace(value); normalized != "" {
+		return normalized
+	}
+	return "0"
 }
 
 func (h *TikTokSettlementHandler) fetchAndReconcile(ctx context.Context, runID, shop, statementID string) error {
