@@ -3,9 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/services/tiktokshop"
 )
@@ -141,5 +144,38 @@ func TestFinanceThaiErrorDoesNotExposeUpstreamDetail(t *testing.T) {
 	message := financeThaiError(&tiktokshop.GatewayError{Code: "permission_denied", Message: "secret upstream failure"})
 	if !strings.Contains(message, "Finance Information") || strings.Contains(message, "secret") {
 		t.Fatalf("message=%q", message)
+	}
+}
+
+func TestTikTokSettlementListWhereAppliesLocalSnapshotFilters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest("GET", "/?shop_id=shop-a&date_from=2026-09-01&date_to=2026-09-23&status=ready", nil)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+
+	where, args, err := tikTokSettlementListWhere(context, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(where, "shop_id=$1") || !strings.Contains(where, "status=$2") || !strings.Contains(where, "COALESCE(statement_time,payment_time) >= $3") {
+		t.Fatalf("where=%q", where)
+	}
+	if len(args) != 4 || args[0] != "shop-a" || args[1] != "ready" {
+		t.Fatalf("args=%#v", args)
+	}
+}
+
+func TestTikTokSettlementSummaryKeepsWorkStatusOutOfItsAggregate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	request := httptest.NewRequest("GET", "/?shop_id=shop-a&status=ready", nil)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = request
+
+	where, args, err := tikTokSettlementListWhere(context, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(where, "status=$") || len(args) != 1 || args[0] != "shop-a" {
+		t.Fatalf("summary must aggregate all statuses: where=%q args=%#v", where, args)
 	}
 }

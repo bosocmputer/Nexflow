@@ -101,6 +101,7 @@ type tikTokSettlementRunView struct {
 	UpdatedAt             string                     `json:"updated_at"`
 	Items                 []tikTokSettlementItemView `json:"items"`
 	ItemCount             int                        `json:"item_count"`
+	BlockedItemCount      int                        `json:"blocked_item_count"`
 }
 type tikTokSettlementItemView struct {
 	ID               string  `json:"id"`
@@ -401,38 +402,13 @@ func (h *TikTokSettlementHandler) List(c *gin.Context) {
 			limit = n
 		}
 	}
-	args := []any{}
-	where := "WHERE 1=1"
-	if shop := strings.TrimSpace(c.Query("shop_id")); shop != "" {
-		args = append(args, shop)
-		where += fmt.Sprintf(" AND shop_id=$%d", len(args))
-	}
-	if status := strings.TrimSpace(c.Query("status")); status != "" {
-		args = append(args, status)
-		where += fmt.Sprintf(" AND status=$%d", len(args))
-	}
-	if paymentStatus := strings.TrimSpace(c.Query("payment_status")); paymentStatus != "" {
-		switch paymentStatus {
-		case string(tiktokshop.StatementStatusPaid), string(tiktokshop.StatementStatusSettled), string(tiktokshop.StatementStatusProcessing), string(tiktokshop.StatementStatusFailed), "BANK_CONFIRMED":
-			args = append(args, paymentStatus)
-			where += fmt.Sprintf(" AND payment_status=$%d", len(args))
-		default:
-			h.error(c, http.StatusBadRequest, "invalid_payment_status", "สถานะการโอน TikTok Shop ไม่ถูกต้อง")
-			return
-		}
-	}
-	dateFrom, dateTo := strings.TrimSpace(c.Query("date_from")), strings.TrimSpace(c.Query("date_to"))
-	if dateFrom != "" || dateTo != "" {
-		from, to, err := parseTikTokStatementImportRange(dateFrom, dateTo)
-		if err != nil {
-			h.error(c, http.StatusBadRequest, "invalid_date", errorText(err))
-			return
-		}
-		args = append(args, from, to)
-		where += fmt.Sprintf(" AND COALESCE(statement_time,payment_time) >= $%d AND COALESCE(statement_time,payment_time) < $%d", len(args)-1, len(args))
+	where, args, err := tikTokSettlementListWhere(c, true)
+	if err != nil {
+		h.error(c, http.StatusBadRequest, "invalid_filter", errorText(err))
+		return
 	}
 	args = append(args, limit)
-	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT r.id::text,r.shop_id,r.shop_label,r.statement_id,r.payment_id,r.payment_status,r.currency,r.payment_time,r.statement_time,r.total_settlement_amount,r.invoice_amount_total,r.fee_amount_total,r.shipping_amount_total,r.adjustment_amount_total,r.refund_amount_total,r.reserve_amount_total,r.status,r.config_version,r.route_config_version,r.rc_doc_no,r.error_msg,r.anomaly_reason,r.created_at,r.updated_at,COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=r.id),0) FROM tiktok_settlement_runs r `+where+fmt.Sprintf(" ORDER BY r.statement_time DESC NULLS LAST,r.payment_time DESC NULLS LAST,r.created_at DESC LIMIT $%d", len(args)), args...)
+	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT r.id::text,r.shop_id,r.shop_label,r.statement_id,r.payment_id,r.payment_status,r.currency,r.payment_time,r.statement_time,r.total_settlement_amount,r.invoice_amount_total,r.fee_amount_total,r.shipping_amount_total,r.adjustment_amount_total,r.refund_amount_total,r.reserve_amount_total,r.status,r.config_version,r.route_config_version,r.rc_doc_no,r.error_msg,r.anomaly_reason,r.created_at,r.updated_at,COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=r.id),0),COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=r.id AND i.status='blocked'),0) FROM tiktok_settlement_runs r `+where+fmt.Sprintf(" ORDER BY r.statement_time DESC NULLS LAST,r.payment_time DESC NULLS LAST,r.created_at DESC LIMIT $%d", len(args)), args...)
 	if err != nil {
 		h.error(c, 500, "list_failed", "โหลด Statement TikTok Shop ไม่สำเร็จ")
 		return
@@ -459,8 +435,13 @@ func (h *TikTokSettlementHandler) Counts(c *gin.Context) {
 		h.error(c, 404, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
 		return
 	}
+	where, args, err := tikTokSettlementListWhere(c, false)
+	if err != nil {
+		h.error(c, http.StatusBadRequest, "invalid_filter", errorText(err))
+		return
+	}
 	var out tikTokSettlementCounts
-	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT status,COUNT(*) FROM tiktok_settlement_runs GROUP BY status`)
+	rows, err := h.db.QueryContext(c.Request.Context(), `SELECT status,COUNT(*) FROM tiktok_settlement_runs `+where+` GROUP BY status`, args...)
 	if err != nil {
 		h.error(c, 500, "counts_failed", "โหลดสรุป Statement ไม่สำเร็จ")
 		return
@@ -487,6 +468,43 @@ func (h *TikTokSettlementHandler) Counts(c *gin.Context) {
 		}
 	}
 	c.JSON(200, out)
+}
+
+// tikTokSettlementListWhere keeps the page's table and summary bounded to the
+// same local snapshot.  It deliberately accepts no free-form SQL and does not
+// call TikTok: importing remains an explicit operator action.
+func tikTokSettlementListWhere(c *gin.Context, includeStatus bool) (string, []any, error) {
+	args := []any{}
+	where := "WHERE 1=1"
+	if shop := strings.TrimSpace(c.Query("shop_id")); shop != "" {
+		args = append(args, shop)
+		where += fmt.Sprintf(" AND shop_id=$%d", len(args))
+	}
+	if includeStatus {
+		if status := strings.TrimSpace(c.Query("status")); status != "" {
+			args = append(args, status)
+			where += fmt.Sprintf(" AND status=$%d", len(args))
+		}
+	}
+	if paymentStatus := strings.TrimSpace(c.Query("payment_status")); paymentStatus != "" {
+		switch paymentStatus {
+		case string(tiktokshop.StatementStatusPaid), string(tiktokshop.StatementStatusSettled), string(tiktokshop.StatementStatusProcessing), string(tiktokshop.StatementStatusFailed), "BANK_CONFIRMED":
+			args = append(args, paymentStatus)
+			where += fmt.Sprintf(" AND payment_status=$%d", len(args))
+		default:
+			return "", nil, errors.New("สถานะการโอน TikTok Shop ไม่ถูกต้อง")
+		}
+	}
+	dateFrom, dateTo := strings.TrimSpace(c.Query("date_from")), strings.TrimSpace(c.Query("date_to"))
+	if dateFrom != "" || dateTo != "" {
+		from, to, err := parseTikTokStatementImportRange(dateFrom, dateTo)
+		if err != nil {
+			return "", nil, err
+		}
+		args = append(args, from, to)
+		where += fmt.Sprintf(" AND COALESCE(statement_time,payment_time) >= $%d AND COALESCE(statement_time,payment_time) < $%d", len(args)-1, len(args))
+	}
+	return where, args, nil
 }
 
 func (h *TikTokSettlementHandler) Get(c *gin.Context) {
@@ -1125,7 +1143,7 @@ func (h *TikTokSettlementHandler) loadSettings(ctx context.Context, shop string)
 	return gin.H{"shop_id": shop, "read_enabled": read, "sml_send_enabled": sml, "config_version": version}, err
 }
 func (h *TikTokSettlementHandler) loadRun(ctx context.Context, id string, withItems bool) (*tikTokSettlementRunView, error) {
-	row := h.db.QueryRowContext(ctx, `SELECT id::text,shop_id,shop_label,statement_id,payment_id,payment_status,currency,payment_time,statement_time,total_settlement_amount,invoice_amount_total,fee_amount_total,shipping_amount_total,adjustment_amount_total,refund_amount_total,reserve_amount_total,status,config_version,route_config_version,rc_doc_no,error_msg,anomaly_reason,created_at,updated_at,COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=tiktok_settlement_runs.id),0) FROM tiktok_settlement_runs WHERE id=$1::uuid`, id)
+	row := h.db.QueryRowContext(ctx, `SELECT id::text,shop_id,shop_label,statement_id,payment_id,payment_status,currency,payment_time,statement_time,total_settlement_amount,invoice_amount_total,fee_amount_total,shipping_amount_total,adjustment_amount_total,refund_amount_total,reserve_amount_total,status,config_version,route_config_version,rc_doc_no,error_msg,anomaly_reason,created_at,updated_at,COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=tiktok_settlement_runs.id),0),COALESCE((SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=tiktok_settlement_runs.id AND i.status='blocked'),0) FROM tiktok_settlement_runs WHERE id=$1::uuid`, id)
 	run, err := scanTikTokSettlementRun(row)
 	if err != nil {
 		return nil, err
@@ -1151,7 +1169,7 @@ func scanTikTokSettlementRun(row interface{ Scan(...any) error }) (*tikTokSettle
 	var r tikTokSettlementRunView
 	var payment, statement sql.NullTime
 	var created, updated time.Time
-	err := row.Scan(&r.ID, &r.ShopID, &r.ShopLabel, &r.StatementID, &r.PaymentID, &r.PaymentStatus, &r.Currency, &payment, &statement, &r.TotalSettlementAmount, &r.InvoiceAmountTotal, &r.FeeAmountTotal, &r.ShippingAmountTotal, &r.AdjustmentAmountTotal, &r.RefundAmountTotal, &r.ReserveAmountTotal, &r.Status, &r.ConfigVersion, &r.RouteConfigVersion, &r.RCDocNo, &r.ErrorMsg, &r.AnomalyReason, &created, &updated, &r.ItemCount)
+	err := row.Scan(&r.ID, &r.ShopID, &r.ShopLabel, &r.StatementID, &r.PaymentID, &r.PaymentStatus, &r.Currency, &payment, &statement, &r.TotalSettlementAmount, &r.InvoiceAmountTotal, &r.FeeAmountTotal, &r.ShippingAmountTotal, &r.AdjustmentAmountTotal, &r.RefundAmountTotal, &r.ReserveAmountTotal, &r.Status, &r.ConfigVersion, &r.RouteConfigVersion, &r.RCDocNo, &r.ErrorMsg, &r.AnomalyReason, &created, &updated, &r.ItemCount, &r.BlockedItemCount)
 	if err != nil {
 		return nil, err
 	}

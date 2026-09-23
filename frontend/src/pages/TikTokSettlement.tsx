@@ -1,22 +1,21 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import dayjs from 'dayjs'
+import { useEffect, useRef, useState } from "react";
+import dayjs from "dayjs";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  FileText,
   ReceiptText,
   RefreshCw,
-  Send,
-  Settings2,
   Store,
-} from 'lucide-react'
-import { toast } from 'sonner'
+} from "lucide-react";
+import { toast } from "sonner";
 
-import client from '@/api/client'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import client from "@/api/client";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -24,626 +23,958 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { DateRangePicker, type DateRangePreset } from '@/components/common/DateRangePicker'
-import { resolveTikTokSettlementShopID } from '@/lib/tiktok-settlement'
-import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/store/auth'
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DateRangePicker,
+  type DateRangePreset,
+} from "@/components/common/DateRangePicker";
+import {
+  settlementDestinationLabel,
+  settlementPrimaryActionLabel,
+} from "@/lib/tiktok-settlement-presentation";
+import { resolveTikTokSettlementShopID } from "@/lib/tiktok-settlement";
+import { cn } from "@/lib/utils";
 
 type Shop = {
-  shop_id: string
-  shop_name: string
-  shop_code?: string
-  disabled?: boolean
-}
-
+  shop_id: string;
+  shop_name: string;
+  shop_code?: string;
+  disabled?: boolean;
+};
 type Item = {
-  id: string
-  order_id: string
-  sml_invoice_doc_no?: string
-  customer_code?: string
-  invoice_amount: number
-  settlement_amount: number
-  fee_amount: number
-  shipping_amount: number
-  adjustment_amount: number
-  refund_amount: number
-  currency: string
-  status: string
-  block_reason?: string
-  receipt_doc_no?: string
-}
-
+  id: string;
+  order_id: string;
+  sml_invoice_doc_no?: string;
+  settlement_amount: number;
+  status: string;
+  block_reason?: string;
+};
 type Run = {
-  id: string
-  shop_id: string
-  shop_label: string
-  statement_id: string
-  payment_id: string
-  payment_status: string
-  currency: string
-  payment_time?: string
-  statement_time?: string
-  total_settlement_amount: number
-  invoice_amount_total: number
-  fee_amount_total: number
-  status: string
-  config_version: number
-  item_count?: number
-  rc_doc_no?: string
-  error_msg?: string
-  anomaly_reason?: string
-  items?: Item[]
-}
-
+  id: string;
+  shop_id: string;
+  shop_label: string;
+  statement_id: string;
+  payment_id: string;
+  payment_status: string;
+  currency: string;
+  payment_time?: string;
+  statement_time?: string;
+  total_settlement_amount: number;
+  invoice_amount_total: number;
+  fee_amount_total: number;
+  status: string;
+  config_version: number;
+  item_count?: number;
+  blocked_item_count?: number;
+  rc_doc_no?: string;
+  error_msg?: string;
+  anomaly_reason?: string;
+  items?: Item[];
+};
 type Counts = {
-  processing?: number
-  ready?: number
-  needs_review?: number
-  sent?: number
-  failed?: number
-  total: number
-}
-
+  processing?: number;
+  ready?: number;
+  needs_review?: number;
+  sent?: number;
+  failed?: number;
+  total: number;
+};
 type RouteSummary = {
-  configured: boolean
-  doc_format_code?: string
-  passbook_code?: string
-  passbook_name?: string
-  bank_code?: string
-  bank_branch?: string
-  expense_code?: string
-  expense_name?: string
-}
-
+  configured: boolean;
+  doc_format_code?: string;
+  passbook_code?: string;
+  passbook_name?: string;
+};
 type ImportNotice = {
-  message: string
-  imported_count?: number
-  paid_count?: number
-  processing_count?: number
-  failed_count?: number
-}
+  message: string;
+  imported_count?: number;
+  paid_count?: number;
+  processing_count?: number;
+  failed_count?: number;
+};
 
-const money = (value?: number, currency = 'THB') => new Intl.NumberFormat('th-TH', {
-  style: 'currency',
-  currency: /^[A-Z]{3}$/.test(currency) ? currency : 'THB',
-}).format(Number(value ?? 0))
-
-const evidenceTitle = (run: Pick<Run, 'statement_id'>) => run.statement_id
-
+const money = (value?: number, currency = "THB") =>
+  new Intl.NumberFormat("th-TH", {
+    style: "currency",
+    currency: /^[A-Z]{3}$/.test(currency) ? currency : "THB",
+  }).format(Number(value ?? 0));
 const statusMeta: Record<string, { text: string; className: string }> = {
-  importing: { text: 'กำลังดึงข้อมูล', className: 'bg-muted text-muted-foreground' },
-  reconciling: { text: 'กำลังตรวจยอด', className: 'bg-info/15 text-info' },
-  ready: { text: 'พร้อมส่ง', className: 'bg-success/15 text-success' },
-  needs_review: { text: 'ต้องตรวจ', className: 'bg-warning/15 text-warning' },
-  sending: { text: 'กำลังส่ง SML', className: 'bg-info/15 text-info' },
-  sent: { text: 'ส่งแล้ว', className: 'bg-success/15 text-success' },
-  failed: { text: 'ผิดพลาด', className: 'bg-destructive/15 text-destructive' },
-  unknown_result: { text: 'ต้องตรวจผล SML', className: 'bg-warning/15 text-warning' },
-  superseded: { text: 'ข้อมูลใหม่กว่า', className: 'bg-muted text-muted-foreground' },
-}
-
+  importing: {
+    text: "กำลังดึงข้อมูล",
+    className: "bg-muted text-muted-foreground",
+  },
+  reconciling: { text: "กำลังตรวจข้อมูล", className: "bg-info/15 text-info" },
+  ready: { text: "พร้อมสร้างเอกสาร", className: "bg-success/15 text-success" },
+  needs_review: {
+    text: "ต้องตรวจข้อมูล",
+    className: "bg-warning/15 text-warning",
+  },
+  sending: { text: "กำลังสร้างเอกสาร", className: "bg-info/15 text-info" },
+  sent: { text: "สร้างเอกสารแล้ว", className: "bg-success/15 text-success" },
+  failed: {
+    text: "ดำเนินการไม่สำเร็จ",
+    className: "bg-destructive/15 text-destructive",
+  },
+  unknown_result: {
+    text: "ต้องตรวจผลใน SML",
+    className: "bg-warning/15 text-warning",
+  },
+  superseded: {
+    text: "มีข้อมูลใหม่กว่า",
+    className: "bg-muted text-muted-foreground",
+  },
+};
 const paymentStatusText: Record<string, string> = {
-  PAID: 'TikTok จ่ายแล้ว',
-  SETTLED: 'TikTok ยืนยัน settlement แล้ว',
-  PROCESSING: 'TikTok กำลังดำเนินการ',
-  FAILED: 'TikTok จ่ายไม่สำเร็จ',
+  PAID: "TikTok แจ้งว่าโอนแล้ว",
+  SETTLED: "TikTok ยืนยัน settlement แล้ว",
+  PROCESSING: "TikTok กำลังดำเนินการ",
+  FAILED: "TikTok โอนไม่สำเร็จ",
+};
+const statementDate = (run: Pick<Run, "statement_time" | "payment_time">) =>
+  run.statement_time || run.payment_time;
+const statementPresets: DateRangePreset[] = [
+  {
+    label: "วันนี้",
+    getRange: () => ({
+      from: dayjs().format("YYYY-MM-DD"),
+      to: dayjs().format("YYYY-MM-DD"),
+    }),
+  },
+  {
+    label: "7 วัน",
+    getRange: () => ({
+      from: dayjs().subtract(6, "day").format("YYYY-MM-DD"),
+      to: dayjs().format("YYYY-MM-DD"),
+    }),
+  },
+  {
+    label: "15 วัน",
+    getRange: () => ({
+      from: dayjs().subtract(14, "day").format("YYYY-MM-DD"),
+      to: dayjs().format("YYYY-MM-DD"),
+    }),
+  },
+  {
+    label: "31 วัน",
+    getRange: () => ({
+      from: dayjs().subtract(30, "day").format("YYYY-MM-DD"),
+      to: dayjs().format("YYYY-MM-DD"),
+    }),
+  },
+];
+const formatDate = (value?: string) =>
+  value ? dayjs(value).format("DD/MM/YY HH:mm") : "-";
+const statusReason = (run: Run) =>
+  run.anomaly_reason ||
+  run.error_msg ||
+  (run.status === "needs_review" && run.blocked_item_count
+    ? `มี ${run.blocked_item_count} รายการที่ต้องตรวจ`
+    : (paymentStatusText[run.payment_status] ?? run.payment_status));
+function TikTokChip() {
+  return (
+    <Badge className="border-[#111817] bg-[#111817] text-white hover:bg-[#111817]">
+      TikTok
+    </Badge>
+  );
 }
-
-const statementDate = (run: Pick<Run, 'statement_time' | 'payment_time'>) => run.statement_time || run.payment_time
-
-const tiktokStatementPresets: DateRangePreset[] = [
-  {
-    label: 'วันนี้',
-    getRange: () => {
-      const today = dayjs().format('YYYY-MM-DD')
-      return { from: today, to: today }
-    },
-  },
-  {
-    label: '7 วัน',
-    getRange: () => ({
-      from: dayjs().subtract(6, 'day').format('YYYY-MM-DD'),
-      to: dayjs().format('YYYY-MM-DD'),
-    }),
-  },
-  {
-    label: '15 วัน',
-    getRange: () => ({
-      from: dayjs().subtract(14, 'day').format('YYYY-MM-DD'),
-      to: dayjs().format('YYYY-MM-DD'),
-    }),
-  },
-]
 
 export default function TikTokSettlement() {
-  const isAdmin = useAuthStore((state) => state.user?.role === 'admin')
-  const [shops, setShops] = useState<Shop[]>([])
-  const [shopID, setShopID] = useState('')
-  const [runs, setRuns] = useState<Run[]>([])
-  const [counts, setCounts] = useState<Counts>({ total: 0 })
-  const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<Run | null>(null)
-  const [route, setRoute] = useState<RouteSummary | null>(null)
-  const [sendConfirmOpen, setSendConfirmOpen] = useState(false)
-  const [sending, setSending] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsConfirmOpen, setSettingsConfirmOpen] = useState(false)
-  const [readEnabled, setReadEnabled] = useState(false)
-  const [smlEnabled, setSmlEnabled] = useState(false)
-  const [settingsVersion, setSettingsVersion] = useState(0)
-  const [importNotice, setImportNotice] = useState<ImportNotice | null>(null)
-  const [importingStatements, setImportingStatements] = useState(false)
-  const [from, setFrom] = useState(dayjs().subtract(14, 'day').format('YYYY-MM-DD'))
-  const [to, setTo] = useState(dayjs().format('YYYY-MM-DD'))
-  const [runStatus, setRunStatus] = useState('all')
-
-  const resolvedShopID = resolveTikTokSettlementShopID(shopID, shops)
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [shopID, setShopID] = useState("");
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [counts, setCounts] = useState<Counts>({ total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Run | null>(null);
+  const [route, setRoute] = useState<RouteSummary | null>(null);
+  const [sendConfirmOpen, setSendConfirmOpen] = useState(false);
+  const [bankEvidenceConfirmed, setBankEvidenceConfirmed] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importShopID, setImportShopID] = useState("");
+  const [importFrom, setImportFrom] = useState(
+    dayjs().subtract(14, "day").format("YYYY-MM-DD"),
+  );
+  const [importTo, setImportTo] = useState(dayjs().format("YYYY-MM-DD"));
+  const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
+  const [importingStatements, setImportingStatements] = useState(false);
+  const [from, setFrom] = useState(
+    dayjs().subtract(14, "day").format("YYYY-MM-DD"),
+  );
+  const [to, setTo] = useState(dayjs().format("YYYY-MM-DD"));
+  const [runStatus, setRunStatus] = useState("all");
+  const requestSequence = useRef(0);
+  const resolvedShopID = resolveTikTokSettlementShopID(shopID, shops);
+  const resolvedImportShopID = resolveTikTokSettlementShopID(
+    importShopID,
+    shops,
+  );
 
   const load = async () => {
-    setLoading(true)
+    const sequence = ++requestSequence.current;
+    setLoading(true);
     try {
       const params = {
         ...(shopID ? { shop_id: shopID } : {}),
         date_from: from,
         date_to: to,
-        ...(runStatus !== 'all' ? { status: runStatus } : {}),
-      }
-      const [connections, list, summary] = await Promise.all([
-        client.get<{ data: Shop[] }>('/api/tiktok-shop-api/local-connections'),
-        client.get<{ data: Run[] }>('/api/tiktok-settlements', { params }),
-        client.get<Counts>('/api/tiktok-settlements/counts'),
-      ])
-      const active = (connections.data.data ?? []).filter((shop) => !shop.disabled)
-      setShops(active)
-      if (!shopID && active.length === 1) setShopID(active[0].shop_id)
-      setRuns(list.data.data ?? [])
-      setCounts(summary.data)
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'โหลดรายการรับชำระ TikTok Shop ไม่สำเร็จ')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    void load()
-  }, [shopID, from, to, runStatus])
-
-  const preflight = async () => {
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนตรวจระบบ')
-      return
-    }
-    try {
-      const response = await client.post<{ data: { message: string } }>(
-        '/api/tiktok-settlements/preflight',
-        null,
-        { params: { shop_id: resolvedShopID } },
-      )
-      toast.success(response.data.data.message)
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'ตรวจระบบไม่สำเร็จ')
-    }
-  }
-
-  const importStatements = async () => {
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนดึง Statement')
-      return
-    }
-    setImportingStatements(true)
-    try {
-      const response = await client.post<ImportNotice>('/api/tiktok-settlements/import', {
-        shop_id: resolvedShopID,
+        ...(runStatus !== "all" ? { status: runStatus } : {}),
+      };
+      const summaryParams = {
+        ...(shopID ? { shop_id: shopID } : {}),
         date_from: from,
         date_to: to,
-      })
-      setImportNotice(response.data)
-      await load()
+      };
+      const [connections, list, summary] = await Promise.all([
+        client.get<{ data: Shop[] }>("/api/tiktok-shop-api/local-connections"),
+        client.get<{ data: Run[] }>("/api/tiktok-settlements", { params }),
+        client.get<Counts>("/api/tiktok-settlements/counts", {
+          params: summaryParams,
+        }),
+      ]);
+      if (sequence !== requestSequence.current) return;
+      const active = (connections.data.data ?? []).filter(
+        (shop) => !shop.disabled,
+      );
+      setShops(active);
+      if (!shopID && active.length === 1) setShopID(active[0].shop_id);
+      setRuns(list.data.data ?? []);
+      setCounts(summary.data);
     } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'ดึง Statement จาก TikTok Shop ไม่สำเร็จ')
+      if (sequence === requestSequence.current)
+        toast.error(
+          error?.response?.data?.error?.message ??
+            "โหลดรายการรับชำระ TikTok Shop ไม่สำเร็จ",
+        );
     } finally {
-      setImportingStatements(false)
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }
-
-  const openSettings = async () => {
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนตั้งค่า')
-      return
+  };
+  useEffect(() => {
+    void load();
+  }, [shopID, from, to, runStatus]);
+  const openImport = () => {
+    setImportShopID(resolvedShopID);
+    setImportFrom(from);
+    setImportTo(to);
+    setImportOpen(true);
+  };
+  const importStatements = async () => {
+    if (!resolvedImportShopID) {
+      toast.error("กรุณาเลือกร้านก่อนดึง Statement");
+      return;
     }
+    if (dayjs(importTo).diff(dayjs(importFrom), "day") > 30) {
+      toast.error("เลือกช่วงข้อมูลได้ไม่เกิน 31 วันต่อครั้ง");
+      return;
+    }
+    setImportingStatements(true);
     try {
-      const response = await client.get<{
-        data: { read_enabled: boolean; sml_send_enabled: boolean; config_version: number }
-      }>('/api/tiktok-settlements/settings', { params: { shop_id: resolvedShopID } })
-      setReadEnabled(response.data.data.read_enabled)
-      setSmlEnabled(response.data.data.sml_send_enabled)
-      setSettingsVersion(response.data.data.config_version)
-      setSettingsOpen(true)
-    } catch {
-      toast.error('โหลดการตั้งค่าร้านไม่สำเร็จ')
-    }
-  }
-
-  const confirmSaveSettings = async () => {
-    if (!resolvedShopID) {
-      toast.error('กรุณาเลือกร้านก่อนบันทึกการตั้งค่า')
-      return
-    }
-    try {
-      await client.put(`/api/tiktok-settlements/settings/${resolvedShopID}`, {
-        read_enabled: readEnabled,
-        sml_send_enabled: smlEnabled,
-        expected_config_version: settingsVersion,
-      })
-      toast.success('บันทึกการตั้งค่าแล้ว')
-      setSettingsOpen(false)
+      const response = await client.post<ImportNotice>(
+        "/api/tiktok-settlements/import",
+        {
+          shop_id: resolvedImportShopID,
+          date_from: importFrom,
+          date_to: importTo,
+        },
+      );
+      setImportNotice(response.data);
+      setImportOpen(false);
+      await load();
     } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'บันทึกการตั้งค่าไม่สำเร็จ')
+      toast.error(
+        error?.response?.data?.error?.message ??
+          "ดึง Statement จาก TikTok Shop ไม่สำเร็จ",
+      );
+    } finally {
+      setImportingStatements(false);
     }
-  }
-
-  const open = async (run: Run) => {
+  };
+  const openDetail = async (run: Run) => {
     try {
       const [detail, routeResult] = await Promise.all([
         client.get<{ data: Run }>(`/api/tiktok-settlements/${run.id}`),
-        client.get<{ data: RouteSummary }>('/api/tiktok-settlements/route'),
-      ])
-      setSelected(detail.data.data)
-      setRoute(routeResult.data.data)
-    } catch {
-      toast.error('โหลดรายละเอียด Statement ไม่สำเร็จ')
-    }
-  }
-
-  const reconcile = async () => {
-    if (!selected) return
-    try {
-      const response = await client.post<{ data: Run }>(`/api/tiktok-settlements/${selected.id}/reconcile`)
-      setSelected(response.data.data)
-      await load()
-      toast.success('ตรวจเทียบ Statement ล่าสุดแล้ว')
+        client.get<{ data: RouteSummary }>("/api/tiktok-settlements/route"),
+      ]);
+      setSelected(detail.data.data);
+      setRoute(routeResult.data.data);
     } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'ตรวจเทียบไม่สำเร็จ')
+      toast.error(
+        error?.response?.data?.error?.message ??
+          "โหลดรายละเอียด Statement ไม่สำเร็จ",
+      );
     }
-  }
-
+  };
+  const reconcile = async () => {
+    if (!selected) return;
+    try {
+      const response = await client.post<{ data: Run }>(
+        `/api/tiktok-settlements/${selected.id}/reconcile`,
+      );
+      setSelected(response.data.data);
+      await load();
+      toast.success("ตรวจข้อมูลเอกสารล่าสุดแล้ว");
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.error?.message ?? "ตรวจข้อมูลไม่สำเร็จ",
+      );
+    }
+  };
   const confirmSend = async () => {
-    if (!selected) return
-    setSending(true)
+    if (!selected || !bankEvidenceConfirmed) return;
+    setSending(true);
     try {
       await client.post(`/api/tiktok-settlements/${selected.id}/send`, {
-        confirm: 'CONFIRM_TIKTOK_RC',
+        confirm: "CONFIRM_TIKTOK_RC",
         expected_config_version: String(selected.config_version),
-      })
-      toast.success('เริ่มส่ง RC เข้า SML แล้ว')
-      setSelected(null)
-      await load()
+      });
+      toast.success("เริ่มสร้างเอกสารใน SML แล้ว");
+      setSendConfirmOpen(false);
+      setSelected(null);
+      await load();
     } catch (error: any) {
-      toast.error(error?.response?.data?.error?.message ?? 'ส่ง RC ไม่สำเร็จ')
+      toast.error(
+        error?.response?.data?.error?.message ?? "สร้างเอกสารใน SML ไม่สำเร็จ",
+      );
     } finally {
-      setSending(false)
+      setSending(false);
     }
-  }
+  };
+  const detailActionLabel = settlementPrimaryActionLabel(
+    selected?.status,
+    route?.configured,
+  );
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-lg border border-border/70 bg-card p-2.5 shadow-sm">
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-semibold tracking-tight text-foreground">รับชำระ TikTok Shop</h1>
-              <code className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-accent-strong">RC</code>
-              <p className="sr-only">ดึง TikTok Statement เพื่ออ่านรายการคำสั่งซื้อจริง ตรวจเทียบกับเอกสารขาย แล้วให้พนักงานยืนยันส่ง RC เข้า SML ทีละ Statement</p>
-              <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
-              <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-                <ReceiptText className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
-                <Link to="/sale-invoices" className="font-medium text-link hover:underline">ขายสินค้าและบริการ</Link>
-                <span>→</span>
-                <span className="font-medium text-foreground">ลูกหนี้ -&gt; รับชำระหนี้</span>
-              </span>
-            </div>
+    <div className="space-y-4 p-0 sm:p-0">
+      <header className="flex flex-col gap-3 border-b pb-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+            <span>นำเข้าและรับชำระ</span>
+            <ChevronRight className="h-3.5 w-3.5" />
+            <span>รับชำระ TikTok Shop</span>
           </div>
-
-          <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
-            <SettlementMetricChip label="กำลังตรวจ" value={counts.processing ?? 0} tone="primary" />
-            <SettlementMetricChip label="พร้อมส่ง" value={counts.ready ?? 0} tone="success" />
-            <SettlementMetricChip label="ส่งแล้ว" value={counts.sent ?? 0} tone="success" />
-            <SettlementMetricChip label="ต้องตรวจ" value={counts.needs_review ?? 0} tone="warning" />
-            <SettlementMetricChip label="ผิดพลาด" value={counts.failed ?? 0} tone="danger" />
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={() => void importStatements()} disabled={importingStatements}>
-              <ReceiptText className="h-4 w-4" />
-              {importingStatements ? 'กำลังดึง Statement…' : 'ดึง Statement จาก TikTok'}
-            </Button>
-            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={preflight}>
-              <CheckCircle2 className="h-4 w-4" />
-              ตรวจระบบ
-            </Button>
-            <Button asChild className="h-8 w-full justify-center sm:w-auto" size="sm" variant="outline">
-              <Link to="/settings/channels">ตั้งค่าเส้นทาง</Link>
-            </Button>
-            {isAdmin && (
-              <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={openSettings}>
-                <Settings2 className="h-4 w-4" />
-                ตั้งค่าร้าน
-              </Button>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight">
+              รับชำระ TikTok Shop
+            </h1>
+            <TikTokChip />
           </div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            ดึงข้อมูลที่ TikTok แจ้งว่าโอนแล้ว ตรวจเอกสารขาย
+            และให้พนักงานยืนยันสร้างเอกสารใน SML ทีละรอบ
+          </p>
         </div>
-
-        <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
-          <div className="grid gap-1.5 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
-            <Select value={resolvedShopID} onValueChange={setShopID}>
-              <SelectTrigger className="h-8 w-full text-xs sm:w-[220px]" aria-label="กรองตามร้าน TikTok Shop">
-                <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-accent-strong" />
-                <SelectValue placeholder="ร้าน TikTok Shop" />
-              </SelectTrigger>
-              <SelectContent>
-                {shops.map((shop) => (
-                  <SelectItem key={shop.shop_id} value={shop.shop_id}>
-                    {shop.shop_name || shop.shop_id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <DateRangePicker
-              from={from}
-              to={to}
-              onFromChange={setFrom}
-              onToChange={setTo}
-              onRangeChange={(range) => {
-                setFrom(range.from)
-                setTo(range.to)
-              }}
-              presets={tiktokStatementPresets}
-              title="ช่วงวันที่รายการขาย"
-              description="ระบบค้นหา Statement ที่ TikTok สร้างวันถัดไปตามเวลา UTC และแสดงทุกสถานะ"
-              className="!h-8 w-full !min-w-0 text-xs sm:w-[260px]"
-            />
-            <Select value={runStatus} onValueChange={setRunStatus}>
-              <SelectTrigger className="h-8 w-full text-xs sm:w-[150px]" aria-label="กรองตามสถานะงาน">
-                <SelectValue placeholder="สถานะงาน" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">ทุกสถานะงาน</SelectItem>
-                <SelectItem value="ready">พร้อมส่ง</SelectItem>
-                <SelectItem value="needs_review">ต้องตรวจ</SelectItem>
-                <SelectItem value="sent">ส่งแล้ว</SelectItem>
-                <SelectItem value="failed">ผิดพลาด</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button className="h-8 w-full justify-center gap-1.5 lg:ml-auto lg:w-auto" size="sm" variant="outline" onClick={() => void load()}>
-              <RefreshCw className="h-3.5 w-3.5" />
-              รีเฟรช
-            </Button>
-          </div>
+        <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+          <SettlementMetricChip
+            label="กำลังตรวจ"
+            value={counts.processing ?? 0}
+            tone="primary"
+          />
+          <SettlementMetricChip
+            label="พร้อมสร้าง"
+            value={counts.ready ?? 0}
+            tone="success"
+          />
+          <SettlementMetricChip
+            label="ส่งแล้ว"
+            value={counts.sent ?? 0}
+            tone="success"
+          />
+          <SettlementMetricChip
+            label="ต้องตรวจ"
+            value={counts.needs_review ?? 0}
+            tone="warning"
+          />
+          <SettlementMetricChip
+            label="ผิดพลาด"
+            value={counts.failed ?? 0}
+            tone="danger"
+          />
+          <Button className="ml-1 h-9 gap-1.5" size="sm" onClick={openImport}>
+            <ReceiptText className="h-4 w-4" />
+            ดึง Statement จาก TikTok
+          </Button>
         </div>
+      </header>
+      <section className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3">
+        <Select
+          value={shopID || "all"}
+          onValueChange={(value) => setShopID(value === "all" ? "" : value)}
+        >
+          <SelectTrigger
+            className="h-9 w-full text-sm sm:w-[220px]"
+            aria-label="กรองตามร้าน TikTok Shop"
+          >
+            <Store className="mr-2 h-4 w-4 shrink-0" />
+            <SelectValue placeholder="ทุกร้าน TikTok Shop" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">ทุกร้าน TikTok Shop</SelectItem>
+            {shops.map((shop) => (
+              <SelectItem key={shop.shop_id} value={shop.shop_id}>
+                {shop.shop_name || shop.shop_id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <DateRangePicker
+          from={from}
+          to={to}
+          onFromChange={setFrom}
+          onToChange={setTo}
+          onRangeChange={(range) => {
+            setFrom(range.from);
+            setTo(range.to);
+          }}
+          presets={statementPresets.slice(0, 3)}
+          title="ช่วงวันที่ของรายการ"
+          description="ใช้กรองรายการที่นำเข้าแล้วตามเวลาประเทศไทย ไม่ได้เรียก TikTok ใหม่"
+          className="h-9 w-full !min-w-0 text-sm sm:w-[260px]"
+        />
+        <Select value={runStatus} onValueChange={setRunStatus}>
+          <SelectTrigger
+            className="h-9 w-full text-sm sm:w-[180px]"
+            aria-label="กรองตามสถานะงาน"
+          >
+            <SelectValue placeholder="ทุกสถานะงาน" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">ทุกสถานะงาน</SelectItem>
+            <SelectItem value="ready">พร้อมสร้างเอกสาร</SelectItem>
+            <SelectItem value="needs_review">ต้องตรวจข้อมูล</SelectItem>
+            <SelectItem value="sent">สร้างเอกสารแล้ว</SelectItem>
+            <SelectItem value="failed">ดำเนินการไม่สำเร็จ</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          className="ml-auto h-9 gap-1.5"
+          size="sm"
+          variant="outline"
+          onClick={() => void load()}
+        >
+          <RefreshCw className="h-4 w-4" />
+          รีเฟรช
+        </Button>
       </section>
-
       {importNotice && (
         <div
           role="status"
           className={cn(
-            'flex items-start justify-between gap-3 rounded-md border p-3 text-sm',
-            (importNotice.processing_count || importNotice.failed_count) ? 'border-warning/30 bg-warning/5 text-warning' : 'border-success/30 bg-success/5 text-success',
+            "flex items-start justify-between gap-3 rounded-md border p-3 text-sm",
+            importNotice.processing_count || importNotice.failed_count
+              ? "border-warning/30 bg-warning/5 text-warning"
+              : "border-success/30 bg-success/5 text-success",
           )}
         >
-          <div className="flex gap-2">
-            {(importNotice.processing_count || importNotice.failed_count) ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
+          <div className="flex min-w-0 gap-2">
+            {importNotice.processing_count || importNotice.failed_count ? (
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            )}
             <p>{importNotice.message}</p>
           </div>
-          <Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={() => setImportNotice(null)}>ปิด</Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2"
+            onClick={() => setImportNotice(null)}
+          >
+            ปิด
+          </Button>
         </div>
       )}
-
       <Card className="border-border/70 shadow-none">
         <CardContent className="p-0">
-          {loading && <div className="p-6 text-sm text-muted-foreground">กำลังโหลดร่างรับชำระ…</div>}
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full text-sm">
-              <thead className="border-b bg-muted/30 text-left text-muted-foreground">
-                <tr>
-                  <th className="p-3">Statement / วันที่สร้าง</th>
-                  <th className="p-3">ร้าน</th>
-                  <th className="p-3 text-right">ยอด TikTok / Order</th>
-                  <th className="p-3">สถานะ</th>
-                  <th className="p-3">RC</th>
-                  <th className="p-3"><span className="sr-only">การดำเนินการ</span></th>
-                </tr>
-              </thead>
-              <tbody>
+          {loading ? (
+            <SettlementSkeleton />
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/30 text-left text-muted-foreground">
+                    <tr>
+                      <th className="p-3 font-medium">Statement / วันที่</th>
+                      <th className="p-3 font-medium">ร้าน</th>
+                      <th className="p-3 text-right font-medium">
+                        ยอด TikTok / คำสั่งซื้อ
+                      </th>
+                      <th className="p-3 font-medium">สถานะงาน</th>
+                      <th className="p-3 font-medium">เอกสาร SML</th>
+                      <th className="p-3">
+                        <span className="sr-only">การดำเนินการ</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.map((run) => (
+                      <SettlementTableRow
+                        key={run.id}
+                        run={run}
+                        onOpen={openDetail}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="divide-y md:hidden">
                 {runs.map((run) => (
-                  <tr key={run.id} className="border-b last:border-0">
-                    <td className="p-3">
-                      <p className="font-medium">{evidenceTitle(run)}</p>
-                      <p className="text-xs text-muted-foreground">{statementDate(run) ? dayjs(statementDate(run)).format('DD/MM/YY HH:mm') : '-'}</p>
-                    </td>
-                    <td className="p-3">
-                      <Badge className="border-[#111817] bg-[#111817] text-white hover:bg-[#111817]">TikTok</Badge>
-                      <p className="mt-1 text-xs text-muted-foreground">{run.shop_label}</p>
-                    </td>
-                    <td className="p-3 text-right">
-                      <p className="font-medium">{money(run.total_settlement_amount, run.currency)}</p>
-                      <p className="text-xs text-muted-foreground">{run.item_count ?? '-'} คำสั่งซื้อ</p>
-                    </td>
-                    <td className="p-3">
-                      <Badge variant="secondary" className={statusMeta[run.status]?.className}>{statusMeta[run.status]?.text ?? run.status}</Badge>
-                      <p className="mt-1 text-xs text-muted-foreground">{paymentStatusText[run.payment_status] ?? run.payment_status}</p>
-                      <p className="mt-1 max-w-[200px] truncate text-xs text-muted-foreground">{run.anomaly_reason || run.error_msg}</p>
-                    </td>
-                    <td className="p-3 font-mono text-xs">{run.rc_doc_no || '-'}</td>
-                    <td className="p-3 text-right">
-                      <Button size="sm" variant="outline" onClick={() => void open(run)}>
-                        รายละเอียด
-                        <ChevronRight className="ml-1 h-4 w-4" />
-                      </Button>
-                    </td>
-                  </tr>
+                  <SettlementMobileRow
+                    key={run.id}
+                    run={run}
+                    onOpen={openDetail}
+                  />
                 ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="divide-y md:hidden">
-            {runs.map((run) => (
-              <button key={run.id} onClick={() => void open(run)} className="w-full p-4 text-left">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-medium">{evidenceTitle(run)}</p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">{run.shop_label} · {money(run.total_settlement_amount, run.currency)}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{paymentStatusText[run.payment_status] ?? run.payment_status}</p>
-                  </div>
-                  <Badge variant="secondary" className={statusMeta[run.status]?.className}>{statusMeta[run.status]?.text ?? run.status}</Badge>
+              </div>
+              {runs.length === 0 && (
+                <div className="p-10 text-center text-sm text-muted-foreground">
+                  <p>ยังไม่มีรายการในตัวกรองนี้</p>
+                  <Button
+                    className="mt-3"
+                    size="sm"
+                    variant="outline"
+                    onClick={openImport}
+                  >
+                    ดึง Statement จาก TikTok
+                  </Button>
                 </div>
-              </button>
-            ))}
-          </div>
-
-          {!loading && runs.length === 0 && (
-            <div className="p-10 text-center text-sm text-muted-foreground">
-              ยังไม่มี Statement ในช่วงนี้ เลือกร้านและช่วงวันที่รายการขาย แล้วกด “ดึง Statement จาก TikTok” เพื่อดูสถานะจริงจาก TikTok Shop
-            </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
-
-      <Dialog open={Boolean(selected)} onOpenChange={(openDialog) => !openDialog && setSelected(null)}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><ReceiptText className="h-5 w-5" />{selected ? evidenceTitle(selected) : 'TikTok Statement'}</DialogTitle>
-            <DialogDescription>
-              {selected && ['PAID', 'SETTLED'].includes(selected.payment_status)
-                ? 'TikTok ยืนยัน Statement นี้ว่าทำ settlement แล้ว ระบบดึงรายการออเดอร์จาก Statement โดยตรง โปรดตรวจข้อมูลและหลักฐานเงินเข้าจริงก่อนกดส่ง RC เข้า SML'
-                : `Statement นี้อยู่สถานะ ${paymentStatusText[selected?.payment_status || ''] ?? selected?.payment_status ?? '-'} ใช้ติดตามข้อมูลเท่านั้น และยังส่ง RC เข้า SML ไม่ได้`}
+      <Dialog
+        open={Boolean(selected)}
+        onOpenChange={(open) => !open && setSelected(null)}
+      >
+        <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b px-5 py-4 sm:px-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <TikTokChip />
+              <DialogTitle className="text-base">
+                {selected?.statement_id || "รายละเอียด Statement"}
+              </DialogTitle>
+            </div>
+            <DialogDescription className="pt-1">
+              {selected && ["PAID", "SETTLED"].includes(selected.payment_status)
+                ? "TikTok แจ้งว่ารอบนี้โอนแล้ว โปรดตรวจหลักฐานเงินเข้าบัญชีจริงก่อนสร้างเอกสารใน SML"
+                : `รอบนี้อยู่สถานะ ${paymentStatusText[selected?.payment_status || ""] ?? selected?.payment_status ?? "-"} จึงยังสร้างเอกสารใน SML ไม่ได้`}
             </DialogDescription>
           </DialogHeader>
-
           {selected && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <Metric label="ยอดใบขาย SML" value={money(selected.invoice_amount_total)} />
-                <Metric label="ยอดใน Statement" value={money(selected.total_settlement_amount)} />
-                <Metric label="Fee / commission" value={money(selected.fee_amount_total)} />
-                <Metric label="Payment ID" value={selected.payment_id || '-'} />
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+              <div className="grid gap-x-6 gap-y-3 border-b pb-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <DetailValue label="ร้าน" value={selected.shop_label} />
+                <DetailValue
+                  label="วันที่ Statement"
+                  value={formatDate(statementDate(selected))}
+                />
+                <DetailValue
+                  label="ยอด TikTok"
+                  value={money(
+                    selected.total_settlement_amount,
+                    selected.currency,
+                  )}
+                  strong
+                />
+                <DetailValue
+                  label="จำนวนคำสั่งซื้อ"
+                  value={`${selected.items?.length ?? selected.item_count ?? 0} รายการ`}
+                />
+                <DetailValue
+                  label="ยอดใบขาย SML"
+                  value={money(
+                    selected.invoice_amount_total,
+                    selected.currency,
+                  )}
+                />
+                <DetailValue
+                  label="Fee / commission"
+                  value={money(selected.fee_amount_total, selected.currency)}
+                />
+                <DetailValue
+                  label="สถานะ"
+                  value={statusMeta[selected.status]?.text ?? selected.status}
+                />
+                <DetailValue
+                  label="ปลายทาง"
+                  value={settlementDestinationLabel(route)}
+                />
               </div>
               {(selected.anomaly_reason || selected.error_msg) && (
-                <div className="flex gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-sm text-warning">
-                  <AlertTriangle className="h-4 w-4 shrink-0" />
-                  {selected.anomaly_reason || selected.error_msg}
+                <div className="mt-4 flex gap-2 rounded-md border border-warning/30 bg-warning/5 p-3 text-sm text-warning">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>{selected.anomaly_reason || selected.error_msg}</p>
                 </div>
               )}
-              <div className="rounded-md border">
-                <div className="grid grid-cols-[1fr_auto_auto] gap-2 border-b p-2 text-xs text-muted-foreground">
+              <div className="mt-4 overflow-hidden rounded-md border">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
                   <span>คำสั่งซื้อ / ใบขาย SML</span>
                   <span>ยอด TikTok</span>
                   <span>ผลตรวจ</span>
                 </div>
                 {(selected.items ?? []).map((item) => (
-                  <div key={item.id} className="grid grid-cols-[1fr_auto_auto] gap-2 border-b p-2 text-sm last:border-0">
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b px-3 py-2.5 text-sm last:border-0"
+                  >
                     <div className="min-w-0">
-                      <p className="truncate">{item.order_id}</p>
-                      <p className="truncate text-xs text-muted-foreground">{item.sml_invoice_doc_no || item.block_reason || 'รอตรวจ SML'}</p>
+                      <p className="truncate font-medium">{item.order_id}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {item.sml_invoice_doc_no ||
+                          item.block_reason ||
+                          "ยังไม่พบใบขาย SML"}
+                      </p>
                     </div>
-                    <span>{money(item.settlement_amount)}</span>
-                    <Badge variant="secondary" className={item.status === 'ready' || item.status === 'sent' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}>
-                      {item.status === 'ready' ? 'ผ่าน' : item.status === 'sent' ? 'ส่งแล้ว' : 'ต้องตรวจ'}
+                    <span className="whitespace-nowrap tabular-nums">
+                      {money(item.settlement_amount, selected.currency)}
+                    </span>
+                    <Badge
+                      variant="secondary"
+                      className={
+                        item.status === "ready" || item.status === "sent"
+                          ? "bg-success/15 text-success"
+                          : "bg-warning/15 text-warning"
+                      }
+                    >
+                      {item.status === "ready"
+                        ? "ผ่าน"
+                        : item.status === "sent"
+                          ? "ส่งแล้ว"
+                          : "ต้องตรวจ"}
                     </Badge>
                   </div>
                 ))}
               </div>
             </div>
           )}
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => void reconcile()} disabled={!selected || selected.status === 'sent' || !['PAID', 'SETTLED'].includes(selected.payment_status)}>ตรวจเทียบใหม่</Button>
-            <Button onClick={() => setSendConfirmOpen(true)} disabled={sending || selected?.status !== 'ready' || !route?.configured}>
-              <Send className="mr-2 h-4 w-4" />
-              ยืนยันส่ง RC เข้า SML
+          <DialogFooter className="border-t bg-background px-5 py-3 sm:px-6">
+            <Button
+              variant="outline"
+              onClick={() => void reconcile()}
+              disabled={
+                !selected ||
+                selected.status === "sent" ||
+                !["PAID", "SETTLED"].includes(selected.payment_status)
+              }
+            >
+              ตรวจข้อมูลใหม่
+            </Button>
+            <Button
+              onClick={() => {
+                setBankEvidenceConfirmed(false);
+                setSendConfirmOpen(true);
+              }}
+              disabled={
+                sending || selected?.status !== "ready" || !route?.configured
+              }
+            >
+              <FileText className="mr-2 h-4 w-4" />
+              {detailActionLabel}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent>
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>ตั้งค่ารับชำระ TikTok Shop</DialogTitle>
-            <DialogDescription>เปิดอ่านเพื่อดึง TikTok Statement และตรวจออเดอร์จริง ส่วนส่ง SML ยังคงต้องให้พนักงานกดยืนยันทีละร่าง RC</DialogDescription>
+            <DialogTitle>ดึง Statement จาก TikTok</DialogTitle>
+            <DialogDescription>
+              เลือกร้านและช่วงวันที่เพื่อดึงข้อมูลล่าสุดด้วยตนเอง
+              ระบบจะไม่สร้างเอกสารหรือส่งข้อมูลเข้า SML ในขั้นตอนนี้
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium">อนุญาตอ่านข้อมูลการเงิน</p>
-                <p className="text-xs text-muted-foreground">ใช้กับตรวจระบบและดึง TikTok Statement ด้วยมือ</p>
-              </div>
-              <Switch checked={readEnabled} onCheckedChange={setReadEnabled} />
+            <div className="space-y-2">
+              <Label htmlFor="tiktok-import-shop">ร้าน TikTok Shop</Label>
+              <Select
+                value={resolvedImportShopID}
+                onValueChange={setImportShopID}
+              >
+                <SelectTrigger id="tiktok-import-shop">
+                  <SelectValue placeholder="เลือกร้าน" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shops.map((shop) => (
+                    <SelectItem key={shop.shop_id} value={shop.shop_id}>
+                      {shop.shop_name || shop.shop_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium">อนุญาตส่ง RC เข้า SML</p>
-                <p className="text-xs text-muted-foreground">ยังไม่มี Auto RC และต้องยืนยันก่อนส่งทุกครั้ง</p>
-              </div>
-              <Switch checked={smlEnabled} onCheckedChange={setSmlEnabled} disabled={!readEnabled} />
-            </div>
+            <DateRangePicker
+              from={importFrom}
+              to={importTo}
+              onFromChange={setImportFrom}
+              onToChange={setImportTo}
+              onRangeChange={(range) => {
+                setImportFrom(range.from);
+                setImportTo(range.to);
+              }}
+              presets={statementPresets}
+              title="ช่วงวันที่ที่ต้องการดึง"
+              description="เลือกได้ไม่เกิน 31 วันต่อครั้ง โดยอ้างอิงเวลา Asia/Bangkok"
+            />
+            <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+              ดึงซ้ำในช่วงเดิมได้อย่างปลอดภัย ระบบจะอัปเดต snapshot เดิมตาม
+              Statement ID และไม่สร้างเอกสาร SML ซ้ำ
+            </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSettingsOpen(false)}>ยกเลิก</Button>
-            <Button onClick={() => setSettingsConfirmOpen(true)}>บันทึกการตั้งค่า</Button>
+            <Button
+              variant="outline"
+              onClick={() => setImportOpen(false)}
+              disabled={importingStatements}
+            >
+              ยกเลิก
+            </Button>
+            <Button
+              onClick={() => void importStatements()}
+              disabled={importingStatements}
+            >
+              {importingStatements ? "กำลังดึงข้อมูล…" : "เริ่มดึง Statement"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <ConfirmDialog
-        open={settingsConfirmOpen}
-        onOpenChange={setSettingsConfirmOpen}
-        title="ยืนยันเปลี่ยนการตั้งค่าร้าน"
-        description={`ร้านนี้จะ${readEnabled ? '' : 'ไม่'}อนุญาตให้อ่าน TikTok Statement และ${smlEnabled ? '' : 'ไม่'}อนุญาตให้ส่ง RC เข้า SML\n\nการส่ง RC ยังต้องยืนยันทีละร่างเสมอ และไม่มี Auto RC`}
-        confirmLabel="ยืนยันบันทึก"
-        onConfirm={confirmSaveSettings}
-      />
-
-      <ConfirmDialog
+      <Dialog
         open={sendConfirmOpen}
-        onOpenChange={setSendConfirmOpen}
-        title="ยืนยันสร้าง RC เข้า SML"
-        description={selected ? `TikTok ระบุว่า Statement ${evidenceTitle(selected)} ทำ settlement แล้ว\n${selected.items?.length ?? selected.item_count ?? 0} คำสั่งซื้อ · ยอด TikTok ${money(selected.total_settlement_amount, selected.currency)}\nรูปแบบ RC: ${route?.doc_format_code || '-'} · บัญชีรับเงิน: ${route?.passbook_name || route?.passbook_code || '-'}\nค่าใช้จ่าย TikTok: ${route?.expense_name || route?.expense_code || '-'}\n\nโปรดตรวจหลักฐานเงินเข้าจริงก่อนยืนยัน การยืนยันนี้จะสร้างเอกสารรับชำระหนี้ใน SML และไม่มี Auto RC` : ''}
-        confirmLabel="ยืนยันส่ง RC"
-        onConfirm={confirmSend}
-      />
+        onOpenChange={(open) => {
+          setSendConfirmOpen(open);
+          if (!open) setBankEvidenceConfirmed(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>ยืนยันสร้างเอกสารใน SML</DialogTitle>
+            <DialogDescription>
+              การดำเนินการนี้สร้างเอกสารตามเส้นทาง SML ที่ร้านตั้งค่าไว้
+              และยังไม่มีการทำงานอัตโนมัติ
+            </DialogDescription>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3 rounded-md border p-3 text-sm">
+              <DetailValue label="Statement" value={selected.statement_id} />
+              <DetailValue
+                label="ยอด TikTok"
+                value={money(
+                  selected.total_settlement_amount,
+                  selected.currency,
+                )}
+                strong
+              />
+              <DetailValue
+                label="ปลายทาง"
+                value={settlementDestinationLabel(route)}
+              />
+              <div className="flex items-start gap-2 border-t pt-3">
+                <Checkbox
+                  id="bank-evidence-confirmed"
+                  checked={bankEvidenceConfirmed}
+                  onCheckedChange={(checked) =>
+                    setBankEvidenceConfirmed(checked === true)
+                  }
+                />
+                <Label
+                  htmlFor="bank-evidence-confirmed"
+                  className="cursor-pointer text-sm font-normal leading-5"
+                >
+                  ฉันตรวจหลักฐานเงินเข้าบัญชีจริงและข้อมูลในรอบนี้แล้ว
+                </Label>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSendConfirmOpen(false)}
+              disabled={sending}
+            >
+              ยกเลิก
+            </Button>
+            <Button
+              onClick={() => void confirmSend()}
+              disabled={sending || !bankEvidenceConfirmed}
+            >
+              {sending ? "กำลังสร้างเอกสาร…" : "ยืนยันสร้างเอกสารใน SML"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
-  )
+  );
 }
 
-function SettlementMetricChip({ label, value, tone }: {
-  label: string
-  value: number
-  tone: 'primary' | 'success' | 'warning' | 'danger'
+function SettlementTableRow({
+  run,
+  onOpen,
+}: {
+  run: Run;
+  onOpen: (run: Run) => void;
 }) {
-  const toneClass = tone === 'success'
-    ? 'border-success/25 bg-success/10 text-success'
-    : tone === 'warning'
-      ? 'border-warning/30 bg-warning/10 text-warning'
-      : tone === 'danger'
-        ? 'border-destructive/25 bg-destructive/10 text-destructive'
-        : 'border-primary/25 bg-primary/10 text-accent-strong'
-
+  const status = statusMeta[run.status] ?? { text: run.status, className: "" };
   return (
-    <span className={cn('inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px]', toneClass)}>
-      <span className="font-semibold tabular-nums">{value.toLocaleString()}</span>
+    <tr className="border-b last:border-0 hover:bg-muted/30">
+      <td className="p-3">
+        <p className="max-w-[200px] truncate font-medium">{run.statement_id}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {formatDate(statementDate(run))}
+        </p>
+      </td>
+      <td className="p-3">
+        <TikTokChip />
+        <p className="mt-1 max-w-[180px] truncate text-xs text-muted-foreground">
+          {run.shop_label}
+        </p>
+      </td>
+      <td className="p-3 text-right">
+        <p className="font-medium tabular-nums">
+          {money(run.total_settlement_amount, run.currency)}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {run.item_count ?? 0} คำสั่งซื้อ
+        </p>
+      </td>
+      <td className="p-3">
+        <Badge variant="secondary" className={status.className}>
+          {status.text}
+        </Badge>
+        <p className="mt-1 max-w-[210px] truncate text-xs text-muted-foreground">
+          {statusReason(run)}
+        </p>
+      </td>
+      <td className="p-3">
+        <p className="max-w-[150px] truncate font-mono text-xs">
+          {run.rc_doc_no || "ยังไม่สร้าง"}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {run.rc_doc_no ? "สร้างแล้วใน SML" : "รอการยืนยัน"}
+        </p>
+      </td>
+      <td className="p-3 text-right">
+        <Button size="sm" variant="outline" onClick={() => onOpen(run)}>
+          รายละเอียด
+          <ChevronRight className="ml-1 h-4 w-4" />
+        </Button>
+      </td>
+    </tr>
+  );
+}
+function SettlementMobileRow({
+  run,
+  onOpen,
+}: {
+  run: Run;
+  onOpen: (run: Run) => void;
+}) {
+  const status = statusMeta[run.status] ?? { text: run.status, className: "" };
+  return (
+    <button
+      onClick={() => onOpen(run)}
+      className="w-full p-4 text-left hover:bg-muted/30"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <TikTokChip />
+            <p className="truncate font-medium">{run.statement_id}</p>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {run.shop_label} · {formatDate(statementDate(run))}
+          </p>
+          <p className="mt-1 text-sm font-medium">
+            {money(run.total_settlement_amount, run.currency)} ·{" "}
+            {run.item_count ?? 0} คำสั่งซื้อ
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <Badge variant="secondary" className={status.className}>
+            {status.text}
+          </Badge>
+          <p className="mt-1 max-w-[110px] truncate text-xs text-muted-foreground">
+            {run.rc_doc_no || "ยังไม่สร้าง"}
+          </p>
+        </div>
+      </div>
+    </button>
+  );
+}
+function SettlementMetricChip({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "primary" | "success" | "warning" | "danger";
+}) {
+  const toneClass =
+    tone === "success"
+      ? "border-success/25 bg-success/10 text-success"
+      : tone === "warning"
+        ? "border-warning/30 bg-warning/10 text-warning"
+        : tone === "danger"
+          ? "border-destructive/25 bg-destructive/10 text-destructive"
+          : "border-primary/25 bg-primary/10 text-accent-strong";
+  return (
+    <span
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px]",
+        toneClass,
+      )}
+    >
+      <span className="font-semibold tabular-nums">
+        {value.toLocaleString()}
+      </span>
       <span className="text-foreground/75">{label}</span>
     </span>
-  )
+  );
 }
-
-function Metric({ label, value }: { label: string; value: string }) {
+function DetailValue({
+  label,
+  value,
+  strong = false,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+}) {
   return (
-    <div className="rounded-md bg-muted/40 p-2">
+    <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate text-sm font-semibold">{value}</p>
+      <p
+        className={cn(
+          "mt-0.5 truncate text-sm",
+          strong && "font-semibold tabular-nums",
+        )}
+      >
+        {value || "-"}
+      </p>
     </div>
-  )
+  );
+}
+function SettlementSkeleton() {
+  return (
+    <div className="space-y-3 p-4" aria-label="กำลังโหลดรายการ">
+      <div className="h-8 w-2/5 animate-pulse rounded bg-muted" />
+      {[1, 2, 3, 4].map((row) => (
+        <div key={row} className="grid grid-cols-5 gap-4 border-t pt-3">
+          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
 }

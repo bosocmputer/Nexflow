@@ -1,127 +1,244 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Clock3, Loader2, PlugZap, RefreshCw, ShieldCheck, Store } from 'lucide-react'
+import { useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Clock3,
+  Loader2,
+  PlugZap,
+  RefreshCw,
+  ShieldCheck,
+  Store,
+} from "lucide-react";
 
-import client from '@/api/client'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { PageHeader } from '@/components/common/PageHeader'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
+import client from "@/api/client";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { PageHeader } from "@/components/common/PageHeader";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
 interface TikTokShopStatus {
-  enabled: boolean
-  configured: boolean
-  mode: 'gateway'
-  redirect_url?: string
-  product_catalog_enabled?: boolean
+  enabled: boolean;
+  configured: boolean;
+  mode: "gateway";
+  redirect_url?: string;
+  product_catalog_enabled?: boolean;
 }
 
 interface TikTokShopConnection {
-  gateway_connection_id: string
-  shop_id: string
-  shop_name: string
-  shop_region: string
-  seller_type: string
-  shop_code: string
-  granted_scopes: string[]
-  access_expires_at: string
-  refresh_expires_at: string
-  disabled: boolean
-  connected_at: string
-  updated_at: string
+  gateway_connection_id: string;
+  shop_id: string;
+  shop_name: string;
+  shop_region: string;
+  seller_type: string;
+  shop_code: string;
+  granted_scopes: string[];
+  access_expires_at: string;
+  refresh_expires_at: string;
+  disabled: boolean;
+  connected_at: string;
+  updated_at: string;
 }
 
 interface TikTokOrderSyncSetting {
-  shop_id: string
-  enabled: boolean
-  interval_seconds: number
-  last_success_at?: string
-  last_error_code?: string
-  last_error_message?: string
+  shop_id: string;
+  enabled: boolean;
+  interval_seconds: number;
+  last_success_at?: string;
+  last_error_code?: string;
+  last_error_message?: string;
 }
 
 interface TikTokOrderSyncResponse {
-  worker_enabled: boolean
-  data: TikTokOrderSyncSetting[]
+  worker_enabled: boolean;
+  data: TikTokOrderSyncSetting[];
+}
+
+interface TikTokSettlementSetting {
+  shop_id: string;
+  read_enabled: boolean;
+  sml_send_enabled: boolean;
+  config_version: number;
 }
 
 export default function TikTokShopConnections() {
-  const pollRef = useRef<number | null>(null)
-  const [status, setStatus] = useState<TikTokShopStatus | null>(null)
-  const [connections, setConnections] = useState<TikTokShopConnection[]>([])
-  const [orderSync, setOrderSync] = useState<TikTokOrderSyncResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [confirmOpen, setConfirmOpen] = useState(false)
+  const pollRef = useRef<number | null>(null);
+  const [status, setStatus] = useState<TikTokShopStatus | null>(null);
+  const [connections, setConnections] = useState<TikTokShopConnection[]>([]);
+  const [orderSync, setOrderSync] = useState<TikTokOrderSyncResponse | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [settlementSettings, setSettlementSettings] = useState<
+    Record<string, TikTokSettlementSetting>
+  >({});
+  const [settlementSettingOpen, setSettlementSettingOpen] = useState(false);
+  const [selectedSettlementSetting, setSelectedSettlementSetting] =
+    useState<TikTokSettlementSetting | null>(null);
+  const [nextSettlementReadEnabled, setNextSettlementReadEnabled] =
+    useState(false);
+  const [nextSettlementSMLEnabled, setNextSettlementSMLEnabled] =
+    useState(false);
+  const [savingSettlementSetting, setSavingSettlementSetting] = useState(false);
+  const [settlementSettingConfirmOpen, setSettlementSettingConfirmOpen] =
+    useState(false);
 
   const load = async () => {
-    setError('')
+    setError("");
     try {
-      const statusResponse = await client.get<TikTokShopStatus>('/api/settings/tiktok-shop-api/status')
-      const nextStatus = statusResponse.data
-      setStatus(nextStatus)
+      const statusResponse = await client.get<TikTokShopStatus>(
+        "/api/settings/tiktok-shop-api/status",
+      );
+      const nextStatus = statusResponse.data;
+      setStatus(nextStatus);
       if (!nextStatus.enabled || !nextStatus.configured) {
-        setConnections([])
-        setOrderSync(null)
-        return
+        setConnections([]);
+        setOrderSync(null);
+        return;
       }
-      const connectionResponse = await client.get<{ data: TikTokShopConnection[] }>('/api/tiktok-shop-api/connections')
-      const syncResponse = await client.get<TikTokOrderSyncResponse>('/api/tiktok-shop-api/order-sync-settings')
-      setConnections(connectionResponse.data.data ?? [])
-      setOrderSync(syncResponse.data)
+      const connectionResponse = await client.get<{
+        data: TikTokShopConnection[];
+      }>("/api/tiktok-shop-api/connections");
+      const syncResponse = await client.get<TikTokOrderSyncResponse>(
+        "/api/tiktok-shop-api/order-sync-settings",
+      );
+      const nextConnections = connectionResponse.data.data ?? [];
+      setConnections(nextConnections);
+      setOrderSync(syncResponse.data);
+      const settings = await Promise.all(
+        nextConnections
+          .filter((connection) => !connection.disabled)
+          .map(async (connection) => {
+            try {
+              const response = await client.get<{
+                data: TikTokSettlementSetting;
+              }>("/api/tiktok-settlements/settings", {
+                params: { shop_id: connection.shop_id },
+              });
+              return response.data.data;
+            } catch {
+              // Finance remains tenant-gated. A disabled Finance feature must
+              // not make the normal TikTok Shop connection page fail.
+              return null;
+            }
+          }),
+      );
+      setSettlementSettings(
+        Object.fromEntries(
+          settings
+            .filter(
+              (setting): setting is TikTokSettlementSetting => setting !== null,
+            )
+            .map((setting) => [setting.shop_id, setting]),
+        ),
+      );
     } catch (cause: unknown) {
-      setError(apiErrorMessage(cause, 'โหลดข้อมูลร้าน TikTok Shop ไม่สำเร็จ'))
+      setError(apiErrorMessage(cause, "โหลดข้อมูลร้าน TikTok Shop ไม่สำเร็จ"));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    void load()
+    void load();
     return () => {
-      if (pollRef.current !== null) window.clearInterval(pollRef.current)
-    }
-  }, [])
+      if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    };
+  }, []);
 
   const connect = async () => {
-    if (pollRef.current !== null) window.clearInterval(pollRef.current)
-    const authWindow = window.open('', '_blank', 'popup=yes,width=1120,height=820')
+    if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    const authWindow = window.open(
+      "",
+      "_blank",
+      "popup=yes,width=1120,height=820",
+    );
     if (!authWindow) {
-      setError('Browser บล็อกหน้าต่าง TikTok Shop ให้เปิด pop-up สำหรับ Nexflow แล้วลองใหม่')
-      return
+      setError(
+        "Browser บล็อกหน้าต่าง TikTok Shop ให้เปิด pop-up สำหรับ Nexflow แล้วลองใหม่",
+      );
+      return;
     }
-    authWindow.document.title = 'กำลังเปิด TikTok Shop'
-    authWindow.document.body.style.cssText = 'margin:0;font-family:system-ui,sans-serif;background:#f4f5ef;color:#111817;display:grid;place-items:center;min-height:100vh;'
-    authWindow.document.body.textContent = 'กำลังเปิดหน้า TikTok Shop เพื่ออนุญาตร้าน...'
-    setBusy(true)
-    setError('')
+    authWindow.document.title = "กำลังเปิด TikTok Shop";
+    authWindow.document.body.style.cssText =
+      "margin:0;font-family:system-ui,sans-serif;background:#f4f5ef;color:#111817;display:grid;place-items:center;min-height:100vh;";
+    authWindow.document.body.textContent =
+      "กำลังเปิดหน้า TikTok Shop เพื่ออนุญาตร้าน...";
+    setBusy(true);
+    setError("");
     try {
-      const response = await client.post<{ auth_url: string }>('/api/tiktok-shop-api/auth-url')
-      authWindow.opener = null
-      authWindow.location.href = response.data.auth_url
-      let attempts = 0
+      const response = await client.post<{ auth_url: string }>(
+        "/api/tiktok-shop-api/auth-url",
+      );
+      authWindow.opener = null;
+      authWindow.location.href = response.data.auth_url;
+      let attempts = 0;
       pollRef.current = window.setInterval(() => {
-        attempts += 1
-        void load()
+        attempts += 1;
+        void load();
         if (authWindow.closed || attempts >= 60) {
-          if (pollRef.current !== null) window.clearInterval(pollRef.current)
-          pollRef.current = null
-          void load()
+          if (pollRef.current !== null) window.clearInterval(pollRef.current);
+          pollRef.current = null;
+          void load();
         }
-      }, 2000)
+      }, 2000);
     } catch (cause: unknown) {
-      authWindow.close()
-      setError(apiErrorMessage(cause, 'สร้างลิงก์เชื่อมต่อ TikTok Shop ไม่สำเร็จ'))
+      authWindow.close();
+      setError(
+        apiErrorMessage(cause, "สร้างลิงก์เชื่อมต่อ TikTok Shop ไม่สำเร็จ"),
+      );
     } finally {
-      setBusy(false)
+      setBusy(false);
     }
-  }
+  };
 
-  const activeConnections = connections.filter((connection) => !connection.disabled)
-  const ready = Boolean(status?.enabled && status.configured)
+  const activeConnections = connections.filter(
+    (connection) => !connection.disabled,
+  );
+  const ready = Boolean(status?.enabled && status.configured);
+
+  const openSettlementSetting = (setting: TikTokSettlementSetting) => {
+    setSelectedSettlementSetting(setting);
+    setNextSettlementReadEnabled(setting.read_enabled);
+    setNextSettlementSMLEnabled(setting.sml_send_enabled);
+    setSettlementSettingOpen(true);
+  };
+
+  const saveSettlementSetting = async () => {
+    if (!selectedSettlementSetting) return;
+    setSavingSettlementSetting(true);
+    try {
+      await client.put(
+        `/api/tiktok-settlements/settings/${selectedSettlementSetting.shop_id}`,
+        {
+          read_enabled: nextSettlementReadEnabled,
+          sml_send_enabled: nextSettlementSMLEnabled,
+          expected_config_version: selectedSettlementSetting.config_version,
+        },
+      );
+      setSettlementSettingOpen(false);
+      await load();
+    } catch (cause: unknown) {
+      setError(
+        apiErrorMessage(cause, "บันทึกการตั้งค่ารับชำระ TikTok Shop ไม่สำเร็จ"),
+      );
+    } finally {
+      setSavingSettlementSetting(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -130,13 +247,35 @@ export default function TikTokShopConnections() {
         description="เชื่อมร้านผ่าน Central Gateway โดยเก็บ App Secret และ token ไว้นอก tenant"
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => void load()} disabled={loading || busy}>
-              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => void load()}
+              disabled={loading || busy}
+            >
+              <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
               รีเฟรช
             </Button>
-            <Button size="sm" className="gap-2" onClick={() => setConfirmOpen(true)} disabled={!ready || busy} title={!ready ? 'TikTok Shop Gateway ยังไม่พร้อมสำหรับ tenant นี้' : undefined}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
-              {activeConnections.length > 0 ? 'เชื่อมร้านเพิ่ม' : 'เชื่อมต่อร้าน TikTok Shop'}
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={() => setConfirmOpen(true)}
+              disabled={!ready || busy}
+              title={
+                !ready
+                  ? "TikTok Shop Gateway ยังไม่พร้อมสำหรับ tenant นี้"
+                  : undefined
+              }
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <PlugZap className="h-4 w-4" />
+              )}
+              {activeConnections.length > 0
+                ? "เชื่อมร้านเพิ่ม"
+                : "เชื่อมต่อร้าน TikTok Shop"}
             </Button>
           </div>
         }
@@ -150,19 +289,42 @@ export default function TikTokShopConnections() {
         </Alert>
       )}
 
-      <Card className={cn('shadow-none', ready ? 'border-success/30 bg-success/[0.04]' : 'border-warning/35 bg-warning/[0.06]')}>
+      <Card
+        className={cn(
+          "shadow-none",
+          ready
+            ? "border-success/30 bg-success/[0.04]"
+            : "border-warning/35 bg-warning/[0.06]",
+        )}
+      >
         <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 items-start gap-3">
-            {ready ? <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-accent-strong" /> : <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-warning" />}
+            {ready ? (
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-accent-strong" />
+            ) : (
+              <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+            )}
             <div>
-              <h2 className="text-sm font-semibold text-foreground">{ready ? 'Gateway พร้อมเชื่อมร้าน' : 'Gateway ยังไม่พร้อม'}</h2>
+              <h2 className="text-sm font-semibold text-foreground">
+                {ready ? "Gateway พร้อมเชื่อมร้าน" : "Gateway ยังไม่พร้อม"}
+              </h2>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                {ready ? 'ระบบอ่านข้อมูลร้าน คำสั่งซื้อ และ Product Catalog ตามสิทธิ์ที่อนุมัติ การเขียนสต๊อกยังแยกปิดจนกว่าจะผ่าน dry-run และ canary' : status?.enabled ? 'ตรวจ Gateway URL, tenant identity และ internal secret บน server' : 'ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้'}
+                {ready
+                  ? "ระบบอ่านข้อมูลร้าน คำสั่งซื้อ และ Product Catalog ตามสิทธิ์ที่อนุมัติ การเขียนสต๊อกยังแยกปิดจนกว่าจะผ่าน dry-run และ canary"
+                  : status?.enabled
+                    ? "ตรวจ Gateway URL, tenant identity และ internal secret บน server"
+                    : "ฟีเจอร์ TikTok Shop Open API ยังปิดอยู่ใน tenant นี้"}
               </p>
-              {status?.redirect_url && <p className="mt-2 break-all font-mono text-xs text-muted-foreground">Callback: {status.redirect_url}</p>}
+              {status?.redirect_url && (
+                <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                  Callback: {status.redirect_url}
+                </p>
+              )}
             </div>
           </div>
-          <Badge variant="outline" className="w-fit shrink-0">Central Gateway</Badge>
+          <Badge variant="outline" className="w-fit shrink-0">
+            Central Gateway
+          </Badge>
         </CardContent>
       </Card>
 
@@ -175,32 +337,71 @@ export default function TikTokShopConnections() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />กำลังโหลดร้าน...</div>
+            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              กำลังโหลดร้าน...
+            </div>
           ) : connections.length === 0 ? (
             <div className="rounded-md border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
-              ยังไม่มีร้านที่เชื่อม เมื่อ Gateway พร้อมแล้ว กด “เชื่อมต่อร้าน TikTok Shop” และอนุญาตร้าน AOY ในหน้าต่าง TikTok
+              ยังไม่มีร้านที่เชื่อม เมื่อ Gateway พร้อมแล้ว กด “เชื่อมต่อร้าน
+              TikTok Shop” และอนุญาตร้าน AOY ในหน้าต่าง TikTok
             </div>
           ) : (
             <div className="divide-y rounded-md border border-border bg-background">
               {connections.map((connection) => (
-                <div key={connection.gateway_connection_id} className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+                <div
+                  key={connection.gateway_connection_id}
+                  className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between"
+                >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-foreground">{connection.shop_name || connection.shop_code || connection.shop_id}</span>
-                      <Badge variant={connection.disabled ? 'outline' : 'default'}>{connection.disabled ? 'ปิดใช้งาน' : 'เชื่อมต่อแล้ว'}</Badge>
-                      {connection.shop_region && <Badge variant="outline">{connection.shop_region}</Badge>}
+                      <span className="font-medium text-foreground">
+                        {connection.shop_name ||
+                          connection.shop_code ||
+                          connection.shop_id}
+                      </span>
+                      <Badge
+                        variant={connection.disabled ? "outline" : "default"}
+                      >
+                        {connection.disabled ? "ปิดใช้งาน" : "เชื่อมต่อแล้ว"}
+                      </Badge>
+                      {connection.shop_region && (
+                        <Badge variant="outline">
+                          {connection.shop_region}
+                        </Badge>
+                      )}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                      <span className="font-mono">Shop ID {connection.shop_id}</span>
-                      {connection.shop_code && <span>รหัสร้าน {connection.shop_code}</span>}
-                      <span>อนุญาต {scopeLabel(connection.granted_scopes)}</span>
+                      <span className="font-mono">
+                        Shop ID {connection.shop_id}
+                      </span>
+                      {connection.shop_code && (
+                        <span>รหัสร้าน {connection.shop_code}</span>
+                      )}
+                      <span>
+                        อนุญาต {scopeLabel(connection.granted_scopes)}
+                      </span>
                     </div>
-                    <ProductScopeLine scopes={connection.granted_scopes} catalogEnabled={Boolean(status?.product_catalog_enabled)} />
-                    <OrderSyncLine workerEnabled={Boolean(orderSync?.worker_enabled)} setting={orderSync?.data.find((item) => item.shop_id === connection.shop_id)} />
+                    <ProductScopeLine
+                      scopes={connection.granted_scopes}
+                      catalogEnabled={Boolean(status?.product_catalog_enabled)}
+                    />
+                    <OrderSyncLine
+                      workerEnabled={Boolean(orderSync?.worker_enabled)}
+                      setting={orderSync?.data.find(
+                        (item) => item.shop_id === connection.shop_id,
+                      )}
+                    />
                   </div>
                   <div className="shrink-0 text-xs text-muted-foreground lg:text-right">
-                    <div>Access token ถึง {formatDateTime(connection.access_expires_at)}</div>
-                    <div className="mt-1">Refresh token ถึง {formatDateTime(connection.refresh_expires_at)}</div>
+                    <div>
+                      Access token ถึง{" "}
+                      {formatDateTime(connection.access_expires_at)}
+                    </div>
+                    <div className="mt-1">
+                      Refresh token ถึง{" "}
+                      {formatDateTime(connection.refresh_expires_at)}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -209,71 +410,245 @@ export default function TikTokShopConnections() {
         </CardContent>
       </Card>
 
+      {Object.keys(settlementSettings).length > 0 && (
+        <Card className="shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">การรับชำระ TikTok Shop</CardTitle>
+            <p className="text-sm font-normal text-muted-foreground">
+              เปิดสิทธิ์การดึง Statement และอนุญาตสร้างเอกสารใน SML แยกตามร้าน
+              การสร้างเอกสารยังต้องให้พนักงานยืนยันทุกครั้ง
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y rounded-md border">
+              {activeConnections.map((connection) => {
+                const setting = settlementSettings[connection.shop_id];
+                return (
+                  <div
+                    key={connection.shop_id}
+                    className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium">
+                        {connection.shop_name ||
+                          connection.shop_code ||
+                          connection.shop_id}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {setting
+                          ? `${setting.read_enabled ? "ดึง Statement ได้" : "ปิดการดึง Statement"} · ${setting.sml_send_enabled ? "อนุญาตสร้างเอกสาร SML" : "ยังไม่อนุญาตสร้างเอกสาร SML"}`
+                          : "กำลังอ่านการตั้งค่า"}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!setting}
+                      onClick={() => setting && openSettlementSetting(setting)}
+                    >
+                      จัดการ
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title="เปิดหน้าต่าง TikTok Shop เพื่อเชื่อมร้าน?"
         description="TikTok Shop จะแสดงร้านที่บัญชีนี้มีสิทธิ์จัดการ กรุณาเลือกเฉพาะร้าน AOY สำหรับ UAT รอบแรก หลังอนุญาตแล้ว Nexflow จะบันทึกทุกร้านที่ TikTok ส่งกลับภายใต้ tenant AOY"
-        confirmLabel={activeConnections.length > 0 ? 'เชื่อมร้านเพิ่ม' : 'เปิด TikTok Shop'}
+        confirmLabel={
+          activeConnections.length > 0 ? "เชื่อมร้านเพิ่ม" : "เปิด TikTok Shop"
+        }
         onConfirm={connect}
       />
+
+      <Dialog
+        open={settlementSettingOpen}
+        onOpenChange={setSettlementSettingOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>ตั้งค่ารับชำระ TikTok Shop</DialogTitle>
+            <DialogDescription>
+              การเปลี่ยนค่านี้มีผลเฉพาะร้านที่เลือก และไม่มี Auto สร้างเอกสาร
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">อนุญาตดึง Statement</p>
+                <p className="text-xs text-muted-foreground">
+                  ใช้ดึงและตรวจข้อมูลการรับชำระจาก TikTok
+                </p>
+              </div>
+              <Switch
+                checked={nextSettlementReadEnabled}
+                onCheckedChange={setNextSettlementReadEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">อนุญาตสร้างเอกสารใน SML</p>
+                <p className="text-xs text-muted-foreground">
+                  พนักงานยังต้องตรวจหลักฐานเงินเข้าและยืนยันทีละรอบ
+                </p>
+              </div>
+              <Switch
+                checked={nextSettlementSMLEnabled}
+                onCheckedChange={setNextSettlementSMLEnabled}
+                disabled={!nextSettlementReadEnabled}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSettlementSettingOpen(false)}
+              disabled={savingSettlementSetting}
+            >
+              ยกเลิก
+            </Button>
+            <Button
+              onClick={() => setSettlementSettingConfirmOpen(true)}
+              disabled={savingSettlementSetting}
+            >
+              {savingSettlementSetting ? "กำลังบันทึก…" : "บันทึกการตั้งค่า"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={settlementSettingConfirmOpen}
+        onOpenChange={setSettlementSettingConfirmOpen}
+        title="ยืนยันเปลี่ยนการตั้งค่ารับชำระ"
+        description={`ร้านนี้จะ${nextSettlementReadEnabled ? "" : "ไม่"}อนุญาตดึง Statement และ${nextSettlementSMLEnabled ? "" : "ไม่"}อนุญาตสร้างเอกสารใน SML\n\nไม่มี Auto สร้างเอกสาร พนักงานยังต้องตรวจหลักฐานเงินเข้าและยืนยันทีละรอบ`}
+        confirmLabel="ยืนยันบันทึก"
+        onConfirm={saveSettlementSetting}
+      />
     </div>
-  )
+  );
 }
 
-function OrderSyncLine({ workerEnabled, setting }: { workerEnabled: boolean; setting?: TikTokOrderSyncSetting }) {
-  const active = Boolean(workerEnabled && setting?.enabled && !setting.last_error_code)
+function OrderSyncLine({
+  workerEnabled,
+  setting,
+}: {
+  workerEnabled: boolean;
+  setting?: TikTokOrderSyncSetting;
+}) {
+  const active = Boolean(
+    workerEnabled && setting?.enabled && !setting.last_error_code,
+  );
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <span className={cn('inline-flex items-center gap-1 font-medium', active ? 'text-success' : 'text-warning')}>
-        <span className={cn('h-1.5 w-1.5 rounded-full', active ? 'bg-success' : 'bg-warning')} />
-        {active ? `ซิงก์ออเดอร์ทุก ${formatInterval(setting?.interval_seconds ?? 300)}` : workerEnabled ? 'ร้านนี้ยังปิดซิงก์ออเดอร์' : 'Worker ซิงก์ออเดอร์ยังปิด'}
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 font-medium",
+          active ? "text-success" : "text-warning",
+        )}
+      >
+        <span
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            active ? "bg-success" : "bg-warning",
+          )}
+        />
+        {active
+          ? `ซิงก์ออเดอร์ทุก ${formatInterval(setting?.interval_seconds ?? 300)}`
+          : workerEnabled
+            ? "ร้านนี้ยังปิดซิงก์ออเดอร์"
+            : "Worker ซิงก์ออเดอร์ยังปิด"}
       </span>
-      {setting?.last_success_at && <span className="text-muted-foreground">สำเร็จล่าสุด {formatDateTime(setting.last_success_at)}</span>}
-      {setting?.last_error_message && <span className="text-destructive">{setting.last_error_message}</span>}
+      {setting?.last_success_at && (
+        <span className="text-muted-foreground">
+          สำเร็จล่าสุด {formatDateTime(setting.last_success_at)}
+        </span>
+      )}
+      {setting?.last_error_message && (
+        <span className="text-destructive">{setting.last_error_message}</span>
+      )}
     </div>
-  )
+  );
 }
 
-function ProductScopeLine({ scopes, catalogEnabled }: { scopes: string[]; catalogEnabled: boolean }) {
-  const basic = scopes.includes('seller.product.basic')
-  const modify = scopes.includes('seller.product.write')
+function ProductScopeLine({
+  scopes,
+  catalogEnabled,
+}: {
+  scopes: string[];
+  catalogEnabled: boolean;
+}) {
+  const basic = scopes.includes("seller.product.basic");
+  const modify = scopes.includes("seller.product.write");
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-      <span className={cn('inline-flex items-center gap-1 font-medium', basic ? 'text-success' : 'text-warning')}>
-        <span className={cn('h-1.5 w-1.5 rounded-full', basic ? 'bg-success' : 'bg-warning')} />
-        Product Basic {basic ? 'พร้อม' : 'ยังไม่ได้อนุมัติ'}
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 font-medium",
+          basic ? "text-success" : "text-warning",
+        )}
+      >
+        <span
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            basic ? "bg-success" : "bg-warning",
+          )}
+        />
+        Product Basic {basic ? "พร้อม" : "ยังไม่ได้อนุมัติ"}
       </span>
-      <span className={cn('inline-flex items-center gap-1 font-medium', modify ? 'text-success' : 'text-muted-foreground')}>
-        <span className={cn('h-1.5 w-1.5 rounded-full', modify ? 'bg-success' : 'bg-muted-foreground/50')} />
-        Product Modify {modify ? 'พร้อม' : 'ยังไม่เปิด'}
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 font-medium",
+          modify ? "text-success" : "text-muted-foreground",
+        )}
+      >
+        <span
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            modify ? "bg-success" : "bg-muted-foreground/50",
+          )}
+        />
+        Product Modify {modify ? "พร้อม" : "ยังไม่เปิด"}
       </span>
-      {basic && !catalogEnabled && <span className="text-muted-foreground">Server ยังปิด Catalog UAT</span>}
+      {basic && !catalogEnabled && (
+        <span className="text-muted-foreground">Server ยังปิด Catalog UAT</span>
+      )}
     </div>
-  )
+  );
 }
 
 function scopeLabel(scopes: string[]) {
-  const labels: string[] = []
-  if (scopes.includes('seller.authorization.info')) labels.push('ข้อมูลร้าน')
-  if (scopes.includes('seller.order.info')) labels.push('คำสั่งซื้อ')
-  if (scopes.includes('seller.product.basic')) labels.push('สินค้า')
-  if (scopes.includes('seller.product.write')) labels.push('แก้ไขสินค้า/สต๊อก')
-  return labels.length > 0 ? labels.join(' · ') : 'สิทธิ์ไม่ครบ'
+  const labels: string[] = [];
+  if (scopes.includes("seller.authorization.info")) labels.push("ข้อมูลร้าน");
+  if (scopes.includes("seller.order.info")) labels.push("คำสั่งซื้อ");
+  if (scopes.includes("seller.product.basic")) labels.push("สินค้า");
+  if (scopes.includes("seller.product.write")) labels.push("แก้ไขสินค้า/สต๊อก");
+  return labels.length > 0 ? labels.join(" · ") : "สิทธิ์ไม่ครบ";
 }
 
 function formatDateTime(value: string) {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return '—'
-  return parsed.toLocaleString('th-TH-u-ca-gregory', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' })
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleString("th-TH-u-ca-gregory", {
+    timeZone: "Asia/Bangkok",
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function formatInterval(seconds: number) {
-  return seconds % 60 === 0 ? `${seconds / 60} นาที` : `${seconds} วินาที`
+  return seconds % 60 === 0 ? `${seconds / 60} นาที` : `${seconds} วินาที`;
 }
 
 function apiErrorMessage(cause: unknown, fallback: string) {
-  const data = (cause as { response?: { data?: { error?: { message?: string } | string } } })?.response?.data
-  if (typeof data?.error === 'string') return data.error
-  return data?.error?.message || fallback
+  const data = (
+    cause as { response?: { data?: { error?: { message?: string } | string } } }
+  )?.response?.data;
+  if (typeof data?.error === "string") return data.error;
+  return data?.error?.message || fallback;
 }
