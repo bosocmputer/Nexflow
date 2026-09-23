@@ -18,6 +18,7 @@ var (
 
 type TikTokFinanceReader interface {
 	SearchStatements(context.Context, string, string, tiktokshop.SearchStatementsRequest) (*tiktokshop.SearchStatementsResult, string, error)
+	SearchWithdrawals(context.Context, string, string, tiktokshop.SearchWithdrawalsRequest) (*tiktokshop.SearchWithdrawalsResult, string, error)
 	GetStatementTransactions(context.Context, string, string, string, string, int) (*tiktokshop.StatementTransactionsResult, string, error)
 }
 
@@ -44,6 +45,13 @@ type FinanceTransactionsResult struct {
 	Transactions []tiktokshop.StatementTransaction `json:"transactions"`
 }
 
+type FinanceWithdrawalsResult struct {
+	UpstreamRequestID string                  `json:"upstream_request_id"`
+	NextPageToken     string                  `json:"next_page_token"`
+	TotalCount        int64                   `json:"total_count"`
+	Withdrawals       []tiktokshop.Withdrawal `json:"withdrawals"`
+}
+
 func NewFinanceService(credentials OrderCredentialProvider, finance TikTokFinanceReader) (*FinanceService, error) {
 	if credentials == nil || finance == nil {
 		return nil, ErrFinanceServiceNotConfigured
@@ -67,6 +75,27 @@ func (s *FinanceService) SearchStatements(ctx context.Context, tenant, shopID st
 		return nil, tiktokshop.ErrInvalidOrderResponse
 	}
 	return &FinanceStatementsResult{UpstreamRequestID: strings.TrimSpace(requestID), NextPageToken: result.NextPageToken, TotalCount: result.TotalCount, Statements: append([]tiktokshop.Statement(nil), result.Statements...)}, nil
+}
+
+// SearchWithdrawals makes no statement/order membership inference.  The
+// caller receives a sanitized withdrawal snapshot so the tenant can decide
+// which completed withdrawal to reconcile in a later, confirmed step.
+func (s *FinanceService) SearchWithdrawals(ctx context.Context, tenant, shopID string, input tiktokshop.SearchWithdrawalsRequest) (*FinanceWithdrawalsResult, error) {
+	if input.Validate() != nil {
+		return nil, tiktokshop.ErrInvalidOrderInput
+	}
+	credential, err := s.credential(ctx, tenant, shopID)
+	if err != nil {
+		return nil, err
+	}
+	result, requestID, err := s.finance.SearchWithdrawals(ctx, credential.AccessToken, credential.ShopCipher, input)
+	if err != nil {
+		return nil, fmt.Errorf("search TikTok Shop withdrawals: %w", err)
+	}
+	if result == nil {
+		return nil, tiktokshop.ErrInvalidOrderResponse
+	}
+	return &FinanceWithdrawalsResult{UpstreamRequestID: strings.TrimSpace(requestID), NextPageToken: result.NextPageToken, TotalCount: result.TotalCount, Withdrawals: append([]tiktokshop.Withdrawal(nil), result.Withdrawals...)}, nil
 }
 
 func (s *FinanceService) GetStatementTransactions(ctx context.Context, tenant, shopID, statementID, pageToken string, pageSize int) (*FinanceTransactionsResult, error) {

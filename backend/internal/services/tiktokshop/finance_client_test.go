@@ -70,6 +70,49 @@ func TestFinanceClientUsesOfficialAllStatusDefaultWhenStatusIsOmitted(t *testing
 	}
 }
 
+func TestFinanceClientSearchesWithdrawalRoundsWithoutSensitivePayoutFields(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != PathFinanceWithdrawals {
+			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
+		}
+		query := r.URL.Query()
+		provided := query.Get("sign")
+		query.Del("sign")
+		if got := query.Get("types"); got != "WITHDRAW" {
+			t.Fatalf("types=%q", got)
+		}
+		expected, err := SignRequest("secret", PathFinanceWithdrawals, query, nil, false)
+		if err != nil || provided != expected {
+			t.Fatalf("signature=%q expected=%q err=%v", provided, expected, err)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"request_id":"withdrawal-request","data":{"total_count":1,"withdrawals":[{"id":"withdrawal-1","type":"WITHDRAW","amount":"100.00","currency":"THB","status":"SUCCESS","create_time":1725000000,"bank_account":"must-not-cross"}]}}`))
+	}))
+	defer server.Close()
+	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: server.URL, AppKey: "key", AppSecret: "secret", HTTPClient: server.Client(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, requestID, err := client.SearchWithdrawals(context.Background(), "token", "cipher", SearchWithdrawalsRequest{Types: []WithdrawalType{WithdrawalTypeWithdraw}, PageSize: 1, CreateTimeGE: now.Add(-time.Hour).Unix(), CreateTimeLT: now.Unix()})
+	if err != nil || requestID != "withdrawal-request" || len(result.Withdrawals) != 1 {
+		t.Fatalf("result=%+v requestID=%q err=%v", result, requestID, err)
+	}
+	if result.Withdrawals[0].WithdrawalID != "withdrawal-1" || result.Withdrawals[0].Amount != "100.00" || result.Withdrawals[0].Currency != "THB" {
+		t.Fatalf("withdrawal=%+v", result.Withdrawals[0])
+	}
+}
+
+func TestFinanceClientRejectsWithdrawalSearchWithoutARealRoundWindow(t *testing.T) {
+	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: "https://example.test", AppKey: "key", AppSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = client.SearchWithdrawals(context.Background(), "token", "cipher", SearchWithdrawalsRequest{Types: []WithdrawalType{WithdrawalTypeWithdraw}, PageSize: 1, CreateTimeGE: 2, CreateTimeLT: 2})
+	if err == nil {
+		t.Fatal("expected invalid withdrawal range")
+	}
+}
+
 func TestFinanceClientRetriesRateLimitAndPropagatesStatementTransactionCurrency(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

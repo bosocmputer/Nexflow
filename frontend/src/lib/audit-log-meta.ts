@@ -70,6 +70,8 @@ export const ACTION_META: Record<string, ActionMeta> = {
   tiktok_settlement_preflight_failed: { label: 'ตรวจระบบรับชำระ TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_settlement_import_completed: { label: 'ดึง Statement TikTok Shop แล้ว', emoji: '📥', tone: 'info' },
   tiktok_settlement_import_failed: { label: 'ดึง Statement TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
+  tiktok_settlement_withdrawal_search_completed: { label: 'ดึงรอบถอนเงิน TikTok Shop แล้ว', emoji: '💳', tone: 'info' },
+  tiktok_settlement_withdrawal_search_failed: { label: 'ดึงรอบถอนเงิน TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_settlement_reconciled: { label: 'ตรวจเทียบ Statement TikTok Shop แล้ว', emoji: '🔎', tone: 'info' },
   tiktok_settlement_sent: { label: 'สร้างรับชำระหนี้ TikTok Shop ใน SML แล้ว', emoji: '✅', tone: 'success' },
   tiktok_settlement_sml_failed: { label: 'ส่งรับชำระ TikTok Shop ไม่สำเร็จ', emoji: '❌', tone: 'danger' },
@@ -213,6 +215,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   shopee_api: 'Shopee API',
   shopee_realtime: 'Shopee API',
   shopee_settlement: 'รับชำระ Shopee',
+  tiktok_settlement: 'รับชำระ TikTok Shop',
   line_myshop: 'LINE MyShop',
 }
 
@@ -238,6 +241,7 @@ export const SOURCE_TONE: Record<string, string> = {
   shopee_api: 'bg-warning/10 text-warning',
   shopee_realtime: 'bg-warning/10 text-warning',
   shopee_settlement: 'bg-success/10 text-success',
+  tiktok_settlement: 'bg-[#111817] text-white',
   line_myshop: 'bg-info/10 text-info',
 }
 

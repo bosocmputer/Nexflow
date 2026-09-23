@@ -58,6 +58,7 @@ type ProductGatewayService interface {
 
 type FinanceGatewayService interface {
 	SearchStatements(context.Context, string, string, tiktokshop.SearchStatementsRequest) (*FinanceStatementsResult, error)
+	SearchWithdrawals(context.Context, string, string, tiktokshop.SearchWithdrawalsRequest) (*FinanceWithdrawalsResult, error)
 	GetStatementTransactions(context.Context, string, string, string, string, int) (*FinanceTransactionsResult, error)
 }
 
@@ -163,6 +164,10 @@ type financeStatementsRequest struct {
 	ShopID string                             `json:"shop_id"`
 	Search tiktokshop.SearchStatementsRequest `json:"search"`
 }
+type financeWithdrawalsRequest struct {
+	ShopID string                              `json:"shop_id"`
+	Search tiktokshop.SearchWithdrawalsRequest `json:"search"`
+}
 type financeTransactionsRequest struct {
 	ShopID      string `json:"shop_id"`
 	StatementID string `json:"statement_id"`
@@ -200,6 +205,7 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(tiktokshop.GatewayInventorySearchPath, h.SearchInventory)
 	router.POST(tiktokshop.GatewayInventoryUpdatePath, h.UpdateInventory)
 	router.POST(tiktokshop.GatewayFinanceStatementsPath, h.SearchFinanceStatements)
+	router.POST(tiktokshop.GatewayFinanceWithdrawalsPath, h.SearchFinanceWithdrawals)
 	router.POST(tiktokshop.GatewayFinanceStatementTransactionsPath, h.GetFinanceStatementTransactions)
 }
 
@@ -518,6 +524,44 @@ func (h *Handler) SearchFinanceStatements(c *gin.Context) {
 		return
 	}
 	result, err := h.finance.SearchStatements(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
+	if err != nil {
+		statusCode, errorCode = financeErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), financeErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), true, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// SearchFinanceWithdrawals exposes only TikTok's payout-side identifiers and
+// amounts.  It is read-only: a withdrawal does not itself create a Statement,
+// receipt, or SML write.
+func (h *Handler) SearchFinanceWithdrawals(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt, requestID := time.Now(), newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() {
+		h.record(c, identity, "finance_withdrawal_search", statusCode, startedAt, errorCode, requestID)
+	}()
+	if h.finance == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, "ระบบข้อมูลการเงิน TikTok Shop ยังไม่พร้อม", true, requestID)
+		return
+	}
+	var input financeWithdrawalsRequest
+	if err := decodeStrictJSON(body, &input); err != nil || strings.TrimSpace(input.ShopID) == "" || input.Search.Validate() != nil {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_finance_request"
+		h.respondError(c, statusCode, errorCode, "ข้อมูลรอบถอนเงิน TikTok Shop ไม่ถูกต้อง", false, requestID)
+		return
+	}
+	result, err := h.finance.SearchWithdrawals(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), input.Search)
 	if err != nil {
 		statusCode, errorCode = financeErrorMeta(err)
 		h.respondError(c, statusCode, errorCode, financeErrorMessage(errorCode), financeErrorRetryable(errorCode), requestID)

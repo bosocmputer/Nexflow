@@ -19,6 +19,7 @@ import (
 
 const (
 	PathFinanceStatements            = "/finance/202309/statements"
+	PathFinanceWithdrawals           = "/finance/202309/withdrawals"
 	PathFinanceStatementTransactions = "/finance/202501/statements/%s/statement_transactions"
 	PathFinanceOrderTransactions     = "/finance/202501/orders/%s/statement_transactions"
 	maxFinanceResponseSize           = 8 << 20
@@ -30,6 +31,18 @@ const (
 	StatementStatusPaid       StatementStatus = "PAID"
 	StatementStatusProcessing StatementStatus = "PROCESSING"
 	StatementStatusFailed     StatementStatus = "FAILED"
+)
+
+// WithdrawalType is deliberately limited to the values published by TikTok
+// Shop.  A withdrawal record is a payout-side observation only; it must never
+// be treated as evidence that a particular Statement or order was included.
+type WithdrawalType string
+
+const (
+	WithdrawalTypeWithdraw WithdrawalType = "WITHDRAW"
+	WithdrawalTypeSettle   WithdrawalType = "SETTLE"
+	WithdrawalTypeTransfer WithdrawalType = "TRANSFER"
+	WithdrawalTypeReverse  WithdrawalType = "REVERSE"
 )
 
 type FinanceClientConfig struct {
@@ -56,6 +69,17 @@ type SearchStatementsRequest struct {
 	StatementStatus StatementStatus `json:"statement_status,omitempty"`
 }
 
+// SearchWithdrawalsRequest mirrors Get Withdrawals.  We keep this separate
+// from Statement search because the public API does not document a stable
+// withdrawal_id -> statement_id relationship.
+type SearchWithdrawalsRequest struct {
+	Types        []WithdrawalType `json:"types"`
+	PageSize     int              `json:"page_size"`
+	PageToken    string           `json:"page_token,omitempty"`
+	CreateTimeGE int64            `json:"create_time_ge,omitempty"`
+	CreateTimeLT int64            `json:"create_time_lt,omitempty"`
+}
+
 type Statement struct {
 	StatementID      string          `json:"id"`
 	PaymentID        string          `json:"payment_id"`
@@ -76,6 +100,24 @@ type SearchStatementsResult struct {
 	Statements    []Statement `json:"statements"`
 	NextPageToken string      `json:"next_page_token,omitempty"`
 	TotalCount    int64       `json:"total_count,omitempty"`
+}
+
+// Withdrawal intentionally excludes bank-card and buyer information.  The
+// fields are sufficient for an operator to identify a TikTok withdrawal round
+// without persisting sensitive payout metadata.
+type Withdrawal struct {
+	WithdrawalID string         `json:"id"`
+	Type         WithdrawalType `json:"type"`
+	Amount       string         `json:"amount"`
+	Currency     string         `json:"currency"`
+	Status       string         `json:"status"`
+	CreateTime   int64          `json:"create_time"`
+}
+
+type SearchWithdrawalsResult struct {
+	Withdrawals   []Withdrawal `json:"withdrawals"`
+	NextPageToken string       `json:"next_page_token,omitempty"`
+	TotalCount    int64        `json:"total_count,omitempty"`
 }
 
 type StatementTransaction struct {
@@ -150,6 +192,39 @@ func (c *FinanceClient) SearchStatements(ctx context.Context, accessToken, shopC
 	}
 	if output.Statements == nil {
 		output.Statements = []Statement{}
+	}
+	return &output, requestID, nil
+}
+
+// SearchWithdrawals calls TikTok's read-only Get Withdrawals endpoint.  It
+// does not infer statement membership from date or amount; callers must expose
+// such records as candidates pending an explicit reconciliation step.
+func (c *FinanceClient) SearchWithdrawals(ctx context.Context, accessToken, shopCipher string, input SearchWithdrawalsRequest) (*SearchWithdrawalsResult, string, error) {
+	if c == nil || c.baseURL == nil || strings.TrimSpace(accessToken) == "" || strings.TrimSpace(shopCipher) == "" || input.Validate() != nil {
+		return nil, "", ErrInvalidOrderInput
+	}
+	query := c.baseQuery(shopCipher)
+	query.Set("page_size", strconv.Itoa(input.PageSize))
+	types := make([]string, 0, len(input.Types))
+	for _, typ := range input.Types {
+		types = append(types, string(typ))
+	}
+	query.Set("types", strings.Join(types, ","))
+	query.Set("create_time_ge", strconv.FormatInt(input.CreateTimeGE, 10))
+	query.Set("create_time_lt", strconv.FormatInt(input.CreateTimeLT, 10))
+	if input.PageToken != "" {
+		query.Set("page_token", input.PageToken)
+	}
+	var output SearchWithdrawalsResult
+	requestID, err := c.do(ctx, http.MethodGet, PathFinanceWithdrawals, query, nil, accessToken, &output)
+	if err != nil {
+		return nil, requestID, err
+	}
+	if err := validateWithdrawals(output.Withdrawals); err != nil || output.TotalCount < int64(len(output.Withdrawals)) {
+		return nil, requestID, ErrInvalidOrderResponse
+	}
+	if output.Withdrawals == nil {
+		output.Withdrawals = []Withdrawal{}
 	}
 	return &output, requestID, nil
 }
@@ -305,6 +380,26 @@ func (input *SearchStatementsRequest) Validate() error {
 	return nil
 }
 
+func (input *SearchWithdrawalsRequest) Validate() error {
+	if input == nil || input.PageSize < 1 || input.PageSize > 100 || input.CreateTimeGE < 0 || input.CreateTimeLT < 0 || input.CreateTimeGE >= input.CreateTimeLT || len(input.Types) == 0 || len(input.Types) > 4 {
+		return ErrInvalidOrderInput
+	}
+	input.PageToken = strings.TrimSpace(input.PageToken)
+	seen := make(map[WithdrawalType]struct{}, len(input.Types))
+	for _, typ := range input.Types {
+		switch typ {
+		case WithdrawalTypeWithdraw, WithdrawalTypeSettle, WithdrawalTypeTransfer, WithdrawalTypeReverse:
+		default:
+			return ErrInvalidOrderInput
+		}
+		if _, ok := seen[typ]; ok {
+			return ErrInvalidOrderInput
+		}
+		seen[typ] = struct{}{}
+	}
+	return nil
+}
+
 func validateStatements(values []Statement) error {
 	if len(values) > 100 {
 		return ErrInvalidOrderResponse
@@ -323,6 +418,33 @@ func validateStatements(values []Statement) error {
 			return ErrInvalidOrderResponse
 		}
 		seen[v.StatementID] = struct{}{}
+	}
+	return nil
+}
+
+func validateWithdrawals(values []Withdrawal) error {
+	if len(values) > 100 {
+		return ErrInvalidOrderResponse
+	}
+	seen := map[string]struct{}{}
+	for i := range values {
+		v := &values[i]
+		v.WithdrawalID = strings.TrimSpace(v.WithdrawalID)
+		v.Amount = strings.TrimSpace(v.Amount)
+		v.Currency = strings.ToUpper(strings.TrimSpace(v.Currency))
+		v.Status = strings.TrimSpace(v.Status)
+		if v.WithdrawalID == "" || v.Amount == "" || v.Currency == "" || v.Status == "" || v.CreateTime <= 0 {
+			return ErrInvalidOrderResponse
+		}
+		switch v.Type {
+		case WithdrawalTypeWithdraw, WithdrawalTypeSettle, WithdrawalTypeTransfer, WithdrawalTypeReverse:
+		default:
+			return ErrInvalidOrderResponse
+		}
+		if _, ok := seen[v.WithdrawalID]; ok {
+			return ErrInvalidOrderResponse
+		}
+		seen[v.WithdrawalID] = struct{}{}
 	}
 	return nil
 }

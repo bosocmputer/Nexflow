@@ -55,6 +55,11 @@ type tikTokSettlementImportRequest struct {
 	DateFrom string `json:"date_from"`
 	DateTo   string `json:"date_to"`
 }
+type tikTokSettlementWithdrawalSearchRequest struct {
+	ShopID   string `json:"shop_id"`
+	DateFrom string `json:"date_from"`
+	DateTo   string `json:"date_to"`
+}
 type tikTokSettlementSendRequest struct{ Confirm, ExpectedConfigVersion, DocDate, DocDateReason string }
 type tikTokSettlementSettingsRequest struct {
 	ReadEnabled           bool `json:"read_enabled"`
@@ -114,6 +119,15 @@ type tikTokSettlementCounts struct {
 	Sent        int `json:"sent"`
 	Failed      int `json:"failed"`
 	Total       int `json:"total"`
+}
+
+type tikTokSettlementWithdrawalView struct {
+	WithdrawalID string `json:"withdrawal_id"`
+	Type         string `json:"type"`
+	Amount       string `json:"amount"`
+	Currency     string `json:"currency"`
+	Status       string `json:"status"`
+	CreateTime   string `json:"create_time"`
 }
 
 func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktokshop.GatewayClient, routes *repository.ChannelDefaultRepo, audit *repository.AuditLogRepo, smlBridge *ShopeeImportHandler, notifications *repository.NotificationRepo, lineNotifications *repository.LineNotificationRepo, broker *events.Broker, logger *zap.Logger) *TikTokSettlementHandler {
@@ -199,6 +213,68 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 		message = "ดึง Statement ที่ TikTok แจ้งว่าโอนแล้วแล้ว แต่ TikTok ยังตอบสถานะรอโอน/โอนไม่สำเร็จไม่ได้ในขณะนี้ จึงยังไม่แสดงสองสถานะดังกล่าว"
 	}
 	c.JSON(http.StatusAccepted, gin.H{"imported_count": importResult.count, "partial": len(importResult.unavailableStatuses) > 0, "unavailable_statuses": importResult.unavailableStatuses, "message": message})
+}
+
+// SearchWithdrawals is a controlled, read-only UAT surface for TikTok's
+// withdrawal rounds.  It intentionally does not create settlement runs or RC
+// candidates: TikTok's documented withdrawal response does not establish which
+// statement/order belongs to a withdrawal, so membership must be reconciled in
+// a later explicit phase rather than guessed from amount or date alone.
+func (h *TikTokSettlementHandler) SearchWithdrawals(c *gin.Context) {
+	if !h.financeEnabled() {
+		h.error(c, 404, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	var req tikTokSettlementWithdrawalSearchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.error(c, 400, "invalid_request", "ข้อมูลค้นหารอบถอนเงินไม่ถูกต้อง")
+		return
+	}
+	req.ShopID = strings.TrimSpace(req.ShopID)
+	from, to, err := parseTikTokSettlementRange(req.DateFrom, req.DateTo)
+	if req.ShopID == "" || err != nil {
+		h.error(c, 400, "invalid_range", firstNonEmpty(errorText(err), "กรุณาเลือกร้าน TikTok Shop"))
+		return
+	}
+	if ok, err := h.readEnabled(c.Request.Context(), req.ShopID); err != nil {
+		h.error(c, 500, "settings_read_failed", "อ่านการตั้งค่าร้านไม่สำเร็จ")
+		return
+	} else if !ok {
+		h.error(c, 403, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	result, err := h.gateway.SearchFinanceWithdrawals(c.Request.Context(), tiktokshop.GatewayFinanceWithdrawalsRequest{
+		ShopID: req.ShopID,
+		Search: tiktokshop.SearchWithdrawalsRequest{
+			Types:        []tiktokshop.WithdrawalType{tiktokshop.WithdrawalTypeWithdraw},
+			PageSize:     100,
+			CreateTimeGE: from.Unix(),
+			CreateTimeLT: to.Unix(),
+		},
+	})
+	if err != nil {
+		h.auditEvent(c, "tiktok_settlement_withdrawal_search_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err)})
+		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
+		return
+	}
+	data := make([]tikTokSettlementWithdrawalView, 0, len(result.Withdrawals))
+	for _, withdrawal := range result.Withdrawals {
+		data = append(data, tikTokSettlementWithdrawalView{
+			WithdrawalID: strings.TrimSpace(withdrawal.WithdrawalID),
+			Type:         string(withdrawal.Type),
+			Amount:       strings.TrimSpace(withdrawal.Amount),
+			Currency:     strings.TrimSpace(withdrawal.Currency),
+			Status:       strings.TrimSpace(withdrawal.Status),
+			CreateTime:   time.Unix(withdrawal.CreateTime, 0).In(tikTokSettlementBangkok).Format(time.RFC3339),
+		})
+	}
+	h.auditEvent(c, "tiktok_settlement_withdrawal_search_completed", "info", map[string]any{"shop_id": req.ShopID, "withdrawal_count": len(data), "request_id": safeRequestID(result.UpstreamRequestID)})
+	c.JSON(http.StatusOK, gin.H{
+		"data":     data,
+		"total":    result.TotalCount,
+		"has_more": strings.TrimSpace(result.NextPageToken) != "",
+		"message":  "แสดงรอบที่กดถอนเงินจาก TikTok Shop เท่านั้น ยังไม่สร้าง RC และยังไม่จับคู่ออเดอร์โดยการคาดเดา",
+	})
 }
 
 func (h *TikTokSettlementHandler) List(c *gin.Context) {

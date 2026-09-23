@@ -30,6 +30,7 @@ const (
 	GatewayInventorySearchPath              = "/internal/v1/tiktok-shop/inventory/search"
 	GatewayInventoryUpdatePath              = "/internal/v1/tiktok-shop/inventory/update"
 	GatewayFinanceStatementsPath            = "/internal/v1/tiktok-shop/finance/statements"
+	GatewayFinanceWithdrawalsPath           = "/internal/v1/tiktok-shop/finance/withdrawals"
 	GatewayFinanceStatementTransactionsPath = "/internal/v1/tiktok-shop/finance/statement-transactions"
 	maxGatewayResponseSize                  = 8 << 20
 )
@@ -141,6 +142,10 @@ type GatewayFinanceStatementsRequest struct {
 	ShopID string                  `json:"shop_id"`
 	Search SearchStatementsRequest `json:"search"`
 }
+type GatewayFinanceWithdrawalsRequest struct {
+	ShopID string                   `json:"shop_id"`
+	Search SearchWithdrawalsRequest `json:"search"`
+}
 type GatewayFinanceStatementTransactionsRequest struct {
 	ShopID      string `json:"shop_id"`
 	StatementID string `json:"statement_id"`
@@ -197,6 +202,12 @@ type GatewayFinanceStatementsResponse struct {
 	NextPageToken     string      `json:"next_page_token"`
 	TotalCount        int64       `json:"total_count"`
 	Statements        []Statement `json:"statements"`
+}
+type GatewayFinanceWithdrawalsResponse struct {
+	UpstreamRequestID string       `json:"upstream_request_id"`
+	NextPageToken     string       `json:"next_page_token"`
+	TotalCount        int64        `json:"total_count"`
+	Withdrawals       []Withdrawal `json:"withdrawals"`
 }
 type GatewayFinanceStatementTransactionsResponse struct {
 	Currency                 string `json:"currency"`
@@ -444,6 +455,24 @@ func (c *GatewayClient) SearchFinanceStatements(ctx context.Context, input Gatew
 	}
 	if output.Statements == nil {
 		output.Statements = []Statement{}
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) SearchFinanceWithdrawals(ctx context.Context, input GatewayFinanceWithdrawalsRequest) (*GatewayFinanceWithdrawalsResponse, error) {
+	input.ShopID = strings.TrimSpace(input.ShopID)
+	if input.ShopID == "" || input.Search.Validate() != nil {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayFinanceWithdrawalsResponse
+	if err := c.call(ctx, GatewayFinanceWithdrawalsPath, input, &output); err != nil {
+		return nil, err
+	}
+	if err := validateWithdrawals(output.Withdrawals); err != nil || output.TotalCount < int64(len(output.Withdrawals)) {
+		return nil, ErrInvalidOrderResponse
+	}
+	if output.Withdrawals == nil {
+		output.Withdrawals = []Withdrawal{}
 	}
 	return &output, nil
 }

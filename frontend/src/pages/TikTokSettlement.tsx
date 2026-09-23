@@ -105,6 +105,15 @@ type ImportNotice = {
   partial: boolean
 }
 
+type WithdrawalRound = {
+  withdrawal_id: string
+  type: string
+  amount: string
+  currency: string
+  status: string
+  create_time: string
+}
+
 const money = (value?: number, currency = 'THB') => new Intl.NumberFormat('th-TH', {
   style: 'currency',
   currency: /^[A-Z]{3}$/.test(currency) ? currency : 'THB',
@@ -163,6 +172,10 @@ export default function TikTokSettlement() {
   const [smlEnabled, setSmlEnabled] = useState(false)
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null)
+  const [withdrawalOpen, setWithdrawalOpen] = useState(false)
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRound[]>([])
+  const [withdrawalsTruncated, setWithdrawalsTruncated] = useState(false)
+  const [withdrawalLoading, setWithdrawalLoading] = useState(false)
   const [from, setFrom] = useState(dayjs().subtract(14, 'day').format('YYYY-MM-DD'))
   const [to, setTo] = useState(dayjs().format('YYYY-MM-DD'))
   const [runStatus, setRunStatus] = useState('all')
@@ -235,6 +248,29 @@ export default function TikTokSettlement() {
       await load()
     } catch (error: any) {
       toast.error(error?.response?.data?.error?.message ?? 'ดึง Statement ไม่สำเร็จ')
+    }
+  }
+
+  const inspectWithdrawals = async () => {
+    if (!resolvedShopID) {
+      toast.error('กรุณาเลือกร้านก่อนดูรอบถอนเงิน')
+      return
+    }
+    setWithdrawalLoading(true)
+    setWithdrawalsTruncated(false)
+    setWithdrawalOpen(true)
+    try {
+      const response = await client.post<{ data: WithdrawalRound[]; has_more?: boolean; message?: string }>(
+        '/api/tiktok-settlements/withdrawals/search',
+        { shop_id: resolvedShopID, date_from: from, date_to: to },
+      )
+      setWithdrawals(response.data.data ?? [])
+      setWithdrawalsTruncated(Boolean(response.data.has_more))
+    } catch (error: any) {
+      setWithdrawalOpen(false)
+      toast.error(error?.response?.data?.error?.message ?? 'ดึงรอบถอนเงิน TikTok Shop ไม่สำเร็จ')
+    } finally {
+      setWithdrawalLoading(false)
     }
   }
 
@@ -345,6 +381,10 @@ export default function TikTokSettlement() {
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" onClick={importStatements}>
               <Download className="h-4 w-4" />
               ดึง Statement
+            </Button>
+            <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={inspectWithdrawals}>
+              <WalletCards className="h-4 w-4" />
+              ดูรอบถอนเงิน
             </Button>
             <Button className="h-8 w-full justify-center gap-1.5 sm:w-auto" size="sm" variant="outline" onClick={preflight}>
               <CheckCircle2 className="h-4 w-4" />
@@ -556,6 +596,48 @@ export default function TikTokSettlement() {
               <Send className="mr-2 h-4 w-4" />
               ยืนยันส่ง RC เข้า SML
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={withdrawalOpen} onOpenChange={setWithdrawalOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><WalletCards className="h-5 w-5" />รอบถอนเงิน TikTok Shop</DialogTitle>
+            <DialogDescription>
+              แสดงเฉพาะรายการที่กดถอนเงินในช่วงวันที่เลือก ยังไม่สร้าง RC และยังไม่เดาความสัมพันธ์กับคำสั่งซื้อจากยอดเงินหรือวันเวลา
+            </DialogDescription>
+          </DialogHeader>
+          {withdrawalLoading ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">กำลังดึงรอบถอนเงิน…</p>
+          ) : withdrawals.length === 0 ? (
+            <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">ไม่พบรายการกดถอนเงินในช่วงวันที่เลือก</p>
+          ) : (
+            <div className="space-y-2">
+              {withdrawalsTruncated && (
+                <p className="rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning">แสดง 100 รอบแรกของช่วงวันที่เลือก กรุณาเลือกช่วงวันที่แคบลงเพื่อให้ตรวจครบ</p>
+              )}
+              <div className="overflow-hidden rounded-md border">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  <span>รอบถอนเงิน / วันที่</span><span className="text-right">ยอด / สถานะ</span>
+                </div>
+                {withdrawals.map((withdrawal) => (
+                  <div key={withdrawal.withdrawal_id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b px-3 py-2.5 text-sm last:border-0">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{withdrawal.withdrawal_id}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{withdrawal.type} · {dayjs(withdrawal.create_time).format('DD/MM/YY HH:mm')}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-medium tabular-nums">{money(Number(withdrawal.amount), withdrawal.currency)}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{withdrawal.status}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWithdrawalOpen(false)}>ปิด</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
