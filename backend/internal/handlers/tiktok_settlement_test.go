@@ -36,3 +36,15 @@ func TestFinanceThaiErrorDoesNotExposeUpstreamDetail(t *testing.T) {
 		t.Fatalf("message=%q", message)
 	}
 }
+
+func TestTikTokSettlementAllStatusFallbackOnlyHandlesRetryableUpstreamFilterFailures(t *testing.T) {
+	if !shouldUseAllTikTokStatementStatuses(&tiktokshop.GatewayError{Code: "internal_error", Retryable: true}) {
+		t.Fatal("expected retryable internal error to use the documented all-status fallback")
+	}
+	if shouldUseAllTikTokStatementStatuses(&tiktokshop.GatewayError{Code: "permission_denied", Retryable: false}) {
+		t.Fatal("permission errors must never bypass the scoped status request")
+	}
+	if shouldUseAllTikTokStatementStatuses(&tiktokshop.GatewayError{Code: "rate_limited", Retryable: true}) {
+		t.Fatal("rate limits must wait for the next manual import, not amplify traffic")
+	}
+}

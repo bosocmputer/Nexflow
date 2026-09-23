@@ -183,15 +183,19 @@ func (h *TikTokSettlementHandler) Import(c *gin.Context) {
 		h.error(c, 403, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
 		return
 	}
-	created, err := h.importStatements(c.Request.Context(), req.ShopID, from, to, c.GetString("user_id"), c.GetString("user_email"))
+	created, usedAllStatusFallback, err := h.importStatements(c.Request.Context(), req.ShopID, from, to, c.GetString("user_id"), c.GetString("user_email"))
 	if err != nil {
 		h.auditEvent(c, "tiktok_settlement_import_failed", "error", map[string]any{"shop_id": req.ShopID, "error_code": financeErrorCode(err)})
 		h.error(c, 502, financeErrorCode(err), financeThaiError(err))
 		return
 	}
 	_, _ = h.db.ExecContext(c.Request.Context(), `UPDATE tiktok_shop_settlement_settings SET last_import_at=NOW(),updated_at=NOW() WHERE shop_id=$1`, req.ShopID)
-	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": created})
-	c.JSON(http.StatusAccepted, gin.H{"imported_count": created, "message": "ดึง Statement แล้ว ระบบตรวจเทียบกับใบขาย SML เรียบร้อย"})
+	h.auditEvent(c, "tiktok_settlement_import_completed", "info", map[string]any{"shop_id": req.ShopID, "statement_count": created, "all_status_fallback": usedAllStatusFallback})
+	message := "ดึง Statement แล้ว ระบบตรวจเทียบกับใบขาย SML เรียบร้อย"
+	if usedAllStatusFallback {
+		message = "ดึง Statement ครบแล้ว โดยใช้รายการรวมทุกสถานะหลัง TikTok ไม่ตอบการกรองสถานะย่อย"
+	}
+	c.JSON(http.StatusAccepted, gin.H{"imported_count": created, "message": message})
 }
 
 func (h *TikTokSettlementHandler) List(c *gin.Context) {
@@ -449,28 +453,49 @@ func (h *TikTokSettlementHandler) UpdateSettings(c *gin.Context) {
 	c.JSON(200, gin.H{"data": s})
 }
 
-func (h *TikTokSettlementHandler) importStatements(ctx context.Context, shop string, from, to time.Time, userID, email string) (int, error) {
-	count := 0
+func (h *TikTokSettlementHandler) importStatements(ctx context.Context, shop string, from, to time.Time, userID, email string) (int, bool, error) {
+	imported := make(map[string]struct{})
 	for _, status := range []tiktokshop.StatementStatus{tiktokshop.StatementStatusPaid, tiktokshop.StatementStatusProcessing, tiktokshop.StatementStatusFailed} {
-		token := ""
-		for page := 0; page < tikTokSettlementMaxPages; page++ {
-			r, err := h.gateway.SearchFinanceStatements(ctx, tiktokshop.GatewayFinanceStatementsRequest{ShopID: shop, Search: tiktokshop.SearchStatementsRequest{PageSize: 100, PageToken: token, StatementTimeGE: from.Unix(), StatementTimeLT: to.Unix(), StatementStatus: status}})
-			if err != nil {
-				return count, err
+		if err := h.importStatementPages(ctx, shop, from, to, status, userID, email, imported); err != nil {
+			if !shouldUseAllTikTokStatementStatuses(err) {
+				return len(imported), false, err
 			}
-			for _, statement := range r.Statements {
-				if err := h.upsertStatement(ctx, shop, statement, r.UpstreamRequestID, userID, email); err != nil {
-					return count, err
-				}
-				count++
+			if fallbackErr := h.importStatementPages(ctx, shop, from, to, "", userID, email, imported); fallbackErr != nil {
+				return len(imported), true, fallbackErr
 			}
-			token = strings.TrimSpace(r.NextPageToken)
-			if token == "" {
-				break
-			}
+			return len(imported), true, nil
 		}
 	}
-	return count, nil
+	return len(imported), false, nil
+}
+
+func (h *TikTokSettlementHandler) importStatementPages(ctx context.Context, shop string, from, to time.Time, status tiktokshop.StatementStatus, userID, email string, imported map[string]struct{}) error {
+	token := ""
+	for page := 0; page < tikTokSettlementMaxPages; page++ {
+		r, err := h.gateway.SearchFinanceStatements(ctx, tiktokshop.GatewayFinanceStatementsRequest{ShopID: shop, Search: tiktokshop.SearchStatementsRequest{PageSize: 100, PageToken: token, StatementTimeGE: from.Unix(), StatementTimeLT: to.Unix(), StatementStatus: status}})
+		if err != nil {
+			return err
+		}
+		for _, statement := range r.Statements {
+			if err := h.upsertStatement(ctx, shop, statement, r.UpstreamRequestID, userID, email); err != nil {
+				return err
+			}
+			imported[statement.StatementID] = struct{}{}
+		}
+		token = strings.TrimSpace(r.NextPageToken)
+		if token == "" {
+			break
+		}
+	}
+	return nil
+}
+
+func shouldUseAllTikTokStatementStatuses(err error) bool {
+	var gatewayErr *tiktokshop.GatewayError
+	if !errors.As(err, &gatewayErr) || !gatewayErr.Retryable {
+		return false
+	}
+	return gatewayErr.Code == "internal_error" || gatewayErr.Code == "tiktok_api_error"
 }
 func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop string, s tiktokshop.Statement, requestID, userID, email string) error {
 	label, connectionID, err := h.connection(ctx, shop)

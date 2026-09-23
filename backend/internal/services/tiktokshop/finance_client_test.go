@@ -41,7 +41,7 @@ func TestFinanceClientSearchStatementsSignsRequestAndKeepsOnlyFinancialFields(t 
 	}
 }
 
-func TestFinanceClientRejectsMissingStatusAndInvalidRange(t *testing.T) {
+func TestFinanceClientRejectsInvalidRange(t *testing.T) {
 	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: "https://example.test", AppKey: "key", AppSecret: "secret"})
 	if err != nil {
 		t.Fatal(err)
@@ -49,8 +49,24 @@ func TestFinanceClientRejectsMissingStatusAndInvalidRange(t *testing.T) {
 	if _, _, err := client.SearchStatements(context.Background(), "token", "cipher", SearchStatementsRequest{PageSize: 1, StatementTimeGE: 2, StatementTimeLT: 1}); err == nil {
 		t.Fatal("expected invalid range")
 	}
-	if _, _, err := client.SearchStatements(context.Background(), "token", "cipher", SearchStatementsRequest{PageSize: 1}); err == nil {
-		t.Fatal("expected missing status")
+}
+
+func TestFinanceClientUsesOfficialAllStatusDefaultWhenStatusIsOmitted(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("payment_status"); got != "" {
+			t.Fatalf("payment_status=%q; expected omitted parameter", got)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"request_id":"all-statuses","data":{"total_count":0,"statements":[]}}`))
+	}))
+	defer server.Close()
+	client, err := NewFinanceClient(FinanceClientConfig{BaseURL: server.URL, AppKey: "key", AppSecret: "secret", HTTPClient: server.Client(), Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, requestID, err := client.SearchStatements(context.Background(), "token", "cipher", SearchStatementsRequest{PageSize: 1, StatementTimeGE: now.Add(-time.Hour).Unix(), StatementTimeLT: now.Unix()})
+	if err != nil || requestID != "all-statuses" || len(result.Statements) != 0 {
+		t.Fatalf("result=%+v requestID=%q err=%v", result, requestID, err)
 	}
 }
 

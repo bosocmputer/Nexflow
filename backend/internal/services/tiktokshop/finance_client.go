@@ -130,7 +130,9 @@ func (c *FinanceClient) SearchStatements(ctx context.Context, accessToken, shopC
 	}
 	query := c.baseQuery(shopCipher)
 	query.Set("page_size", strconv.Itoa(input.PageSize))
-	query.Set("payment_status", string(input.StatementStatus))
+	if input.StatementStatus != "" {
+		query.Set("payment_status", string(input.StatementStatus))
+	}
 	query.Set("statement_time_ge", strconv.FormatInt(input.StatementTimeGE, 10))
 	query.Set("statement_time_lt", strconv.FormatInt(input.StatementTimeLT, 10))
 	query.Set("sort_field", "statement_time")
@@ -296,7 +298,7 @@ func (input *SearchStatementsRequest) Validate() error {
 	}
 	input.PageToken = strings.TrimSpace(input.PageToken)
 	switch input.StatementStatus {
-	case StatementStatusPaid, StatementStatusProcessing, StatementStatusFailed:
+	case "", StatementStatusPaid, StatementStatusProcessing, StatementStatusFailed:
 	default:
 		return ErrInvalidOrderInput
 	}
