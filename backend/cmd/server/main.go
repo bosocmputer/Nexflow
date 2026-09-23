@@ -405,8 +405,7 @@ func main() {
 		WithProductCatalog(tiktokProductCatalogService, tiktokProductCatalogStore).
 		WithAutoSML(tiktokAutoSMLRepo).
 		WithAuditLogger(auditLogRepo)
-	tiktokSettlementH := handlers.NewTikTokSettlementHandler(db, cfg, tiktokGatewayClient, channelDefaultRepo, auditLogRepo, shopeeH, notificationRepo, lineNotificationRepo, eventBroker, logger)
-	tiktokSettlementH.SetLineNotifier(lineNotificationSvc)
+	tiktokSettlementH := handlers.NewTikTokSettlementHandler(db, cfg, tiktokGatewayClient, channelDefaultRepo, auditLogRepo, shopeeH, notificationRepo, eventBroker, logger)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
 	tiktokshop.NewTikTokWebhookWorker(cfg.TikTokShopWebhookEnabled, tiktokWebhookStore, tiktokSnapshotService, logger).Start(appCtx)
 	tiktokAutoSMLController.Start(appCtx)

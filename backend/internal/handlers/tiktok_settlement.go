@@ -39,23 +39,15 @@ const (
 var tikTokSettlementBangkok = time.FixedZone("Asia/Bangkok", 7*60*60)
 
 type TikTokSettlementHandler struct {
-	db                     *sql.DB
-	config                 *config.Config
-	gateway                *tiktokshop.GatewayClient
-	routes                 *repository.ChannelDefaultRepo
-	audit                  *repository.AuditLogRepo
-	sml                    *ShopeeImportHandler // shared SML proxy, never a Shopee route/default
-	notifications          *repository.NotificationRepo
-	lineNotifications      *repository.LineNotificationRepo
-	settlementLineNotifier tikTokSettlementLineNotifier
-	broker                 *events.Broker
-	logger                 *zap.Logger
-}
-
-// tikTokSettlementLineNotifier keeps the handler independent from the LINE
-// renderer. Notification delivery must never affect the receipt write.
-type tikTokSettlementLineNotifier interface {
-	EnqueueTikTokSettlementResult(context.Context, models.TikTokSettlementLineNotification, string) (int, error)
+	db            *sql.DB
+	config        *config.Config
+	gateway       *tiktokshop.GatewayClient
+	routes        *repository.ChannelDefaultRepo
+	audit         *repository.AuditLogRepo
+	sml           *ShopeeImportHandler // shared SML proxy, never a Shopee route/default
+	notifications *repository.NotificationRepo
+	broker        *events.Broker
+	logger        *zap.Logger
 }
 
 type tikTokSettlementImportRequest struct {
@@ -161,20 +153,11 @@ type tikTokSettlementPaymentView struct {
 	ObservedFields []string `json:"observed_fields,omitempty"`
 }
 
-func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktokshop.GatewayClient, routes *repository.ChannelDefaultRepo, audit *repository.AuditLogRepo, smlBridge *ShopeeImportHandler, notifications *repository.NotificationRepo, lineNotifications *repository.LineNotificationRepo, broker *events.Broker, logger *zap.Logger) *TikTokSettlementHandler {
+func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktokshop.GatewayClient, routes *repository.ChannelDefaultRepo, audit *repository.AuditLogRepo, smlBridge *ShopeeImportHandler, notifications *repository.NotificationRepo, broker *events.Broker, logger *zap.Logger) *TikTokSettlementHandler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &TikTokSettlementHandler{db: db, config: cfg, gateway: gateway, routes: routes, audit: audit, sml: smlBridge, notifications: notifications, lineNotifications: lineNotifications, broker: broker, logger: logger}
-}
-
-// SetLineNotifier attaches the shared durable LINE outbox after server
-// construction. Keeping the repo fallback preserves safe delivery if an older
-// bootstrap path has not injected the richer renderer yet.
-func (h *TikTokSettlementHandler) SetLineNotifier(notifier tikTokSettlementLineNotifier) {
-	if h != nil {
-		h.settlementLineNotifier = notifier
-	}
+	return &TikTokSettlementHandler{db: db, config: cfg, gateway: gateway, routes: routes, audit: audit, sml: smlBridge, notifications: notifications, broker: broker, logger: logger}
 }
 
 func (h *TikTokSettlementHandler) financeEnabled() bool {
@@ -1083,9 +1066,9 @@ func (h *TikTokSettlementHandler) failSettlementRun(ctx context.Context, run *ti
 	h.notifySettlementResult(ctx, run, "error", "ส่ง RC TikTok Shop ไม่สำเร็จ", message, "failed")
 }
 
-// notifySettlementResult sends only terminal outcomes.  Payloads contain the
-// Statement/Payment identity and no buyer data, so both Topbar and LINE are
-// useful operational evidence without becoming a PII channel.
+// notifySettlementResult sends terminal outcomes to Nexflow's internal
+// notification center only. TikTok settlement RC events intentionally do not
+// send LINE messages; operators review the durable result in Topbar/page.
 func (h *TikTokSettlementHandler) notifySettlementResult(ctx context.Context, run *tikTokSettlementRunView, severity, title, body, outcome string) {
 	if h == nil || run == nil {
 		return
@@ -1095,26 +1078,6 @@ func (h *TikTokSettlementHandler) notifySettlementResult(ctx context.Context, ru
 		return
 	}
 	dedupe := "tiktok:settlement:" + entityID + ":" + strings.TrimSpace(outcome)
-	if h.settlementLineNotifier != nil {
-		_, err := h.settlementLineNotifier.EnqueueTikTokSettlementResult(ctx, models.TikTokSettlementLineNotification{
-			RunID: run.ID, ShopID: run.ShopID, ShopName: run.ShopLabel,
-			StatementID: run.StatementID, PaymentID: run.PaymentID, Currency: run.Currency,
-			TotalAmount: run.TotalSettlementAmount, OrderCount: run.ItemCount,
-			RCDocNo: run.RCDocNo, Outcome: outcome, ErrorMessage: body,
-		}, dedupe)
-		if err != nil && h.logger != nil {
-			h.logger.Warn("enqueue TikTok settlement LINE notification failed", zap.String("run_id", entityID), zap.Error(err))
-		}
-	} else if h.lineNotifications != nil {
-		_, err := h.lineNotifications.Enqueue(ctx, models.LineNotificationMessageInput{
-			Source: "tiktok_settlement", Severity: severity, Title: title,
-			Body: body, ActionURL: "/tiktok-settlements", EntityType: "tiktok_settlement", EntityID: entityID,
-			DedupeKey: dedupe, MessageText: title + "\nStatement: " + run.StatementID + "\nPayment ID: " + run.PaymentID + "\n" + body,
-		})
-		if err != nil && h.logger != nil {
-			h.logger.Warn("enqueue TikTok settlement LINE notification failed", zap.String("run_id", entityID), zap.Error(err))
-		}
-	}
 	if h.notifications == nil {
 		return
 	}
