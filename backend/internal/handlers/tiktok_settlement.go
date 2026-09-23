@@ -50,7 +50,11 @@ type TikTokSettlementHandler struct {
 	logger            *zap.Logger
 }
 
-type tikTokSettlementImportRequest struct{ ShopID, DateFrom, DateTo string }
+type tikTokSettlementImportRequest struct {
+	ShopID   string `json:"shop_id"`
+	DateFrom string `json:"date_from"`
+	DateTo   string `json:"date_to"`
+}
 type tikTokSettlementSendRequest struct{ Confirm, ExpectedConfigVersion, DocDate, DocDateReason string }
 type tikTokSettlementSettingsRequest struct {
 	ReadEnabled           bool `json:"read_enabled"`
