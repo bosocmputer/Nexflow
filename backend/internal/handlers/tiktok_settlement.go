@@ -704,11 +704,11 @@ func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop stri
 	s.RefundAmount = tikTokSettlementAmountOrZero(s.RefundAmount)
 	label, connectionID, err := h.connection(ctx, shop)
 	if err != nil {
-		return err
+		return fmt.Errorf("load_connection: %w", err)
 	}
 	snapshot, err := json.Marshal(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal_statement: %w", err)
 	}
 	sum := sha256.Sum256(snapshot)
 	status := "needs_review"
@@ -720,7 +720,7 @@ func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop stri
 	}
 	settings, err := h.loadSettings(ctx, shop)
 	if err != nil {
-		return err
+		return fmt.Errorf("load_settings: %w", err)
 	}
 	settingVersion, _ := settings["config_version"].(int)
 	routeVersion := int64(0)
@@ -734,7 +734,7 @@ func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop stri
 		// original RC evidence and surface an anomaly instead of rewriting it.
 		changed, updateErr := h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET anomaly_reason='ข้อมูล TikTok Statement เปลี่ยนหลังส่ง RC แล้ว ต้องตรวจสอบกับธนาคาร',updated_at=NOW() WHERE shop_id=$1 AND statement_id=$2 AND status='sent' AND content_hash<>$3`, shop, s.StatementID, hex.EncodeToString(sum[:]))
 		if updateErr != nil {
-			return updateErr
+			return fmt.Errorf("mark_sent_anomaly: %w", updateErr)
 		}
 		if n, _ := changed.RowsAffected(); n > 0 {
 			h.auditDirect(ctx, "tiktok_settlement_anomaly", userID, "warning", map[string]any{"shop_id": shop, "statement_id": s.StatementID, "reason": "upstream_data_changed_after_rc"})
@@ -742,10 +742,12 @@ func (h *TikTokSettlementHandler) upsertStatement(ctx context.Context, shop stri
 		return nil
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("save_snapshot: %w", err)
 	}
 	if s.Status == tiktokshop.StatementStatusPaid {
-		return h.fetchAndReconcile(ctx, runID, shop, s.StatementID)
+		if err := h.fetchAndReconcile(ctx, runID, shop, s.StatementID); err != nil {
+			return fmt.Errorf("reconcile_statement: %w", err)
+		}
 	}
 	return nil
 }
@@ -1205,7 +1207,18 @@ func tikTokSettlementImportFailureStage(err error) string {
 	case strings.HasPrefix(message, "read_statement_page:"):
 		return "read_statement_page"
 	case strings.HasPrefix(message, "store_statement:"):
-		return "store_statement"
+		switch {
+		case strings.Contains(message, "load_connection:"):
+			return "load_connection"
+		case strings.Contains(message, "load_settings:"):
+			return "load_settings"
+		case strings.Contains(message, "save_snapshot:"):
+			return "save_snapshot"
+		case strings.Contains(message, "reconcile_statement:"):
+			return "reconcile_statement"
+		default:
+			return "store_statement"
+		}
 	default:
 		return "unknown"
 	}

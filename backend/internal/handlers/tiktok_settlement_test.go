@@ -65,6 +65,8 @@ func TestTikTokSettlementImportFailureStage(t *testing.T) {
 	}{
 		{errors.New("read_statement_page: unavailable"), "read_statement_page"},
 		{errors.New("store_statement: database unavailable"), "store_statement"},
+		{errors.New("store_statement: save_snapshot: database unavailable"), "save_snapshot"},
+		{errors.New("store_statement: reconcile_statement: unavailable"), "reconcile_statement"},
 		{errors.New("other"), "unknown"},
 	} {
 		if got := tikTokSettlementImportFailureStage(test.err); got != test.want {
