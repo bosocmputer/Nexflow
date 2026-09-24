@@ -277,7 +277,7 @@ func (r *TikTokAutoSMLRepo) LeaseJobs(ctx context.Context, limit int, lease time
 		WITH due AS (
 		  SELECT j.id FROM tiktok_shop_auto_sml_jobs j
 		  JOIN tiktok_shop_auto_sml_settings st ON st.shop_id=j.shop_id
-		  WHERE j.status IN ('queued','retry_wait') AND j.next_run_at<=NOW()
+		  WHERE j.status IN ('queued','retry_wait') AND j.next_run_at<=NOW() AND j.attempts<8
 		    AND st.enabled=TRUE AND st.paused_reason=''
 		  ORDER BY j.next_run_at,j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT $1
 		)
