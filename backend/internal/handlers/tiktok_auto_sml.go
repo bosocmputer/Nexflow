@@ -439,12 +439,16 @@ func (c *TikTokAutoSMLController) auditEvent(action, level string, job models.Ti
 	if c == nil || c.audit == nil {
 		return
 	}
-	target := strings.TrimSpace(job.OrderID)
 	if detail == nil {
 		detail = map[string]interface{}{}
 	}
+	// audit_logs.target_id is UUID-typed. TikTok order IDs are numeric strings,
+	// so retain them in immutable detail and attach the target only after a
+	// local Nexflow Bill has supplied a UUID.
+	var target *string
 	if billID, ok := detail["bill_id"].(string); ok && strings.TrimSpace(billID) != "" {
-		target = strings.TrimSpace(billID)
+		value := strings.TrimSpace(billID)
+		target = &value
 	}
 	detail["shop_id"] = job.ShopID
 	detail["order_id"] = job.OrderID
@@ -454,7 +458,7 @@ func (c *TikTokAutoSMLController) auditEvent(action, level string, job models.Ti
 	if job.TriggerConfigVersion > 0 {
 		detail["config_version"] = job.TriggerConfigVersion
 	}
-	if err := c.audit.Log(models.AuditEntry{Action: action, TargetID: &target, Source: "tiktok_shop", Level: level, Detail: detail}); err != nil {
+	if err := c.audit.Log(models.AuditEntry{Action: action, TargetID: target, Source: "tiktok_shop", Level: level, Detail: detail}); err != nil {
 		c.logger.Warn("tiktok_auto_sml_audit_failed", zap.String("action", action), zap.String("order_id", job.OrderID), zap.Error(err))
 	}
 }

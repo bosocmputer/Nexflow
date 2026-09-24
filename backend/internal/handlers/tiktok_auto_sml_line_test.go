@@ -39,6 +39,13 @@ func (f tikTokAutoSMLShopLabelFake) ActiveShopLabel(context.Context, string) (st
 	return f.label, nil
 }
 
+type tikTokAutoSMLAuditFake struct{ entries []models.AuditEntry }
+
+func (f *tikTokAutoSMLAuditFake) Log(entry models.AuditEntry) error {
+	f.entries = append(f.entries, entry)
+	return nil
+}
+
 func TestTikTokAutoSMLLineSuccessUsesSafeDocumentEvidence(t *testing.T) {
 	notifier := &tikTokAutoSMLLineNotifierFake{}
 	controller := NewTikTokAutoSMLController(&config.Config{TikTokShopLineEnabled: true}, nil, nil, nil, nil, nil, nil)
@@ -163,5 +170,20 @@ func TestTikTokAutoBillDoesNotPromoteQueuedJobAfterSMLSettingChanges(t *testing.
 	}
 	if store.markedBillJobID != "65b124d5-570d-48d4-9741-d22f1f46f1ef" || store.markedReviewDigest != preview.ReviewDigest {
 		t.Fatalf("unexpected completed job evidence: %#v", store)
+	}
+}
+
+func TestTikTokAutoSMLQueueAuditDoesNotUseNumericOrderIDAsUUIDTarget(t *testing.T) {
+	audit := &tikTokAutoSMLAuditFake{}
+	controller := NewTikTokAutoSMLController(&config.Config{}, nil, nil, nil, nil, audit, nil)
+	controller.auditEvent("tiktok_auto_sml_queued", "info", models.TikTokAutoSMLJob{
+		ShopID: "7494619203789490654", OrderID: "586228966518261658", TriggerConfigVersion: 3,
+	}, nil)
+	if len(audit.entries) != 1 || audit.entries[0].TargetID != nil {
+		t.Fatalf("queue audit target must be nil until a Bill exists: %#v", audit.entries)
+	}
+	detail, ok := audit.entries[0].Detail.(map[string]interface{})
+	if !ok || detail["order_id"] != "586228966518261658" || detail["shop_id"] != "7494619203789490654" {
+		t.Fatalf("queue audit must preserve shop/order evidence in detail: %#v", audit.entries[0].Detail)
 	}
 }
