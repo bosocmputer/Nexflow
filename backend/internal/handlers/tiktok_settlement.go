@@ -631,6 +631,16 @@ func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
 			h.error(c, http.StatusInternalServerError, "settlement_reload_failed", "โหลด Statement หลังตรวจข้อมูลไม่สำเร็จ")
 			return
 		}
+		// A no-op recovery is still an operator action worth recording.  It
+		// proves that the exact Statement was checked and that no extra Order
+		// API read, Bill, SML document, or RC was created.
+		h.auditEvent(c, "tiktok_settlement_order_backfill_completed", "info", map[string]any{
+			"statement_id":    run.StatementID,
+			"shop_id":         run.ShopID,
+			"synced_count":    0,
+			"remaining_count": 0,
+			"outcome":         "already_snapshotted",
+		})
 		c.JSON(http.StatusOK, gin.H{
 			"data": out, "imported_count": 0, "remaining_count": 0,
 			"message": "คำสั่งซื้อของ Statement นี้อยู่ใน Nexflow แล้ว ขั้นถัดไปคือสร้างเอกสารขายและส่ง SML สำหรับรายการที่ยังขาด ก่อนกดตรวจข้อมูลใหม่",
