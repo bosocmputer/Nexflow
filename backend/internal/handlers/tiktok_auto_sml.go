@@ -147,11 +147,16 @@ func (c *TikTokAutoSMLController) Start(ctx context.Context) {
 	if c == nil || c.cfg == nil || !c.cfg.TikTokShopAutoSMLEnabled || c.repo == nil {
 		return
 	}
+	c.logger.Info("tiktok_auto_sml_worker_started", zap.Bool("sml_send_enabled_by_default", false))
 	if recovered, err := c.repo.RecoverStaleJobs(ctx); err != nil {
 		c.logger.Warn("tiktok_auto_sml_recover_failed", zap.Error(err))
 	} else if recovered > 0 {
 		c.logger.Warn("tiktok_auto_sml_recovered", zap.Int64("jobs", recovered))
 	}
+	// Do one bounded pass on startup. This makes a deploy/restart recover local
+	// TikTok Bills promptly while retaining the same preview, mapping, route,
+	// idempotency, and SML-send guards as the recurring worker.
+	c.processBatch(ctx)
 	go func() {
 		ticker := time.NewTicker(tikTokAutoSMLWorkerEvery)
 		defer ticker.Stop()
