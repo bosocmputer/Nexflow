@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -38,6 +38,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   buildTikTokReviewedBillRequest,
   buildTikTokCancellationRequest,
@@ -46,12 +47,15 @@ import {
   normalizeTikTokStatusGroup,
   tiktokCancellationState,
   tiktokCompactDocumentState,
+  tiktokOrderDetailKey,
   tiktokOrderDetailPath,
   tiktokDocumentState,
   tiktokAutoSMLControlState,
   tiktokOperationsHeaderMeta,
   tiktokOrderStatusLabel,
+  tiktokReviewedBillDisabledReason,
   tiktokRowActions,
+  shouldOpenTikTokDetailFromQuery,
   tiktokStatusGroupCount,
   tiktokSyncState,
   type TikTokStatusCounts,
@@ -341,20 +345,23 @@ export default function TikTokShopOperations() {
   }, [loading, orders?.data, previewOpen, reviewOrderID, setQuery])
 
   useEffect(() => {
-    if (!detailRequested || loading || !orderID || detailOrder?.order_id === orderID) return
+    if (!detailRequested) {
+      dismissedDetailOrderRef.current = ''
+      return
+    }
+    if (loading || !orderID || !shouldOpenTikTokDetailFromQuery(shopID, orderID, detailRequested, Boolean(detailOrder), dismissedDetailOrderRef.current)) return
     const row = orders?.data.find((item) => item.order_id === orderID && (shopID === ALL || item.shop_id === shopID))
     if (row) {
-      dismissedDetailOrderRef.current = ''
       setDetailOrder(row)
       return
     }
-    const key = `${shopID}:${orderID}`
+    const key = tiktokOrderDetailKey(shopID, orderID)
     if (orders && dismissedDetailOrderRef.current !== key) {
       dismissedDetailOrderRef.current = key
       toast.error('ไม่พบคำสั่งซื้อ TikTok Shop ในร้านที่เลือก')
       setQuery({ detail: null })
     }
-  }, [detailOrder?.order_id, detailRequested, loading, orderID, orders, setQuery, shopID])
+  }, [detailOrder, detailRequested, loading, orderID, orders, setQuery, shopID])
 
   useEffect(() => {
     if (!previewOpen || !previewOrder) return
@@ -488,14 +495,27 @@ export default function TikTokShopOperations() {
       toast.error('ข้อมูลร้านหรือ Order ID ของ TikTok Shop ไม่ถูกต้อง')
       return
     }
+    dismissedDetailOrderRef.current = ''
     setDetailOrder(row)
     setQuery({ shop_id: row.shop_id, order_id: row.order_id, detail: '1', page: null })
   }
   const setDetailOpen = (open: boolean) => {
     if (open) return
+    dismissedDetailOrderRef.current = tiktokOrderDetailKey(
+      detailOrder?.shop_id ?? shopID,
+      detailOrder?.order_id ?? orderID,
+    )
     setDetailOrder(null)
     setQuery({ detail: null })
   }
+  const copyTikTokOrderID = useCallback(async (order: TikTokOrderRow) => {
+    try {
+      await navigator.clipboard.writeText(order.order_id)
+      toast.success('คัดลอก Order ID แล้ว')
+    } catch {
+      toast.error('คัดลอก Order ID ไม่สำเร็จ')
+    }
+  }, [])
   const setBillPreviewOpen = (open: boolean) => {
     setPreviewOpen(open)
     if (!open) {
@@ -766,6 +786,7 @@ export default function TikTokShopOperations() {
                   key={`${row.shop_id}:${row.order_id}`}
                   row={row}
                   previewLoading={billPreviewLoading && previewOrder?.shop_id === row.shop_id && previewOrder?.order_id === row.order_id}
+                  canCreateDocument={canCreateDocument}
                   onPreview={() => openBillPreview(row)}
                   onDetails={() => openOrderDetail(row)}
                   retryingAutoSML={autoSMLRetryingOrder === row.order_id}
@@ -844,6 +865,14 @@ export default function TikTokShopOperations() {
           if (!detailOrder) return
           setDetailOpen(false)
           openBillPreview(detailOrder)
+        }}
+        createDocumentDisabledReason={detailOrder ? tiktokReviewedBillDisabledReason({
+          orderStatus: detailOrder.order_status,
+          hasDocument: Boolean(detailOrder.bill_id && detailOrder.document_path),
+          canCreateDocument,
+        }) : ''}
+        onCopyOrder={() => {
+          if (detailOrder) void copyTikTokOrderID(detailOrder)
         }}
       />
       <TikTokProductMappingDialog
@@ -1066,6 +1095,7 @@ function tikTokDiagnosticIssueLabel(code: string) {
 function DesktopRow({
   row,
   previewLoading,
+  canCreateDocument,
   retryingAutoSML,
   canRetryAutoSML,
   onPreview,
@@ -1077,6 +1107,7 @@ function DesktopRow({
 }: {
   row: TikTokOrderRow
   previewLoading: boolean
+  canCreateDocument: boolean
   retryingAutoSML: boolean
   canRetryAutoSML: boolean
   onPreview: () => void
@@ -1106,6 +1137,11 @@ function DesktopRow({
   const cancellationDocument = isCancellationRow ? tiktokCancellationState(documentInput) : null
   const document = cancellationDocument ?? tiktokCompactDocumentState(documentInput, row.auto_sml)
   const actions = tiktokRowActions({ billID: row.bill_id, documentPath: row.document_path })
+  const createDocumentDisabledReason = tiktokReviewedBillDisabledReason({
+    orderStatus: row.order_status,
+    hasDocument: Boolean(row.bill_id && row.document_path),
+    canCreateDocument,
+  })
   const canRetry = !isCancellationRow && canRetryAutoSML && Boolean(row.auto_sml && ['needs_review', 'failed'].includes(row.auto_sml.status))
   return (
     <tr className="border-t border-border hover:bg-muted/30">
@@ -1160,10 +1196,13 @@ function DesktopRow({
               </Link>
             </Button>
           ) : (
-            <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={previewLoading} onClick={onPreview}>
-              {previewLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FilePlus2 className="h-3.5 w-3.5" />}
-              {actions.primaryLabel}
-            </Button>
+            <GuardedButton
+              icon={previewLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FilePlus2 className="h-3.5 w-3.5" />}
+              label={actions.primaryLabel}
+              disabled={previewLoading}
+              disabledReason={createDocumentDisabledReason}
+              onClick={onPreview}
+            />
           )}
           <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={onDetails}>
             <Eye className="h-3.5 w-3.5" />
@@ -1172,6 +1211,36 @@ function DesktopRow({
         </div>
       </td>
     </tr>
+  )
+}
+
+function GuardedButton({
+  icon,
+  label,
+  disabled = false,
+  disabledReason,
+  onClick,
+}: {
+  icon: ReactNode
+  label: string
+  disabled?: boolean
+  disabledReason: string
+  onClick: () => void
+}) {
+  const blocked = disabled || Boolean(disabledReason)
+  const reason = disabledReason || (disabled ? 'กำลังตรวจข้อมูลเอกสาร' : '')
+  const button = (
+    <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" disabled={blocked} onClick={onClick} title={reason || undefined}>
+      {icon}
+      {label}
+    </Button>
+  )
+  if (!blocked) return button
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild><span className="inline-flex">{button}</span></TooltipTrigger>
+      <TooltipContent>{reason}</TooltipContent>
+    </Tooltip>
   )
 }
 

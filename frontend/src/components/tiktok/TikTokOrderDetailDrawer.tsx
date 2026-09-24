@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Eye, FileSearch, PackageSearch } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Copy, Eye, FilePlus2, PackageSearch } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -46,16 +46,20 @@ type Props = {
   open: boolean
   order: TikTokOrderDetail | null
   canCreateDocument: boolean
+  createDocumentDisabledReason?: string
   onOpenChange: (open: boolean) => void
   onReviewBill: () => void
+  onCopyOrder: () => void
 }
 
 export function TikTokOrderDetailDrawer({
   open,
   order,
   canCreateDocument,
+  createDocumentDisabledReason = '',
   onOpenChange,
   onReviewBill,
+  onCopyOrder,
 }: Props) {
   const document = order
     ? tiktokCompactDocumentState({
@@ -79,12 +83,10 @@ export function TikTokOrderDetailDrawer({
       <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl lg:max-w-2xl">
         <SheetHeader className="border-b border-border px-4 py-3 text-left sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <SheetTitle>Timeline คำสั่งซื้อ TikTok Shop</SheetTitle>
+            <SheetTitle>Timeline คำสั่งซื้อ</SheetTitle>
             <Badge className="border-[#111817] bg-[#111817] text-white hover:bg-[#111817]">TikTok Shop</Badge>
           </div>
-          <SheetDescription>
-            {order ? <>Order <span className="font-mono text-foreground">{order.order_id}</span>{order.shop_name ? ` · ${order.shop_name}` : ''}</> : 'กำลังโหลดข้อมูลคำสั่งซื้อ'}
-          </SheetDescription>
+          <SheetDescription>สถานะคำสั่งซื้อจาก TikTok Shop และ milestone เอกสารใน Nexflow</SheetDescription>
         </SheetHeader>
 
         <ScrollArea className="min-h-0 flex-1">
@@ -123,21 +125,6 @@ export function TikTokOrderDetailDrawer({
                         ? 'ตรวจสินค้า การจับคู่ และยอดก่อนยืนยันสร้างเอกสารใน Nexflow'
                         : 'ผู้ที่มีสิทธิ์สร้างเอกสารสามารถตรวจข้อมูลและสร้าง Bill ได้'}
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {rawDocument.path ? (
-                      <Button asChild size="sm" variant="outline" className="gap-1.5">
-                        <Link to={rawDocument.path}>
-                          <Eye className="h-3.5 w-3.5" />
-                          เปิดเอกสาร
-                        </Link>
-                      </Button>
-                    ) : (
-                      <Button type="button" size="sm" className="gap-1.5" disabled={!canCreateDocument} onClick={onReviewBill}>
-                        <FileSearch className="h-3.5 w-3.5" />
-                        ตรวจเอกสารก่อนสร้าง
-                      </Button>
-                    )}
-                  </div>
                 </div>
               </section>
 
@@ -160,6 +147,37 @@ export function TikTokOrderDetailDrawer({
             </div>
           )}
         </ScrollArea>
+
+        <div className="flex flex-col gap-2 border-t border-border p-3 sm:flex-row sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {rawDocument?.path ? (
+              <Button asChild variant="outline" className="gap-2">
+                <Link to={rawDocument.path}>
+                  <Eye className="h-4 w-4" />
+                  เปิดเอกสาร
+                </Link>
+              </Button>
+            ) : order ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={Boolean(createDocumentDisabledReason)}
+                title={createDocumentDisabledReason || undefined}
+                onClick={onReviewBill}
+              >
+                <FilePlus2 className="h-4 w-4" />
+                สร้างเอกสาร
+              </Button>
+            ) : null}
+            {order && (
+              <Button type="button" variant="outline" className="gap-2" onClick={onCopyOrder}>
+                <Copy className="h-4 w-4" />
+                คัดลอก Order ID
+              </Button>
+            )}
+          </div>
+        </div>
       </SheetContent>
     </Sheet>
   )
@@ -186,7 +204,7 @@ function ManualSMLFlow({ hasDocument, sentToSML }: { hasDocument: boolean; sentT
 
   return (
     <section aria-labelledby="tiktok-manual-sml-flow">
-      <h2 id="tiktok-manual-sml-flow" className="mb-2 text-sm font-semibold">ขั้นตอนส่ง SML แบบกดเอง</h2>
+      <h2 id="tiktok-manual-sml-flow" className="mb-2 text-sm font-semibold">Timeline เอกสาร Nexflow และ SML</h2>
       <ol className="overflow-hidden rounded-lg border border-border bg-card sm:grid sm:grid-cols-3 sm:divide-x sm:divide-border">
         {steps.map((step, index) => (
           <li key={step.label} className="flex min-w-0 gap-2.5 border-b border-border px-3 py-3 last:border-b-0 sm:border-b-0">

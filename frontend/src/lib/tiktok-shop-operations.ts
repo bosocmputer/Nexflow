@@ -64,6 +64,12 @@ export interface TikTokRowActions {
   detailsLabel: 'รายละเอียด'
 }
 
+export interface TikTokReviewedBillDisabledReasonInput {
+  orderStatus: string
+  hasDocument?: boolean
+  canCreateDocument: boolean
+}
+
 const TIKTOK_STATUS_GROUPS: TikTokStatusGroup[] = ['all', 'unpaid', 'to_ship', 'shipping', 'completed', 'cancelled']
 
 const STATUS_LABELS: Record<string, string> = {
@@ -298,6 +304,48 @@ export function tiktokRowActions(input: TikTokRowActionsInput): TikTokRowActions
     primaryLabel: hasDocument ? 'เอกสาร' : 'สร้างเอกสาร',
     detailsLabel: 'รายละเอียด',
   }
+}
+
+// This is only a local, explanatory guard for a row action.  The reviewed-bill
+// preview remains the authority because it re-checks the current TikTok snapshot,
+// route, mapping, amounts, and idempotency immediately before a create can occur.
+export function tiktokReviewedBillDisabledReason(input: TikTokReviewedBillDisabledReasonInput): string {
+  if (!input.canCreateDocument) return 'คุณไม่มีสิทธิ์สร้างเอกสาร'
+  if (input.hasDocument) return 'สร้างเอกสารแล้ว เปิดเอกสารเพื่อตรวจหรือส่ง SML'
+
+  switch (input.orderStatus.trim().toUpperCase()) {
+    case 'UNPAID':
+      return 'คำสั่งซื้อยังไม่ชำระเงิน'
+    case 'CANCELLED':
+      return 'คำสั่งซื้อถูกยกเลิกแล้ว'
+    case 'AWAITING_COLLECTION':
+    case 'IN_TRANSIT':
+    case 'DELIVERED':
+    case 'COMPLETED':
+      return ''
+    default:
+      return 'สร้างเอกสารได้เมื่อ TikTok ยืนยันว่ารอรับพัสดุหรืออยู่ระหว่างจัดส่งแล้ว'
+  }
+}
+
+export function tiktokOrderDetailKey(shopID: string, orderID: string): string {
+  const shop = shopID.trim()
+  const order = orderID.trim()
+  return shop && order ? `${shop}:${order}` : ''
+}
+
+// Mirrors Shopee's close guard.  React can render once with the old query before
+// the URL update is committed; retaining a dismissed key prevents that old query
+// from reopening the same sheet.
+export function shouldOpenTikTokDetailFromQuery(
+  shopID: string,
+  orderID: string,
+  detailRequested: boolean,
+  detailOpen: boolean,
+  dismissedDetailKey: string,
+): boolean {
+  const key = tiktokOrderDetailKey(shopID, orderID)
+  return Boolean(detailRequested && key && !detailOpen && key !== dismissedDetailKey.trim())
 }
 
 export function tiktokOrderDetailPath(input: { shopID: string; orderID: string }): string {

@@ -27,7 +27,10 @@ const {
   tiktokCompactDocumentState,
   tiktokAutoSMLControlState,
   tiktokOrderDetailPath,
+  tiktokOrderDetailKey,
   tiktokRowActions,
+  tiktokReviewedBillDisabledReason,
+  shouldOpenTikTokDetailFromQuery,
   tiktokShadowMappingValidation,
   tiktokSyncState,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
@@ -226,6 +229,24 @@ test('builds a shop-scoped TikTok order detail link without accepting malformed 
   assert.equal(tiktokOrderDetailPath({ shopID: '', orderID: '586129051626538855' }), '')
   assert.equal(tiktokOrderDetailPath({ shopID: 'shop/one', orderID: '586129051626538855' }), '')
   assert.equal(tiktokOrderDetailPath({ shopID: '7494619203789490654', orderID: '5861?bad' }), '')
+})
+
+test('uses the same safe row-create guard as Shopee while leaving preview as the authority', () => {
+  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'AWAITING_COLLECTION', canCreateDocument: true }), '')
+  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'IN_TRANSIT', canCreateDocument: true }), '')
+  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'AWAITING_SHIPMENT', canCreateDocument: true }), 'สร้างเอกสารได้เมื่อ TikTok ยืนยันว่ารอรับพัสดุหรืออยู่ระหว่างจัดส่งแล้ว')
+  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'CANCELLED', canCreateDocument: true }), 'คำสั่งซื้อถูกยกเลิกแล้ว')
+  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'DELIVERED', canCreateDocument: false }), 'คุณไม่มีสิทธิ์สร้างเอกสาร')
+})
+
+test('does not reopen the TikTok detail sheet from the stale query rendered during close', () => {
+  const key = tiktokOrderDetailKey('7494619203789490654', '586227661644662273')
+  assert.equal(key, '7494619203789490654:586227661644662273')
+  assert.equal(shouldOpenTikTokDetailFromQuery('7494619203789490654', '586227661644662273', true, false, ''), true)
+  assert.equal(shouldOpenTikTokDetailFromQuery('7494619203789490654', '586227661644662273', true, false, key), false)
+  assert.equal(shouldOpenTikTokDetailFromQuery('7494619203789490654', '586227661644662274', true, false, key), true)
+  assert.equal(shouldOpenTikTokDetailFromQuery('7494619203789490654', '586227661644662273', false, false, ''), false)
+  assert.equal(shouldOpenTikTokDetailFromQuery('7494619203789490654', '586227661644662273', true, true, ''), false)
 })
 
 test('never offers a new sale document from the TikTok cancelled queue', () => {

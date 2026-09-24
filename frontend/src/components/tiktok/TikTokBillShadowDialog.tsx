@@ -126,13 +126,13 @@ export function TikTokBillShadowDialog({
       <DialogContent className="grid max-h-[92dvh] max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
         <DialogHeader className="border-b border-border px-4 py-4 pr-12 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <DialogTitle>ตรวจและสร้างเอกสาร TikTok Shop</DialogTitle>
+            <DialogTitle>สร้างเอกสารใน Nexflow</DialogTitle>
             <Badge variant="outline" className="border-info/30 bg-info/10 text-info">
               {preview?.can_create_bill ? 'พร้อมสร้าง' : 'ตรวจสอบเท่านั้น'}
             </Badge>
           </div>
           <DialogDescription>
-            Order <span className="font-mono text-foreground">{orderID}</span>{shopName ? ` · ${shopName}` : ''}
+            Order <span className="font-mono text-foreground">{orderID}</span>{shopName ? ` · ${shopName}` : ''} · ตรวจ snapshot ล่าสุดก่อนสร้างหรือ reuse เอกสารใน Nexflow เท่านั้น ยังไม่ส่งเข้า SML
           </DialogDescription>
         </DialogHeader>
 
@@ -166,6 +166,14 @@ export function TikTokBillShadowDialog({
                   {preview.can_create_bill
                     ? 'ตรวจข้อมูลให้ครบก่อนยืนยัน ระบบจะสร้างเอกสารใน Nexflow เท่านั้น โดยยังไม่ส่ง SML, LINE หรือแก้สต๊อก'
                     : 'หน้านี้ใช้ตรวจข้อมูลเท่านั้น ยังไม่สร้างเอกสาร ไม่ส่ง SML และไม่เปลี่ยนข้อมูลสินค้า'}
+                </AlertDescription>
+              </Alert>
+
+              <Alert>
+                <ShieldCheck className="h-4 w-4" />
+                <AlertTitle>กันเอกสารซ้ำ</AlertTitle>
+                <AlertDescription>
+                  หาก Order นี้มีเอกสารเดิม ระบบจะ reuse เอกสารเดิมทันที หากยังไม่มีจะสร้างจาก snapshot ล่าสุด และให้เปิดเอกสารเพื่อส่ง SML ด้วยมือ
                 </AlertDescription>
               </Alert>
 
