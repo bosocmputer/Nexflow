@@ -47,6 +47,9 @@ func TestTikTokReviewedBillCreatesOnePendingBillFromReviewedSnapshot(t *testing.
 	if result == nil || result.Reused || result.BillID == "" || writer.calls != 1 {
 		t.Fatalf("result=%+v writer_calls=%d", result, writer.calls)
 	}
+	if want := "/sale-invoices/11111111-1111-4111-8111-111111111111"; result.ReviewPath != want {
+		t.Fatalf("review path=%q want=%q", result.ReviewPath, want)
+	}
 	if writer.bill.Source != "tiktok" || writer.bill.SourceAccountKey != "shop:"+source.ShopID ||
 		writer.bill.Status != "pending" || writer.bill.SMLOrderID != source.Order.ID || writer.bill.SMLDocNo != nil || len(writer.bill.SMLPayload) != 0 {
 		t.Fatalf("unsafe bill=%+v", writer.bill)
@@ -94,6 +97,9 @@ func TestTikTokReviewedBillReplayReusesOnlySameShopReviewedBill(t *testing.T) {
 	if err != nil || result == nil || !result.Reused || result.BillID != source.ExistingBill.ID || writer.calls != 0 {
 		t.Fatalf("result=%+v err=%v calls=%d", result, err, writer.calls)
 	}
+	if want := "/sale-invoices/" + source.ExistingBill.ID; result.ReviewPath != want {
+		t.Fatalf("reused review path=%q want=%q", result.ReviewPath, want)
+	}
 
 	source.ExistingBill.SourceAccountKey = "default"
 	if _, err := NewTikTokReviewedBillService(&billShadowSourceFake{source: source}, writer).Create(t.Context(), TikTokReviewedBillInput{
@@ -101,6 +107,22 @@ func TestTikTokReviewedBillReplayReusesOnlySameShopReviewedBill(t *testing.T) {
 		ActorID: "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef",
 	}); !errors.Is(err, ErrTikTokReviewedBillConflict) {
 		t.Fatalf("cross-scope replay err=%v", err)
+	}
+}
+
+func TestTikTokReviewedBillPathRequiresAValidBillRouteAndID(t *testing.T) {
+	const billID = "11111111-1111-4111-8111-111111111111"
+	if got, want := tikTokReviewedBillPath("saleinvoice", billID), "/sale-invoices/"+billID; got != want {
+		t.Fatalf("sale invoice path=%q want=%q", got, want)
+	}
+	if got, want := tikTokReviewedBillPath("saleorder", billID), "/sales-orders/"+billID; got != want {
+		t.Fatalf("sale order path=%q want=%q", got, want)
+	}
+	if got := tikTokReviewedBillPath("saleinvoice", ""); got != "" {
+		t.Fatalf("empty bill id path=%q", got)
+	}
+	if got := tikTokReviewedBillPath("unexpected", billID); got != "" {
+		t.Fatalf("unexpected route path=%q", got)
 	}
 }
 

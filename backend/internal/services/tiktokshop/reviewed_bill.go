@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -93,7 +94,7 @@ func (s *TikTokReviewedBillService) Create(ctx context.Context, input TikTokRevi
 	}
 	return &TikTokReviewedBillResult{
 		BillID: bill.ID, Status: bill.Status, DocumentRoute: bill.DocumentRoute,
-		ReviewPath: tikTokReviewedBillPath(bill.DocumentRoute),
+		ReviewPath: tikTokReviewedBillPath(bill.DocumentRoute, bill.ID),
 		Message:    "สร้าง Bill ใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML",
 	}, nil
 }
@@ -111,7 +112,7 @@ func reviewedTikTokExistingBill(existing *TikTokBillShadowExistingBill, shopID s
 	}
 	return &TikTokReviewedBillResult{
 		BillID: existing.ID, Status: existing.Status, Reused: true, DocumentRoute: route,
-		ReviewPath: tikTokReviewedBillPath(route), Message: "Order นี้สร้าง Bill ที่ตรวจทานแล้วไว้ก่อนหน้านี้",
+		ReviewPath: tikTokReviewedBillPath(route, existing.ID), Message: "Order นี้สร้าง Bill ที่ตรวจทานแล้วไว้ก่อนหน้านี้",
 	}, nil
 }
 
@@ -215,11 +216,19 @@ func tikTokReviewedBillRoute(semantic string) string {
 	}
 }
 
-func tikTokReviewedBillPath(route string) string {
-	if route == "saleinvoice" {
-		return "/sale-invoices"
+func tikTokReviewedBillPath(route, billID string) string {
+	billID = strings.TrimSpace(billID)
+	if billID == "" {
+		return ""
 	}
-	return "/sales-orders"
+	switch strings.TrimSpace(route) {
+	case "saleinvoice":
+		return "/sale-invoices/" + url.PathEscape(billID)
+	case "saleorder":
+		return "/sales-orders/" + url.PathEscape(billID)
+	default:
+		return ""
+	}
 }
 
 func reviewedTikTokRawName(productName, variantName string) string {

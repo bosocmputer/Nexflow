@@ -521,7 +521,7 @@ func TestTikTokShopAPIHandlerCreatesReviewedBillWithExplicitConfirmation(t *test
 	digest := strings.Repeat("a", 64)
 	creator := &tenantTikTokReviewedBillCreatorFake{result: &tiktokshop.TikTokReviewedBillResult{
 		BillID: "11111111-1111-4111-8111-111111111111", Status: "pending", DocumentRoute: "saleinvoice",
-		ReviewPath: "/sale-invoices", Message: "สร้าง Bill ใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML",
+		ReviewPath: "/sale-invoices/11111111-1111-4111-8111-111111111111", Message: "สร้าง Bill ใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML",
 	}}
 	handler := NewTikTokShopAPIHandler(&config.Config{
 		TikTokShopOpenAPIEnabled: true, TikTokShopReviewedBillEnabled: true,
