@@ -45,6 +45,9 @@ func NewTikTokNewOrderLineObserver(
 func (o *TikTokNewOrderLineObserver) ObserveTikTokOrderSnapshot(ctx context.Context, shopID string, record TikTokOrderSnapshotRecord) error {
 	shopID = strings.TrimSpace(shopID)
 	orderID := strings.TrimSpace(record.OrderID)
+	if normalizeTikTokObservationSource(record.ObservationSource) == "settlement_backfill" {
+		return nil
+	}
 	if o == nil || !o.enabled || o.cutoff.IsZero() || o.shops == nil || o.notifier == nil ||
 		shopID == "" || orderID == "" || record.OrderCreatedAt == nil || record.OrderCreatedAt.Before(o.cutoff) ||
 		!tikTokNewOrderNotificationEligibleStatus(record.OrderStatus) {

@@ -358,7 +358,7 @@ func BuildTikTokOrderSnapshot(order Order, price PriceDetail, detailRequestID, p
 
 func normalizeTikTokObservationSource(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "polling", "webhook", "manual":
+	case "polling", "webhook", "manual", "settlement_backfill":
 		return strings.ToLower(strings.TrimSpace(raw))
 	default:
 		return "manual"

@@ -103,6 +103,18 @@ func TestTikTokNewOrderInAppObserverCreatesRoleScopedNotificationAndPublishesSSE
 	}
 }
 
+func TestTikTokNewOrderInAppObserverSkipsSettlementBackfill(t *testing.T) {
+	cutoff := time.Date(2026, 9, 21, 4, 0, 0, 0, time.UTC)
+	createdAt := cutoff.Add(time.Minute)
+	repo := &tikTokNotificationRepoFake{}
+	observer := NewTikTokNewOrderInAppObserver(true, cutoff, &tikTokLineShopLabelFake{label: "AOY"}, repo, &tikTokEventPublisherFake{}, zap.NewNop())
+	if err := observer.ObserveTikTokOrderSnapshot(t.Context(), "7494619203789490654", TikTokOrderSnapshotRecord{
+		OrderID: "586030483469993439", OrderStatus: OrderStatusAwaitingShipment, OrderCreatedAt: &createdAt, ObservationSource: "settlement_backfill",
+	}); err != nil || repo.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, repo.calls)
+	}
+}
+
 func TestTikTokNewOrderInAppObserverDedupeReplayPublishesNoSSE(t *testing.T) {
 	cutoff := time.Date(2026, 9, 21, 4, 0, 0, 0, time.UTC)
 	createdAt := cutoff.Add(time.Minute)

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -8,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gin-gonic/gin"
 
 	"nexflow/internal/services/tiktokshop"
@@ -20,6 +23,43 @@ func TestTikTokSettlementImportRequestBindsSnakeCaseJSON(t *testing.T) {
 	}
 	if request.ShopID != "7494619203789490654" || request.DateFrom != "2026-09-09" || request.DateTo != "2026-09-23" {
 		t.Fatalf("request=%+v", request)
+	}
+}
+
+func TestTikTokSettlementMissingSnapshotOrderIDsIsBounded(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	rows := sqlmock.NewRows([]string{"order_id"})
+	for index := 0; index < tikTokSettlementOrderBackfillLimit; index++ {
+		rows.AddRow("58" + strings.Repeat("0", 16) + string(rune('0'+index%10)))
+	}
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM tiktok_settlement_items").
+		WithArgs("run-1", "7494619203789490654").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(tikTokSettlementOrderBackfillLimit + 1))
+	mock.ExpectQuery("SELECT i.order_id FROM tiktok_settlement_items").
+		WithArgs("run-1", "7494619203789490654", tikTokSettlementOrderBackfillLimit).
+		WillReturnRows(rows)
+
+	h := &TikTokSettlementHandler{db: database}
+	ids, remaining, err := h.missingSnapshotOrderIDs(context.Background(), "run-1", "7494619203789490654")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != tikTokSettlementOrderBackfillLimit || remaining != 1 {
+		t.Fatalf("ids=%d remaining=%d", len(ids), remaining)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTikTokSettlementMissingSnapshotOrderIDsRejectsInvalidInput(t *testing.T) {
+	h := &TikTokSettlementHandler{db: &sql.DB{}}
+	if _, _, err := h.missingSnapshotOrderIDs(context.Background(), "", "shop"); err == nil {
+		t.Fatal("expected invalid input to be rejected")
 	}
 }
 

@@ -566,9 +566,7 @@ export default function TikTokShopOperations() {
           ? 'ติดตามออเดอร์ที่ TikTok Shop ยืนยันการยกเลิกแล้ว พร้อมตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก'
           : <>
               ติดตาม order จาก TikTok Shop แบบเรียลไทม์ผ่าน Webhook พร้อมซิงก์สำรองทุก 5 นาที ร้านที่เปิด Auto SML จะส่งเมื่อถึงสถานะที่กำหนดและข้อมูลครบ ส่วนรายการที่ต้องตรวจยังสร้างเอกสารและส่งด้วยมือได้{' '}
-              <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
-                <Link to="/import/tiktok">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า TikTok</Link>
-              </Button>
+              <span className="text-xs text-muted-foreground">หาก Statement ไม่พบออเดอร์เก่า ให้เปิด Statement นั้นในหน้ารับชำระ แล้วกด “นำเข้าคำสั่งซื้อที่ขาด” ระบบจะไม่สร้าง Bill หรือส่ง SML เอง</span>
             </>}
         health={<TikTokOperationsHealthLine
           state={syncState}

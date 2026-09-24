@@ -93,6 +93,12 @@ func (c *TikTokAutoSMLController) SetLineNotifier(line tikTokAutoSMLLineNotifier
 }
 
 func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context, shopID string, record tiktokshop.TikTokOrderSnapshotRecord) error {
+	// Finance recovery is a staff-triggered read/import operation.  It must
+	// never turn historical Statement data into an automatic sale, even when an
+	// imported order happens to have a status that normally qualifies.
+	if strings.EqualFold(strings.TrimSpace(record.ObservationSource), "settlement_backfill") {
+		return nil
+	}
 	if c == nil || c.cfg == nil || !c.cfg.TikTokShopAutoSMLEnabled || c.repo == nil || c.previewer == nil || record.LastOrderUpdateAt == nil ||
 		string(record.OrderStatus) != models.TikTokAutoSMLTriggerAwaitingCollection {
 		return nil

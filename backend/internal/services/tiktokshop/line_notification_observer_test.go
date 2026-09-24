@@ -84,6 +84,18 @@ func TestTikTokNewOrderLineObserverFailsClosedBeforeCutoffOrReadyStatus(t *testi
 	}
 }
 
+func TestTikTokNewOrderLineObserverSkipsSettlementBackfill(t *testing.T) {
+	cutoff := time.Date(2026, 9, 21, 3, 0, 0, 0, time.UTC)
+	createdAt := cutoff.Add(time.Minute)
+	notifier := &tikTokLineNotifierFake{}
+	observer := NewTikTokNewOrderLineObserver(true, cutoff, &tikTokLineShopLabelFake{label: "AOY"}, notifier, zap.NewNop())
+	if err := observer.ObserveTikTokOrderSnapshot(t.Context(), "7494619203789490654", TikTokOrderSnapshotRecord{
+		OrderID: "586030483469993439", OrderStatus: OrderStatusAwaitingShipment, OrderCreatedAt: &createdAt, ObservationSource: "settlement_backfill",
+	}); err != nil || notifier.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, notifier.calls)
+	}
+}
+
 func TestTikTokNewOrderLineObserverPropagatesDurableEnqueueFailureForRetry(t *testing.T) {
 	cutoff := time.Date(2026, 9, 21, 3, 0, 0, 0, time.UTC)
 	createdAt := cutoff.Add(time.Minute)

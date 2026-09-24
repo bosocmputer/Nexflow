@@ -35,20 +35,33 @@ const (
 	tikTokSettlementDefaultDays = 15
 	tikTokSettlementMaxDays     = 31
 	tikTokSettlementMaxPages    = 10
+	// A statement can contain a large number of transactions.  Backfilling is
+	// deliberately bounded so one staff click cannot monopolise the order API
+	// or turn a temporary upstream error into an unbounded retry storm.
+	tikTokSettlementOrderBackfillLimit = 20
+	tikTokSettlementSnapshotBatchSize  = 20
 )
 
 var tikTokSettlementBangkok = time.FixedZone("Asia/Bangkok", 7*60*60)
 
 type TikTokSettlementHandler struct {
-	db            *sql.DB
-	config        *config.Config
-	gateway       *tiktokshop.GatewayClient
-	routes        *repository.ChannelDefaultRepo
-	audit         *repository.AuditLogRepo
-	sml           *ShopeeImportHandler // shared SML proxy, never a Shopee route/default
-	notifications *repository.NotificationRepo
-	broker        *events.Broker
-	logger        *zap.Logger
+	db             *sql.DB
+	config         *config.Config
+	gateway        *tiktokshop.GatewayClient
+	routes         *repository.ChannelDefaultRepo
+	audit          *repository.AuditLogRepo
+	sml            *ShopeeImportHandler // shared SML proxy, never a Shopee route/default
+	notifications  *repository.NotificationRepo
+	broker         *events.Broker
+	orderSnapshots tikTokSettlementOrderSnapshotter
+	logger         *zap.Logger
+}
+
+// tikTokSettlementOrderSnapshotter is deliberately the same read-only,
+// PII-minimised snapshot boundary used by normal polling and webhooks.  It
+// cannot create a Bill, an SML document, or a settlement run.
+type tikTokSettlementOrderSnapshotter interface {
+	Sync(context.Context, tiktokshop.TikTokOrderSnapshotRequest) (*tiktokshop.TikTokOrderSnapshotResult, error)
 }
 
 type tikTokSettlementImportRequest struct {
@@ -190,6 +203,16 @@ func NewTikTokSettlementHandler(db *sql.DB, cfg *config.Config, gateway *tiktoks
 		logger = zap.NewNop()
 	}
 	return &TikTokSettlementHandler{db: db, config: cfg, gateway: gateway, routes: routes, audit: audit, sml: smlBridge, notifications: notifications, broker: broker, logger: logger}
+}
+
+// WithOrderSnapshotter enables the explicit settlement recovery action.  It is
+// optional so a tenant cannot accidentally backfill orders when the snapshot
+// service has not been wired.
+func (h *TikTokSettlementHandler) WithOrderSnapshotter(snapshotter tikTokSettlementOrderSnapshotter) *TikTokSettlementHandler {
+	if h != nil {
+		h.orderSnapshots = snapshotter
+	}
+	return h
 }
 
 func (h *TikTokSettlementHandler) financeEnabled() bool {
@@ -564,6 +587,146 @@ func (h *TikTokSettlementHandler) Reconcile(c *gin.Context) {
 	out, _ := h.loadRun(c.Request.Context(), run.ID, true)
 	h.auditEvent(c, "tiktok_settlement_reconciled", "info", map[string]any{"statement_id": out.StatementID, "status": out.Status})
 	c.JSON(200, gin.H{"data": out})
+}
+
+// ImportMissingOrders snapshots the exact order IDs that TikTok returned in a
+// Statement but Nexflow has never seen locally.  It is an operator recovery
+// tool for the period before a shop started polling/webhooks.  It intentionally
+// does not create Bills, SML sales, RCs, notifications, or stock writes.
+func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
+	if !h.financeEnabled() {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	if h.orderSnapshots == nil {
+		h.error(c, http.StatusServiceUnavailable, "order_snapshot_not_configured", "ระบบนำเข้าคำสั่งซื้อ TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	run, err := h.loadRun(c.Request.Context(), c.Param("id"), true)
+	if err != nil {
+		h.error(c, http.StatusNotFound, "not_found", "ไม่พบ Statement นี้")
+		return
+	}
+	if run.Status == "sent" {
+		h.error(c, http.StatusConflict, "sent_immutable", "Statement ที่ส่ง RC แล้วไม่ต้องนำเข้าคำสั่งซื้อเพิ่ม")
+		return
+	}
+	if ok, settingErr := h.readEnabled(c.Request.Context(), run.ShopID); settingErr != nil {
+		h.error(c, http.StatusInternalServerError, "settings_read_failed", "อ่านการตั้งค่าร้านไม่สำเร็จ")
+		return
+	} else if !ok {
+		h.error(c, http.StatusForbidden, "read_disabled", "ร้านนี้ยังไม่เปิดอ่านข้อมูลการเงิน TikTok Shop")
+		return
+	}
+
+	orderIDs, _, err := h.missingSnapshotOrderIDs(c.Request.Context(), run.ID, run.ShopID)
+	if err != nil {
+		h.logger.Error("tiktok_settlement_missing_order_lookup_failed", zap.String("run_id", run.ID), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "missing_orders_lookup_failed", "ตรวจรายการคำสั่งซื้อที่ต้องนำเข้าไม่สำเร็จ")
+		return
+	}
+	if len(orderIDs) == 0 {
+		out, loadErr := h.loadRun(c.Request.Context(), run.ID, true)
+		if loadErr != nil {
+			h.error(c, http.StatusInternalServerError, "settlement_reload_failed", "โหลด Statement หลังตรวจข้อมูลไม่สำเร็จ")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data": out, "imported_count": 0, "remaining_count": 0,
+			"message": "คำสั่งซื้อของ Statement นี้อยู่ใน Nexflow แล้ว ขั้นถัดไปคือสร้างหรือผูกใบขาย SML ที่ยังขาด ก่อนกดตรวจข้อมูลใหม่",
+		})
+		return
+	}
+
+	imported := 0
+	for start := 0; start < len(orderIDs); start += tikTokSettlementSnapshotBatchSize {
+		end := min(start+tikTokSettlementSnapshotBatchSize, len(orderIDs))
+		result, syncErr := h.orderSnapshots.Sync(c.Request.Context(), tiktokshop.TikTokOrderSnapshotRequest{
+			// This is historical recovery, not a newly observed order.  The
+			// source is kept distinct so operational observers cannot emit a
+			// new-order notification or enqueue Auto SML for this import.
+			ShopID: run.ShopID, OrderIDs: orderIDs[start:end], ObservationSource: "settlement_backfill",
+		})
+		if syncErr != nil || result == nil || result.SyncedCount != end-start {
+			h.logger.Warn("tiktok_settlement_missing_order_snapshot_failed", zap.String("run_id", run.ID), zap.Int("synced_count", imported), zap.Error(syncErr))
+			h.auditEvent(c, "tiktok_settlement_order_backfill_failed", "error", map[string]any{
+				"statement_id": run.StatementID, "shop_id": run.ShopID, "synced_count": imported,
+				"requested_count": len(orderIDs),
+			})
+			h.error(c, http.StatusBadGateway, "order_snapshot_failed", "นำเข้าคำสั่งซื้อ TikTok Shop ไม่ครบ กรุณาลองใหม่ ระบบจะไม่สร้าง Bill หรือ SML")
+			return
+		}
+		imported += result.SyncedCount
+	}
+	if err := h.reconcileRun(c.Request.Context(), run.ID); err != nil {
+		h.logger.Warn("tiktok_settlement_reconcile_after_order_backfill_failed", zap.String("run_id", run.ID), zap.Error(err))
+		h.error(c, http.StatusInternalServerError, "reconcile_failed", "นำเข้าคำสั่งซื้อแล้ว แต่ตรวจ Statement ใหม่ไม่สำเร็จ กรุณากดตรวจข้อมูลใหม่")
+		return
+	}
+	out, err := h.loadRun(c.Request.Context(), run.ID, true)
+	if err != nil {
+		h.error(c, http.StatusInternalServerError, "settlement_reload_failed", "โหลด Statement หลังนำเข้าคำสั่งซื้อไม่สำเร็จ")
+		return
+	}
+	_, remaining, remainingErr := h.missingSnapshotOrderIDs(c.Request.Context(), run.ID, run.ShopID)
+	remainingKnown := remainingErr == nil
+	if remainingErr != nil {
+		// The snapshot and reconciliation both already succeeded.  Do not
+		// misreport the result as complete merely because the follow-up count
+		// failed; the operator can safely refresh and retry this read-only check.
+		h.logger.Warn("tiktok_settlement_missing_order_remaining_lookup_failed", zap.String("run_id", run.ID), zap.Error(remainingErr))
+	}
+	h.auditEvent(c, "tiktok_settlement_order_backfill_completed", "info", map[string]any{
+		"statement_id": run.StatementID, "shop_id": run.ShopID, "synced_count": imported, "remaining_count": remaining, "remaining_known": remainingKnown,
+	})
+	message := fmt.Sprintf("นำเข้าคำสั่งซื้อ TikTok Shop %d รายการแล้ว ยังไม่สร้าง Bill หรือส่ง SML", imported)
+	if !remainingKnown {
+		message += " โหลด Statement ใหม่เพื่อตรวจว่ามีรายการที่ต้องนำเข้าต่อหรือไม่"
+	} else if remaining > 0 {
+		message += fmt.Sprintf(" เหลือ %d รายการ ให้กดนำเข้าต่อ", remaining)
+	} else {
+		message += " ขั้นถัดไปคือสร้างหรือผูกใบขาย SML ของรายการที่ยังขาด แล้วกดตรวจข้อมูลใหม่"
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "imported_count": imported, "remaining_count": remaining, "remaining_known": remainingKnown, "message": message})
+}
+
+// missingSnapshotOrderIDs returns only TikTok order identities that occurred in
+// this Statement and have no local snapshot.  A direct SQL anti-join prevents
+// the UI from re-downloading the same historical order after a successful
+// backfill.  Synthetic Finance entries never go to the Order API.
+func (h *TikTokSettlementHandler) missingSnapshotOrderIDs(ctx context.Context, runID, shopID string) ([]string, int, error) {
+	if h == nil || h.db == nil || strings.TrimSpace(runID) == "" || strings.TrimSpace(shopID) == "" {
+		return nil, 0, errors.New("invalid settlement order backfill input")
+	}
+	const sourceOrderPredicate = `i.order_id ~ '^[0-9]{1,32}$'`
+	const missingPredicate = `NOT EXISTS (SELECT 1 FROM tiktok_shop_order_snapshots s WHERE s.shop_id=$2 AND s.order_id=i.order_id)`
+	var total int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM tiktok_settlement_items i WHERE i.run_id=$1::uuid AND `+sourceOrderPredicate+` AND `+missingPredicate,
+		runID, shopID,
+	).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := h.db.QueryContext(ctx,
+		`SELECT i.order_id FROM tiktok_settlement_items i WHERE i.run_id=$1::uuid AND `+sourceOrderPredicate+` AND `+missingPredicate+` ORDER BY i.order_id LIMIT $3`,
+		runID, shopID, tikTokSettlementOrderBackfillLimit,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	orderIDs := make([]string, 0, min(total, tikTokSettlementOrderBackfillLimit))
+	for rows.Next() {
+		var orderID string
+		if err := rows.Scan(&orderID); err != nil {
+			return nil, 0, err
+		}
+		orderIDs = append(orderIDs, orderID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return orderIDs, total - len(orderIDs), nil
 }
 
 func (h *TikTokSettlementHandler) Send(c *gin.Context) {

@@ -106,6 +106,12 @@ type ImportNotice = {
   processing_count?: number;
   failed_count?: number;
 };
+type MissingOrderImportResult = {
+  data: Run;
+  imported_count: number;
+  remaining_count: number;
+  message: string;
+};
 type SendProgress = {
   open: boolean;
   runID: string | null;
@@ -256,6 +262,7 @@ export default function TikTokSettlement() {
   const [importTo, setImportTo] = useState(dayjs().format("YYYY-MM-DD"));
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
   const [importingStatements, setImportingStatements] = useState(false);
+  const [importingMissingOrders, setImportingMissingOrders] = useState(false);
   const [from, setFrom] = useState(
     dayjs().subtract(14, "day").format("YYYY-MM-DD"),
   );
@@ -376,6 +383,30 @@ export default function TikTokSettlement() {
       toast.error(
         error?.response?.data?.error?.message ?? "ตรวจข้อมูลไม่สำเร็จ",
       );
+    }
+  };
+  const importMissingOrders = async () => {
+    if (!selected) return;
+    setImportingMissingOrders(true);
+    try {
+      const response = await client.post<MissingOrderImportResult>(
+        `/api/tiktok-settlements/${selected.id}/import-missing-orders`,
+      );
+      setSelected(response.data.data);
+      await load();
+      toast.success(response.data.message, {
+        description:
+          response.data.imported_count > 0
+            ? "ตรวจและสร้างใบขายใน Nexflow ก่อนส่งเข้า SML จากนั้นกลับมากดตรวจข้อมูลใหม่"
+            : undefined,
+      });
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.error?.message ??
+          "นำเข้าคำสั่งซื้อ TikTok Shop ไม่สำเร็จ",
+      );
+    } finally {
+      setImportingMissingOrders(false);
     }
   };
   const toggleBatchRun = (runID: string, checked: boolean) => {
@@ -868,6 +899,14 @@ export default function TikTokSettlement() {
                   <p>{selected.anomaly_reason || selected.error_msg}</p>
                 </div>
               )}
+              {selected.status !== "sent" && (
+                <div className="mt-4 rounded-md border border-info/20 bg-info/5 px-3 py-2.5 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">ไม่พบใบขายของออเดอร์เก่าหรือไม่?</p>
+                  <p className="mt-0.5">
+                    นำเข้าคำสั่งซื้อที่อยู่ใน Statement นี้ก่อน ระบบจะบันทึกเป็นรายการตรวจสอบเท่านั้น และจะไม่สร้าง Bill หรือส่ง SML เอง
+                  </p>
+                </div>
+              )}
               <div className="mt-4 overflow-hidden rounded-md border">
                 <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground">
                   <span>คำสั่งซื้อ / ใบขาย SML</span>
@@ -910,6 +949,20 @@ export default function TikTokSettlement() {
             </div>
           )}
           <DialogFooter className="border-t bg-background px-5 py-3 sm:px-6">
+            <Button
+              variant="outline"
+              onClick={() => void importMissingOrders()}
+              disabled={
+                importingMissingOrders || !selected || selected.status === "sent"
+              }
+            >
+              {importingMissingOrders ? (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="mr-2 h-4 w-4" />
+              )}
+              นำเข้าคำสั่งซื้อที่ขาด
+            </Button>
             <Button
               variant="outline"
               onClick={() => void reconcile()}

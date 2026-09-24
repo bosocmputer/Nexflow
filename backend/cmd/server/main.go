@@ -405,7 +405,8 @@ func main() {
 		WithProductCatalog(tiktokProductCatalogService, tiktokProductCatalogStore).
 		WithAutoSML(tiktokAutoSMLRepo).
 		WithAuditLogger(auditLogRepo)
-	tiktokSettlementH := handlers.NewTikTokSettlementHandler(db, cfg, tiktokGatewayClient, channelDefaultRepo, auditLogRepo, shopeeH, notificationRepo, eventBroker, logger)
+	tiktokSettlementH := handlers.NewTikTokSettlementHandler(db, cfg, tiktokGatewayClient, channelDefaultRepo, auditLogRepo, shopeeH, notificationRepo, eventBroker, logger).
+		WithOrderSnapshotter(tiktokSnapshotService)
 	tiktokshop.NewTikTokOrderReconcileWorker(cfg.TikTokShopOrderSyncEnabled, tiktokReconcileStore, tiktokReconcileService, logger).Start(appCtx)
 	tiktokshop.NewTikTokWebhookWorker(cfg.TikTokShopWebhookEnabled, tiktokWebhookStore, tiktokSnapshotService, logger).Start(appCtx)
 	tiktokAutoSMLController.Start(appCtx)
@@ -681,6 +682,7 @@ func main() {
 		api.POST("/tiktok-settlements/batches/send", middleware.RequireRole("admin", "staff"), tiktokSettlementH.SendBatch)
 		api.GET("/tiktok-settlements/batches/:id", middleware.RequireRole("admin", "staff"), tiktokSettlementH.GetBatch)
 		api.GET("/tiktok-settlements/:id", middleware.RequireRole("admin", "staff"), tiktokSettlementH.Get)
+		api.POST("/tiktok-settlements/:id/import-missing-orders", middleware.RequireRole("admin", "staff"), tiktokSettlementH.ImportMissingOrders)
 		api.POST("/tiktok-settlements/:id/reconcile", middleware.RequireRole("admin", "staff"), tiktokSettlementH.Reconcile)
 		api.POST("/tiktok-settlements/:id/send", middleware.RequireRole("admin", "staff"), tiktokSettlementH.Send)
 		api.GET("/marketplace-operations", middleware.RequireRole("admin", "staff"), marketplaceOperationsH.List)
