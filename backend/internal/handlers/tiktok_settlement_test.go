@@ -179,3 +179,43 @@ func TestTikTokSettlementSummaryKeepsWorkStatusOutOfItsAggregate(t *testing.T) {
 		t.Fatalf("summary must aggregate all statuses: where=%q args=%#v", where, args)
 	}
 }
+
+func TestTikTokSettlementBatchDigestBindsSelectionAndAmounts(t *testing.T) {
+	batch := &tikTokSettlementBatchView{
+		ShopID: "shop-a", Currency: "THB", ConfigVersion: 4, RouteVersion: 8,
+		SettlementAmount: 120.50, InvoiceAmount: 150, RunIDs: []string{"run-a", "run-b"},
+	}
+	first := tikTokSettlementBatchDigest(batch)
+	if first == "" {
+		t.Fatal("digest must not be empty")
+	}
+	batch.SettlementAmount = 120.51
+	if second := tikTokSettlementBatchDigest(batch); second == first {
+		t.Fatal("amount change must invalidate digest")
+	}
+	batch.SettlementAmount = 120.50
+	batch.RunIDs = []string{"run-b", "run-a"}
+	if second := tikTokSettlementBatchDigest(batch); second == first {
+		t.Fatal("selection change must invalidate digest")
+	}
+}
+
+func TestTikTokSettlementMoneyRequiresNonNegativeTwoDecimalAmount(t *testing.T) {
+	for _, raw := range []string{"0", "2922.57", "10.5"} {
+		if _, err := tikTokSettlementMoney(raw); err != nil {
+			t.Fatalf("%q must be accepted: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{"", "-1", "1.234", "not-a-number"} {
+		if _, err := tikTokSettlementMoney(raw); err == nil {
+			t.Fatalf("%q must be rejected", raw)
+		}
+	}
+}
+
+func TestTikTokSettlementUniqueIDsDropsBlankAndDuplicateValues(t *testing.T) {
+	got := tikTokSettlementUniqueIDs([]string{" run-a ", "", "run-a", "run-b"})
+	if strings.Join(got, ",") != "run-a,run-b" {
+		t.Fatalf("got %#v", got)
+	}
+}

@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -111,6 +112,23 @@ type SendProgress = {
   status: SMLSendProgressStatus;
   docNo: string | null;
   error: string | null;
+};
+type BatchPreview = {
+  id?: string;
+  shop_id: string;
+  shop_label: string;
+  currency: string;
+  run_ids: string[];
+  statement_ids: string[];
+  statement_count: number;
+  order_count: number;
+  settlement_amount: number;
+  invoice_amount: number;
+  fee_amount: number;
+  selection_digest: string;
+  status?: string;
+  rc_doc_no?: string;
+  error_msg?: string;
 };
 
 const money = (value?: number, currency = "THB") =>
@@ -216,6 +234,20 @@ export default function TikTokSettlement() {
     docNo: null,
     error: null,
   });
+  const [selectedRunIDs, setSelectedRunIDs] = useState<string[]>([]);
+  const [batchPreview, setBatchPreview] = useState<BatchPreview | null>(null);
+  const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
+  const [bankAmount, setBankAmount] = useState("");
+  const [bankReference, setBankReference] = useState("");
+  const [batchBankConfirmed, setBatchBankConfirmed] = useState(false);
+  const [batchSending, setBatchSending] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    open: boolean;
+    batchID: string | null;
+    status: SMLSendProgressStatus;
+    docNo: string | null;
+    error: string | null;
+  }>({ open: false, batchID: null, status: "sending", docNo: null, error: null });
   const [importOpen, setImportOpen] = useState(false);
   const [importShopID, setImportShopID] = useState("");
   const [importFrom, setImportFrom] = useState(
@@ -346,6 +378,57 @@ export default function TikTokSettlement() {
       );
     }
   };
+  const toggleBatchRun = (runID: string, checked: boolean) => {
+    setSelectedRunIDs((current) =>
+      checked
+        ? current.includes(runID)
+          ? current
+          : [...current, runID]
+        : current.filter((id) => id !== runID),
+    );
+  };
+  const openBatchPreview = async () => {
+    if (selectedRunIDs.length < 2) {
+      toast.error("เลือก Statement ที่พร้อมสร้างเอกสารอย่างน้อย 2 รายการ");
+      return;
+    }
+    try {
+      const [preview, routeResult] = await Promise.all([
+        client.post<{ data: BatchPreview }>("/api/tiktok-settlements/batches/preview", { run_ids: selectedRunIDs }),
+        client.get<{ data: RouteSummary }>("/api/tiktok-settlements/route"),
+      ]);
+      setBatchPreview(preview.data.data);
+      setRoute(routeResult.data.data);
+      setBankAmount(Number(preview.data.data.settlement_amount).toFixed(2));
+      setBankReference("");
+      setBatchBankConfirmed(false);
+      setBatchConfirmOpen(true);
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error?.message ?? "ตรวจชุด Statement ไม่สำเร็จ");
+      await load();
+    }
+  };
+  const confirmBatchSend = async () => {
+    if (!batchPreview || !batchBankConfirmed) return;
+    setBatchSending(true);
+    setBatchConfirmOpen(false);
+    try {
+      const response = await client.post<{ batch_id: string }>("/api/tiktok-settlements/batches/send", {
+        run_ids: batchPreview.run_ids,
+        confirm: "CONFIRM_TIKTOK_RC_BATCH",
+        expected_digest: batchPreview.selection_digest,
+        bank_amount: bankAmount,
+        bank_reference: bankReference,
+      });
+      setBatchProgress({ open: true, batchID: response.data.batch_id, status: "sending", docNo: null, error: null });
+      setSelectedRunIDs([]);
+      setBatchPreview(null);
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error?.message ?? "เริ่มสร้าง RC รวมไม่สำเร็จ");
+    } finally {
+      setBatchSending(false);
+    }
+  };
   const confirmSend = async () => {
     if (!selected || !bankEvidenceConfirmed) return;
     const run = selected;
@@ -469,6 +552,41 @@ export default function TikTokSettlement() {
       if (timer) window.clearTimeout(timer);
     };
   }, [load, sendProgress.open, sendProgress.runID, sendProgress.status]);
+  useEffect(() => {
+    if (!batchProgress.open || batchProgress.status !== "sending" || !batchProgress.batchID) return;
+    let active = true;
+    let timer: number | undefined;
+    let attempts = 0;
+    const poll = async () => {
+      try {
+        const response = await client.get<{ data: BatchPreview }>(`/api/tiktok-settlements/batches/${batchProgress.batchID}`);
+        if (!active) return;
+        const batch = response.data.data;
+        if (batch.status === "sent") {
+          setBatchProgress((current) => ({ ...current, status: "success", docNo: batch.rc_doc_no ?? null, error: null }));
+          void load();
+          return;
+        }
+        if (batch.status === "failed" || batch.status === "unknown_result") {
+          setBatchProgress((current) => ({ ...current, status: batch.status === "unknown_result" ? "warning" : "error", docNo: batch.rc_doc_no ?? null, error: batch.error_msg ?? "สร้างเอกสารใน SML ไม่สำเร็จ" }));
+          void load();
+          return;
+        }
+      } catch {
+        // Keep polling the durable batch for a bounded time; a temporary read
+        // failure must not be presented as a final SML result.
+      }
+      attempts += 1;
+      if (attempts >= 45) {
+        setBatchProgress((current) => ({ ...current, status: "warning", error: "ระบบยังยืนยันผลจาก SML ไม่ได้ กรุณาตรวจเอกสารก่อนลองใหม่" }));
+        void load();
+        return;
+      }
+      if (active) timer = window.setTimeout(() => void poll(), 1200);
+    };
+    void poll();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [batchProgress.batchID, batchProgress.open, batchProgress.status, load]);
   const detailActionLabel = settlementPrimaryActionLabel(
     selected?.status,
     route?.configured,
@@ -581,6 +699,19 @@ export default function TikTokSettlement() {
           รีเฟรช
         </Button>
       </section>
+      {selectedRunIDs.length > 0 && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#111817]/20 bg-[#111817]/[0.03] px-3 py-2.5 text-sm">
+          <p className="text-muted-foreground">
+            เลือก <span className="font-semibold text-foreground">{selectedRunIDs.length} Statement</span> เพื่อรวมเป็น RC เดียว
+          </p>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedRunIDs([])}>ล้างที่เลือก</Button>
+            <Button size="sm" onClick={() => void openBatchPreview()} disabled={selectedRunIDs.length < 2}>
+              รวมเป็น RC เดียว
+            </Button>
+          </div>
+        </section>
+      )}
       {importNotice && (
         <div
           role="status"
@@ -619,6 +750,7 @@ export default function TikTokSettlement() {
                 <table className="w-full text-sm">
                   <thead className="border-b bg-muted/30 text-left text-muted-foreground">
                     <tr>
+                      <th className="w-10 p-3"><span className="sr-only">เลือก</span></th>
                       <th className="p-3 font-medium">Statement / วันที่</th>
                       <th className="p-3 font-medium">ร้าน</th>
                       <th className="p-3 text-right font-medium">
@@ -637,6 +769,8 @@ export default function TikTokSettlement() {
                         key={run.id}
                         run={run}
                         onOpen={openDetail}
+                        selected={selectedRunIDs.includes(run.id)}
+                        onSelect={toggleBatchRun}
                       />
                     ))}
                   </tbody>
@@ -648,6 +782,8 @@ export default function TikTokSettlement() {
                     key={run.id}
                     run={run}
                     onOpen={openDetail}
+                    selected={selectedRunIDs.includes(run.id)}
+                    onSelect={toggleBatchRun}
                   />
                 ))}
               </div>
@@ -927,6 +1063,48 @@ export default function TikTokSettlement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={batchConfirmOpen} onOpenChange={(open) => { setBatchConfirmOpen(open); if (!open) setBatchBankConfirmed(false); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>ยืนยันรวม Statement เป็น RC เดียว</DialogTitle>
+            <DialogDescription>
+              ระบบจะสร้าง RC เพียงหนึ่งใบจาก Statement ที่เลือก ไม่จับคู่รอบถอนเงินโดยการคาดเดา และไม่มีการส่งอัตโนมัติ
+            </DialogDescription>
+          </DialogHeader>
+          {batchPreview && (
+            <div className="space-y-4 py-1 text-sm">
+              <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+                <DetailValue label="ร้าน" value={batchPreview.shop_label} />
+                <DetailValue label="จำนวน Statement" value={`${batchPreview.statement_count} รอบ`} />
+                <DetailValue label="จำนวนคำสั่งซื้อ" value={`${batchPreview.order_count} รายการ`} />
+                <DetailValue label="ยอด TikTok รวม" value={money(batchPreview.settlement_amount, batchPreview.currency)} strong />
+                <DetailValue label="Fee / commission" value={money(batchPreview.fee_amount, batchPreview.currency)} />
+                <DetailValue label="ปลายทาง" value={settlementDestinationLabel(route)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tiktok-batch-bank-amount">ยอดเงินจริงที่ได้รับเข้าบัญชี</Label>
+                <Input id="tiktok-batch-bank-amount" inputMode="decimal" value={bankAmount} onChange={(event) => setBankAmount(event.target.value)} placeholder="0.00" />
+                <p className="text-xs text-muted-foreground">ต้องเท่ากับยอด TikTok รวมทุกสตางค์ จึงจะส่ง RC ได้</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tiktok-batch-bank-reference">เลขอ้างอิงธนาคาร (ถ้ามี)</Label>
+                <Input id="tiktok-batch-bank-reference" value={bankReference} onChange={(event) => setBankReference(event.target.value)} maxLength={160} placeholder="เช่น เลขรายการจากธนาคาร" />
+              </div>
+              <div className="max-h-24 overflow-y-auto rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                Statement: {batchPreview.statement_ids.join(", ")}
+              </div>
+              <div className="flex items-start gap-2 border-t pt-3">
+                <Checkbox id="tiktok-batch-bank-confirmed" checked={batchBankConfirmed} onCheckedChange={(checked) => setBatchBankConfirmed(checked === true)} />
+                <Label htmlFor="tiktok-batch-bank-confirmed" className="cursor-pointer text-sm font-normal leading-5">ฉันตรวจยอดเงินจริงในบัญชีแล้ว และยืนยันว่าเท่ากับยอดรวมของ Statement ที่เลือก</Label>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchConfirmOpen(false)} disabled={batchSending}>ยกเลิก</Button>
+            <Button onClick={() => void confirmBatchSend()} disabled={batchSending || !batchBankConfirmed}>{batchSending ? "กำลังสร้างเอกสาร…" : "ยืนยันสร้าง RC รวม"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <SMLSendProgressDialog
         open={sendProgress.open}
         status={sendProgress.status}
@@ -940,6 +1118,13 @@ export default function TikTokSettlement() {
           }))
         }
       />
+      <SMLSendProgressDialog
+        open={batchProgress.open}
+        status={batchProgress.status}
+        docNo={batchProgress.docNo}
+        error={batchProgress.error}
+        onClose={() => setBatchProgress((current) => ({ ...current, open: false, batchID: null }))}
+      />
     </div>
   );
 }
@@ -947,13 +1132,21 @@ export default function TikTokSettlement() {
 function SettlementTableRow({
   run,
   onOpen,
+  selected,
+  onSelect,
 }: {
   run: Run;
   onOpen: (run: Run) => void;
+  selected: boolean;
+  onSelect: (runID: string, checked: boolean) => void;
 }) {
   const status = statusMeta[run.status] ?? { text: run.status, className: "" };
+  const selectable = run.status === "ready" && ["PAID", "SETTLED"].includes(run.payment_status);
   return (
     <tr className="border-b last:border-0 hover:bg-muted/30">
+      <td className="p-3">
+        {selectable && <Checkbox checked={selected} onCheckedChange={(checked) => onSelect(run.id, checked === true)} aria-label={`เลือก Statement ${run.statement_id}`} />}
+      </td>
       <td className="p-3">
         <p className="max-w-[200px] truncate font-medium">{run.statement_id}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
@@ -1002,16 +1195,18 @@ function SettlementTableRow({
 function SettlementMobileRow({
   run,
   onOpen,
+  selected,
+  onSelect,
 }: {
   run: Run;
   onOpen: (run: Run) => void;
+  selected: boolean;
+  onSelect: (runID: string, checked: boolean) => void;
 }) {
   const status = statusMeta[run.status] ?? { text: run.status, className: "" };
+  const selectable = run.status === "ready" && ["PAID", "SETTLED"].includes(run.payment_status);
   return (
-    <button
-      onClick={() => onOpen(run)}
-      className="w-full p-4 text-left hover:bg-muted/30"
-    >
+    <article className="p-4 hover:bg-muted/30">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -1035,7 +1230,11 @@ function SettlementMobileRow({
           </p>
         </div>
       </div>
-    </button>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        {selectable ? <label className="flex items-center gap-2 text-xs text-muted-foreground"><Checkbox checked={selected} onCheckedChange={(checked) => onSelect(run.id, checked === true)} /> เลือกรวมเป็น RC เดียว</label> : <span />}
+        <Button size="sm" variant="outline" onClick={() => onOpen(run)}>รายละเอียด<ChevronRight className="ml-1 h-4 w-4" /></Button>
+      </div>
+    </article>
   );
 }
 function SettlementMetricChip({

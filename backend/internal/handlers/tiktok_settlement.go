@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -67,6 +68,16 @@ type tikTokSettlementPaymentSearchRequest struct {
 }
 
 type tikTokSettlementSendRequest struct{ Confirm, ExpectedConfigVersion, DocDate, DocDateReason string }
+
+// tikTokSettlementBatchRequest is deliberately operator-driven. BankAmount is
+// required evidence, not an amount inferred from a TikTok withdrawal record.
+type tikTokSettlementBatchRequest struct {
+	RunIDs         []string `json:"run_ids"`
+	Confirm        string   `json:"confirm"`
+	ExpectedDigest string   `json:"expected_digest"`
+	BankAmount     string   `json:"bank_amount"`
+	BankReference  string   `json:"bank_reference"`
+}
 type tikTokSettlementSettingsRequest struct {
 	ReadEnabled           bool `json:"read_enabled"`
 	SMLEnabled            bool `json:"sml_send_enabled"`
@@ -126,6 +137,27 @@ type tikTokSettlementCounts struct {
 	Sent        int `json:"sent"`
 	Failed      int `json:"failed"`
 	Total       int `json:"total"`
+}
+type tikTokSettlementBatchView struct {
+	ID               string   `json:"id,omitempty"`
+	ShopID           string   `json:"shop_id"`
+	ShopLabel        string   `json:"shop_label"`
+	Currency         string   `json:"currency"`
+	RunIDs           []string `json:"run_ids"`
+	StatementIDs     []string `json:"statement_ids"`
+	StatementCount   int      `json:"statement_count"`
+	OrderCount       int      `json:"order_count"`
+	SettlementAmount float64  `json:"settlement_amount"`
+	InvoiceAmount    float64  `json:"invoice_amount"`
+	FeeAmount        float64  `json:"fee_amount"`
+	BankAmount       float64  `json:"bank_amount"`
+	BankReference    string   `json:"bank_reference,omitempty"`
+	ConfigVersion    int      `json:"config_version"`
+	RouteVersion     int64    `json:"-"`
+	SelectionDigest  string   `json:"selection_digest"`
+	Status           string   `json:"status,omitempty"`
+	RCDocNo          string   `json:"rc_doc_no,omitempty"`
+	ErrorMsg         string   `json:"error_msg,omitempty"`
 }
 
 type tikTokSettlementWithdrawalView struct {
@@ -594,6 +626,372 @@ func (h *TikTokSettlementHandler) Send(c *gin.Context) {
 	}
 	go h.sendRun(run.ID, route, c.GetString("user_id"))
 	c.JSON(http.StatusAccepted, gin.H{"message": "เริ่มส่ง RC เข้า SML แล้ว", "run_id": run.ID})
+}
+
+// PreviewBatch validates a staff selection without creating a lock, SML
+// request, audit row, or database record. The digest binds the confirmation to
+// the exact immutable local Statement snapshots shown to the operator.
+func (h *TikTokSettlementHandler) PreviewBatch(c *gin.Context) {
+	if !h.financeEnabled() {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	var req tikTokSettlementBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูล Statement ที่เลือกไม่ถูกต้อง")
+		return
+	}
+	batch, err := h.buildSettlementBatch(c.Request.Context(), req.RunIDs)
+	if err != nil {
+		h.error(c, http.StatusConflict, "batch_not_ready", safeTikTokSettlementErrorReason(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": batch})
+}
+
+// SendBatch creates exactly one RC from staff-selected, fully-ready Statements.
+// It never guesses withdrawal membership and never runs automatically.
+func (h *TikTokSettlementHandler) SendBatch(c *gin.Context) {
+	if !h.smlEnabled() {
+		h.error(c, http.StatusNotFound, "sml_feature_disabled", "ยังไม่เปิดส่งรับชำระ TikTok Shop เข้า SML")
+		return
+	}
+	var req tikTokSettlementBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Confirm) != "CONFIRM_TIKTOK_RC_BATCH" {
+		h.error(c, http.StatusBadRequest, "confirmation_required", "กรุณายืนยันการสร้าง RC รวมก่อนส่ง SML")
+		return
+	}
+	batch, err := h.buildSettlementBatch(c.Request.Context(), req.RunIDs)
+	if err != nil {
+		h.error(c, http.StatusConflict, "batch_not_ready", safeTikTokSettlementErrorReason(err))
+		return
+	}
+	if strings.TrimSpace(req.ExpectedDigest) == "" || req.ExpectedDigest != batch.SelectionDigest {
+		h.error(c, http.StatusConflict, "selection_changed", "รายการหรือยอดที่เลือกเปลี่ยนแล้ว กรุณาตรวจใหม่ก่อนส่ง")
+		return
+	}
+	bankAmount, err := tikTokSettlementMoney(req.BankAmount)
+	if err != nil || bankAmount.Sign() <= 0 || bankAmount.Cmp(tikTokSettlementMoneyFromFloat(batch.SettlementAmount)) != 0 {
+		h.error(c, http.StatusConflict, "bank_amount_mismatch", "ยอดเงินจริงที่ยืนยันต้องเท่ากับยอดรวม TikTok ของ Statement ที่เลือก")
+		return
+	}
+	if ok, version, settingErr := h.smlSendEnabled(c.Request.Context(), batch.ShopID); settingErr != nil || !ok || version != batch.ConfigVersion {
+		h.error(c, http.StatusForbidden, "sml_send_disabled", "ร้านนี้ยังไม่เปิดส่ง RC เข้า SML หรือการตั้งค่าเปลี่ยนแล้ว")
+		return
+	}
+	route, err := h.routes.Get("tiktok_settlement", "ar_receipt")
+	if err != nil || route == nil || route.DocFormatCode == "" || route.PassbookCode == "" || route.ConfigVersion != batch.RouteVersion {
+		h.error(c, http.StatusConflict, "route_changed", "เส้นทาง SML ถูกแก้ไขแล้ว กรุณาตรวจ Statement ใหม่ก่อนส่ง")
+		return
+	}
+	if math.Abs(batch.FeeAmount) > 0.01 && strings.TrimSpace(route.ExpenseCode) == "" {
+		h.error(c, http.StatusConflict, "expense_code_missing", "มี Fee/commission กรุณาตั้งรหัสค่าใช้จ่าย TikTok Shop ก่อนส่ง RC")
+		return
+	}
+	batch.BankAmount = batch.SettlementAmount
+	batch.BankReference = strings.TrimSpace(req.BankReference)
+	batchID, err := h.lockSettlementBatch(c.Request.Context(), batch, c.GetString("user_id"), c.GetString("user_email"))
+	if err != nil {
+		h.error(c, http.StatusConflict, "batch_locked", "รายการนี้กำลังส่งหรือถูกใช้สร้าง RC แล้ว กรุณาโหลดใหม่")
+		return
+	}
+	h.auditEvent(c, "tiktok_settlement_batch_confirmed", "info", map[string]any{"batch_id": batchID, "shop_id": batch.ShopID, "statement_count": batch.StatementCount, "order_count": batch.OrderCount, "bank_amount": req.BankAmount, "bank_reference_present": batch.BankReference != ""})
+	go h.sendSettlementBatch(batchID, route, c.GetString("user_id"))
+	c.JSON(http.StatusAccepted, gin.H{"message": "เริ่มสร้าง RC รวมเข้า SML แล้ว", "batch_id": batchID})
+}
+
+func (h *TikTokSettlementHandler) GetBatch(c *gin.Context) {
+	if !h.financeEnabled() {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดข้อมูลการเงิน TikTok Shop")
+		return
+	}
+	batch, err := h.loadSettlementBatch(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		h.error(c, http.StatusNotFound, "not_found", "ไม่พบชุดรับชำระ TikTok Shop")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": batch})
+}
+
+func (h *TikTokSettlementHandler) buildSettlementBatch(ctx context.Context, ids []string) (*tikTokSettlementBatchView, error) {
+	ids = tikTokSettlementUniqueIDs(ids)
+	if len(ids) < 2 || len(ids) > 50 {
+		return nil, errors.New("เลือก Statement ได้ตั้งแต่ 2 ถึง 50 รายการต่อ RC")
+	}
+	runs := make([]*tikTokSettlementRunView, 0, len(ids))
+	for _, id := range ids {
+		run, err := h.loadRun(ctx, id, true)
+		if err != nil {
+			return nil, errors.New("ไม่พบ Statement ที่เลือก")
+		}
+		runs = append(runs, run)
+	}
+	sort.Slice(runs, func(i, j int) bool { return runs[i].ID < runs[j].ID })
+	first := runs[0]
+	batch := &tikTokSettlementBatchView{ShopID: first.ShopID, ShopLabel: first.ShopLabel, Currency: strings.ToUpper(first.Currency), ConfigVersion: first.ConfigVersion, RouteVersion: first.RouteConfigVersion, RunIDs: make([]string, 0, len(runs)), StatementIDs: make([]string, 0, len(runs))}
+	seenOrders := map[string]struct{}{}
+	customerCode := ""
+	for _, run := range runs {
+		if run.Status != "ready" || !tikTokStatementIsSettlementReady(tiktokshop.StatementStatus(run.PaymentStatus)) {
+			return nil, errors.New("เลือกได้เฉพาะ Statement ที่พร้อมสร้างเอกสาร")
+		}
+		if run.ShopID != batch.ShopID || strings.ToUpper(run.Currency) != batch.Currency || run.ConfigVersion != batch.ConfigVersion || run.RouteConfigVersion != batch.RouteVersion {
+			return nil, errors.New("Statement ที่เลือกต้องเป็นร้าน สกุลเงิน และการตั้งค่า SML ชุดเดียวกัน")
+		}
+		if len(run.Items) == 0 || run.BlockedItemCount > 0 {
+			return nil, errors.New("Statement ที่เลือกมีรายการที่ต้องตรวจ")
+		}
+		for _, item := range run.Items {
+			if item.Status != "ready" || item.SMLInvoiceDocNo == "" {
+				return nil, errors.New("Statement ที่เลือกมีรายการที่ยังไม่พร้อมส่ง")
+			}
+			if customerCode == "" {
+				customerCode = item.CustomerCode
+			} else if customerCode != item.CustomerCode {
+				return nil, errors.New("Statement ที่เลือกมีลูกหนี้มากกว่าหนึ่งราย")
+			}
+			if _, exists := seenOrders[item.OrderID]; exists {
+				return nil, errors.New("พบคำสั่งซื้อซ้ำระหว่าง Statement ที่เลือก")
+			}
+			seenOrders[item.OrderID] = struct{}{}
+		}
+		batch.RunIDs = append(batch.RunIDs, run.ID)
+		batch.StatementIDs = append(batch.StatementIDs, run.StatementID)
+		batch.SettlementAmount += run.TotalSettlementAmount
+		batch.InvoiceAmount += run.InvoiceAmountTotal
+		batch.FeeAmount += run.FeeAmountTotal
+		batch.OrderCount += len(run.Items)
+	}
+	batch.StatementCount = len(runs)
+	batch.SelectionDigest = tikTokSettlementBatchDigest(batch)
+	return batch, nil
+}
+
+func tikTokSettlementUniqueIDs(ids []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func tikTokSettlementBatchDigest(batch *tikTokSettlementBatchView) string {
+	parts := append([]string{batch.ShopID, batch.Currency, strconv.Itoa(batch.ConfigVersion), strconv.FormatInt(batch.RouteVersion, 10), fmt.Sprintf("%.2f", batch.SettlementAmount), fmt.Sprintf("%.2f", batch.InvoiceAmount)}, batch.RunIDs...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])
+}
+
+func tikTokSettlementMoney(raw string) (*big.Rat, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || len(value) > 32 {
+		return nil, errors.New("ยอดเงินจริงไม่ถูกต้อง")
+	}
+	r, ok := new(big.Rat).SetString(value)
+	if !ok || r.Sign() < 0 || r.Denom().Cmp(big.NewInt(100)) > 0 {
+		return nil, errors.New("ยอดเงินจริงต้องมีทศนิยมไม่เกิน 2 ตำแหน่ง")
+	}
+	return r, nil
+}
+func tikTokSettlementMoneyFromFloat(value float64) *big.Rat {
+	r, _ := tikTokSettlementMoney(fmt.Sprintf("%.2f", value))
+	return r
+}
+
+func (h *TikTokSettlementHandler) lockSettlementBatch(ctx context.Context, batch *tikTokSettlementBatchView, userID, email string) (string, error) {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	batchID := ""
+	err = tx.QueryRowContext(ctx, `INSERT INTO tiktok_settlement_batches(shop_id,shop_label,currency,statement_count,order_count,settlement_amount,invoice_amount,fee_amount,bank_amount,bank_reference,selection_digest,config_version,route_config_version,request_fingerprint,lease_until,created_by,created_by_email) VALUES($1,$2,$3,$4,$5,$6::numeric,$7::numeric,$8::numeric,$9::numeric,$10,$11,$12,$13,$14,NOW()+INTERVAL '60 seconds',NULLIF($15,'')::uuid,$16) RETURNING id::text`, batch.ShopID, batch.ShopLabel, batch.Currency, batch.StatementCount, batch.OrderCount, fmt.Sprintf("%.2f", batch.SettlementAmount), fmt.Sprintf("%.2f", batch.InvoiceAmount), fmt.Sprintf("%.2f", batch.FeeAmount), fmt.Sprintf("%.2f", batch.BankAmount), batch.BankReference, batch.SelectionDigest, batch.ConfigVersion, batch.RouteVersion, batch.SelectionDigest, userID, email).Scan(&batchID)
+	if err != nil {
+		return "", err
+	}
+	for index, runID := range batch.RunIDs {
+		res, err := tx.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='sending',request_fingerprint=$2,lease_until=NOW()+INTERVAL '60 seconds',started_at=COALESCE(started_at,NOW()),updated_at=NOW() WHERE id=$1::uuid AND status='ready' AND shop_id=$3 AND config_version=$4 AND route_config_version=$5`, runID, batch.SelectionDigest, batch.ShopID, batch.ConfigVersion, batch.RouteVersion)
+		if err != nil {
+			return "", err
+		}
+		n, _ := res.RowsAffected()
+		if n != 1 {
+			return "", errors.New("selected run stale")
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO tiktok_settlement_batch_members(batch_id,run_id,statement_id) VALUES($1::uuid,$2::uuid,$3)`, batchID, runID, batch.StatementIDs[index]); err != nil {
+			return "", err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	return batchID, nil
+}
+
+func (h *TikTokSettlementHandler) loadSettlementBatch(ctx context.Context, id string) (*tikTokSettlementBatchView, error) {
+	batch := &tikTokSettlementBatchView{RunIDs: []string{}, StatementIDs: []string{}}
+	err := h.db.QueryRowContext(ctx, `SELECT id::text,shop_id,shop_label,currency,statement_count,order_count,settlement_amount,invoice_amount,fee_amount,bank_amount,bank_reference,selection_digest,config_version,route_config_version,status,rc_doc_no,error_msg FROM tiktok_settlement_batches WHERE id=$1::uuid`, id).Scan(&batch.ID, &batch.ShopID, &batch.ShopLabel, &batch.Currency, &batch.StatementCount, &batch.OrderCount, &batch.SettlementAmount, &batch.InvoiceAmount, &batch.FeeAmount, &batch.BankAmount, &batch.BankReference, &batch.SelectionDigest, &batch.ConfigVersion, &batch.RouteVersion, &batch.Status, &batch.RCDocNo, &batch.ErrorMsg)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.db.QueryContext(ctx, `SELECT m.run_id::text,m.statement_id FROM tiktok_settlement_batch_members m WHERE m.batch_id=$1::uuid ORDER BY m.statement_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var runID, statementID string
+		if err := rows.Scan(&runID, &statementID); err != nil {
+			return nil, err
+		}
+		batch.RunIDs = append(batch.RunIDs, runID)
+		batch.StatementIDs = append(batch.StatementIDs, statementID)
+	}
+	return batch, rows.Err()
+}
+
+func (h *TikTokSettlementHandler) sendSettlementBatch(batchID string, route *models.ChannelDefault, userID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	batch, err := h.loadSettlementBatch(ctx, batchID)
+	if err != nil || batch.Status != "sending" {
+		return
+	}
+	if latest, routeErr := h.routes.Get("tiktok_settlement", "ar_receipt"); routeErr != nil || latest == nil || latest.ConfigVersion != route.ConfigVersion {
+		h.failSettlementBatch(ctx, batch, userID, "เส้นทาง SML ถูกแก้ไขระหว่างส่ง กรุณาตรวจ Statement ใหม่")
+		return
+	}
+	if enabled, version, settingErr := h.smlSendEnabled(ctx, batch.ShopID); settingErr != nil || !enabled || version != batch.ConfigVersion {
+		h.failSettlementBatch(ctx, batch, userID, "การตั้งค่าร้านถูกแก้ไขระหว่างส่ง กรุณาตรวจ Statement ใหม่")
+		return
+	}
+	lines := make([]map[string]any, 0, batch.OrderCount)
+	docDate := time.Now().In(tikTokSettlementBangkok).Format("2006-01-02")
+	for _, runID := range batch.RunIDs {
+		run, loadErr := h.loadRun(ctx, runID, true)
+		if loadErr != nil || run.Status != "sending" || run.ConfigVersion != batch.ConfigVersion {
+			h.failSettlementBatch(ctx, batch, userID, "Statement เปลี่ยนระหว่างส่ง")
+			return
+		}
+		if run.PaymentTime != "" {
+			if t, parseErr := time.Parse(time.RFC3339, run.PaymentTime); parseErr == nil && t.After(time.Time{}) {
+				docDate = t.In(tikTokSettlementBangkok).Format("2006-01-02")
+			}
+		}
+		for _, item := range run.Items {
+			if item.Status != "ready" || item.SMLInvoiceDocNo == "" {
+				h.failSettlementBatch(ctx, batch, userID, "มีรายการที่ไม่พร้อมส่งระหว่างสร้าง RC")
+				return
+			}
+			lines = append(lines, map[string]any{"order_sn": item.OrderID, "invoice_doc_no": item.SMLInvoiceDocNo, "payout_amount": item.SettlementAmount})
+		}
+	}
+	remark := "TikTok Statements " + strings.Join(batch.StatementIDs, ",")
+	if batch.BankReference != "" {
+		remark += " BankRef " + batch.BankReference
+	}
+	if len(remark) > 500 {
+		remark = remark[:500]
+	}
+	payload := map[string]any{"doc_date": docDate, "doc_time": time.Now().In(tikTokSettlementBangkok).Format("15:04"), "doc_format_code": route.DocFormatCode, "passbook_code": route.PassbookCode, "expense_code": route.ExpenseCode, "remark": remark, "lines": lines}
+	var out struct {
+		Success bool                      `json:"success"`
+		Data    settlementReceiptResponse `json:"data"`
+		Error   *smlProxyErrorBody        `json:"error"`
+		Message string                    `json:"message"`
+	}
+	if err := h.sml.callSMLAPI(ctx, http.MethodPost, "/api/v1/ar/receipts", payload, &out); err != nil {
+		h.unknownSettlementBatch(ctx, batch, userID, "ไม่ทราบผลการส่ง SML กรุณาตรวจ RC ก่อนลองใหม่")
+		return
+	}
+	if !out.Success || strings.TrimSpace(out.Data.DocNo) == "" {
+		message := firstNonEmpty(out.Message, "SML ปฏิเสธการสร้าง RC")
+		if out.Error != nil {
+			message = firstNonEmpty(out.Error.Message, message)
+		}
+		h.failSettlementBatch(ctx, batch, userID, message)
+		return
+	}
+	if math.Abs(out.Data.InvoiceAmount-batch.InvoiceAmount) > 0.01 || math.Abs(out.Data.PayoutAmount-batch.SettlementAmount) > 0.01 {
+		_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_batches SET rc_doc_no=$2 WHERE id=$1::uuid`, batch.ID, out.Data.DocNo)
+		_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET rc_doc_no=$2 WHERE id IN (SELECT run_id FROM tiktok_settlement_batch_members WHERE batch_id=$1::uuid)`, batch.ID, out.Data.DocNo)
+		h.unknownSettlementBatch(ctx, batch, userID, "ยอด RC ที่ SML ตอบกลับไม่ตรงกับชุด Statement ต้องตรวจเอกสารก่อนลองใหม่")
+		return
+	}
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		h.unknownSettlementBatch(ctx, batch, userID, "บันทึกผล SML ไม่สำเร็จ กรุณาตรวจ RC")
+		return
+	}
+	defer tx.Rollback()
+	for _, runID := range batch.RunIDs {
+		if _, err = tx.ExecContext(ctx, `UPDATE tiktok_settlement_items SET status='sent',receipt_doc_no=$2,updated_at=NOW() WHERE run_id=$1::uuid AND status='ready'`, runID, out.Data.DocNo); err != nil {
+			break
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='sent',rc_doc_no=$2,error_msg='',lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid AND status='sending'`, runID, out.Data.DocNo); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE tiktok_settlement_batches SET status='sent',rc_doc_no=$2,error_msg='',lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid AND status='sending'`, batch.ID, out.Data.DocNo)
+	}
+	if err != nil || tx.Commit() != nil {
+		h.unknownSettlementBatch(ctx, batch, userID, "บันทึกผล SML ไม่สำเร็จ กรุณาตรวจ RC")
+		return
+	}
+	h.auditDirect(ctx, "tiktok_settlement_batch_sent", userID, "info", map[string]any{"batch_id": batch.ID, "statement_count": batch.StatementCount, "order_count": batch.OrderCount, "rc_doc_no": out.Data.DocNo})
+	h.notifySettlementBatchResult(ctx, batch, "success", "ส่ง RC TikTok Shop แล้ว", "สร้างรับชำระหนี้รวม "+strconv.Itoa(batch.StatementCount)+" Statement ใน SML เลขที่ "+out.Data.DocNo, "sent")
+}
+
+func (h *TikTokSettlementHandler) failSettlementBatch(ctx context.Context, batch *tikTokSettlementBatchView, userID, message string) {
+	if batch == nil {
+		return
+	}
+	_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_batches SET status='failed',error_msg=$2,lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, batch.ID, message)
+	_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='failed',error_msg=$2,lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id IN (SELECT run_id FROM tiktok_settlement_batch_members WHERE batch_id=$1::uuid) AND status='sending'`, batch.ID, message)
+	h.auditDirect(ctx, "tiktok_settlement_batch_failed", userID, "error", map[string]any{"batch_id": batch.ID, "statement_count": batch.StatementCount})
+	h.notifySettlementBatchResult(ctx, batch, "error", "ส่ง RC รวม TikTok Shop ไม่สำเร็จ", message, "failed")
+}
+func (h *TikTokSettlementHandler) unknownSettlementBatch(ctx context.Context, batch *tikTokSettlementBatchView, userID, message string) {
+	if batch == nil {
+		return
+	}
+	_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_batches SET status='unknown_result',error_msg=$2,lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, batch.ID, message)
+	_, _ = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status='unknown_result',error_msg=$2,lease_until=NULL,finished_at=NOW(),updated_at=NOW() WHERE id IN (SELECT run_id FROM tiktok_settlement_batch_members WHERE batch_id=$1::uuid) AND status='sending'`, batch.ID, message)
+	h.auditDirect(ctx, "tiktok_settlement_batch_unknown_result", userID, "warning", map[string]any{"batch_id": batch.ID, "statement_count": batch.StatementCount})
+	h.notifySettlementBatchResult(ctx, batch, "warning", "ต้องตรวจผล RC รวม TikTok Shop", message, "unknown_result")
+}
+
+// TikTok settlement events stay in Nexflow's Topbar only. They intentionally
+// do not create a LINE delivery, and never include buyer data or bank values.
+func (h *TikTokSettlementHandler) notifySettlementBatchResult(ctx context.Context, batch *tikTokSettlementBatchView, severity, title, body, outcome string) {
+	if h == nil || h.notifications == nil || batch == nil || strings.TrimSpace(batch.ID) == "" {
+		return
+	}
+	created, err := h.notifications.CreateForRoles(ctx, []string{"admin", "staff"}, models.NotificationInput{Source: "tiktok_settlement", Severity: severity, Title: title, Body: body, ActionURL: "/tiktok-settlements", EntityType: "tiktok_settlement_batch", EntityID: batch.ID, DedupeKey: "tiktok:settlement:batch:" + batch.ID + ":" + outcome})
+	if err != nil {
+		return
+	}
+	for _, notification := range created {
+		if h.broker == nil {
+			continue
+		}
+		unread, _ := h.notifications.UnreadCount(ctx, notification.RecipientID)
+		bySource, _ := h.notifications.UnreadCountsBySource(ctx, notification.RecipientID)
+		if bySource == nil {
+			bySource = map[string]int{}
+		}
+		h.broker.Publish(events.Event{Type: events.TypeNotificationCreated, TargetUserID: notification.RecipientID, Payload: map[string]any{"notification": notification, "unread_count": unread, "unread_by_source": bySource}})
+		h.broker.Publish(events.Event{Type: events.TypeNotificationUnreadChanged, TargetUserID: notification.RecipientID, Payload: map[string]any{"total": unread, "unread_by_source": bySource}})
+	}
 }
 
 func (h *TikTokSettlementHandler) Settings(c *gin.Context) {
