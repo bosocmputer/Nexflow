@@ -176,6 +176,37 @@ func TestTikTokAutoBillDoesNotPromoteQueuedJobAfterSMLSettingChanges(t *testing.
 	}
 }
 
+func TestTikTokAutoBillLinksAnExistingTikTokExcelBillWithoutSendingIt(t *testing.T) {
+	actorID := "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef"
+	preview := &tiktokshop.TikTokBillShadowPreview{
+		ShopID: "7494619203789490654", OrderID: "586180035911386153", Currency: "THB",
+		OrderStatus: tiktokshop.OrderStatusAwaitingCollection, ReadyForReviewedBill: true,
+		ReviewDigest: strings.Repeat("e", 64),
+		Route:        tiktokshop.TikTokBillShadowRoute{Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: "SI", ConfigVersion: 2, ShippingItemCode: "AH-0061", ShippingItemUnitCode: "ชิ้น"},
+		Amounts:      tiktokshop.TikTokBillShadowAmounts{ProductSubtotal: "100.00", Shipping: "15.00", ProposedDocumentTotal: "115.00"},
+		Items:        []tiktokshop.TikTokBillShadowItem{{ProductID: "product-1", SKUID: "sku-1", Quantity: 1, UnitSalePrice: "100.00", LineTotal: "100.00", Mapping: tiktokshop.TikTokBillShadowItemMapping{Status: tiktokshop.TikTokBillShadowMappingReady, ItemCode: "AH-0001", UnitCode: "ชิ้น", SMLQuantity: "1", MappingRevision: 2}}},
+		ExistingBill: &tiktokshop.TikTokBillShadowExistingBill{ID: "0b5fa961-d42e-45ef-8b96-3ffdb5dc28a8", SourceAccountKey: "default", SourceFlow: "tiktok_excel"},
+	}
+	fingerprint, err := tikTokAutoSMLBillFingerprint(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeSignature := tikTokAutoSMLRouteSignature(preview.Route)
+	store := &tikTokAutoSMLWorkStoreFake{setting: &models.TikTokAutoSMLSetting{ShopID: preview.ShopID, AutoBillEnabled: true, SMLEnabled: true, EnabledBy: &actorID, ConfigVersion: 3, RouteSignature: routeSignature}}
+	creator := &tenantTikTokReviewedBillCreatorFake{}
+	controller := NewTikTokAutoSMLController(&config.Config{TikTokShopAutoSMLEnabled: true}, store, &tenantTikTokBillShadowPreviewerFake{result: preview}, creator, nil, nil, nil)
+	job := models.TikTokAutoSMLJob{ID: "65b124d5-570d-48d4-9741-d22f1f46f1ef", ShopID: preview.ShopID, OrderID: preview.OrderID, Status: models.TikTokAutoSMLRunning, Attempts: 1, TriggerConfigVersion: 2, BillFingerprint: fingerprint, RouteSignature: routeSignature}
+
+	controller.processJob(t.Context(), job)
+
+	if creator.calls != 0 {
+		t.Fatalf("creator calls=%d, want 0", creator.calls)
+	}
+	if store.markedBillJobID != job.ID || store.markedBillID != preview.ExistingBill.ID {
+		t.Fatalf("existing Bill must terminate the job: %#v", store)
+	}
+}
+
 func TestTikTokAutoSMLQueueAuditDoesNotUseNumericOrderIDAsUUIDTarget(t *testing.T) {
 	audit := &tikTokAutoSMLAuditFake{}
 	controller := NewTikTokAutoSMLController(&config.Config{}, nil, nil, nil, nil, audit, nil)

@@ -241,7 +241,17 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		return
 	}
 	if preview.ExistingBill != nil {
-		c.markNeedsReview(ctx, job, "", "existing_tiktok_bill", "พบเอกสาร TikTok ของคำสั่งซื้อนี้แล้ว ระบบจะไม่สร้าง Bill ซ้ำ")
+		// An order may have reached Nexflow through the TikTok Excel importer before
+		// its API snapshot is reconciled. That is a completed local-Bill outcome,
+		// not an operator problem: link the durable job to that Bill and stop here.
+		// In particular, never promote an existing Bill into an SML send just because
+		// the API reconciliation worker happened to see it.
+		c.completeBillCreation(ctx, job, preview.ExistingBill.ID, job.ReviewDigest)
+		c.auditEvent("tiktok_auto_bill_reused", "info", job, map[string]interface{}{
+			"bill_id":            preview.ExistingBill.ID,
+			"source_account_key": preview.ExistingBill.SourceAccountKey,
+			"sml_send":           "manual",
+		})
 		return
 	}
 	if !preview.ReadyForReviewedBill || len(preview.Blockers) > 0 || preview.ReviewDigest == "" {
