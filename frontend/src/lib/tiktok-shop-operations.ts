@@ -38,16 +38,6 @@ export interface TikTokAutoSMLRowState {
   status: string
 }
 
-export interface TikTokAutoSMLControlStateInput {
-  role?: string
-  selectedShopID: string
-  globalEnabled: boolean
-}
-
-export type TikTokAutoSMLControlState =
-  | { mode: 'control' }
-  | { mode: 'summary' | 'readonly'; reason: string }
-
 export interface TikTokCancellationState extends TikTokDocumentState {
   status: 'not_required' | 'evidence_missing' | 'review_required' | 'previewed' | 'creating' | 'completed' | 'failed' | 'reconciliation_required'
   canReviewCancellation: boolean
@@ -214,13 +204,6 @@ export function tiktokCompactDocumentState(
   return document
 }
 
-export function tiktokAutoSMLControlState(input: TikTokAutoSMLControlStateInput): TikTokAutoSMLControlState {
-  if (input.selectedShopID === 'all') return { mode: 'summary', reason: 'เลือกร้านก่อนจัดการ' }
-  if (input.role !== 'admin') return { mode: 'readonly', reason: 'เฉพาะผู้ดูแลระบบเปลี่ยนการตั้งค่าได้' }
-  if (!input.globalEnabled) return { mode: 'readonly', reason: 'ระบบสร้างเอกสารอัตโนมัติยังไม่พร้อมใช้งาน' }
-  return { mode: 'control' }
-}
-
 export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTokCancellationState {
   const billID = input.billID?.trim() ?? ''
   const billStatus = input.billStatus?.trim().toLowerCase() ?? ''
@@ -358,6 +341,13 @@ export function tiktokOrderDetailPath(input: { shopID: string; orderID: string }
     detail: '1',
   })
   return `/tiktok-shop-operations?${query.toString()}`
+}
+
+export function clearTikTokOrderDetailQuery(current: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(current)
+  next.delete('detail')
+  next.delete('order_id')
+  return next
 }
 
 export function tiktokBillShadowReadinessLabel(ready: boolean, blockerCount: number): string {

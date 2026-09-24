@@ -14,6 +14,7 @@ const {
   buildTikTokCancellationRequest,
   buildTikTokShadowMappingPayload,
   canCreateTikTokReviewedBill,
+  clearTikTokOrderDetailQuery,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokStatusGroupCount,
@@ -25,7 +26,6 @@ const {
   tiktokCancellationState,
   tiktokDocumentState,
   tiktokCompactDocumentState,
-  tiktokAutoSMLControlState,
   tiktokOrderDetailPath,
   tiktokOrderDetailKey,
   tiktokRowActions,
@@ -191,24 +191,6 @@ test('keeps the TikTok document cell to a compact two-line operational summary',
   })
 })
 
-test('only lets an admin control Auto SML after selecting exactly one shop', () => {
-  assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'all', globalEnabled: true }), {
-    mode: 'summary',
-    reason: 'เลือกร้านก่อนจัดการ',
-  })
-  assert.deepEqual(tiktokAutoSMLControlState({ role: 'staff', selectedShopID: 'shop-1', globalEnabled: true }), {
-    mode: 'readonly',
-    reason: 'เฉพาะผู้ดูแลระบบเปลี่ยนการตั้งค่าได้',
-  })
-  assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'shop-1', globalEnabled: true }), {
-    mode: 'control',
-  })
-  assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'shop-1', globalEnabled: false }), {
-    mode: 'readonly',
-    reason: 'ระบบสร้างเอกสารอัตโนมัติยังไม่พร้อมใช้งาน',
-  })
-})
-
 test('keeps TikTok row actions in the same create, document, and detail pattern as Shopee', () => {
   assert.deepEqual(tiktokRowActions({}), {
     primary: 'create_document',
@@ -233,6 +215,19 @@ test('builds a shop-scoped TikTok order detail link without accepting malformed 
   assert.equal(tiktokOrderDetailPath({ shopID: '', orderID: '586129051626538855' }), '')
   assert.equal(tiktokOrderDetailPath({ shopID: 'shop/one', orderID: '586129051626538855' }), '')
   assert.equal(tiktokOrderDetailPath({ shopID: '7494619203789490654', orderID: '5861?bad' }), '')
+})
+
+test('removes the TikTok drawer-only order filter when the detail sheet closes', () => {
+  const next = clearTikTokOrderDetailQuery(new URLSearchParams({
+    shop_id: '7494619203789490654',
+    order_id: '586198548136560051',
+    detail: '1',
+    status_group: 'to_ship',
+  }))
+  assert.equal(next.get('shop_id'), '7494619203789490654')
+  assert.equal(next.get('status_group'), 'to_ship')
+  assert.equal(next.has('detail'), false)
+  assert.equal(next.has('order_id'), false)
 })
 
 test('uses the same safe row-create guard as Shopee while leaving preview as the authority', () => {

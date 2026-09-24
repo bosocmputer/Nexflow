@@ -43,6 +43,7 @@ import {
   buildTikTokReviewedBillRequest,
   buildTikTokCancellationRequest,
   canCreateTikTokReviewedBill,
+  clearTikTokOrderDetailQuery,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
   tiktokCancellationState,
@@ -50,7 +51,6 @@ import {
   tiktokOrderDetailKey,
   tiktokOrderDetailPath,
   tiktokDocumentState,
-  tiktokAutoSMLControlState,
   tiktokOperationsHeaderMeta,
   tiktokOrderStatusLabel,
   tiktokReviewedBillDisabledReason,
@@ -391,11 +391,10 @@ export default function TikTokShopOperations() {
     () => shopID === ALL ? undefined : autoSML?.settings.find((setting) => setting.shop_id === shopID),
     [autoSML?.settings, shopID],
   )
-  const autoSMLControl = tiktokAutoSMLControlState({
-    role: userRole,
-    selectedShopID: shopID,
-    globalEnabled: Boolean(autoSML?.global_enabled),
-  })
+  const enabledAutoSMLShopCount = autoSML?.settings.filter((setting) => (
+    setting.auto_bill_enabled && setting.sml_send_enabled && !setting.paused_reason
+  )).length ?? 0
+  const autoSMLShopCount = autoSML?.settings.length ?? 0
 
   const loadOperationsSummary = useCallback(async () => {
     const requestSequence = ++operationsRequestSequence.current
@@ -507,7 +506,10 @@ export default function TikTokShopOperations() {
       detailOrder?.order_id ?? orderID,
     )
     setDetailOrder(null)
-    setQuery({ detail: null })
+    // `order_id` is used only to open this deep-linked drawer.  Unlike a
+    // deliberate list search, it must disappear with the drawer so the user
+    // returns to the same unfiltered queue as Shopee Operations does.
+    setParams((current) => clearTikTokOrderDetailQuery(current), { replace: true })
   }
   const copyTikTokOrderID = useCallback(async (order: TikTokOrderRow) => {
     try {
@@ -635,13 +637,17 @@ export default function TikTokShopOperations() {
                 ))}
               </SelectContent>
             </Select>
+            <MarketplaceOperationsHelp channel="TikTok Shop" signalLabel="Webhook" />
             <TikTokAutoSMLControl
               setting={selectedAutoSMLSetting}
-              mode={autoSMLControl}
+              shopID={shopID}
+              globalEnabled={Boolean(autoSML?.global_enabled)}
+              isAdmin={userRole === 'admin'}
+              enabledShopCount={enabledAutoSMLShopCount}
+              shopCount={autoSMLShopCount}
               saving={autoSMLSaving}
               onRequestChange={requestAutomationUpdate}
             />
-            <MarketplaceOperationsHelp channel="TikTok Shop" signalLabel="Webhook" />
             <Button
               type="button"
               size="sm"
@@ -654,7 +660,7 @@ export default function TikTokShopOperations() {
                 if (!diagnosticsOpen) void loadDiagnostics()
               }}
             >
-              {diagnosticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RadioTower className="h-4 w-4" />}
+              {diagnosticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
               ตรวจระบบ
             </Button>
             <Button type="button" size="sm" className="h-8 gap-2" disabled={loading} onClick={() => setRefreshTick((value) => value + 1)}>
@@ -932,43 +938,87 @@ function TikTokOperationsHealthLine({
 
 function TikTokAutoSMLControl({
   setting,
-  mode,
+  shopID,
+  globalEnabled,
+  isAdmin,
+  enabledShopCount,
+  shopCount,
   saving,
   onRequestChange,
 }: {
   setting?: TikTokAutoSMLSetting
-  mode: ReturnType<typeof tiktokAutoSMLControlState>
+  shopID: string
+  globalEnabled: boolean
+  isAdmin: boolean
+  enabledShopCount: number
+  shopCount: number
   saving: boolean
   onRequestChange: (setting: TikTokAutoSMLSetting, enabled: boolean) => Promise<void>
 }) {
   const smlEnabled = Boolean(setting?.sml_send_enabled && setting?.auto_bill_enabled && !setting.paused_reason)
-  const smlLabel = smlEnabled ? 'เปิดอยู่' : 'ส่งด้วยมือ'
-  const readonlyReason = mode.mode === 'control' ? undefined : mode.reason
-  const readonlyLabel = mode.mode === 'summary' ? `เลือกร้านก่อนจัดการ` : `${smlLabel} · ${readonlyReason}`
-  const readonly = mode.mode !== 'control' || !setting
+  const paused = shopID !== ALL && Boolean(setting?.paused_reason)
+  const active = shopID === ALL ? enabledShopCount > 0 : smlEnabled
+  const status = shopID === ALL
+    ? tiktokAutoSMLAllShopsStatus(enabledShopCount, shopCount)
+    : tiktokAutoSMLCompactStatus(globalEnabled, setting)
   return (
-    <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5" title={readonly ? readonlyLabel : undefined}>
+    <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5">
       <div className="flex min-w-0 items-center gap-1.5">
         <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
       </div>
-      {readonly ? (
-        <span className="max-w-[104px] truncate text-right text-[10px] text-muted-foreground">{readonlyLabel}</span>
-      ) : (
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Badge variant="outline" className={cn('h-5 whitespace-nowrap px-1.5 text-[10px] font-medium', smlEnabled ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : 'border-border bg-muted/40 text-muted-foreground')}>
-            {smlLabel}
-          </Badge>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Badge
+          variant="outline"
+          className={cn(
+            'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
+            paused && 'border-warning/40 bg-warning/10 text-warning',
+            active && !paused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+          )}
+        >
+          {status}
+        </Badge>
+        {shopID === ALL ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
+              >
+                <Info className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>เลือกร้าน TikTok Shop หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
+          </Tooltip>
+        ) : (
           <Switch
             checked={smlEnabled}
-            disabled={saving || !setting.auto_bill_enabled}
-            aria-label={`เปลี่ยนการส่ง SML อัตโนมัติของ ${setting.shop_name || setting.shop_id || 'TikTok Shop'}`}
-            onCheckedChange={(next) => void onRequestChange(setting, next)}
+            disabled={!isAdmin || saving || !globalEnabled || !setting || !setting.auto_bill_enabled}
+            aria-label={`เปลี่ยนการส่ง SML อัตโนมัติของ ${setting?.shop_name || setting?.shop_id || 'TikTok Shop'}`}
+            onCheckedChange={(next) => setting && void onRequestChange(setting, next)}
           />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
+}
+
+function tiktokAutoSMLAllShopsStatus(enabled: number, total: number) {
+  if (total === 0) return 'ไม่มีร้าน'
+  if (total === 1) return enabled === 1 ? 'เปิด' : 'ปิด'
+  if (enabled === 0) return 'ปิดทุกร้าน'
+  if (enabled === total) return `เปิด ${total.toLocaleString('th-TH')} ร้าน`
+  return `เปิด ${enabled.toLocaleString('th-TH')} จาก ${total.toLocaleString('th-TH')} ร้าน`
+}
+
+function tiktokAutoSMLCompactStatus(globalEnabled: boolean, setting?: TikTokAutoSMLSetting) {
+  if (!globalEnabled) return 'ปิดในระบบ'
+  if (!setting) return 'ไม่พบการตั้งค่าร้าน'
+  if (setting.paused_reason) return 'หยุดชั่วคราว'
+  if (!setting.auto_bill_enabled || !setting.sml_send_enabled) return 'ปิด'
+  if (setting.queued_count > 0) return `เปิด · รอ ${setting.queued_count.toLocaleString('th-TH')}`
+  return 'เปิด'
 }
 
 function TikTokDiagnosticsPanel({
