@@ -112,6 +112,12 @@ type MissingOrderImportResult = {
   remaining_count: number;
   message: string;
 };
+type MissingOrderImportNotice = {
+  kind: "success" | "error";
+  message: string;
+  importedCount?: number;
+  remainingCount?: number;
+};
 type SendProgress = {
   open: boolean;
   runID: string | null;
@@ -263,6 +269,8 @@ export default function TikTokSettlement() {
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
   const [importingStatements, setImportingStatements] = useState(false);
   const [importingMissingOrders, setImportingMissingOrders] = useState(false);
+  const [missingOrderImportNotice, setMissingOrderImportNotice] =
+    useState<MissingOrderImportNotice | null>(null);
   const [from, setFrom] = useState(
     dayjs().subtract(14, "day").format("YYYY-MM-DD"),
   );
@@ -356,6 +364,7 @@ export default function TikTokSettlement() {
     }
   };
   const openDetail = async (run: Run) => {
+    setMissingOrderImportNotice(null);
     try {
       const [detail, routeResult] = await Promise.all([
         client.get<{ data: Run }>(`/api/tiktok-settlements/${run.id}`),
@@ -394,17 +403,19 @@ export default function TikTokSettlement() {
       );
       setSelected(response.data.data);
       await load();
-      toast.success(response.data.message, {
-        description:
-          response.data.imported_count > 0
-            ? "ตรวจและสร้างใบขายใน Nexflow ก่อนส่งเข้า SML จากนั้นกลับมากดตรวจข้อมูลใหม่"
-            : undefined,
+      setMissingOrderImportNotice({
+        kind: "success",
+        message: response.data.message,
+        importedCount: response.data.imported_count,
+        remainingCount: response.data.remaining_count,
       });
     } catch (error: any) {
-      toast.error(
-        error?.response?.data?.error?.message ??
+      setMissingOrderImportNotice({
+        kind: "error",
+        message:
+          error?.response?.data?.error?.message ??
           "นำเข้าคำสั่งซื้อ TikTok Shop ไม่สำเร็จ",
-      );
+      });
     } finally {
       setImportingMissingOrders(false);
     }
@@ -837,7 +848,12 @@ export default function TikTokSettlement() {
       </Card>
       <Dialog
         open={Boolean(selected)}
-        onOpenChange={(open) => !open && setSelected(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelected(null);
+            setMissingOrderImportNotice(null);
+          }
+        }}
       >
         <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
           <DialogHeader className="border-b px-5 py-4 sm:px-6">
@@ -905,6 +921,39 @@ export default function TikTokSettlement() {
                   <p className="mt-0.5">
                     นำเข้าคำสั่งซื้อที่อยู่ใน Statement นี้ก่อน ระบบจะบันทึกเป็นรายการตรวจสอบเท่านั้น และจะไม่สร้าง Bill หรือส่ง SML เอง
                   </p>
+                </div>
+              )}
+              {missingOrderImportNotice && (
+                <div
+                  role="status"
+                  className={cn(
+                    "mt-4 flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm",
+                    missingOrderImportNotice.kind === "success"
+                      ? "border-success/30 bg-success/5 text-success"
+                      : "border-destructive/30 bg-destructive/5 text-destructive",
+                  )}
+                >
+                  {missingOrderImportNotice.kind === "success" ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-medium">
+                      {missingOrderImportNotice.kind === "success"
+                        ? "ผลการนำเข้าคำสั่งซื้อ"
+                        : "นำเข้าคำสั่งซื้อไม่สำเร็จ"}
+                    </p>
+                    <p className="mt-0.5 text-foreground/80">
+                      {missingOrderImportNotice.message}
+                    </p>
+                    {missingOrderImportNotice.kind === "success" &&
+                      (missingOrderImportNotice.importedCount ?? 0) > 0 && (
+                        <p className="mt-1 text-foreground/80">
+                          ขั้นถัดไป: ตรวจและสร้างเอกสารขายใน Nexflow แล้วส่ง SML สำหรับออเดอร์ที่ยังขาด ก่อนกดตรวจข้อมูลใหม่
+                        </p>
+                      )}
+                  </div>
                 </div>
               )}
               <div className="mt-4 overflow-hidden rounded-md border">

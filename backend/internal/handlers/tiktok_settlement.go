@@ -633,7 +633,7 @@ func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"data": out, "imported_count": 0, "remaining_count": 0,
-			"message": "คำสั่งซื้อของ Statement นี้อยู่ใน Nexflow แล้ว ขั้นถัดไปคือสร้างหรือผูกใบขาย SML ที่ยังขาด ก่อนกดตรวจข้อมูลใหม่",
+			"message": "คำสั่งซื้อของ Statement นี้อยู่ใน Nexflow แล้ว ขั้นถัดไปคือสร้างเอกสารขายและส่ง SML สำหรับรายการที่ยังขาด ก่อนกดตรวจข้อมูลใหม่",
 		})
 		return
 	}
@@ -685,7 +685,7 @@ func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
 	} else if remaining > 0 {
 		message += fmt.Sprintf(" เหลือ %d รายการ ให้กดนำเข้าต่อ", remaining)
 	} else {
-		message += " ขั้นถัดไปคือสร้างหรือผูกใบขาย SML ของรายการที่ยังขาด แล้วกดตรวจข้อมูลใหม่"
+		message += " ขั้นถัดไปคือสร้างเอกสารขายและส่ง SML สำหรับรายการที่ยังขาด แล้วกดตรวจข้อมูลใหม่"
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out, "imported_count": imported, "remaining_count": remaining, "remaining_known": remainingKnown, "message": message})
 }
