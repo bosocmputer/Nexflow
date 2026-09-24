@@ -127,21 +127,22 @@ type tikTokSettlementRunView struct {
 	BlockedItemCount      int                        `json:"blocked_item_count"`
 }
 type tikTokSettlementItemView struct {
-	ID               string  `json:"id"`
-	OrderID          string  `json:"order_id"`
-	SMLInvoiceDocNo  string  `json:"sml_invoice_doc_no,omitempty"`
-	CustomerCode     string  `json:"customer_code,omitempty"`
-	InvoiceAmount    float64 `json:"invoice_amount"`
-	SettlementAmount float64 `json:"settlement_amount"`
-	FeeAmount        float64 `json:"fee_amount"`
-	ShippingAmount   float64 `json:"shipping_amount"`
-	AdjustmentAmount float64 `json:"adjustment_amount"`
-	RefundAmount     float64 `json:"refund_amount"`
-	ReserveAmount    float64 `json:"reserve_amount"`
-	Currency         string  `json:"currency"`
-	Status           string  `json:"status"`
-	BlockReason      string  `json:"block_reason,omitempty"`
-	ReceiptDocNo     string  `json:"receipt_doc_no,omitempty"`
+	ID                     string  `json:"id"`
+	OrderID                string  `json:"order_id"`
+	OrderSnapshotAvailable bool    `json:"order_snapshot_available"`
+	SMLInvoiceDocNo        string  `json:"sml_invoice_doc_no,omitempty"`
+	CustomerCode           string  `json:"customer_code,omitempty"`
+	InvoiceAmount          float64 `json:"invoice_amount"`
+	SettlementAmount       float64 `json:"settlement_amount"`
+	FeeAmount              float64 `json:"fee_amount"`
+	ShippingAmount         float64 `json:"shipping_amount"`
+	AdjustmentAmount       float64 `json:"adjustment_amount"`
+	RefundAmount           float64 `json:"refund_amount"`
+	ReserveAmount          float64 `json:"reserve_amount"`
+	Currency               string  `json:"currency"`
+	Status                 string  `json:"status"`
+	BlockReason            string  `json:"block_reason,omitempty"`
+	ReceiptDocNo           string  `json:"receipt_doc_no,omitempty"`
 }
 type tikTokSettlementCounts struct {
 	Processing  int `json:"processing"`
@@ -626,6 +627,14 @@ func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
 		return
 	}
 	if len(orderIDs) == 0 {
+		// The explicit recovery action also refreshes SML evidence.  Page loads
+		// remain read-only, but this operator action must not report a stale
+		// document status after a sale has just been sent to SML.
+		if err := h.reconcileRun(c.Request.Context(), run.ID); err != nil {
+			h.logger.Warn("tiktok_settlement_reconcile_after_noop_order_backfill_failed", zap.String("run_id", run.ID), zap.Error(err))
+			h.error(c, http.StatusBadGateway, "reconcile_failed", "ตรวจสถานะเอกสาร SML ไม่สำเร็จ กรุณาลองใหม่")
+			return
+		}
 		out, loadErr := h.loadRun(c.Request.Context(), run.ID, true)
 		if loadErr != nil {
 			h.error(c, http.StatusInternalServerError, "settlement_reload_failed", "โหลด Statement หลังตรวจข้อมูลไม่สำเร็จ")
@@ -639,11 +648,11 @@ func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
 			"shop_id":         run.ShopID,
 			"synced_count":    0,
 			"remaining_count": 0,
-			"outcome":         "already_snapshotted",
+			"outcome":         "already_snapshotted_reconciled",
 		})
 		c.JSON(http.StatusOK, gin.H{
 			"data": out, "imported_count": 0, "remaining_count": 0,
-			"message": "คำสั่งซื้อของ Statement นี้อยู่ใน Nexflow แล้ว ขั้นถัดไปคือสร้างเอกสารขายและส่ง SML สำหรับรายการที่ยังขาด ก่อนกดตรวจข้อมูลใหม่",
+			"message": "คำสั่งซื้อของ Statement นี้อยู่ใน Nexflow แล้ว และตรวจสถานะ SML ล่าสุดแล้ว สร้างเอกสารขายและส่ง SML เฉพาะรายการที่ยังขาด",
 		})
 		return
 	}
@@ -695,7 +704,7 @@ func (h *TikTokSettlementHandler) ImportMissingOrders(c *gin.Context) {
 	} else if remaining > 0 {
 		message += fmt.Sprintf(" เหลือ %d รายการ ให้กดนำเข้าต่อ", remaining)
 	} else {
-		message += " ขั้นถัดไปคือสร้างเอกสารขายและส่ง SML สำหรับรายการที่ยังขาด แล้วกดตรวจข้อมูลใหม่"
+		message += " ขั้นถัดไปคือสร้างเอกสารขายและส่ง SML สำหรับรายการที่ยังขาด"
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out, "imported_count": imported, "remaining_count": remaining, "remaining_known": remainingKnown, "message": message})
 }
@@ -1711,7 +1720,7 @@ func (h *TikTokSettlementHandler) loadRun(ctx context.Context, id string, withIt
 		return nil, err
 	}
 	if withItems {
-		rows, err := h.db.QueryContext(ctx, `SELECT id::text,order_id,sml_invoice_doc_no,customer_code,invoice_amount,settlement_amount,fee_amount,shipping_amount,adjustment_amount,refund_amount,reserve_amount,currency,status,block_reason,receipt_doc_no FROM tiktok_settlement_items WHERE run_id=$1::uuid ORDER BY order_id`, id)
+		rows, err := h.db.QueryContext(ctx, `SELECT i.id::text,i.order_id,EXISTS(SELECT 1 FROM tiktok_shop_order_snapshots s WHERE s.shop_id=$2 AND s.order_id=i.order_id),i.sml_invoice_doc_no,i.customer_code,i.invoice_amount,i.settlement_amount,i.fee_amount,i.shipping_amount,i.adjustment_amount,i.refund_amount,i.reserve_amount,i.currency,i.status,i.block_reason,i.receipt_doc_no FROM tiktok_settlement_items i WHERE i.run_id=$1::uuid ORDER BY i.order_id`, id, run.ShopID)
 		if err != nil {
 			return nil, err
 		}
@@ -1719,7 +1728,7 @@ func (h *TikTokSettlementHandler) loadRun(ctx context.Context, id string, withIt
 		run.Items = []tikTokSettlementItemView{}
 		for rows.Next() {
 			var item tikTokSettlementItemView
-			if err := rows.Scan(&item.ID, &item.OrderID, &item.SMLInvoiceDocNo, &item.CustomerCode, &item.InvoiceAmount, &item.SettlementAmount, &item.FeeAmount, &item.ShippingAmount, &item.AdjustmentAmount, &item.RefundAmount, &item.ReserveAmount, &item.Currency, &item.Status, &item.BlockReason, &item.ReceiptDocNo); err != nil {
+			if err := rows.Scan(&item.ID, &item.OrderID, &item.OrderSnapshotAvailable, &item.SMLInvoiceDocNo, &item.CustomerCode, &item.InvoiceAmount, &item.SettlementAmount, &item.FeeAmount, &item.ShippingAmount, &item.AdjustmentAmount, &item.RefundAmount, &item.ReserveAmount, &item.Currency, &item.Status, &item.BlockReason, &item.ReceiptDocNo); err != nil {
 				return nil, err
 			}
 			run.Items = append(run.Items, item)

@@ -58,6 +58,7 @@ type Shop = {
 type Item = {
   id: string;
   order_id: string;
+  order_snapshot_available: boolean;
   sml_invoice_doc_no?: string;
   settlement_amount: number;
   status: string;
@@ -376,21 +377,6 @@ export default function TikTokSettlement() {
       toast.error(
         error?.response?.data?.error?.message ??
           "โหลดรายละเอียด Statement ไม่สำเร็จ",
-      );
-    }
-  };
-  const reconcile = async () => {
-    if (!selected) return;
-    try {
-      const response = await client.post<{ data: Run }>(
-        `/api/tiktok-settlements/${selected.id}/reconcile`,
-      );
-      setSelected(response.data.data);
-      await load();
-      toast.success("ตรวจข้อมูลเอกสารล่าสุดแล้ว");
-    } catch (error: any) {
-      toast.error(
-        error?.response?.data?.error?.message ?? "ตรวจข้อมูลไม่สำเร็จ",
       );
     }
   };
@@ -950,7 +936,7 @@ export default function TikTokSettlement() {
                     {missingOrderImportNotice.kind === "success" &&
                       (missingOrderImportNotice.importedCount ?? 0) > 0 && (
                         <p className="mt-1 text-foreground/80">
-                          ขั้นถัดไป: ตรวจและสร้างเอกสารขายใน Nexflow แล้วส่ง SML สำหรับออเดอร์ที่ยังขาด ก่อนกดตรวจข้อมูลใหม่
+                          ขั้นถัดไป: ตรวจและสร้างเอกสารขายใน Nexflow แล้วส่ง SML สำหรับออเดอร์ที่ยังขาด
                         </p>
                       )}
                   </div>
@@ -970,9 +956,11 @@ export default function TikTokSettlement() {
                     <div className="min-w-0">
                       <p className="truncate font-medium">{item.order_id}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {item.sml_invoice_doc_no ||
-                          item.block_reason ||
-                          "ยังไม่พบใบขาย SML"}
+                        {item.sml_invoice_doc_no
+                          ? `ส่ง SML แล้ว · ${item.sml_invoice_doc_no}`
+                          : item.order_snapshot_available
+                            ? "นำเข้า order แล้ว · ยังไม่สร้างเอกสาร/SML"
+                            : item.block_reason || "ยังไม่พบ order ใน Nexflow"}
                       </p>
                     </div>
                     <span className="whitespace-nowrap tabular-nums">
@@ -1010,18 +998,7 @@ export default function TikTokSettlement() {
               ) : (
                 <FileText className="mr-2 h-4 w-4" />
               )}
-              นำเข้าคำสั่งซื้อที่ขาด
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void reconcile()}
-              disabled={
-                !selected ||
-                selected.status === "sent" ||
-                !["PAID", "SETTLED"].includes(selected.payment_status)
-              }
-            >
-              ตรวจข้อมูลใหม่
+              ตรวจและนำเข้าคำสั่งซื้อที่ขาด
             </Button>
             <Button
               onClick={() => {
