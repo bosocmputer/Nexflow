@@ -160,6 +160,14 @@ func (f *tenantTikTokReviewedBillCreatorFake) Create(_ context.Context, input ti
 	return f.result, f.err
 }
 
+func (f *tenantTikTokReviewedBillCreatorFake) CreateFromVerifiedPreview(_ context.Context, preview *tiktokshop.TikTokBillShadowPreview, actorID, traceID string) (*tiktokshop.TikTokReviewedBillResult, error) {
+	f.calls++
+	if preview != nil {
+		f.input = tiktokshop.TikTokReviewedBillInput{ShopID: preview.ShopID, OrderID: preview.OrderID, ReviewDigest: preview.ReviewDigest, ActorID: actorID, TraceID: traceID}
+	}
+	return f.result, f.err
+}
+
 func (f *tenantTikTokBillShadowMapperFake) Preview(_ context.Context, input tiktokshop.TikTokBillShadowMappingSelection) (models.MarketplaceAliasImpact, error) {
 	f.previewCalls++
 	f.previewInput = input

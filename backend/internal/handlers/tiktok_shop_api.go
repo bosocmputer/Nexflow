@@ -65,6 +65,7 @@ type TikTokShopBillShadowMapper interface {
 
 type TikTokShopReviewedBillCreator interface {
 	Create(context.Context, tiktokshop.TikTokReviewedBillInput) (*tiktokshop.TikTokReviewedBillResult, error)
+	CreateFromVerifiedPreview(context.Context, *tiktokshop.TikTokBillShadowPreview, string, string) (*tiktokshop.TikTokReviewedBillResult, error)
 }
 
 type TikTokShopProductCatalogSyncer interface {

@@ -249,10 +249,7 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		c.markNeedsReview(ctx, job, "", "operator_missing", "ไม่พบผู้เปิด Auto SML กรุณาปิดและเปิดใหม่")
 		return
 	}
-	result, err := c.creator.Create(ctx, tiktokshop.TikTokReviewedBillInput{
-		ShopID: job.ShopID, OrderID: job.OrderID, ReviewDigest: preview.ReviewDigest,
-		ActorID: strings.TrimSpace(*setting.EnabledBy), TraceID: "tiktok-auto-sml-" + job.ID,
-	})
+	result, err := c.creator.CreateFromVerifiedPreview(ctx, preview, strings.TrimSpace(*setting.EnabledBy), "tiktok-auto-sml-"+job.ID)
 	if err != nil || result == nil || strings.TrimSpace(result.BillID) == "" {
 		if errors.Is(err, tiktokshop.ErrTikTokReviewedBillNotReady) || errors.Is(err, tiktokshop.ErrTikTokReviewedBillReviewChanged) || errors.Is(err, tiktokshop.ErrTikTokReviewedBillConflict) {
 			c.markNeedsReview(ctx, job, "", "bill_review_required", "ข้อมูลบิลเปลี่ยน กรุณาตรวจสอบก่อนส่ง")

@@ -79,6 +79,25 @@ func TestTikTokReviewedBillCreatesOnePendingBillFromReviewedSnapshot(t *testing.
 	}
 }
 
+func TestTikTokReviewedBillCreatesFromVerifiedPreviewWithoutReloadingEvidence(t *testing.T) {
+	source := readyControlledTikTokBillSource()
+	loader := &billShadowSourceFake{source: source}
+	preview, err := NewTikTokBillShadowService(loader).Preview(t.Context(), source.ShopID, source.Order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := &reviewedBillWriterFake{}
+	result, err := NewTikTokReviewedBillService(loader, writer).CreateFromVerifiedPreview(
+		t.Context(), preview, "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef", "worker-verified-preview",
+	)
+	if err != nil || result == nil || writer.calls != 1 {
+		t.Fatalf("result=%+v err=%v writer_calls=%d", result, err, writer.calls)
+	}
+	if loader.calls != 1 {
+		t.Fatalf("verified worker path must not reload evidence, calls=%d", loader.calls)
+	}
+}
+
 func TestTikTokReviewedBillReplayReusesOnlySameShopReviewedBill(t *testing.T) {
 	source := readyControlledTikTokBillSource()
 	preview, err := NewTikTokBillShadowService(&billShadowSourceFake{source: source}).Preview(t.Context(), source.ShopID, source.Order.ID)

@@ -76,17 +76,43 @@ func (s *TikTokReviewedBillService) Create(ctx context.Context, input TikTokRevi
 	if subtle.ConstantTimeCompare([]byte(preview.ReviewDigest), []byte(input.ReviewDigest)) != 1 {
 		return nil, ErrTikTokReviewedBillReviewChanged
 	}
+	return s.CreateFromVerifiedPreview(ctx, preview, input.ActorID, input.TraceID)
+}
 
-	bill, items, audit, err := buildReviewedTikTokBill(preview, input)
+// CreateFromVerifiedPreview creates a local Bill from one already-validated
+// snapshot. It is used by the durable worker after it has checked the current
+// route, mapping, lifecycle, and fingerprint. Re-reading here could make a
+// stable order appear to change only because non-financial catalog evidence was
+// refreshed between two adjacent reads. Database uniqueness remains the final
+// duplicate guard, and a conflict is reloaded before being reported.
+func (s *TikTokReviewedBillService) CreateFromVerifiedPreview(ctx context.Context, preview *TikTokBillShadowPreview, actorID, traceID string) (*TikTokReviewedBillResult, error) {
+	actorID = strings.TrimSpace(actorID)
+	traceID = strings.TrimSpace(traceID)
+	if s == nil || s.loader == nil || s.writer == nil || preview == nil ||
+		!ValidTikTokShopID(preview.ShopID) || !ValidTikTokShopID(preview.OrderID) ||
+		!validTikTokBillShadowImpactDigest(preview.ReviewDigest) || actorID == "" {
+		return nil, ErrTikTokReviewedBillInvalidInput
+	}
+	if preview.ExistingBill != nil {
+		return reviewedTikTokExistingBill(preview.ExistingBill, preview.ShopID)
+	}
+	if !preview.ReadyForReviewedBill || len(preview.Blockers) != 0 {
+		return nil, ErrTikTokReviewedBillNotReady
+	}
+
+	bill, items, audit, err := buildReviewedTikTokBill(preview, TikTokReviewedBillInput{
+		ShopID: preview.ShopID, OrderID: preview.OrderID, ReviewDigest: preview.ReviewDigest,
+		ActorID: actorID, TraceID: traceID,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if err := s.writer.CreateWithItemsAndAudit(bill, items, audit); err != nil {
 		// The database uniqueness guard may have won a concurrent retry. Reload
 		// and only return success when the winner is the same reviewed shop flow.
-		reloaded, reloadErr := NewTikTokBillShadowService(s.loader).Preview(ctx, input.ShopID, input.OrderID)
+		reloaded, reloadErr := NewTikTokBillShadowService(s.loader).Preview(ctx, preview.ShopID, preview.OrderID)
 		if reloadErr == nil && reloaded != nil && reloaded.ExistingBill != nil {
-			if existing, existingErr := reviewedTikTokExistingBill(reloaded.ExistingBill, input.ShopID); existingErr == nil {
+			if existing, existingErr := reviewedTikTokExistingBill(reloaded.ExistingBill, preview.ShopID); existingErr == nil {
 				return existing, nil
 			}
 		}

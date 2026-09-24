@@ -190,7 +190,8 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 		       source_hash=EXCLUDED.source_hash,bill_fingerprint=EXCLUDED.bill_fingerprint,
 		       route_signature=EXCLUDED.route_signature,next_run_at=NOW(),lease_until=NULL,
 		       last_error_code='',last_error_message='',completed_at=NULL,updated_at=NOW()
-		 WHERE tiktok_shop_auto_sml_jobs.status='bill_created'
+		 WHERE (
+		   tiktok_shop_auto_sml_jobs.status='bill_created'
 		   AND EXISTS (
 		     SELECT 1 FROM tiktok_shop_auto_sml_settings enabled_setting
 		      WHERE enabled_setting.shop_id=EXCLUDED.shop_id
@@ -198,7 +199,12 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 		        AND enabled_setting.sml_send_enabled=TRUE
 		        AND enabled_setting.paused_reason=''
 		   )
-		   AND $8 IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')`,
+		   AND $8 IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')
+		 ) OR (
+		   $7=TRUE AND tiktok_shop_auto_sml_jobs.status='needs_review'
+		   AND tiktok_shop_auto_sml_jobs.last_error_code='bill_review_required'
+		   AND tiktok_shop_auto_sml_jobs.bill_id IS NULL
+		 )`,
 		strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID), input.TriggerTransitionAt.UTC(),
 		strings.TrimSpace(input.SourceHash), strings.TrimSpace(input.BillFingerprint), strings.TrimSpace(input.RouteSignature), input.AllowHistorical, strings.TrimSpace(input.OrderStatus))
 	if err != nil {
@@ -233,6 +239,7 @@ func (r *TikTokAutoSMLRepo) ListBillBacklogCandidates(ctx context.Context, limit
 		   AND NOT EXISTS (
 		     SELECT 1 FROM tiktok_shop_auto_sml_jobs j
 		      WHERE j.shop_id=s.shop_id AND j.order_id=s.order_id
+		        AND NOT (j.status='needs_review' AND j.last_error_code='bill_review_required' AND j.bill_id IS NULL)
 		   )
 		 ORDER BY s.last_synced_at ASC,s.order_id ASC
 		 LIMIT $1`, limit)
