@@ -27,7 +27,7 @@ func TestBuildTikTokShopNewOrderMessagesAreBoundedAndPIIFree(t *testing.T) {
 		"มีออเดอร์ TikTok Shop ใหม่", "ร้าน: henna_milkford", "Order ID: 586030483469993439",
 		"สถานะ: รอจัดส่ง", "ยอดสินค้า: 300.00 THB", "ยอดลูกค้าชำระ: 307.49 THB",
 		"สีเพ้นท์คิ้วมิวฟอร์ด รุ่นพิเศษ (No.5 สีฟ้า) x2",
-		"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order_id=586030483469993439",
+		"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order=586030483469993439&shop_id=7494619203789490654",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("TikTok text missing %q:\n%s", want, text)
@@ -75,7 +75,7 @@ func TestEnqueueTikTokShopNewOrderUsesDurableRecipientDedupe(t *testing.T) {
 	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
 		WithArgs(
 			"tiktok_shop", "info", "มีออเดอร์ TikTok Shop ใหม่", sqlmock.AnyArg(),
-			"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order_id=586030483469993439",
+			"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order=586030483469993439&shop_id=7494619203789490654",
 			"tiktok_shop_order", "7494619203789490654:586030483469993439",
 			"tiktok_shop:new_order:7494619203789490654:586030483469993439",
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1,

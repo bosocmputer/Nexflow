@@ -171,6 +171,16 @@ interface TikTokOperationsSummary {
   shops: TikTokOrderSyncSetting[]
 }
 
+interface TikTokOrderReconcileResult {
+  run_id: string
+  shop_id: string
+  window_start: string
+  window_end: string
+  page_count: number
+  discovered_count: number
+  snapshotted_count: number
+}
+
 interface TikTokReviewedBillResponse {
   data: {
     bill_id: string
@@ -243,6 +253,7 @@ export default function TikTokShopOperations() {
   const [diagnostics, setDiagnostics] = useState<TikTokDiagnostics | null>(null)
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
+  const [syncingNow, setSyncingNow] = useState(false)
   const [autoSMLSaving, setAutoSMLSaving] = useState(false)
   const [autoSMLConfirmChange, setAutoSMLConfirmChange] = useState<{ setting: TikTokAutoSMLSetting; enabled: boolean } | null>(null)
   const [autoSMLRetryingOrder, setAutoSMLRetryingOrder] = useState('')
@@ -273,11 +284,14 @@ export default function TikTokShopOperations() {
   const shopID = params.get('shop_id') ?? ALL
   const status = params.get('status') ?? ALL
   const orderID = params.get('order_id') ?? ''
-  const detailRequested = params.get('detail') === '1'
+  const detailOrderID = params.get('order') ?? ''
+  const legacyDetailRequested = params.get('detail') === '1'
+  const requestedDetailOrderID = detailOrderID || (legacyDetailRequested ? orderID : '')
   const reviewOrderID = params.get('review_order_id') ?? ''
   const [pageJumpInput, setPageJumpInput] = useState(String(page))
   const operationsRequestSequence = useRef(0)
   const diagnosticsRequestSequence = useRef(0)
+  const detailRequestSequence = useRef(0)
   const dismissedDetailOrderRef = useRef('')
   const total = orders?.total_items ?? 0
   const totalPages = Math.max(1, orders?.total_pages ?? 1)
@@ -345,24 +359,52 @@ export default function TikTokShopOperations() {
     setQuery({ review_order_id: null })
   }, [loading, orders?.data, previewOpen, reviewOrderID, setQuery])
 
+  // Old LINE/browser links used `order_id` plus `detail=1`. Migrate them to
+  // the dedicated drawer parameter once, while still accepting them so prior
+  // notifications do not break.
   useEffect(() => {
-    if (!detailRequested) {
+    if (detailOrderID || !legacyDetailRequested || !orderID) return
+    setQuery({ order: orderID, order_id: null, detail: null, page: null })
+  }, [detailOrderID, legacyDetailRequested, orderID, setQuery])
+
+  const loadDetailOrder = useCallback(async (targetShopID: string, targetOrderID: string) => {
+    const requestSequence = ++detailRequestSequence.current
+    try {
+      // This is a local snapshot lookup only. It deliberately does not call
+      // TikTok again and never changes the main queue's filters.
+      const response = await client.get<TikTokOrderPage>('/api/tiktok-shop-api/orders', {
+        params: { shop_id: targetShopID, order_id: targetOrderID, page: 1, page_size: 1 },
+      })
+      if (requestSequence !== detailRequestSequence.current) return
+      const row = response.data.data.find((item) => item.order_id === targetOrderID && item.shop_id === targetShopID)
+      if (row) {
+        setDetailOrder(row)
+        return
+      }
+      const key = tiktokOrderDetailKey(targetShopID, targetOrderID)
+      if (dismissedDetailOrderRef.current === key) return
+      dismissedDetailOrderRef.current = key
+      toast.error('ไม่พบคำสั่งซื้อ TikTok Shop ในร้านที่เลือก')
+      setQuery({ order: null, detail: null })
+    } catch (cause: unknown) {
+      if (requestSequence !== detailRequestSequence.current) return
+      toast.error(apiErrorMessage(cause, 'เปิด Timeline คำสั่งซื้อ TikTok Shop ไม่สำเร็จ'))
+    }
+  }, [setQuery])
+
+  useEffect(() => {
+    if (!requestedDetailOrderID) {
       dismissedDetailOrderRef.current = ''
       return
     }
-    if (loading || !orderID || !shouldOpenTikTokDetailFromQuery(shopID, orderID, detailRequested, Boolean(detailOrder), dismissedDetailOrderRef.current)) return
-    const row = orders?.data.find((item) => item.order_id === orderID && (shopID === ALL || item.shop_id === shopID))
+    if (loading || shopID === ALL || !shouldOpenTikTokDetailFromQuery(shopID, requestedDetailOrderID, true, Boolean(detailOrder), dismissedDetailOrderRef.current)) return
+    const row = orders?.data.find((item) => item.order_id === requestedDetailOrderID && item.shop_id === shopID)
     if (row) {
       setDetailOrder(row)
       return
     }
-    const key = tiktokOrderDetailKey(shopID, orderID)
-    if (orders && dismissedDetailOrderRef.current !== key) {
-      dismissedDetailOrderRef.current = key
-      toast.error('ไม่พบคำสั่งซื้อ TikTok Shop ในร้านที่เลือก')
-      setQuery({ detail: null })
-    }
-  }, [detailOrder, detailRequested, loading, orderID, orders, setQuery, shopID])
+    if (orders) void loadDetailOrder(shopID, requestedDetailOrderID)
+  }, [detailOrder, loadDetailOrder, loading, orders, requestedDetailOrderID, shopID])
 
   useEffect(() => {
     if (!previewOpen || !previewOrder) return
@@ -402,6 +444,37 @@ export default function TikTokShopOperations() {
       params: { shop_id: shopID === ALL ? undefined : shopID },
     })
     if (requestSequence === operationsRequestSequence.current) setSummary(response.data)
+  }, [shopID])
+
+  const syncOrdersNow = useCallback(async () => {
+    if (shopID === ALL) {
+      toast.error('กรุณาเลือกร้าน TikTok Shop หนึ่งร้านก่อนซิงก์')
+      return
+    }
+    // The TikTok Order List reconciliation contract accepts at most 24 hours.
+    // End a few seconds in the past so a small browser/server clock skew cannot
+    // make an otherwise valid manual sync fail closed.
+    const windowEnd = Math.floor(Date.now() / 1000) - 10
+    const windowStart = windowEnd - (24 * 60 * 60)
+    setSyncingNow(true)
+    try {
+      const response = await client.post<{ data: TikTokOrderReconcileResult }>('/api/tiktok-shop-api/orders/reconcile', {
+        shop_id: shopID,
+        update_time_ge: windowStart,
+        update_time_lt: windowEnd,
+      })
+      const result = response.data.data
+      toast.success(
+        result.snapshotted_count > 0
+          ? `ซิงก์ TikTok Shop แล้ว อัปเดต ${result.snapshotted_count.toLocaleString('th-TH')} ออเดอร์`
+          : 'ซิงก์ TikTok Shop แล้ว ไม่พบออเดอร์ที่มีการเปลี่ยนแปลงใน 24 ชั่วโมงล่าสุด',
+      )
+      setRefreshTick((value) => value + 1)
+    } catch (cause: unknown) {
+      toast.error(apiErrorMessage(cause, 'ซิงก์ออเดอร์ TikTok Shop ไม่สำเร็จ'))
+    } finally {
+      setSyncingNow(false)
+    }
   }, [shopID])
 
   const loadDiagnostics = useCallback(async (silent = false) => {
@@ -497,18 +570,19 @@ export default function TikTokShopOperations() {
     }
     dismissedDetailOrderRef.current = ''
     setDetailOrder(row)
-    setQuery({ shop_id: row.shop_id, order_id: row.order_id, detail: '1', page: null })
+    // Keep the queue behind the drawer exactly as it was. `order` is the
+    // timeline deep link; `order_id` is only a deliberate list search.
+    setQuery({ shop_id: row.shop_id, order: row.order_id, order_id: null, detail: null, page: null })
   }
   const setDetailOpen = (open: boolean) => {
     if (open) return
     dismissedDetailOrderRef.current = tiktokOrderDetailKey(
       detailOrder?.shop_id ?? shopID,
-      detailOrder?.order_id ?? orderID,
+      detailOrder?.order_id ?? requestedDetailOrderID,
     )
     setDetailOrder(null)
-    // `order_id` is used only to open this deep-linked drawer.  Unlike a
-    // deliberate list search, it must disappear with the drawer so the user
-    // returns to the same unfiltered queue as Shopee Operations does.
+    // Clear only drawer state. A user-entered `order_id` search, if present,
+    // remains a real list filter after the drawer closes.
     setParams((current) => clearTikTokOrderDetailQuery(current), { replace: true })
   }
   const copyTikTokOrderID = useCallback(async (order: TikTokOrderRow) => {
@@ -663,9 +737,16 @@ export default function TikTokShopOperations() {
               {diagnosticsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
               ตรวจระบบ
             </Button>
-            <Button type="button" size="sm" className="h-8 gap-2" disabled={loading} onClick={() => setRefreshTick((value) => value + 1)}>
-              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-              รีเฟรชรายการ
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 gap-2"
+              disabled={syncingNow || shopID === ALL}
+              title={shopID === ALL ? 'เลือกร้านก่อนซิงก์ออเดอร์จาก TikTok Shop' : 'ดึงการเปลี่ยนแปลงออเดอร์ 24 ชั่วโมงล่าสุดจาก TikTok Shop'}
+              onClick={() => void syncOrdersNow()}
+            >
+              <RefreshCw className={cn('h-4 w-4', syncingNow && 'animate-spin')} />
+              ซิงก์
             </Button>
           </>}
       />

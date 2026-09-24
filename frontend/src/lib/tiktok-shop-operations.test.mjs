@@ -210,24 +210,26 @@ test('keeps TikTok row actions in the same create, document, and detail pattern 
 test('builds a shop-scoped TikTok order detail link without accepting malformed identities', () => {
   assert.equal(
     tiktokOrderDetailPath({ shopID: '7494619203789490654', orderID: '586129051626538855' }),
-    '/tiktok-shop-operations?shop_id=7494619203789490654&order_id=586129051626538855&detail=1',
+    '/tiktok-shop-operations?shop_id=7494619203789490654&order=586129051626538855',
   )
   assert.equal(tiktokOrderDetailPath({ shopID: '', orderID: '586129051626538855' }), '')
   assert.equal(tiktokOrderDetailPath({ shopID: 'shop/one', orderID: '586129051626538855' }), '')
   assert.equal(tiktokOrderDetailPath({ shopID: '7494619203789490654', orderID: '5861?bad' }), '')
 })
 
-test('removes the TikTok drawer-only order filter when the detail sheet closes', () => {
+test('removes the TikTok drawer deep link without changing an intentional list filter', () => {
   const next = clearTikTokOrderDetailQuery(new URLSearchParams({
     shop_id: '7494619203789490654',
-    order_id: '586198548136560051',
+    order: '586198548136560051',
+    order_id: '586199999999999999',
     detail: '1',
     status_group: 'to_ship',
   }))
   assert.equal(next.get('shop_id'), '7494619203789490654')
   assert.equal(next.get('status_group'), 'to_ship')
   assert.equal(next.has('detail'), false)
-  assert.equal(next.has('order_id'), false)
+  assert.equal(next.has('order'), false)
+  assert.equal(next.get('order_id'), '586199999999999999')
 })
 
 test('uses the same safe row-create guard as Shopee while leaving preview as the authority', () => {

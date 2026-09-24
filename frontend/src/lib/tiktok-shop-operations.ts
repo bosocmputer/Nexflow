@@ -337,8 +337,10 @@ export function tiktokOrderDetailPath(input: { shopID: string; orderID: string }
 
   const query = new URLSearchParams({
     shop_id: shopID,
-    order_id: orderID,
-    detail: '1',
+    // `order` is reserved for opening the timeline. `order_id` remains the
+    // deliberate list-filter parameter, so opening a drawer never narrows the
+    // queue rendered behind it.
+    order: orderID,
   })
   return `/tiktok-shop-operations?${query.toString()}`
 }
@@ -346,7 +348,7 @@ export function tiktokOrderDetailPath(input: { shopID: string; orderID: string }
 export function clearTikTokOrderDetailQuery(current: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(current)
   next.delete('detail')
-  next.delete('order_id')
+  next.delete('order')
   return next
 }
 

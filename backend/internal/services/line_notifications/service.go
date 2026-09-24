@@ -124,7 +124,7 @@ func (s *Service) EnqueueTikTokShopNewOrder(ctx context.Context, in models.TikTo
 			}
 		}
 	}
-	actionURL := TikTokShopOrderActionURL(s.publicBaseURL, in.OrderID)
+	actionURL := TikTokShopOrderActionURL(s.publicBaseURL, in.ShopID, in.OrderID)
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
 		Source:         "tiktok_shop",
 		Severity:       "info",
@@ -708,7 +708,7 @@ func BuildTikTokShopNewOrderLineText(in models.TikTokShopNewOrderNotification, p
 		parts = append(parts, "สินค้า:")
 		parts = append(parts, items...)
 	}
-	parts = append(parts, "เปิดใน Nexflow: "+TikTokShopOrderActionURL(publicBaseURL, in.OrderID))
+	parts = append(parts, "เปิดใน Nexflow: "+TikTokShopOrderActionURL(publicBaseURL, in.ShopID, in.OrderID))
 	return strings.Join(filterNonEmpty(parts), "\n")
 }
 
@@ -850,7 +850,7 @@ func tikTokShopAutoSMLActionURL(publicBaseURL string, in models.TikTokAutoSMLNot
 		}
 		return base + path
 	}
-	return TikTokShopOrderActionURL(publicBaseURL, in.OrderID)
+	return TikTokShopOrderActionURL(publicBaseURL, in.ShopID, in.OrderID)
 }
 
 // flexMarketplaceSourceChip mirrors the compact Marketplace channel tag in
@@ -871,8 +871,13 @@ func flexMarketplaceSourceChip(label, color string) map[string]any {
 	}
 }
 
-func TikTokShopOrderActionURL(publicBaseURL, orderID string) string {
-	path := "/tiktok-shop-operations?order_id=" + url.QueryEscape(strings.TrimSpace(orderID))
+func TikTokShopOrderActionURL(publicBaseURL, shopID, orderID string) string {
+	query := url.Values{}
+	if shopID = strings.TrimSpace(shopID); shopID != "" {
+		query.Set("shop_id", shopID)
+	}
+	query.Set("order", strings.TrimSpace(orderID))
+	path := "/tiktok-shop-operations?" + query.Encode()
 	base := strings.TrimRight(strings.TrimSpace(publicBaseURL), "/")
 	if base == "" {
 		return path
