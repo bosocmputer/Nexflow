@@ -179,11 +179,11 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO tiktok_shop_auto_sml_jobs
 		  (shop_id,order_id,trigger_status_snapshot,trigger_transition_at,trigger_config_version,source_hash,bill_fingerprint,route_signature)
-		SELECT $1,$2,$3,$4,st.config_version,$5,$6,$7
+		SELECT $1,$2,'AWAITING_COLLECTION',$3,st.config_version,$4,$5,$6
 		  FROM tiktok_shop_auto_sml_settings st
 		 WHERE st.shop_id=$1 AND st.enabled=TRUE AND st.paused_reason=''
-		   AND st.route_signature=$7
-		   AND ($8=TRUE OR (st.eligible_after IS NOT NULL AND $4 >= st.eligible_after))
+		   AND st.route_signature=$6
+		   AND ($7=TRUE OR (st.eligible_after IS NOT NULL AND $3 >= st.eligible_after))
 		ON CONFLICT (shop_id,order_id) DO UPDATE
 		   SET status='queued',trigger_status_snapshot=EXCLUDED.trigger_status_snapshot,
 		       trigger_transition_at=EXCLUDED.trigger_transition_at,trigger_config_version=EXCLUDED.trigger_config_version,
@@ -198,9 +198,9 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 		        AND enabled_setting.sml_send_enabled=TRUE
 		        AND enabled_setting.paused_reason=''
 		   )
-		   AND EXCLUDED.trigger_status_snapshot IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')`,
-		strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID), strings.TrimSpace(input.OrderStatus),
-		input.TriggerTransitionAt.UTC(), strings.TrimSpace(input.SourceHash), strings.TrimSpace(input.BillFingerprint), strings.TrimSpace(input.RouteSignature), input.AllowHistorical)
+		   AND $8 IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')`,
+		strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID), input.TriggerTransitionAt.UTC(),
+		strings.TrimSpace(input.SourceHash), strings.TrimSpace(input.BillFingerprint), strings.TrimSpace(input.RouteSignature), input.AllowHistorical, strings.TrimSpace(input.OrderStatus))
 	if err != nil {
 		return false, err
 	}

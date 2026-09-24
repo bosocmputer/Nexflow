@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-
-	"nexflow/internal/models"
 )
 
 func TestTikTokAutoSMLEnqueueCreatesBillJobsForEligibleSnapshots(t *testing.T) {
@@ -19,13 +17,13 @@ func TestTikTokAutoSMLEnqueueCreatesBillJobsForEligibleSnapshots(t *testing.T) {
 	defer db.Close()
 	repo := NewTikTokAutoSMLRepo(db)
 	transition := time.Date(2026, 9, 19, 10, 0, 0, 0, time.UTC)
-	mock.ExpectExec("INSERT INTO tiktok_shop_auto_sml_jobs").
-		WithArgs("7494619203789490654", "586030483469993439", models.TikTokAutoSMLTriggerAwaitingCollection, transition, string64("a"), string64("c"), string64("b"), false).
+	mock.ExpectExec("(?s)INSERT INTO tiktok_shop_auto_sml_jobs.*'AWAITING_COLLECTION'").
+		WithArgs("7494619203789490654", "586030483469993439", transition, string64("a"), string64("c"), string64("b"), false, "COMPLETED").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	inserted, err := repo.Enqueue(context.Background(), TikTokAutoSMLEnqueueInput{
 		ShopID: "7494619203789490654", OrderID: "586030483469993439",
-		OrderStatus: models.TikTokAutoSMLTriggerAwaitingCollection, TriggerTransitionAt: transition,
+		OrderStatus: "COMPLETED", TriggerTransitionAt: transition,
 		SourceHash: string64("a"), BillFingerprint: string64("c"), RouteSignature: string64("b"),
 	})
 	if err != nil || !inserted {
