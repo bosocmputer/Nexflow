@@ -1,4 +1,4 @@
-import { AlertTriangle, Eye, FileSearch, Info, PackageSearch } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Eye, FileSearch, PackageSearch } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -79,7 +79,7 @@ export function TikTokOrderDetailDrawer({
       <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl lg:max-w-2xl">
         <SheetHeader className="border-b border-border px-4 py-3 text-left sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <SheetTitle>รายละเอียดคำสั่งซื้อ TikTok Shop</SheetTitle>
+            <SheetTitle>Timeline คำสั่งซื้อ TikTok Shop</SheetTitle>
             <Badge className="border-[#111817] bg-[#111817] text-white hover:bg-[#111817]">TikTok Shop</Badge>
           </div>
           <SheetDescription>
@@ -118,9 +118,9 @@ export function TikTokOrderDetailDrawer({
                   <p className="text-sm font-medium text-foreground">{document.detail}</p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
                     {rawDocument.path
-                      ? 'เปิดเอกสาร Nexflow เพื่อตรวจข้อมูลหรือส่ง SML ตามสิทธิ์ของคุณ'
+                      ? 'เปิดเอกสารเพื่อตรวจข้อมูล แล้วกดส่ง SML ทีละใบจากหน้าเอกสารเดียวกับ Shopee'
                       : canCreateDocument
-                        ? 'ตรวจสินค้า การจับคู่ และยอดก่อนยืนยันสร้าง Bill ใน Nexflow'
+                        ? 'ตรวจสินค้า การจับคู่ และยอดก่อนยืนยันสร้างเอกสารใน Nexflow'
                         : 'ผู้ที่มีสิทธิ์สร้างเอกสารสามารถตรวจข้อมูลและสร้าง Bill ได้'}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -128,26 +128,20 @@ export function TikTokOrderDetailDrawer({
                       <Button asChild size="sm" variant="outline" className="gap-1.5">
                         <Link to={rawDocument.path}>
                           <Eye className="h-3.5 w-3.5" />
-                          เปิดเอกสาร Nexflow
+                          เปิดเอกสาร
                         </Link>
                       </Button>
                     ) : (
                       <Button type="button" size="sm" className="gap-1.5" disabled={!canCreateDocument} onClick={onReviewBill}>
                         <FileSearch className="h-3.5 w-3.5" />
-                        ตรวจและสร้างเอกสาร
+                        ตรวจเอกสารก่อนสร้าง
                       </Button>
                     )}
                   </div>
                 </div>
               </section>
 
-              <Alert className="border-info/30 bg-info/10">
-                <Info className="h-4 w-4" />
-                <AlertTitle>ขั้นตอนการทำงาน</AlertTitle>
-                <AlertDescription>
-                  หน้านี้ใช้ตรวจคำสั่งซื้อเท่านั้น การสร้าง Bill ต้องยืนยันอีกครั้ง และการส่ง SML ทำจากรายละเอียดเอกสาร Nexflow เพื่อป้องกันการส่งข้ามขั้นหรือสร้างเอกสารซ้ำ
-                </AlertDescription>
-              </Alert>
+              <ManualSMLFlow hasDocument={Boolean(rawDocument.path)} sentToSML={Boolean(order.sml_doc_no)} />
 
               {order.cancellation && (
                 <Alert className={cn(
@@ -168,6 +162,48 @@ export function TikTokOrderDetailDrawer({
         </ScrollArea>
       </SheetContent>
     </Sheet>
+  )
+}
+
+function ManualSMLFlow({ hasDocument, sentToSML }: { hasDocument: boolean; sentToSML: boolean }) {
+  const steps = [
+    {
+      label: 'ตรวจคำสั่งซื้อ',
+      detail: 'ตรวจยอด สินค้า และสถานะ TikTok Shop',
+      complete: true,
+    },
+    {
+      label: 'สร้างเอกสาร Nexflow',
+      detail: hasDocument ? 'สร้างเอกสารแล้ว' : 'รอตรวจและยืนยันสร้าง',
+      complete: hasDocument,
+    },
+    {
+      label: 'ส่งเข้า SML',
+      detail: sentToSML ? 'ส่ง SML แล้ว' : hasDocument ? 'เปิดเอกสารเพื่อส่งทีละใบ' : 'ทำหลังสร้างเอกสาร',
+      complete: sentToSML,
+    },
+  ]
+
+  return (
+    <section aria-labelledby="tiktok-manual-sml-flow">
+      <h2 id="tiktok-manual-sml-flow" className="mb-2 text-sm font-semibold">ขั้นตอนส่ง SML แบบกดเอง</h2>
+      <ol className="overflow-hidden rounded-lg border border-border bg-card sm:grid sm:grid-cols-3 sm:divide-x sm:divide-border">
+        {steps.map((step, index) => (
+          <li key={step.label} className="flex min-w-0 gap-2.5 border-b border-border px-3 py-3 last:border-b-0 sm:border-b-0">
+            <span className={cn(
+              'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-semibold tabular-nums',
+              step.complete ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : 'border-border bg-muted/40 text-muted-foreground',
+            )}>
+              {step.complete ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : index + 1}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-medium text-foreground">{step.label}</span>
+              <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">{step.detail}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
   )
 }
 
