@@ -38,7 +38,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   buildTikTokReviewedBillRequest,
   buildTikTokCancellationRequest,
@@ -608,7 +608,8 @@ export default function TikTokShopOperations() {
   })
 
   return (
-    <div className="space-y-4">
+    <TooltipProvider delayDuration={150}>
+      <div className="space-y-4">
       <MarketplaceOperationsHeader
         titleID="tiktok-operations-title"
         title={cancellationQueue ? 'เอกสารยกเลิก TikTok Shop' : 'คำสั่งซื้อ TikTok Shop'}
@@ -898,7 +899,8 @@ export default function TikTokShopOperations() {
           if (autoSMLConfirmChange) await updateAutoSML(autoSMLConfirmChange.setting, autoSMLConfirmChange.enabled)
         }}
       />
-    </div>
+      </div>
+    </TooltipProvider>
   )
 }
 
