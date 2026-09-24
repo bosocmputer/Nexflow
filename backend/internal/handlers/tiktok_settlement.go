@@ -130,6 +130,7 @@ type tikTokSettlementItemView struct {
 	ID                     string  `json:"id"`
 	OrderID                string  `json:"order_id"`
 	OrderSnapshotAvailable bool    `json:"order_snapshot_available"`
+	BillID                 string  `json:"bill_id,omitempty"`
 	SMLInvoiceDocNo        string  `json:"sml_invoice_doc_no,omitempty"`
 	CustomerCode           string  `json:"customer_code,omitempty"`
 	InvoiceAmount          float64 `json:"invoice_amount"`
@@ -1720,7 +1721,24 @@ func (h *TikTokSettlementHandler) loadRun(ctx context.Context, id string, withIt
 		return nil, err
 	}
 	if withItems {
-		rows, err := h.db.QueryContext(ctx, `SELECT i.id::text,i.order_id,EXISTS(SELECT 1 FROM tiktok_shop_order_snapshots s WHERE s.shop_id=$2 AND s.order_id=i.order_id),i.sml_invoice_doc_no,i.customer_code,i.invoice_amount,i.settlement_amount,i.fee_amount,i.shipping_amount,i.adjustment_amount,i.refund_amount,i.reserve_amount,i.currency,i.status,i.block_reason,i.receipt_doc_no FROM tiktok_settlement_items i WHERE i.run_id=$1::uuid ORDER BY i.order_id`, id, run.ShopID)
+		rows, err := h.db.QueryContext(ctx, `SELECT i.id::text,i.order_id,
+			EXISTS(SELECT 1 FROM tiktok_shop_order_snapshots s WHERE s.shop_id=$2 AND s.order_id=i.order_id),
+			COALESCE(b.id::text,''),i.sml_invoice_doc_no,i.customer_code,i.invoice_amount,i.settlement_amount,
+			i.fee_amount,i.shipping_amount,i.adjustment_amount,i.refund_amount,i.reserve_amount,i.currency,
+			i.status,i.block_reason,i.receipt_doc_no
+			FROM tiktok_settlement_items i
+			LEFT JOIN LATERAL (
+				SELECT bill.id
+				FROM bills bill
+				WHERE bill.source='tiktok'
+					AND bill.source_account_key='shop:' || $2
+					AND bill.sml_order_id=i.order_id
+					AND bill.archived_at IS NULL
+				ORDER BY bill.created_at DESC,bill.id DESC
+				LIMIT 1
+			) b ON TRUE
+			WHERE i.run_id=$1::uuid
+			ORDER BY i.order_id`, id, run.ShopID)
 		if err != nil {
 			return nil, err
 		}
@@ -1728,7 +1746,7 @@ func (h *TikTokSettlementHandler) loadRun(ctx context.Context, id string, withIt
 		run.Items = []tikTokSettlementItemView{}
 		for rows.Next() {
 			var item tikTokSettlementItemView
-			if err := rows.Scan(&item.ID, &item.OrderID, &item.OrderSnapshotAvailable, &item.SMLInvoiceDocNo, &item.CustomerCode, &item.InvoiceAmount, &item.SettlementAmount, &item.FeeAmount, &item.ShippingAmount, &item.AdjustmentAmount, &item.RefundAmount, &item.ReserveAmount, &item.Currency, &item.Status, &item.BlockReason, &item.ReceiptDocNo); err != nil {
+			if err := rows.Scan(&item.ID, &item.OrderID, &item.OrderSnapshotAvailable, &item.BillID, &item.SMLInvoiceDocNo, &item.CustomerCode, &item.InvoiceAmount, &item.SettlementAmount, &item.FeeAmount, &item.ShippingAmount, &item.AdjustmentAmount, &item.RefundAmount, &item.ReserveAmount, &item.Currency, &item.Status, &item.BlockReason, &item.ReceiptDocNo); err != nil {
 				return nil, err
 			}
 			run.Items = append(run.Items, item)

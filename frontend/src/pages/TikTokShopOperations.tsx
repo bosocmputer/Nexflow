@@ -29,6 +29,7 @@ import {
 } from '@/components/tiktok/TikTokBillShadowDialog'
 import { TikTokProductMappingDialog } from '@/components/tiktok/TikTokProductMappingDialog'
 import { TikTokCancellationDialog, type TikTokCancellationPreview } from '@/components/tiktok/TikTokCancellationDialog'
+import { TikTokCancellationDocumentCell } from '@/components/tiktok/TikTokCancellationDocumentCell'
 import { TikTokOrderDetailDrawer } from '@/components/tiktok/TikTokOrderDetailDrawer'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -1284,10 +1285,19 @@ function DesktopRow({
       </td>
       <td className="px-3 py-2 align-top"><OrderStatusBadge status={row.order_status} /></td>
       <td className="px-3 py-2 align-top">
-        <div className="flex max-w-[260px] flex-col items-start gap-1">
-          <Badge variant="outline" className={cn('max-w-full truncate', documentBadgeClass(document.tone))}>{document.label}</Badge>
-          <div className="max-w-full truncate text-[11px] text-muted-foreground" title={document.detail}>{document.detail}</div>
-        </div>
+        {isCancellationRow && cancellationDocument ? (
+          <TikTokCancellationDocumentCell
+            orderID={row.order_id}
+            saleDocNo={row.sml_doc_no}
+            cancelDocNo={row.cancellation?.cancel_sml_doc_no}
+            document={cancellationDocument}
+          />
+        ) : (
+          <div className="flex max-w-[260px] flex-col items-start gap-1">
+            <Badge variant="outline" className={cn('max-w-full truncate', documentBadgeClass(document.tone))}>{document.label}</Badge>
+            <div className="max-w-full truncate text-[11px] text-muted-foreground" title={document.detail}>{document.detail}</div>
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 align-top">
         <div className="flex flex-wrap justify-end gap-1.5">
@@ -1308,9 +1318,12 @@ function DesktopRow({
               <Link to={document.path}><Eye className="h-3.5 w-3.5" />ใบขายเดิม</Link>
             </Button>
           ) : isCancellationRow && !cancellationDocument?.canReviewCancellation ? (
-            <Badge variant="outline" className="h-8 border-border bg-muted/40 px-2 text-muted-foreground">
-              ไม่ต้องดำเนินการ
-            </Badge>
+            <GuardedButton
+              icon={<FilePlus2 className="h-3.5 w-3.5" />}
+              label="สร้างเอกสาร"
+              disabledReason={cancellationDocument?.detail || 'ยังสร้างเอกสารยกเลิกไม่ได้'}
+              onClick={() => undefined}
+            />
           ) : actions.primary === 'open_document' && document.path ? (
             <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
               <Link to={document.path}>
@@ -1386,7 +1399,7 @@ function OrderStatusBadge({ status }: { status: string }) {
         status === 'CANCELLED' && 'border-destructive/30 bg-destructive/10 text-destructive',
       )}
     >
-      {tiktokOrderStatusLabel(status)}
+      {status === 'CANCELLED' ? 'ยกเลิกแล้ว' : tiktokOrderStatusLabel(status)}
     </Badge>
   )
 }

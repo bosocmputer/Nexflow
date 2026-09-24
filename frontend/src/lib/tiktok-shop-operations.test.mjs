@@ -253,8 +253,8 @@ test('does not reopen the TikTok detail sheet from the stale query rendered duri
 test('never offers a new sale document from the TikTok cancelled queue', () => {
   assert.deepEqual(tiktokCancellationState({}), {
     status: 'not_required',
-    label: 'ไม่ต้องสร้างเอกสารยกเลิก',
-    detail: 'ออเดอร์นี้ไม่มีใบขายใน Nexflow หรือ SML',
+    label: 'ไม่มีใบขายเดิม',
+    detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
     tone: 'muted',
     canReviewCancellation: false,
   })
@@ -264,8 +264,8 @@ test('never offers a new sale document from the TikTok cancelled queue', () => {
     documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
   }), {
     status: 'not_required',
-    label: 'ไม่ต้องสร้างเอกสารยกเลิก SML',
-    detail: 'ใบขายเดิมยังไม่เคยส่งเข้า SML',
+    label: 'ใบขายเดิมยังไม่ส่ง SML',
+    detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
     tone: 'muted',
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
     canReviewCancellation: false,

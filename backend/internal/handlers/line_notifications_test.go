@@ -125,7 +125,7 @@ func TestLineNotificationTikTokShopSampleMessage(t *testing.T) {
 		"henna_milkford",
 		"586030483469993439",
 		"ยอดลูกค้าชำระ: 307.49 THB",
-		"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order_id=586030483469993439",
+		"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order=586030483469993439&shop_id=7494619203789490654",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("TikTok Shop sample missing %q:\n%s", want, msg)

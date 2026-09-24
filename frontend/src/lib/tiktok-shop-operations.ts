@@ -215,8 +215,8 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
   if (!billID) {
     return {
       status: 'not_required',
-      label: 'ไม่ต้องสร้างเอกสารยกเลิก',
-      detail: 'ออเดอร์นี้ไม่มีใบขายใน Nexflow หรือ SML',
+      label: 'ไม่มีใบขายเดิม',
+      detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
       tone: 'muted',
       canReviewCancellation: false,
     }
@@ -224,8 +224,8 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
   if (!smlDocNo && billStatus !== 'sent') {
     return {
       status: 'not_required',
-      label: 'ไม่ต้องสร้างเอกสารยกเลิก SML',
-      detail: 'ใบขายเดิมยังไม่เคยส่งเข้า SML',
+      label: 'ใบขายเดิมยังไม่ส่ง SML',
+      detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
       tone: 'muted',
       ...(path ? { path } : {}),
       canReviewCancellation: false,

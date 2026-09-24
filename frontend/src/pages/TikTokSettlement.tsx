@@ -61,6 +61,7 @@ type Item = {
   id: string;
   order_id: string;
   order_snapshot_available: boolean;
+  bill_id?: string;
   sml_invoice_doc_no?: string;
   settlement_amount: number;
   status: string;
@@ -951,19 +952,26 @@ export default function TikTokSettlement() {
                   <span>ผลตรวจ</span>
                 </div>
                 {(selected.items ?? []).map((item) => {
+                  const billDetailPath = item.bill_id
+                    ? `/sale-invoices/${encodeURIComponent(item.bill_id)}`
+                    : "";
                   const orderDetailPath = item.order_snapshot_available
                     ? tiktokOrderDetailPath({ shopID: selected.shop_id, orderID: item.order_id })
                     : "";
+                  const detailPath = billDetailPath || orderDetailPath;
+                  const detailLabel = billDetailPath
+                    ? `เปิด Bill ของคำสั่งซื้อ ${item.order_id}`
+                    : `เปิดคำสั่งซื้อ TikTok Shop ${item.order_id}`;
                   return (
                   <div
                     key={item.id}
                     className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b px-3 py-2.5 text-sm last:border-0"
                   >
                     <div className="min-w-0">
-                      {orderDetailPath ? (
+                      {detailPath ? (
                         <Link
-                          to={orderDetailPath}
-                          aria-label={`เปิดคำสั่งซื้อ TikTok Shop ${item.order_id}`}
+                          to={detailPath}
+                          aria-label={detailLabel}
                           className="inline-flex max-w-full items-center gap-1 truncate font-medium text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <span className="truncate">{item.order_id}</span>
@@ -975,6 +983,8 @@ export default function TikTokSettlement() {
                       <p className="truncate text-xs text-muted-foreground">
                         {item.sml_invoice_doc_no
                           ? `ส่ง SML แล้ว · ${item.sml_invoice_doc_no}`
+                          : item.bill_id
+                            ? "เปิด Bill เพื่อตรวจและส่ง SML"
                           : item.order_snapshot_available
                             ? "นำเข้า order แล้ว · เปิดเพื่อตรวจ Bill และส่ง SML"
                             : item.block_reason || "ยังไม่พบ order ใน Nexflow"}
