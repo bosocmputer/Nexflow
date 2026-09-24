@@ -240,7 +240,11 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		c.markNeedsReview(ctx, job, "", "route_changed", "เส้นทาง SML เปลี่ยนหลังเข้าคิว กรุณาตรวจสอบก่อนส่ง")
 		return
 	}
-	if preview.ExistingBill == nil && (!preview.ReadyForReviewedBill || len(preview.Blockers) > 0 || preview.ReviewDigest == "") {
+	if preview.ExistingBill != nil {
+		c.markNeedsReview(ctx, job, "", "existing_tiktok_bill", "พบเอกสาร TikTok ของคำสั่งซื้อนี้แล้ว ระบบจะไม่สร้าง Bill ซ้ำ")
+		return
+	}
+	if !preview.ReadyForReviewedBill || len(preview.Blockers) > 0 || preview.ReviewDigest == "" {
 		code, message := firstTikTokAutoSMLBlocker(preview.Blockers)
 		c.markNeedsReview(ctx, job, "", code, message)
 		return

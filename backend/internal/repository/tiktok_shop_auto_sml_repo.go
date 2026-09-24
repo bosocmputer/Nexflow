@@ -233,8 +233,7 @@ func (r *TikTokAutoSMLRepo) ListBillBacklogCandidates(ctx context.Context, limit
 		 WHERE s.order_status IN ('AWAITING_SHIPMENT','PARTIALLY_SHIPPING','AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')
 		   AND NOT EXISTS (
 		     SELECT 1 FROM bills b
-		      WHERE b.source='tiktok' AND b.source_account_key='shop:'||s.shop_id
-		        AND b.sml_order_id=s.order_id AND b.archived_at IS NULL
+		      WHERE b.source='tiktok' AND b.sml_order_id=s.order_id AND b.archived_at IS NULL
 		   )
 		   AND NOT EXISTS (
 		     SELECT 1 FROM tiktok_shop_auto_sml_jobs j
