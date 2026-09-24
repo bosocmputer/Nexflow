@@ -300,6 +300,19 @@ export function tiktokRowActions(input: TikTokRowActionsInput): TikTokRowActions
   }
 }
 
+export function tiktokOrderDetailPath(input: { shopID: string; orderID: string }): string {
+  const shopID = input.shopID.trim()
+  const orderID = input.orderID.trim()
+  if (!/^[0-9]{1,32}$/.test(shopID) || !/^[0-9]{1,32}$/.test(orderID)) return ''
+
+  const query = new URLSearchParams({
+    shop_id: shopID,
+    order_id: orderID,
+    detail: '1',
+  })
+  return `/tiktok-shop-operations?${query.toString()}`
+}
+
 export function tiktokBillShadowReadinessLabel(ready: boolean, blockerCount: number): string {
   if (ready) return 'ข้อมูลพร้อมสำหรับตรวจและสร้างเอกสาร'
   return `ต้องแก้ไข ${Math.max(0, blockerCount).toLocaleString('th-TH')} จุดก่อนสร้างเอกสาร`

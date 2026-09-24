@@ -10,6 +10,7 @@ import {
   Store,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 
 import client from "@/api/client";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +48,7 @@ import {
   settlementPrimaryActionLabel,
 } from "@/lib/tiktok-settlement-presentation";
 import { resolveTikTokSettlementShopID } from "@/lib/tiktok-settlement";
+import { tiktokOrderDetailPath } from "@/lib/tiktok-shop-operations";
 import { cn } from "@/lib/utils";
 
 type Shop = {
@@ -948,18 +950,33 @@ export default function TikTokSettlement() {
                   <span>ยอด TikTok</span>
                   <span>ผลตรวจ</span>
                 </div>
-                {(selected.items ?? []).map((item) => (
+                {(selected.items ?? []).map((item) => {
+                  const orderDetailPath = item.order_snapshot_available
+                    ? tiktokOrderDetailPath({ shopID: selected.shop_id, orderID: item.order_id })
+                    : "";
+                  return (
                   <div
                     key={item.id}
                     className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b px-3 py-2.5 text-sm last:border-0"
                   >
                     <div className="min-w-0">
-                      <p className="truncate font-medium">{item.order_id}</p>
+                      {orderDetailPath ? (
+                        <Link
+                          to={orderDetailPath}
+                          aria-label={`เปิดคำสั่งซื้อ TikTok Shop ${item.order_id}`}
+                          className="inline-flex max-w-full items-center gap-1 truncate font-medium text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <span className="truncate">{item.order_id}</span>
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        </Link>
+                      ) : (
+                        <p className="truncate font-medium">{item.order_id}</p>
+                      )}
                       <p className="truncate text-xs text-muted-foreground">
                         {item.sml_invoice_doc_no
                           ? `ส่ง SML แล้ว · ${item.sml_invoice_doc_no}`
                           : item.order_snapshot_available
-                            ? "นำเข้า order แล้ว · ยังไม่สร้างเอกสาร/SML"
+                            ? "นำเข้า order แล้ว · เปิดเพื่อตรวจ Bill และส่ง SML"
                             : item.block_reason || "ยังไม่พบ order ใน Nexflow"}
                       </p>
                     </div>
@@ -981,7 +998,8 @@ export default function TikTokSettlement() {
                           : "ต้องตรวจ"}
                     </Badge>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

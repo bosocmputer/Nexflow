@@ -23,13 +23,13 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { MarketplaceOperationsHeader } from '@/components/marketplace/MarketplaceOperationsHeader'
 import { MarketplaceOperationsHelp } from '@/components/marketplace/MarketplaceOperationsHelp'
 import {
-  TikTokBillShadowButton,
   TikTokBillShadowDialog,
   type TikTokBillShadowItem,
   type TikTokBillShadowPreview,
 } from '@/components/tiktok/TikTokBillShadowDialog'
 import { TikTokProductMappingDialog } from '@/components/tiktok/TikTokProductMappingDialog'
 import { TikTokCancellationDialog, type TikTokCancellationPreview } from '@/components/tiktok/TikTokCancellationDialog'
+import { TikTokOrderDetailDrawer } from '@/components/tiktok/TikTokOrderDetailDrawer'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,7 @@ import {
   normalizeTikTokStatusGroup,
   tiktokCancellationState,
   tiktokCompactDocumentState,
+  tiktokOrderDetailPath,
   tiktokDocumentState,
   tiktokAutoSMLControlState,
   tiktokOperationsHeaderMeta,
@@ -245,6 +246,7 @@ export default function TikTokShopOperations() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [previewOrder, setPreviewOrder] = useState<TikTokOrderRow | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [detailOrder, setDetailOrder] = useState<TikTokOrderRow | null>(null)
   const [billPreview, setBillPreview] = useState<TikTokBillShadowPreview | null>(null)
   const [billPreviewLoading, setBillPreviewLoading] = useState(false)
   const [billPreviewError, setBillPreviewError] = useState('')
@@ -266,10 +268,12 @@ export default function TikTokShopOperations() {
   const shopID = params.get('shop_id') ?? ALL
   const status = params.get('status') ?? ALL
   const orderID = params.get('order_id') ?? ''
+  const detailRequested = params.get('detail') === '1'
   const reviewOrderID = params.get('review_order_id') ?? ''
   const [pageJumpInput, setPageJumpInput] = useState(String(page))
   const operationsRequestSequence = useRef(0)
   const diagnosticsRequestSequence = useRef(0)
+  const dismissedDetailOrderRef = useRef('')
   const total = orders?.total_items ?? 0
   const totalPages = Math.max(1, orders?.total_pages ?? 1)
   const pageStart = total === 0 ? 0 : (page - 1) * perPage + 1
@@ -335,6 +339,22 @@ export default function TikTokShopOperations() {
     setPreviewOpen(true)
     setQuery({ review_order_id: null })
   }, [loading, orders?.data, previewOpen, reviewOrderID, setQuery])
+
+  useEffect(() => {
+    if (!detailRequested || loading || !orderID || detailOrder?.order_id === orderID) return
+    const row = orders?.data.find((item) => item.order_id === orderID && (shopID === ALL || item.shop_id === shopID))
+    if (row) {
+      dismissedDetailOrderRef.current = ''
+      setDetailOrder(row)
+      return
+    }
+    const key = `${shopID}:${orderID}`
+    if (orders && dismissedDetailOrderRef.current !== key) {
+      dismissedDetailOrderRef.current = key
+      toast.error('ไม่พบคำสั่งซื้อ TikTok Shop ในร้านที่เลือก')
+      setQuery({ detail: null })
+    }
+  }, [detailOrder?.order_id, detailRequested, loading, orderID, orders, setQuery, shopID])
 
   useEffect(() => {
     if (!previewOpen || !previewOrder) return
@@ -461,6 +481,20 @@ export default function TikTokShopOperations() {
     setPreviewOrder(row)
     setBillCreateError('')
     setPreviewOpen(true)
+  }
+  const openOrderDetail = (row: TikTokOrderRow) => {
+    const path = tiktokOrderDetailPath({ shopID: row.shop_id, orderID: row.order_id })
+    if (!path) {
+      toast.error('ข้อมูลร้านหรือ Order ID ของ TikTok Shop ไม่ถูกต้อง')
+      return
+    }
+    setDetailOrder(row)
+    setQuery({ shop_id: row.shop_id, order_id: row.order_id, detail: '1', page: null })
+  }
+  const setDetailOpen = (open: boolean) => {
+    if (open) return
+    setDetailOrder(null)
+    setQuery({ detail: null })
   }
   const setBillPreviewOpen = (open: boolean) => {
     setPreviewOpen(open)
@@ -733,6 +767,7 @@ export default function TikTokShopOperations() {
                   row={row}
                   previewLoading={billPreviewLoading && previewOrder?.shop_id === row.shop_id && previewOrder?.order_id === row.order_id}
                   onPreview={() => openBillPreview(row)}
+                  onDetails={() => openOrderDetail(row)}
                   retryingAutoSML={autoSMLRetryingOrder === row.order_id}
                   canRetryAutoSML={Boolean(canManageMapping && autoSML?.global_enabled)}
                   onRetryAutoSML={() => void retryAutoSML(row)}
@@ -799,6 +834,17 @@ export default function TikTokShopOperations() {
         onMapItem={openProductMapping}
         onCreateBill={createReviewedBill}
         onOpenChange={setBillPreviewOpen}
+      />
+      <TikTokOrderDetailDrawer
+        open={Boolean(detailOrder)}
+        order={detailOrder}
+        canCreateDocument={canCreateDocument}
+        onOpenChange={setDetailOpen}
+        onReviewBill={() => {
+          if (!detailOrder) return
+          setDetailOpen(false)
+          openBillPreview(detailOrder)
+        }}
       />
       <TikTokProductMappingDialog
         open={mappingOpen}
@@ -1023,6 +1069,7 @@ function DesktopRow({
   retryingAutoSML,
   canRetryAutoSML,
   onPreview,
+  onDetails,
   onRetryAutoSML,
   cancellationQueue,
   cancellationLoading,
@@ -1033,6 +1080,7 @@ function DesktopRow({
   retryingAutoSML: boolean
   canRetryAutoSML: boolean
   onPreview: () => void
+  onDetails: () => void
   onRetryAutoSML: () => void
   cancellationQueue: boolean
   cancellationLoading: boolean
@@ -1117,13 +1165,10 @@ function DesktopRow({
               {actions.primaryLabel}
             </Button>
           )}
-          {!isCancellationRow && document.path && (
-            <TikTokBillShadowButton
-              loading={previewLoading}
-              label={actions.detailsLabel}
-              onClick={onPreview}
-            />
-          )}
+          <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={onDetails}>
+            <Eye className="h-3.5 w-3.5" />
+            {actions.detailsLabel}
+          </Button>
         </div>
       </td>
     </tr>

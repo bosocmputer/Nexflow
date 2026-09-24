@@ -26,6 +26,7 @@ const {
   tiktokDocumentState,
   tiktokCompactDocumentState,
   tiktokAutoSMLControlState,
+  tiktokOrderDetailPath,
   tiktokRowActions,
   tiktokShadowMappingValidation,
   tiktokSyncState,
@@ -215,6 +216,16 @@ test('keeps TikTok row actions in the same create, document, and detail pattern 
     primaryLabel: 'เอกสาร',
     detailsLabel: 'รายละเอียด',
   })
+})
+
+test('builds a shop-scoped TikTok order detail link without accepting malformed identities', () => {
+  assert.equal(
+    tiktokOrderDetailPath({ shopID: '7494619203789490654', orderID: '586129051626538855' }),
+    '/tiktok-shop-operations?shop_id=7494619203789490654&order_id=586129051626538855&detail=1',
+  )
+  assert.equal(tiktokOrderDetailPath({ shopID: '', orderID: '586129051626538855' }), '')
+  assert.equal(tiktokOrderDetailPath({ shopID: 'shop/one', orderID: '586129051626538855' }), '')
+  assert.equal(tiktokOrderDetailPath({ shopID: '7494619203789490654', orderID: '5861?bad' }), '')
 })
 
 test('never offers a new sale document from the TikTok cancelled queue', () => {
