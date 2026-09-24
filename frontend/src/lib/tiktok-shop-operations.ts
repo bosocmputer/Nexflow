@@ -137,8 +137,8 @@ export function tiktokOperationsHeaderMeta(input: TikTokOperationsHeaderMetaInpu
   const enabledShops = Math.max(0, input.autoSML.enabledShops)
   const configuredShops = Math.max(0, input.autoSML.configuredShops)
   const autoSMLLabel = enabledShops > 0
-    ? configuredShops > 1 ? `Auto SML เปิด ${enabledShops}/${configuredShops} ร้าน` : 'Auto SML เปิด'
-    : 'Auto SML ปิด'
+    ? configuredShops > 1 ? `สร้าง Bill อัตโนมัติ ${enabledShops}/${configuredShops} ร้าน` : 'สร้าง Bill อัตโนมัติ เปิด'
+    : 'สร้าง Bill อัตโนมัติ ปิด'
 
   return {
     modeLabel: 'เรียลไทม์',
@@ -196,10 +196,18 @@ export function tiktokCompactDocumentState(
   if (status === 'succeeded') {
     return { ...document, label: 'ส่ง SML แล้ว (อัตโนมัติ)', tone: 'success' }
   }
+  if (status === 'bill_created') {
+    return {
+      ...document,
+      label: 'สร้างเอกสารแล้ว (อัตโนมัติ)',
+      detail: 'รอส่ง SML ด้วยมือ',
+      tone: 'warning',
+    }
+  }
   if (status === 'failed' || status === 'needs_review') {
     return {
       ...document,
-      label: status === 'failed' ? 'Auto SML ไม่สำเร็จ' : 'Auto SML ต้องตรวจ',
+      label: status === 'failed' ? 'งานอัตโนมัติไม่สำเร็จ' : 'งานอัตโนมัติต้องตรวจ',
       detail: status === 'failed' ? 'ตรวจสาเหตุแล้วลองใหม่' : 'เปิดเอกสารเพื่อตรวจข้อมูล',
       tone: status === 'failed' ? 'danger' : 'warning',
     }
@@ -207,13 +215,13 @@ export function tiktokCompactDocumentState(
   if (status === 'queued' || status === 'retry_wait' || status === 'running') {
     return {
       ...document,
-      label: status === 'running' ? 'กำลังส่ง SML อัตโนมัติ' : 'รอส่ง SML อัตโนมัติ',
-      detail: status === 'retry_wait' ? 'ระบบจะลองส่งใหม่' : 'รอคิวตามลำดับ',
+      label: status === 'running' ? 'กำลังสร้างเอกสารอัตโนมัติ' : 'รอสร้างเอกสารอัตโนมัติ',
+      detail: status === 'retry_wait' ? 'ระบบจะลองสร้างใหม่' : 'รอคิวตามลำดับ',
       tone: 'warning',
     }
   }
   if (status === 'cancelled') {
-    return { ...document, label: 'ยกเลิกงาน Auto SML', detail: 'เปิดเอกสารเพื่อตรวจต่อ', tone: 'muted' }
+    return { ...document, label: 'ยกเลิกงานสร้างเอกสารอัตโนมัติ', detail: 'เปิดเอกสารเพื่อตรวจต่อ', tone: 'muted' }
   }
   return document
 }
@@ -221,7 +229,7 @@ export function tiktokCompactDocumentState(
 export function tiktokAutoSMLControlState(input: TikTokAutoSMLControlStateInput): TikTokAutoSMLControlState {
   if (input.selectedShopID === 'all') return { mode: 'summary', reason: 'เลือกร้านก่อนจัดการ' }
   if (input.role !== 'admin') return { mode: 'readonly', reason: 'เฉพาะผู้ดูแลระบบเปลี่ยนการตั้งค่าได้' }
-  if (!input.globalEnabled) return { mode: 'readonly', reason: 'ระบบส่ง SML อัตโนมัติยังไม่พร้อมใช้งาน' }
+  if (!input.globalEnabled) return { mode: 'readonly', reason: 'ระบบสร้างเอกสารอัตโนมัติยังไม่พร้อมใช้งาน' }
   return { mode: 'control' }
 }
 

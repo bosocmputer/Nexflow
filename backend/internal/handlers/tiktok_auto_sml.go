@@ -44,6 +44,7 @@ type TikTokAutoSMLWorkStore interface {
 	RecoverStaleJobs(context.Context) (int64, error)
 	LeaseJobs(context.Context, int, time.Duration) ([]models.TikTokAutoSMLJob, error)
 	LinkBill(context.Context, string, string, string) error
+	MarkBillCreated(context.Context, string, string, string) error
 	GetOrSetDocumentTime(context.Context, string, string) (string, error)
 	MarkNeedsReview(context.Context, string, string, string, string) error
 	MarkCancelled(context.Context, string, string, string) error
@@ -104,7 +105,7 @@ func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context
 		return nil
 	}
 	setting, err := c.repo.GetSetting(ctx, shopID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && (setting == nil || !setting.Enabled || setting.PausedReason != "")) {
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (setting == nil || !setting.AutoBillEnabled || setting.PausedReason != "")) {
 		return nil
 	}
 	if err != nil {
@@ -176,8 +177,8 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		return
 	}
 	setting, err := c.repo.GetSetting(ctx, job.ShopID)
-	if err != nil || setting == nil || !setting.Enabled || setting.PausedReason != "" || setting.ConfigVersion != job.TriggerConfigVersion {
-		c.markCancelled(ctx, job, "automation_changed", "การตั้งค่า Auto SML เปลี่ยนก่อนเริ่มส่ง")
+	if err != nil || setting == nil || !setting.AutoBillEnabled || setting.PausedReason != "" {
+		c.markCancelled(ctx, job, "automation_changed", "การตั้งค่าการสร้าง Bill อัตโนมัติเปลี่ยนก่อนเริ่มทำงาน")
 		return
 	}
 	preview, err := c.previewer.Preview(ctx, job.ShopID, job.OrderID)
@@ -230,6 +231,13 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		return
 	}
 	job.BillID = &result.BillID
+	// A queued job never inherits a later decision to auto-send SML. A setting
+	// change may still safely create its local Bill when the route evidence did
+	// not change, but it must finish in the manual-SML state.
+	if !setting.SMLEnabled || setting.ConfigVersion != job.TriggerConfigVersion {
+		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
+		return
+	}
 	if c.billH == nil || c.billH.billRepo == nil {
 		c.failTransient(ctx, job, "bill_sender_unavailable", "ระบบส่ง Bill ไป SML ยังไม่พร้อม")
 		return
@@ -252,9 +260,12 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		return
 	}
 	latestSetting, settingErr := c.repo.GetSetting(ctx, job.ShopID)
-	if settingErr != nil || latestSetting == nil || !latestSetting.Enabled || latestSetting.PausedReason != "" ||
-		latestSetting.ConfigVersion != job.TriggerConfigVersion || latestSetting.RouteSignature != job.RouteSignature {
-		c.markCancelled(ctx, job, "automation_changed", "การตั้งค่า Auto SML เปลี่ยนก่อนส่ง SML")
+	if settingErr != nil || latestSetting == nil || !latestSetting.AutoBillEnabled || latestSetting.PausedReason != "" || latestSetting.RouteSignature != job.RouteSignature {
+		c.markCancelled(ctx, job, "automation_changed", "การตั้งค่าอัตโนมัติเปลี่ยนก่อนส่ง SML")
+		return
+	}
+	if !latestSetting.SMLEnabled || latestSetting.ConfigVersion != job.TriggerConfigVersion {
+		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
 		return
 	}
 	documentTime, err := c.repo.GetOrSetDocumentTime(ctx, job.ID, time.Now().In(tikTokAutoSMLBangkok).Format("15:04"))
@@ -278,6 +289,14 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		c.failTransient(ctx, job, "sml_send_failed", firstNonEmpty(send.Error, send.Message, "ส่ง SML ไม่สำเร็จ"))
 	}
 	log.Info("tiktok_auto_sml_processed")
+}
+
+func (c *TikTokAutoSMLController) completeBillCreation(ctx context.Context, job models.TikTokAutoSMLJob, billID, reviewDigest string) {
+	if err := c.repo.MarkBillCreated(ctx, job.ID, billID, reviewDigest); err != nil {
+		c.logger.Warn("tiktok_auto_bill_mark_created_failed", zap.String("job_id", job.ID), zap.Error(err))
+		return
+	}
+	c.auditEvent("tiktok_auto_bill_created", "info", job, map[string]interface{}{"bill_id": billID, "sml_send": "manual"})
 }
 
 func (c *TikTokAutoSMLController) complete(ctx context.Context, job models.TikTokAutoSMLJob, bill *models.Bill) {
@@ -528,39 +547,83 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Enabled               *bool  `json:"enabled"`
+		AutoBillEnabled       *bool  `json:"auto_bill_enabled"`
+		SMLEnabled            *bool  `json:"sml_send_enabled"`
 		ExpectedConfigVersion int64  `json:"expected_config_version"`
 		Confirm               string `json:"confirm"`
 	}
-	if c.ShouldBindJSON(&request) != nil || request.Enabled == nil || request.ExpectedConfigVersion < 1 {
-		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลตั้งค่า Auto SML ไม่ถูกต้อง")
+	if c.ShouldBindJSON(&request) != nil || request.ExpectedConfigVersion < 1 || (request.AutoBillEnabled == nil && request.SMLEnabled == nil) || (request.AutoBillEnabled != nil && request.SMLEnabled != nil) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ระบุการตั้งค่าอัตโนมัติได้ครั้งละหนึ่งรายการ")
 		return
 	}
-	if *request.Enabled && (h.config == nil || !h.config.TikTokShopAutoSMLEnabled) {
-		h.error(c, http.StatusConflict, "auto_sml_global_disabled", "Auto SML ยังปิดในระดับเซิร์ฟเวอร์")
+	settings, err := h.autoSML.ListSettings(c.Request.Context())
+	if err != nil {
+		h.error(c, http.StatusInternalServerError, "auto_sml_settings_failed", "โหลดการตั้งค่าร้านไม่สำเร็จ")
 		return
 	}
-	expectedConfirmation := "DISABLE_TIKTOK_AUTO_SML"
-	confirmationMessage := "กรุณายืนยันปิด Auto SML อีกครั้ง"
-	if *request.Enabled {
-		expectedConfirmation = "ENABLE_TIKTOK_AUTO_SML"
-		confirmationMessage = "กรุณายืนยันเปิด Auto SML อีกครั้ง"
-	}
-	if strings.TrimSpace(request.Confirm) != expectedConfirmation {
-		h.error(c, http.StatusBadRequest, "confirmation_required", confirmationMessage)
-		return
-	}
-	routeSignature := ""
-	if *request.Enabled {
-		var code, message string
-		routeSignature, code, message = h.tikTokAutoSMLPreflight(c.Request.Context(), shopID)
-		if code != "" {
-			h.error(c, http.StatusConflict, code, message)
-			return
+	var current *models.TikTokAutoSMLSetting
+	for index := range settings {
+		if settings[index].ShopID == shopID {
+			current = &settings[index]
+			break
 		}
 	}
+	if current == nil {
+		h.error(c, http.StatusNotFound, "shop_not_connected", "ไม่พบร้าน TikTok Shop ที่เชื่อมต่อ")
+		return
+	}
+	autoBillEnabled, smlEnabled := current.AutoBillEnabled, current.SMLEnabled
+	confirmation, successMessage := "", ""
+	routeSignature := current.RouteSignature
+	if request.AutoBillEnabled != nil {
+		autoBillEnabled = *request.AutoBillEnabled
+		if !autoBillEnabled && smlEnabled {
+			h.error(c, http.StatusConflict, "sml_auto_still_enabled", "กรุณาปิดส่ง SML อัตโนมัติก่อนปิดการสร้าง Bill อัตโนมัติ")
+			return
+		}
+		if autoBillEnabled {
+			if h.config == nil || !h.config.TikTokShopAutoSMLEnabled {
+				h.error(c, http.StatusConflict, "auto_bill_global_disabled", "ระบบสร้าง Bill อัตโนมัติยังปิดในระดับเซิร์ฟเวอร์")
+				return
+			}
+			var code, message string
+			routeSignature, code, message = h.tikTokAutoBillPreflight(c.Request.Context(), shopID)
+			if code != "" {
+				h.error(c, http.StatusConflict, code, message)
+				return
+			}
+			confirmation, successMessage = "ENABLE_TIKTOK_AUTO_BILL", "เปิดสร้าง Bill ใน Nexflow อัตโนมัติสำหรับออเดอร์ใหม่แล้ว"
+		} else {
+			confirmation, successMessage = "DISABLE_TIKTOK_AUTO_BILL", "ปิดสร้าง Bill ใน Nexflow อัตโนมัติแล้ว"
+		}
+	} else {
+		smlEnabled = *request.SMLEnabled
+		if smlEnabled {
+			if !autoBillEnabled {
+				h.error(c, http.StatusConflict, "auto_bill_required", "เปิดสร้าง Bill อัตโนมัติก่อน จึงจะเปิดส่ง SML อัตโนมัติได้")
+				return
+			}
+			if h.config == nil || !h.config.TikTokShopAutoSMLEnabled || !h.config.TikTokShopSMLSendEnabled {
+				h.error(c, http.StatusConflict, "auto_sml_global_disabled", "ระบบส่ง SML อัตโนมัติยังปิดในระดับเซิร์ฟเวอร์")
+				return
+			}
+			var code, message string
+			routeSignature, code, message = h.tikTokAutoSMLPreflight(c.Request.Context(), shopID)
+			if code != "" {
+				h.error(c, http.StatusConflict, code, message)
+				return
+			}
+			confirmation, successMessage = "ENABLE_TIKTOK_AUTO_SML", "เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว"
+		} else {
+			confirmation, successMessage = "DISABLE_TIKTOK_AUTO_SML", "ปิดส่ง SML อัตโนมัติแล้ว"
+		}
+	}
+	if strings.TrimSpace(request.Confirm) != confirmation {
+		h.error(c, http.StatusBadRequest, "confirmation_required", "กรุณายืนยันการเปลี่ยนการตั้งค่าอีกครั้ง")
+		return
+	}
 	setting, err := h.autoSML.UpdateSetting(c.Request.Context(), repository.TikTokAutoSMLSettingUpdate{
-		ShopID: shopID, Enabled: *request.Enabled, ExpectedConfigVersion: request.ExpectedConfigVersion,
+		ShopID: shopID, AutoBillEnabled: autoBillEnabled, SMLEnabled: smlEnabled, ExpectedConfigVersion: request.ExpectedConfigVersion,
 		RouteSignature: routeSignature, UserID: strings.TrimSpace(c.GetString("user_id")),
 	})
 	if errors.Is(err, repository.ErrTikTokAutoSMLConfigConflict) {
@@ -573,9 +636,9 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 	}
 	if h.audit != nil {
 		userID, target := strings.TrimSpace(c.GetString("user_id")), shopID
-		_ = h.audit.Log(models.AuditEntry{Action: "tiktok_auto_sml_setting_updated", TargetID: &target, UserID: &userID, Source: "tiktok_shop", Detail: gin.H{"enabled": setting.Enabled, "config_version": setting.ConfigVersion, "eligible_after": setting.EligibleAfter, "historical_backfill": false}})
+		_ = h.audit.Log(models.AuditEntry{Action: "tiktok_auto_sml_setting_updated", TargetID: &target, UserID: &userID, Source: "tiktok_shop", Detail: gin.H{"auto_bill_enabled": setting.AutoBillEnabled, "sml_send_enabled": setting.SMLEnabled, "config_version": setting.ConfigVersion, "eligible_after": setting.EligibleAfter, "historical_backfill": false}})
 	}
-	c.JSON(http.StatusOK, gin.H{"setting": setting, "message": map[bool]string{true: "เปิด Auto SML สำหรับออเดอร์ใหม่แล้ว", false: "ปิด Auto SML แล้ว"}[*request.Enabled]})
+	c.JSON(http.StatusOK, gin.H{"setting": setting, "message": successMessage})
 }
 
 func (h *TikTokShopAPIHandler) RetryAutoSML(c *gin.Context) {
@@ -624,8 +687,15 @@ func (h *TikTokShopAPIHandler) RetryAutoSML(c *gin.Context) {
 }
 
 func (h *TikTokShopAPIHandler) tikTokAutoSMLPreflight(ctx context.Context, shopID string) (string, string, string) {
-	if h.config == nil || !h.config.TikTokShopOrderSyncEnabled || !h.config.TikTokShopWebhookEnabled || !h.config.TikTokShopSMLSendEnabled {
-		return "", "automation_dependency_disabled", "Order sync, Webhook หรือการส่ง SML ยังไม่พร้อม"
+	if h.config == nil || !h.config.TikTokShopSMLSendEnabled {
+		return "", "sml_send_disabled", "การส่ง SML ยังไม่พร้อม"
+	}
+	return h.tikTokAutoBillPreflight(ctx, shopID)
+}
+
+func (h *TikTokShopAPIHandler) tikTokAutoBillPreflight(ctx context.Context, shopID string) (string, string, string) {
+	if h.config == nil || !h.config.TikTokShopOrderSyncEnabled || !h.config.TikTokShopWebhookEnabled {
+		return "", "automation_dependency_disabled", "Order sync หรือ Webhook ยังไม่พร้อม"
 	}
 	if h.syncSettings == nil || h.orderReader == nil || h.billShadow == nil {
 		return "", "automation_not_configured", "ระบบตรวจความพร้อม Auto SML ยังตั้งค่าไม่ครบ"

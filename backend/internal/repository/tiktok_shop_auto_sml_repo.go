@@ -18,7 +18,8 @@ type TikTokAutoSMLRepo struct {
 
 type TikTokAutoSMLSettingUpdate struct {
 	ShopID                string
-	Enabled               bool
+	AutoBillEnabled       bool
+	SMLEnabled            bool
 	ExpectedConfigVersion int64
 	RouteSignature        string
 	UserID                string
@@ -48,7 +49,7 @@ func (r *TikTokAutoSMLRepo) ListSettings(ctx context.Context) ([]models.TikTokAu
 		return nil, sql.ErrConnDone
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT c.shop_id,c.shop_name,COALESCE(st.enabled,FALSE),COALESCE(st.trigger_status,'AWAITING_COLLECTION'),COALESCE(st.config_version,1),st.eligible_after,
+		SELECT c.shop_id,c.shop_name,COALESCE(st.enabled,FALSE),COALESCE(st.sml_send_enabled,FALSE),COALESCE(st.trigger_status,'AWAITING_COLLECTION'),COALESCE(st.config_version,1),st.eligible_after,
 		       COALESCE(st.route_signature,''),st.enabled_by::text,st.enabled_at,COALESCE(st.paused_reason,''),st.paused_at,
 		       COALESCE(st.consecutive_system_failures,0),st.last_success_at,st.last_failure_at,
 		       COUNT(j.id) FILTER (WHERE j.status IN ('queued','running','retry_wait')),
@@ -58,7 +59,7 @@ func (r *TikTokAutoSMLRepo) ListSettings(ctx context.Context) ([]models.TikTokAu
 		  LEFT JOIN tiktok_shop_auto_sml_settings st ON st.shop_id=c.shop_id
 		  LEFT JOIN tiktok_shop_auto_sml_jobs j ON j.shop_id=st.shop_id
 		 WHERE c.disabled_at IS NULL
-		 GROUP BY c.shop_id,c.shop_name,c.updated_at,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
+		 GROUP BY c.shop_id,c.shop_name,c.updated_at,st.enabled,st.sml_send_enabled,st.trigger_status,st.config_version,st.eligible_after,
 		          st.route_signature,st.enabled_by,st.enabled_at,st.paused_reason,st.paused_at,
 		          st.consecutive_system_failures,st.last_success_at,st.last_failure_at,st.updated_at
 		 ORDER BY c.shop_name,c.shop_id`)
@@ -83,7 +84,7 @@ func (r *TikTokAutoSMLRepo) GetSetting(ctx context.Context, shopID string) (*mod
 	}
 	shopID = strings.TrimSpace(shopID)
 	setting, err := scanTikTokAutoSMLSetting(r.db.QueryRowContext(ctx, `
-		SELECT st.shop_id,c.shop_name,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
+		SELECT st.shop_id,c.shop_name,st.enabled,st.sml_send_enabled,st.trigger_status,st.config_version,st.eligible_after,
 		       st.route_signature,st.enabled_by::text,st.enabled_at,st.paused_reason,st.paused_at,
 		       st.consecutive_system_failures,st.last_success_at,st.last_failure_at,
 		       COUNT(j.id) FILTER (WHERE j.status IN ('queued','running','retry_wait')),
@@ -93,7 +94,7 @@ func (r *TikTokAutoSMLRepo) GetSetting(ctx context.Context, shopID string) (*mod
 		  JOIN tiktok_shop_connections c ON c.shop_id=st.shop_id AND c.disabled_at IS NULL
 		  LEFT JOIN tiktok_shop_auto_sml_jobs j ON j.shop_id=st.shop_id
 		 WHERE st.shop_id=$1
-		 GROUP BY st.shop_id,c.shop_name,st.enabled,st.trigger_status,st.config_version,st.eligible_after,
+		 GROUP BY st.shop_id,c.shop_name,st.enabled,st.sml_send_enabled,st.trigger_status,st.config_version,st.eligible_after,
 		          st.route_signature,st.enabled_by,st.enabled_at,st.paused_reason,st.paused_at,
 		          st.consecutive_system_failures,st.last_success_at,st.last_failure_at,st.updated_at`, shopID))
 	if err != nil {
@@ -124,21 +125,21 @@ func (r *TikTokAutoSMLRepo) UpdateSetting(ctx context.Context, input TikTokAutoS
 	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE tiktok_shop_auto_sml_settings
-		   SET enabled=$2,config_version=config_version+1,
+		   SET enabled=$2,sml_send_enabled=$3,config_version=config_version+1,
 		       eligible_after=CASE WHEN $2 AND (enabled=FALSE OR paused_reason<>'') THEN NOW() ELSE eligible_after END,
-		       route_signature=CASE WHEN $2 THEN $3 ELSE route_signature END,
-		       enabled_by=CASE WHEN $2 THEN NULLIF($4,'')::uuid ELSE enabled_by END,
+		       route_signature=CASE WHEN $2 THEN $4 ELSE route_signature END,
+		       enabled_by=CASE WHEN $2 THEN NULLIF($5,'')::uuid ELSE enabled_by END,
 		       enabled_at=CASE WHEN $2 AND (enabled=FALSE OR paused_reason<>'') THEN NOW() ELSE enabled_at END,
 		       paused_reason='',paused_at=NULL,consecutive_system_failures=0,updated_at=NOW()
-		 WHERE shop_id=$1 AND config_version=$5`, input.ShopID, input.Enabled, strings.TrimSpace(input.RouteSignature), strings.TrimSpace(input.UserID), input.ExpectedConfigVersion)
+		 WHERE shop_id=$1 AND config_version=$6`, input.ShopID, input.AutoBillEnabled, input.SMLEnabled, strings.TrimSpace(input.RouteSignature), strings.TrimSpace(input.UserID), input.ExpectedConfigVersion)
 	if err != nil {
 		return nil, err
 	}
 	if count, _ := result.RowsAffected(); count != 1 {
 		return nil, ErrTikTokAutoSMLConfigConflict
 	}
-	if !input.Enabled {
-		if _, err := tx.ExecContext(ctx, `UPDATE tiktok_shop_auto_sml_jobs SET status='cancelled',lease_until=NULL,last_error_code='automation_disabled',last_error_message='ปิด Auto SML ก่อนเริ่มส่ง',completed_at=NOW(),updated_at=NOW() WHERE shop_id=$1 AND status IN ('queued','retry_wait')`, input.ShopID); err != nil {
+	if !input.AutoBillEnabled {
+		if _, err := tx.ExecContext(ctx, `UPDATE tiktok_shop_auto_sml_jobs SET status='cancelled',lease_until=NULL,last_error_code='automation_disabled',last_error_message='ปิดสร้าง Bill อัตโนมัติก่อนเริ่มทำงาน',completed_at=NOW(),updated_at=NOW() WHERE shop_id=$1 AND status IN ('queued','retry_wait')`, input.ShopID); err != nil {
 			return nil, err
 		}
 	}
@@ -146,6 +147,14 @@ func (r *TikTokAutoSMLRepo) UpdateSetting(ctx context.Context, input TikTokAutoS
 		return nil, err
 	}
 	return r.GetSetting(ctx, input.ShopID)
+}
+
+// MarkBillCreated is terminal for the automation queue but deliberately leaves
+// the Bill pending. Staff may inspect it and use the ordinary Bill detail flow
+// to send it to SML.
+func (r *TikTokAutoSMLRepo) MarkBillCreated(ctx context.Context, id, billID, reviewDigest string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE tiktok_shop_auto_sml_jobs SET status='bill_created',bill_id=COALESCE(NULLIF($2,'')::uuid,bill_id),review_digest=$3,lease_until=NULL,last_error_code='',last_error_message='',completed_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, id, strings.TrimSpace(billID), strings.TrimSpace(reviewDigest))
+	return err
 }
 
 func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqueueInput) (bool, error) {
@@ -309,7 +318,7 @@ func scanTikTokAutoSMLSetting(scanner tikTokAutoSMLScanner) (models.TikTokAutoSM
 	var out models.TikTokAutoSMLSetting
 	var eligibleAfter, enabledAt, pausedAt, lastSuccess, lastFailure sql.NullTime
 	var enabledBy sql.NullString
-	err := scanner.Scan(&out.ShopID, &out.ShopName, &out.Enabled, &out.TriggerStatus, &out.ConfigVersion, &eligibleAfter,
+	err := scanner.Scan(&out.ShopID, &out.ShopName, &out.AutoBillEnabled, &out.SMLEnabled, &out.TriggerStatus, &out.ConfigVersion, &eligibleAfter,
 		&out.RouteSignature, &enabledBy, &enabledAt, &out.PausedReason, &pausedAt, &out.ConsecutiveSystemFailures,
 		&lastSuccess, &lastFailure, &out.QueuedCount, &out.NeedsReviewCount, &out.FailedCount, &out.UpdatedAt)
 	if eligibleAfter.Valid {

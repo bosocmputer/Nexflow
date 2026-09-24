@@ -58,8 +58,9 @@ export const ACTION_META: Record<string, ActionMeta> = {
   tiktok_shop_sml_cancel_stock_recalc_failed: { label: 'คำนวณสต๊อกหลังยกเลิก TikTok ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_shop_product_catalog_synced: { label: 'อัปเดตรายการสินค้า TikTok Shop แล้ว', emoji: '✅', tone: 'success' },
   tiktok_shop_product_catalog_sync_failed: { label: 'อัปเดตรายการสินค้า TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
-  tiktok_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่า Auto SML TikTok Shop', emoji: '⚙️', tone: 'info' },
+  tiktok_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่าอัตโนมัติ TikTok Shop', emoji: '⚙️', tone: 'info' },
   tiktok_auto_sml_queued: { label: 'เข้าคิว Auto SML TikTok Shop', emoji: '⏳', tone: 'info' },
+  tiktok_auto_bill_created: { label: 'สร้าง Bill อัตโนมัติจาก TikTok Shop แล้ว', emoji: '🧾', tone: 'success' },
   tiktok_auto_sml_needs_review: { label: 'Auto SML TikTok Shop ต้องตรวจสอบ', emoji: '⚠️', tone: 'warning' },
   tiktok_auto_sml_retry_or_failed: { label: 'Auto SML TikTok Shop ลองใหม่/ไม่สำเร็จ', emoji: '🔄', tone: 'danger' },
   tiktok_auto_sml_cancelled: { label: 'ยกเลิกงาน Auto SML TikTok Shop', emoji: '⏹️', tone: 'muted' },
@@ -431,10 +432,15 @@ export function summarize(log: AuditLog): string {
       }
       return labels[String(d.error_code ?? '')] ?? 'ระบบเก็บ snapshot เดิมไว้ กรุณาลองใหม่'
     }
-    case 'tiktok_auto_sml_setting_updated':
-      return [d.enabled ? 'เปิดสำหรับออเดอร์ใหม่' : 'ปิด', d.config_version ? `เวอร์ชัน ${d.config_version}` : '', d.historical_backfill === false ? 'ไม่ย้อนหลัง' : ''].filter(Boolean).join(' · ')
+    case 'tiktok_auto_sml_setting_updated': {
+      const autoBill = d.auto_bill_enabled === true ? 'สร้าง Bill อัตโนมัติ: เปิด' : 'สร้าง Bill อัตโนมัติ: ปิด'
+      const sml = d.sml_send_enabled === true ? 'ส่ง SML อัตโนมัติ: เปิด' : 'ส่ง SML: ด้วยมือ'
+      return [autoBill, sml, d.config_version ? `เวอร์ชัน ${d.config_version}` : '', d.historical_backfill === false ? 'ไม่ย้อนหลัง' : ''].filter(Boolean).join(' · ')
+    }
     case 'tiktok_auto_sml_queued':
       return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.trigger_status || 'AWAITING_COLLECTION', 'ไม่ย้อนหลัง'].filter(Boolean).join(' · ')
+    case 'tiktok_auto_bill_created':
+      return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.bill_id ? 'สร้าง Bill แล้ว' : '', 'รอส่ง SML ด้วยมือ'].filter(Boolean).join(' · ')
     case 'tiktok_auto_sml_needs_review':
       return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.error_message || d.error_code].filter(Boolean).join(' · ')
     case 'tiktok_auto_sml_retry_or_failed':

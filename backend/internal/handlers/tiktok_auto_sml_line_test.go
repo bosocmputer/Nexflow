@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"nexflow/internal/config"
 	"nexflow/internal/models"
+	"nexflow/internal/repository"
+	"nexflow/internal/services/tiktokshop"
 )
 
 type tikTokAutoSMLLineNotifierFake struct {
@@ -65,3 +69,99 @@ func TestTikTokAutoSMLLineSuccessUsesSafeDocumentEvidence(t *testing.T) {
 
 func floatPtr(v float64) *float64 { return &v }
 func stringPtr(v string) *string  { return &v }
+
+type tikTokAutoSMLWorkStoreFake struct {
+	setting            *models.TikTokAutoSMLSetting
+	linkedBillID       string
+	markedBillID       string
+	markedBillJobID    string
+	markedReviewDigest string
+}
+
+func (f *tikTokAutoSMLWorkStoreFake) ListSettings(context.Context) ([]models.TikTokAutoSMLSetting, error) {
+	if f.setting == nil {
+		return nil, nil
+	}
+	return []models.TikTokAutoSMLSetting{*f.setting}, nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) GetSetting(context.Context, string) (*models.TikTokAutoSMLSetting, error) {
+	return f.setting, nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) UpdateSetting(context.Context, repository.TikTokAutoSMLSettingUpdate) (*models.TikTokAutoSMLSetting, error) {
+	return f.setting, nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) RetryJob(context.Context, string, string, string, string) error {
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) Enqueue(context.Context, repository.TikTokAutoSMLEnqueueInput) (bool, error) {
+	return false, nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) RecoverStaleJobs(context.Context) (int64, error) { return 0, nil }
+func (f *tikTokAutoSMLWorkStoreFake) LeaseJobs(context.Context, int, time.Duration) ([]models.TikTokAutoSMLJob, error) {
+	return nil, nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) LinkBill(_ context.Context, _, billID, _ string) error {
+	f.linkedBillID = billID
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) MarkBillCreated(_ context.Context, jobID, billID, reviewDigest string) error {
+	f.markedBillJobID, f.markedBillID, f.markedReviewDigest = jobID, billID, reviewDigest
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) GetOrSetDocumentTime(context.Context, string, string) (string, error) {
+	return "", nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) MarkNeedsReview(context.Context, string, string, string, string) error {
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) MarkCancelled(context.Context, string, string, string) error {
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) MarkSucceeded(context.Context, string, string, string) error {
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) MarkTransientFailure(context.Context, string, string, string, int) error {
+	return nil
+}
+func (f *tikTokAutoSMLWorkStoreFake) PauseForRouteChange(context.Context, string) error { return nil }
+
+func TestTikTokAutoBillDoesNotPromoteQueuedJobAfterSMLSettingChanges(t *testing.T) {
+	actorID := "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef"
+	preview := &tiktokshop.TikTokBillShadowPreview{
+		ShopID: "7494619203789490654", OrderID: "586180035911386153", Currency: "THB",
+		OrderStatus: tiktokshop.OrderStatusAwaitingCollection, ReadyForReviewedBill: true,
+		ReviewDigest: strings.Repeat("d", 64),
+		Route: tiktokshop.TikTokBillShadowRoute{
+			Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: "SI",
+			ConfigVersion: 2, ShippingItemCode: "AH-0061", ShippingItemUnitCode: "ชิ้น",
+		},
+		Amounts: tiktokshop.TikTokBillShadowAmounts{ProductSubtotal: "100.00", Shipping: "15.00", ProposedDocumentTotal: "115.00"},
+		Items: []tiktokshop.TikTokBillShadowItem{{
+			ProductID: "product-1", SKUID: "sku-1", Quantity: 1, UnitSalePrice: "100.00", LineTotal: "100.00",
+			Mapping: tiktokshop.TikTokBillShadowItemMapping{Status: tiktokshop.TikTokBillShadowMappingReady, ItemCode: "AH-0001", UnitCode: "ชิ้น", SMLQuantity: "1", MappingRevision: 2},
+		}},
+	}
+	fingerprint, err := tikTokAutoSMLBillFingerprint(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeSignature := tikTokAutoSMLRouteSignature(preview.Route)
+	store := &tikTokAutoSMLWorkStoreFake{setting: &models.TikTokAutoSMLSetting{
+		ShopID: preview.ShopID, AutoBillEnabled: true, SMLEnabled: true, EnabledBy: &actorID,
+		ConfigVersion: 3, RouteSignature: routeSignature,
+	}}
+	creator := &tenantTikTokReviewedBillCreatorFake{result: &tiktokshop.TikTokReviewedBillResult{BillID: "80834efe-8bc3-4109-b270-a139d418f747"}}
+	controller := NewTikTokAutoSMLController(&config.Config{TikTokShopAutoSMLEnabled: true}, store, &tenantTikTokBillShadowPreviewerFake{result: preview}, creator, nil, nil, nil)
+	controller.processJob(t.Context(), models.TikTokAutoSMLJob{
+		ID: "65b124d5-570d-48d4-9741-d22f1f46f1ef", ShopID: preview.ShopID, OrderID: preview.OrderID,
+		Status: models.TikTokAutoSMLRunning, Attempts: 1, TriggerConfigVersion: 2,
+		BillFingerprint: fingerprint, RouteSignature: routeSignature,
+	})
+
+	if creator.calls != 1 || store.linkedBillID == "" || store.markedBillID != store.linkedBillID {
+		t.Fatalf("creator=%d linked=%q marked=%q", creator.calls, store.linkedBillID, store.markedBillID)
+	}
+	if store.markedBillJobID != "65b124d5-570d-48d4-9741-d22f1f46f1ef" || store.markedReviewDigest != preview.ReviewDigest {
+		t.Fatalf("unexpected completed job evidence: %#v", store)
+	}
+}

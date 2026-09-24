@@ -702,3 +702,25 @@ func TestCheckMarketplaceActivationRequiresFeatureDependencies(t *testing.T) {
 		t.Fatalf("shadow mode should not require readiness: %v", err)
 	}
 }
+
+func TestMigration117SeparatesTikTokAutoBillFromSMLSending(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/117_tiktok_shop_auto_bill_manual_sml.sql")
+	if err != nil {
+		t.Fatalf("read migration 117: %v", err)
+	}
+	body := strings.ToLower(string(data))
+	for _, required := range []string{
+		"add column if not exists sml_send_enabled boolean not null default false",
+		"tiktok_shop_auto_sml_jobs_status_check",
+		"'bill_created'",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("migration 117 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"delete from", "truncate", "drop table", "drop column", "update tiktok_shop_auto_sml_settings"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("migration 117 contains unsafe statement %q", forbidden)
+		}
+	}
+}

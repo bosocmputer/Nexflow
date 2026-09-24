@@ -49,7 +49,7 @@ func TestTikTokAutoSMLUpdateSettingRejectsStaleVersion(t *testing.T) {
 	mock.ExpectRollback()
 
 	_, err = repo.UpdateSetting(t.Context(), TikTokAutoSMLSettingUpdate{
-		ShopID: "7494619203789490654", Enabled: true, ExpectedConfigVersion: 3,
+		ShopID: "7494619203789490654", AutoBillEnabled: true, ExpectedConfigVersion: 3,
 		RouteSignature: string64("b"), UserID: "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef",
 	})
 	if !errors.Is(err, ErrTikTokAutoSMLConfigConflict) {
@@ -95,6 +95,27 @@ func TestTikTokAutoSMLRetryRefreshesReviewedEvidenceWithoutCreatingAnotherJob(t 
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	if err := repo.RetryJob(t.Context(), "7494619203789490654", "586030483469993439", string64("c"), string64("b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTikTokAutoSMLMarkBillCreatedStopsBeforeManualSML(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewTikTokAutoSMLRepo(db)
+	jobID := "65b124d5-570d-48d4-9741-d22f1f46f1ef"
+	billID := "80834efe-8bc3-4109-b270-a139d418f747"
+	mock.ExpectExec("UPDATE tiktok_shop_auto_sml_jobs SET status='bill_created'").
+		WithArgs(jobID, billID, string64("d")).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := repo.MarkBillCreated(t.Context(), jobID, billID, string64("d")); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

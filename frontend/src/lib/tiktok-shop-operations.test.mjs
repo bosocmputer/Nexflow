@@ -69,7 +69,7 @@ test('presents TikTok operations as realtime with a truthful webhook and polling
     modeLabel: 'เรียลไทม์',
     routeLabel: 'เส้นทาง SML พร้อมใช้งาน',
     webhookLabel: 'Webhook พร้อมรับ',
-    autoSMLLabel: 'Auto SML เปิด',
+    autoSMLLabel: 'สร้าง Bill อัตโนมัติ เปิด',
   })
   assert.deepEqual(tiktokOperationsHeaderMeta({
     cancellationQueue: true,
@@ -80,7 +80,7 @@ test('presents TikTok operations as realtime with a truthful webhook and polling
     modeLabel: 'เรียลไทม์',
     routeLabel: 'เอกสารหลังยกเลิก SML',
     webhookLabel: 'Webhook กำลังตรวจ',
-    autoSMLLabel: 'Auto SML ปิด',
+    autoSMLLabel: 'สร้าง Bill อัตโนมัติ ปิด',
   })
 })
 
@@ -181,9 +181,17 @@ test('keeps the TikTok document cell to a compact two-line operational summary',
     tone: 'success',
   })
   assert.deepEqual(tiktokCompactDocumentState({}, { status: 'failed' }), {
-    label: 'Auto SML ไม่สำเร็จ',
+    label: 'งานอัตโนมัติไม่สำเร็จ',
     detail: 'ตรวจสาเหตุแล้วลองใหม่',
     tone: 'danger',
+  })
+  assert.deepEqual(tiktokCompactDocumentState({
+    billID: 'bill-2',
+    billStatus: 'pending',
+  }, { status: 'bill_created' }), {
+    label: 'สร้างเอกสารแล้ว (อัตโนมัติ)',
+    detail: 'รอส่ง SML ด้วยมือ',
+    tone: 'warning',
   })
 })
 
@@ -201,7 +209,7 @@ test('only lets an admin control Auto SML after selecting exactly one shop', () 
   })
   assert.deepEqual(tiktokAutoSMLControlState({ role: 'admin', selectedShopID: 'shop-1', globalEnabled: false }), {
     mode: 'readonly',
-    reason: 'ระบบส่ง SML อัตโนมัติยังไม่พร้อมใช้งาน',
+    reason: 'ระบบสร้างเอกสารอัตโนมัติยังไม่พร้อมใช้งาน',
   })
 })
 

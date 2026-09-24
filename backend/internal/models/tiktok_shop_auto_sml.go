@@ -8,6 +8,7 @@ const (
 	TikTokAutoSMLQueued      = "queued"
 	TikTokAutoSMLRunning     = "running"
 	TikTokAutoSMLRetryWait   = "retry_wait"
+	TikTokAutoSMLBillCreated = "bill_created"
 	TikTokAutoSMLNeedsReview = "needs_review"
 	TikTokAutoSMLSucceeded   = "succeeded"
 	TikTokAutoSMLFailed      = "failed"
@@ -15,9 +16,12 @@ const (
 )
 
 type TikTokAutoSMLSetting struct {
-	ShopID                    string     `json:"shop_id"`
-	ShopName                  string     `json:"shop_name"`
-	Enabled                   bool       `json:"enabled"`
+	ShopID   string `json:"shop_id"`
+	ShopName string `json:"shop_name"`
+	// AutoBillEnabled reuses the existing enabled database column. It controls
+	// only local Bill creation; SML writes require the separate SMLEnabled flag.
+	AutoBillEnabled           bool       `json:"auto_bill_enabled"`
+	SMLEnabled                bool       `json:"sml_send_enabled"`
 	TriggerStatus             string     `json:"trigger_status"`
 	ConfigVersion             int64      `json:"config_version"`
 	EligibleAfter             *time.Time `json:"eligible_after,omitempty"`

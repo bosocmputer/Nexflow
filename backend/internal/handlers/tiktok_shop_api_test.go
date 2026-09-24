@@ -147,7 +147,7 @@ func (f *tenantTikTokAutoSMLSettingsFake) UpdateSetting(_ context.Context, input
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &models.TikTokAutoSMLSetting{ShopID: input.ShopID, Enabled: input.Enabled, ConfigVersion: input.ExpectedConfigVersion + 1}, nil
+	return &models.TikTokAutoSMLSetting{ShopID: input.ShopID, AutoBillEnabled: input.AutoBillEnabled, SMLEnabled: input.SMLEnabled, ConfigVersion: input.ExpectedConfigVersion + 1}, nil
 }
 
 func (f *tenantTikTokAutoSMLSettingsFake) RetryJob(context.Context, string, string, string, string) error {
@@ -939,27 +939,27 @@ func TestTikTokShopAPIHandlerListsDormantAutoSMLSettings(t *testing.T) {
 	}
 }
 
-func TestTikTokShopAPIHandlerCannotEnableAutoSMLWhileGlobalGateIsOff(t *testing.T) {
+func TestTikTokShopAPIHandlerCannotEnableAutoBillWhileGlobalGateIsOff(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	store := &tenantTikTokAutoSMLSettingsFake{}
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{ShopID: "7494619203789490654", ConfigVersion: 1}}}
 	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: false}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
 		WithAutoSML(store)
 	router := gin.New()
 	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
-		`{"enabled":true,"expected_config_version":1,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+		`{"auto_bill_enabled":true,"expected_config_version":1,"confirm":"ENABLE_TIKTOK_AUTO_BILL"}`,
 	)))
 
-	if response.Code != http.StatusConflict || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "auto_sml_global_disabled") {
+	if response.Code != http.StatusConflict || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "auto_bill_global_disabled") {
 		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
 	}
 }
 
-func TestTikTokShopAPIHandlerRequiresExplicitConfirmationToDisableAutoSML(t *testing.T) {
+func TestTikTokShopAPIHandlerRequiresExplicitConfirmationToDisableAutoBill(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
-		ShopID: "7494619203789490654", Enabled: true, ConfigVersion: 3,
+		ShopID: "7494619203789490654", AutoBillEnabled: true, ConfigVersion: 3,
 	}}}
 	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
 		WithAutoSML(store)
@@ -968,7 +968,7 @@ func TestTikTokShopAPIHandlerRequiresExplicitConfirmationToDisableAutoSML(t *tes
 
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
-		`{"enabled":false,"expected_config_version":3}`,
+		`{"auto_bill_enabled":false,"expected_config_version":3}`,
 	)))
 	if response.Code != http.StatusBadRequest || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "confirmation_required") {
 		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
@@ -976,10 +976,31 @@ func TestTikTokShopAPIHandlerRequiresExplicitConfirmationToDisableAutoSML(t *tes
 
 	confirmed := httptest.NewRecorder()
 	router.ServeHTTP(confirmed, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
-		`{"enabled":false,"expected_config_version":3,"confirm":"DISABLE_TIKTOK_AUTO_SML"}`,
+		`{"auto_bill_enabled":false,"expected_config_version":3,"confirm":"DISABLE_TIKTOK_AUTO_BILL"}`,
 	)))
-	if confirmed.Code != http.StatusOK || store.updated.ShopID != "7494619203789490654" || store.updated.Enabled {
+	if confirmed.Code != http.StatusOK || store.updated.ShopID != "7494619203789490654" || store.updated.AutoBillEnabled {
 		t.Fatalf("status=%d update=%+v body=%s", confirmed.Code, store.updated, confirmed.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerRequiresAutoBillBeforeEnablingAutoSML(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: "7494619203789490654", AutoBillEnabled: false, SMLEnabled: false, ConfigVersion: 3,
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/7494619203789490654", strings.NewReader(
+		`{"sml_send_enabled":true,"expected_config_version":3,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+	)))
+	if response.Code != http.StatusConflict || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "auto_bill_required") {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
 	}
 }
 
@@ -996,7 +1017,7 @@ func TestTikTokShopAPIHandlerOperationsSummaryAvoidsOrderPreviews(t *testing.T) 
 		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, ShopName: "ร้านทดสอบ", Enabled: true, IntervalSeconds: 300}}}).
 		WithOrderReader(reader).
 		WithBillShadowPreviewer(previewer).
-		WithAutoSML(&tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{ShopID: shopID, ShopName: "ร้านทดสอบ", Enabled: true, ConfigVersion: 2}}})
+		WithAutoSML(&tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{ShopID: shopID, ShopName: "ร้านทดสอบ", AutoBillEnabled: true, ConfigVersion: 2}}})
 	router := gin.New()
 	router.GET("/operations-summary", handler.OperationsSummary)
 
