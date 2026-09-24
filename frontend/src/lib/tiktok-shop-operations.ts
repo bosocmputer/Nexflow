@@ -118,35 +118,23 @@ export interface TikTokOperationsHeaderMetaInput {
   cancellationQueue: boolean
   routeReady: boolean
   webhookEnabled: boolean
-  autoSML: {
-    enabledShops: number
-    configuredShops: number
-  }
 }
 
 export interface TikTokOperationsHeaderMeta {
   modeLabel: 'เรียลไทม์'
   routeLabel: string
   webhookLabel: string
-  autoSMLLabel: string
 }
 
 // The primary mode describes how Nexflow receives change signals. Polling is
 // deliberately shown as a recovery path in the health line, not as the page mode.
 export function tiktokOperationsHeaderMeta(input: TikTokOperationsHeaderMetaInput): TikTokOperationsHeaderMeta {
-  const enabledShops = Math.max(0, input.autoSML.enabledShops)
-  const configuredShops = Math.max(0, input.autoSML.configuredShops)
-  const autoSMLLabel = enabledShops > 0
-    ? configuredShops > 1 ? `สร้าง Bill อัตโนมัติ ${enabledShops}/${configuredShops} ร้าน` : 'สร้าง Bill อัตโนมัติ เปิด'
-    : 'สร้าง Bill อัตโนมัติ ปิด'
-
   return {
     modeLabel: 'เรียลไทม์',
     routeLabel: input.cancellationQueue
       ? 'เอกสารหลังยกเลิก SML'
       : input.routeReady ? 'เส้นทาง SML พร้อมใช้งาน' : 'เส้นทาง SML ต้องตรวจ',
     webhookLabel: input.webhookEnabled ? 'Webhook พร้อมรับ' : 'Webhook กำลังตรวจ',
-    autoSMLLabel,
   }
 }
 
@@ -331,8 +319,11 @@ export function tiktokReviewedBillDisabledReason(input: TikTokReviewedBillDisabl
     case 'DELIVERED':
     case 'COMPLETED':
       return ''
+    case 'AWAITING_SHIPMENT':
+    case 'PARTIALLY_SHIPPING':
+      return ''
     default:
-      return 'สร้างเอกสารได้เมื่อ TikTok ยืนยันว่ารอรับพัสดุหรืออยู่ระหว่างจัดส่งแล้ว'
+      return 'สร้างเอกสารได้เมื่อ TikTok ยืนยันการชำระเงินและพร้อมจัดส่งแล้ว'
   }
 }
 

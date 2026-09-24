@@ -103,6 +103,9 @@ func (f *tikTokAutoSMLWorkStoreFake) RetryJob(context.Context, string, string, s
 func (f *tikTokAutoSMLWorkStoreFake) Enqueue(context.Context, repository.TikTokAutoSMLEnqueueInput) (bool, error) {
 	return false, nil
 }
+func (f *tikTokAutoSMLWorkStoreFake) ListBillBacklogCandidates(context.Context, int) ([]repository.TikTokAutoSMLBacklogCandidate, error) {
+	return nil, nil
+}
 func (f *tikTokAutoSMLWorkStoreFake) RecoverStaleJobs(context.Context) (int64, error) { return 0, nil }
 func (f *tikTokAutoSMLWorkStoreFake) LeaseJobs(context.Context, int, time.Duration) ([]models.TikTokAutoSMLJob, error) {
 	return nil, nil

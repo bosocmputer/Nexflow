@@ -41,6 +41,7 @@ type TikTokAutoSMLSettingsStore interface {
 type TikTokAutoSMLWorkStore interface {
 	TikTokAutoSMLSettingsStore
 	Enqueue(context.Context, repository.TikTokAutoSMLEnqueueInput) (bool, error)
+	ListBillBacklogCandidates(context.Context, int) ([]repository.TikTokAutoSMLBacklogCandidate, error)
 	RecoverStaleJobs(context.Context) (int64, error)
 	LeaseJobs(context.Context, int, time.Duration) ([]models.TikTokAutoSMLJob, error)
 	LinkBill(context.Context, string, string, string) error
@@ -101,9 +102,16 @@ func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context
 		return nil
 	}
 	if c == nil || c.cfg == nil || !c.cfg.TikTokShopAutoSMLEnabled || c.repo == nil || c.previewer == nil || record.LastOrderUpdateAt == nil ||
-		string(record.OrderStatus) != models.TikTokAutoSMLTriggerAwaitingCollection {
+		!tiktokshop.TikTokBillLifecycleReady(record.OrderStatus) {
 		return nil
 	}
+	return c.queueBillSnapshot(ctx, shopID, record.OrderID, string(record.OrderStatus), *record.LastOrderUpdateAt, record.SourceHash, false)
+}
+
+// queueBillSnapshot records Bill creation independently from the SML-send
+// decision.  The exact preview is still rechecked by the worker before a Bill
+// is created, so a stale webhook can never create a wrong document.
+func (c *TikTokAutoSMLController) queueBillSnapshot(ctx context.Context, shopID, orderID, orderStatus string, transitionAt time.Time, sourceHash string, allowHistorical bool) error {
 	setting, err := c.repo.GetSetting(ctx, shopID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && (setting == nil || !setting.AutoBillEnabled || setting.PausedReason != "")) {
 		return nil
@@ -111,7 +119,7 @@ func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context
 	if err != nil {
 		return err
 	}
-	preview, err := c.previewer.Preview(ctx, shopID, record.OrderID)
+	preview, err := c.previewer.Preview(ctx, shopID, orderID)
 	if err != nil || preview == nil {
 		if err == nil {
 			err = errors.New("empty TikTok Bill preview")
@@ -123,13 +131,14 @@ func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context
 		return err
 	}
 	inserted, err := c.repo.Enqueue(ctx, repository.TikTokAutoSMLEnqueueInput{
-		ShopID: shopID, OrderID: record.OrderID, OrderStatus: string(record.OrderStatus),
-		TriggerTransitionAt: record.LastOrderUpdateAt.UTC(), SourceHash: record.SourceHash,
+		ShopID: shopID, OrderID: orderID, OrderStatus: orderStatus,
+		TriggerTransitionAt: transitionAt.UTC(), SourceHash: sourceHash,
 		BillFingerprint: billFingerprint, RouteSignature: setting.RouteSignature,
+		AllowHistorical: allowHistorical,
 	})
 	if err == nil && inserted {
-		c.logger.Info("tiktok_auto_sml_queued", zap.String("shop_id", shopID), zap.String("order_id", record.OrderID), zap.Int64("config_version", setting.ConfigVersion))
-		c.auditEvent("tiktok_auto_sml_queued", "info", models.TikTokAutoSMLJob{ShopID: shopID, OrderID: record.OrderID, TriggerConfigVersion: setting.ConfigVersion}, map[string]interface{}{"trigger_status": record.OrderStatus, "historical_backfill": false})
+		c.logger.Info("tiktok_auto_bill_queued", zap.String("shop_id", shopID), zap.String("order_id", orderID), zap.Int64("config_version", setting.ConfigVersion), zap.Bool("historical_backfill", allowHistorical))
+		c.auditEvent("tiktok_auto_bill_queued", "info", models.TikTokAutoSMLJob{ShopID: shopID, OrderID: orderID, TriggerConfigVersion: setting.ConfigVersion}, map[string]interface{}{"observed_status": orderStatus, "historical_backfill": allowHistorical})
 	}
 	return err
 }
@@ -158,6 +167,7 @@ func (c *TikTokAutoSMLController) Start(ctx context.Context) {
 }
 
 func (c *TikTokAutoSMLController) processBatch(ctx context.Context) {
+	c.enqueueBillBacklog(ctx)
 	jobs, err := c.repo.LeaseJobs(ctx, tikTokAutoSMLBatchSize, tikTokAutoSMLLease)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -167,6 +177,26 @@ func (c *TikTokAutoSMLController) processBatch(ctx context.Context) {
 	}
 	for _, job := range jobs {
 		c.processJob(ctx, job)
+	}
+}
+
+// enqueueBillBacklog steadily reconciles a bounded stored-snapshot backlog.
+// This gives the same result as receiving the order live, without external
+// API calls and without bypassing the normal preview, mapping, audit, or
+// idempotency checks.
+func (c *TikTokAutoSMLController) enqueueBillBacklog(ctx context.Context) {
+	if c == nil || c.repo == nil || c.previewer == nil {
+		return
+	}
+	candidates, err := c.repo.ListBillBacklogCandidates(ctx, tikTokAutoSMLBatchSize*10)
+	if err != nil {
+		c.logger.Warn("tiktok_auto_bill_backlog_list_failed", zap.Error(err))
+		return
+	}
+	for _, candidate := range candidates {
+		if err := c.queueBillSnapshot(ctx, candidate.ShopID, candidate.OrderID, candidate.OrderStatus, candidate.LastOrderUpdateAt, candidate.SourceHash, true); err != nil {
+			c.logger.Warn("tiktok_auto_bill_backlog_enqueue_failed", zap.String("shop_id", candidate.ShopID), zap.String("order_id", candidate.OrderID), zap.Error(err))
+		}
 	}
 }
 
@@ -187,12 +217,12 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		return
 	}
 	status := string(preview.OrderStatus)
-	if models.TikTokAutoSMLStopStatus(status) {
-		c.markCancelled(ctx, job, "order_cancelled", "ออเดอร์ถูกยกเลิกก่อนส่ง SML")
-		return
-	}
-	if !models.TikTokAutoSMLAllowsStatus(status) {
-		c.markNeedsReview(ctx, job, "", "order_status_changed", "สถานะ TikTok Shop ไม่สอดคล้องกับจุดเริ่ม Auto SML: "+status)
+	if !tiktokshop.TikTokBillLifecycleReady(preview.OrderStatus) {
+		if models.TikTokAutoSMLStopStatus(status) {
+			c.markCancelled(ctx, job, "order_cancelled", "ออเดอร์ถูกยกเลิกก่อนสร้าง Bill")
+			return
+		}
+		c.markNeedsReview(ctx, job, "", "order_status_not_ready", "สถานะ TikTok Shop ยังไม่พร้อมสร้าง Bill: "+status)
 		return
 	}
 	currentFingerprint, fingerprintErr := tikTokAutoSMLBillFingerprint(preview)
@@ -235,6 +265,12 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 	// change may still safely create its local Bill when the route evidence did
 	// not change, but it must finish in the manual-SML state.
 	if !setting.SMLEnabled || setting.ConfigVersion != job.TriggerConfigVersion {
+		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
+		return
+	}
+	if !models.TikTokAutoSMLAllowsStatus(status) {
+		// Bill exists for staff now. A later eligible status will requeue this
+		// durable job only when Auto SML is explicitly enabled.
 		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
 		return
 	}

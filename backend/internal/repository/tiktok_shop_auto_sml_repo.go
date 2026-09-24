@@ -33,6 +33,21 @@ type TikTokAutoSMLEnqueueInput struct {
 	SourceHash          string
 	BillFingerprint     string
 	RouteSignature      string
+	// AllowHistorical is true only for the bounded worker reconciliation of
+	// snapshots already stored in Nexflow.  Normal webhook/poll observations
+	// must remain post-cutoff so toggling Auto SML never unexpectedly sends old
+	// Bills to SML.
+	AllowHistorical bool
+}
+
+// TikTokAutoSMLBacklogCandidate is safe, non-PII evidence used to reconcile
+// stored paid orders that have not yet received a Nexflow Bill.
+type TikTokAutoSMLBacklogCandidate struct {
+	ShopID            string
+	OrderID           string
+	OrderStatus       string
+	LastOrderUpdateAt time.Time
+	SourceHash        string
 }
 
 func NewTikTokAutoSMLRepo(db *sql.DB) *TikTokAutoSMLRepo {
@@ -164,19 +179,77 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO tiktok_shop_auto_sml_jobs
 		  (shop_id,order_id,trigger_status_snapshot,trigger_transition_at,trigger_config_version,source_hash,bill_fingerprint,route_signature)
-		SELECT $1,$2,st.trigger_status,$4,st.config_version,$5,$6,$7
+		SELECT $1,$2,$3,$4,st.config_version,$5,$6,$7
 		  FROM tiktok_shop_auto_sml_settings st
 		 WHERE st.shop_id=$1 AND st.enabled=TRUE AND st.paused_reason=''
-		   AND st.trigger_status=$3 AND st.eligible_after IS NOT NULL AND $4 >= st.eligible_after
 		   AND st.route_signature=$7
-		ON CONFLICT (shop_id,order_id) DO NOTHING`,
+		   AND ($8=TRUE OR (st.eligible_after IS NOT NULL AND $4 >= st.eligible_after))
+		ON CONFLICT (shop_id,order_id) DO UPDATE
+		   SET status='queued',trigger_status_snapshot=EXCLUDED.trigger_status_snapshot,
+		       trigger_transition_at=EXCLUDED.trigger_transition_at,trigger_config_version=EXCLUDED.trigger_config_version,
+		       source_hash=EXCLUDED.source_hash,bill_fingerprint=EXCLUDED.bill_fingerprint,
+		       route_signature=EXCLUDED.route_signature,next_run_at=NOW(),lease_until=NULL,
+		       last_error_code='',last_error_message='',completed_at=NULL,updated_at=NOW()
+		 WHERE tiktok_shop_auto_sml_jobs.status='bill_created'
+		   AND EXISTS (
+		     SELECT 1 FROM tiktok_shop_auto_sml_settings enabled_setting
+		      WHERE enabled_setting.shop_id=EXCLUDED.shop_id
+		        AND enabled_setting.enabled=TRUE
+		        AND enabled_setting.sml_send_enabled=TRUE
+		        AND enabled_setting.paused_reason=''
+		   )
+		   AND EXCLUDED.trigger_status_snapshot IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')`,
 		strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID), strings.TrimSpace(input.OrderStatus),
-		input.TriggerTransitionAt.UTC(), strings.TrimSpace(input.SourceHash), strings.TrimSpace(input.BillFingerprint), strings.TrimSpace(input.RouteSignature))
+		input.TriggerTransitionAt.UTC(), strings.TrimSpace(input.SourceHash), strings.TrimSpace(input.BillFingerprint), strings.TrimSpace(input.RouteSignature), input.AllowHistorical)
 	if err != nil {
 		return false, err
 	}
 	count, err := result.RowsAffected()
 	return count == 1, err
+}
+
+// ListBillBacklogCandidates returns a bounded list of paid TikTok Shop orders
+// that exist in Nexflow's snapshot store but do not yet have a local Bill or
+// a durable automation job.  It never invokes TikTok or SML.
+func (r *TikTokAutoSMLRepo) ListBillBacklogCandidates(ctx context.Context, limit int) ([]TikTokAutoSMLBacklogCandidate, error) {
+	if r == nil || r.db == nil {
+		return nil, sql.ErrConnDone
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT s.shop_id,s.order_id,s.order_status,
+		       COALESCE(s.last_order_update_at,s.last_synced_at),s.source_hash
+		  FROM tiktok_shop_order_snapshots s
+		  JOIN tiktok_shop_auto_sml_settings st
+		    ON st.shop_id=s.shop_id AND st.enabled=TRUE AND st.paused_reason=''
+		 WHERE s.order_status IN ('AWAITING_SHIPMENT','PARTIALLY_SHIPPING','AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')
+		   AND NOT EXISTS (
+		     SELECT 1 FROM bills b
+		      WHERE b.source='tiktok' AND b.source_account_key='shop:'||s.shop_id
+		        AND b.sml_order_id=s.order_id AND b.archived_at IS NULL
+		   )
+		   AND NOT EXISTS (
+		     SELECT 1 FROM tiktok_shop_auto_sml_jobs j
+		      WHERE j.shop_id=s.shop_id AND j.order_id=s.order_id
+		   )
+		 ORDER BY s.last_synced_at ASC,s.order_id ASC
+		 LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]TikTokAutoSMLBacklogCandidate, 0)
+	for rows.Next() {
+		var item TikTokAutoSMLBacklogCandidate
+		if err := rows.Scan(&item.ShopID, &item.OrderID, &item.OrderStatus, &item.LastOrderUpdateAt, &item.SourceHash); err != nil {
+			return nil, err
+		}
+		item.LastOrderUpdateAt = item.LastOrderUpdateAt.UTC()
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *TikTokAutoSMLRepo) RecoverStaleJobs(ctx context.Context) (int64, error) {

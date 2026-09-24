@@ -215,8 +215,8 @@ const EMPTY_COUNTS: TikTokStatusCounts = {
   cancelled: 0,
 }
 const TIKTOK_ORDER_STATUS_HELP = [
-  { value: 'รอจัดส่ง', detail: 'TikTok Shop รับออเดอร์แล้ว แต่ยังไม่พร้อมสร้างเอกสารขายใน Nexflow' },
-  { value: 'รอรับพัสดุ', detail: 'เตรียมการจัดส่งแล้ว สามารถตรวจข้อมูลและสร้างเอกสารได้' },
+  { value: 'รอจัดส่ง', detail: 'TikTok Shop ยืนยันการชำระเงินแล้ว ระบบสามารถสร้าง Bill ใน Nexflow ได้ แต่ยังไม่ส่ง SML อัตโนมัติ' },
+  { value: 'รอรับพัสดุ', detail: 'เตรียมการจัดส่งแล้ว สามารถตรวจ Bill และส่ง SML ด้วยมือได้' },
   { value: 'กำลังขนส่ง', detail: 'ขนส่งรับพัสดุแล้ว และยังสร้างเอกสารแบบตรวจทีละใบได้' },
   { value: 'สำเร็จ', detail: 'ออเดอร์เสร็จสมบูรณ์แล้ว และยังตรวจหรือสร้างเอกสารย้อนหลังได้' },
   { value: 'ยกเลิก', detail: 'ไม่สร้างเอกสารขายใหม่จากออเดอร์นี้' },
@@ -244,7 +244,7 @@ export default function TikTokShopOperations() {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false)
   const [autoSMLSaving, setAutoSMLSaving] = useState(false)
-  const [autoSMLConfirmChange, setAutoSMLConfirmChange] = useState<{ setting: TikTokAutoSMLSetting; field: 'auto_bill' | 'sml_send'; enabled: boolean } | null>(null)
+  const [autoSMLConfirmChange, setAutoSMLConfirmChange] = useState<{ setting: TikTokAutoSMLSetting; enabled: boolean } | null>(null)
   const [autoSMLRetryingOrder, setAutoSMLRetryingOrder] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -433,19 +433,15 @@ export default function TikTokShopOperations() {
     setQuery({ diagnostics: null })
   }, [diagnosticsOpen, loadDiagnostics, params, setQuery, shopID])
 
-  const updateAutomation = useCallback(async (setting: TikTokAutoSMLSetting, field: 'auto_bill' | 'sml_send', enabled: boolean) => {
+  const updateAutomation = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
     setAutoSMLSaving(true)
     try {
       await client.put(`/api/tiktok-shop-api/auto-sml/settings/${encodeURIComponent(setting.shop_id)}`, {
-        ...(field === 'auto_bill' ? { auto_bill_enabled: enabled } : { sml_send_enabled: enabled }),
+        sml_send_enabled: enabled,
         expected_config_version: setting.config_version,
-        confirm: field === 'auto_bill'
-          ? enabled ? 'ENABLE_TIKTOK_AUTO_BILL' : 'DISABLE_TIKTOK_AUTO_BILL'
-          : enabled ? 'ENABLE_TIKTOK_AUTO_SML' : 'DISABLE_TIKTOK_AUTO_SML',
+        confirm: enabled ? 'ENABLE_TIKTOK_AUTO_SML' : 'DISABLE_TIKTOK_AUTO_SML',
       })
-      toast.success(field === 'auto_bill'
-        ? enabled ? 'เปิดสร้าง Bill อัตโนมัติสำหรับออเดอร์ใหม่แล้ว' : 'ปิดสร้าง Bill อัตโนมัติแล้ว'
-        : enabled ? 'เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว' : 'ปิดส่ง SML อัตโนมัติแล้ว')
+      toast.success(enabled ? 'เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว' : 'ปิดส่ง SML อัตโนมัติแล้ว')
       await loadOperationsSummary()
       if (diagnosticsOpen) await loadDiagnostics()
     } catch (cause: unknown) {
@@ -455,8 +451,8 @@ export default function TikTokShopOperations() {
     }
   }, [diagnosticsOpen, loadDiagnostics, loadOperationsSummary])
 
-  const requestAutomationUpdate = useCallback(async (setting: TikTokAutoSMLSetting, field: 'auto_bill' | 'sml_send', enabled: boolean) => {
-    setAutoSMLConfirmChange({ setting, field, enabled })
+  const requestAutomationUpdate = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
+    setAutoSMLConfirmChange({ setting, enabled })
   }, [])
 
   const retryAutoSML = useCallback(async (row: TikTokOrderRow) => {
@@ -606,10 +602,6 @@ export default function TikTokShopOperations() {
     cancellationQueue,
     routeReady: diagnostics?.document.route_ready === true,
     webhookEnabled: summary?.webhook_enabled === true,
-    autoSML: {
-      enabledShops: (autoSML?.settings ?? []).filter((setting) => setting.auto_bill_enabled && !setting.paused_reason).length,
-      configuredShops: autoSML?.settings.length ?? 0,
-    },
   })
 
   return (
@@ -624,16 +616,12 @@ export default function TikTokShopOperations() {
         routeTitle={cancellationQueue ? 'ตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก' : 'ตรวจ route ที่ใช้งานจริงได้จาก ตรวจระบบ'}
         description={cancellationQueue
           ? 'ติดตามออเดอร์ที่ TikTok Shop ยืนยันการยกเลิกแล้ว พร้อมตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก'
-          : <>
-              ติดตาม order จาก TikTok Shop แบบเรียลไทม์ผ่าน Webhook พร้อมซิงก์สำรองทุก 5 นาที ร้านที่เปิดสร้าง Bill อัตโนมัติจะสร้างเอกสารเมื่อถึงสถานะที่กำหนด ส่วนการส่ง SML เลือกให้พนักงานส่งเองหรือเปิดอัตโนมัติแยกกันได้{' '}
-              <span className="text-xs text-muted-foreground">หาก Statement ไม่พบออเดอร์เก่า ให้เปิด Statement นั้นในหน้ารับชำระ แล้วกด “นำเข้าคำสั่งซื้อที่ขาด” ระบบจะไม่สร้าง Bill หรือส่ง SML เอง</span>
-            </>}
+          : 'TikTok Shop จะสร้าง Bill ใน Nexflow สำหรับออเดอร์ที่ชำระเงินและพร้อมจัดส่ง เพื่อให้ตรวจและส่ง SML ด้วยมือได้ตามปกติ เปิด Auto SML เฉพาะเมื่อพร้อมใช้งานจริง'}
         health={<TikTokOperationsHealthLine
           state={syncState}
           setting={selectedSetting}
           diagnostics={diagnostics}
           webhookLabel={headerMeta.webhookLabel}
-          autoSMLLabel={headerMeta.autoSMLLabel}
         />}
         actions={<>
             <Select value={shopID} onValueChange={(value) => setQuery({ shop_id: value, page: null })}>
@@ -647,11 +635,10 @@ export default function TikTokShopOperations() {
                 ))}
               </SelectContent>
             </Select>
-            <TikTokAutomationControl
+            <TikTokAutoSMLControl
               setting={selectedAutoSMLSetting}
               mode={autoSMLControl}
               saving={autoSMLSaving}
-              summaryLabel={headerMeta.autoSMLLabel.replace('Auto SML ', '')}
               onRequestChange={requestAutomationUpdate}
             />
             <MarketplaceOperationsHelp channel="TikTok Shop" signalLabel="Webhook" />
@@ -894,22 +881,14 @@ export default function TikTokShopOperations() {
         onOpenChange={(open) => {
           if (!open) setAutoSMLConfirmChange(null)
         }}
-        title={autoSMLConfirmChange?.field === 'auto_bill'
-          ? autoSMLConfirmChange.enabled ? 'เปิดสร้าง Bill ใน Nexflow อัตโนมัติสำหรับร้านนี้?' : 'ปิดสร้าง Bill ใน Nexflow อัตโนมัติสำหรับร้านนี้?'
-          : autoSMLConfirmChange?.enabled ? 'เปิดส่ง SML อัตโนมัติสำหรับร้านนี้?' : 'ปิดส่ง SML อัตโนมัติสำหรับร้านนี้?'}
-        description={autoSMLConfirmChange?.field === 'auto_bill'
-          ? autoSMLConfirmChange.enabled
-            ? `ร้าน ${autoSMLConfirmChange.setting.shop_name || autoSMLConfirmChange.setting.shop_id || 'TikTok Shop'} จะสร้าง Bill ใน Nexflow เฉพาะออเดอร์ใหม่ที่เข้าสู่สถานะ “รอรับพัสดุ” หลังจากยืนยันนี้ โดยยังไม่ส่งเข้า SML อัตโนมัติ\n\nระบบจะไม่สร้างย้อนหลัง และตรวจ mapping, ยอดเงิน และเส้นทางเอกสารก่อนสร้างทุกครั้ง`
-            : 'หลังปิด ระบบจะไม่รับออเดอร์ใหม่เข้าสู่คิวสร้าง Bill อัตโนมัติ งานที่ยังรอคิวจะถูกยกเลิก แต่เอกสารที่สร้างแล้วจะคงอยู่เพื่อให้ตรวจและส่ง SML ด้วยมือได้'
-          : autoSMLConfirmChange?.enabled
-            ? 'ออเดอร์ใหม่ที่ระบบสร้าง Bill อัตโนมัติและข้อมูลครบ จะถูกส่งเข้า SML ต่อทันทีเมื่อถึงเงื่อนไข ระบบจะไม่ส่งออเดอร์ย้อนหลัง'
-            : 'หลังปิด ระบบยังสร้าง Bill อัตโนมัติตามปกติ แต่พนักงานต้องเปิด Bill แล้วกดส่ง SML ด้วยตนเอง'}
-        confirmLabel={autoSMLConfirmChange?.field === 'auto_bill'
-          ? autoSMLConfirmChange.enabled ? 'เปิดสร้าง Bill อัตโนมัติ' : 'ปิดสร้าง Bill อัตโนมัติ'
-          : autoSMLConfirmChange?.enabled ? 'เปิดส่ง SML อัตโนมัติ' : 'ปิดส่ง SML อัตโนมัติ'}
+        title={autoSMLConfirmChange?.enabled ? 'เปิดส่ง SML อัตโนมัติสำหรับร้านนี้?' : 'ปิดส่ง SML อัตโนมัติสำหรับร้านนี้?'}
+        description={autoSMLConfirmChange?.enabled
+          ? 'เฉพาะ Bill ใหม่ที่ระบบสร้างอัตโนมัติและถึงสถานะพร้อมส่งเท่านั้นที่จะถูกส่งเข้า SML ต่อ ระบบจะไม่ย้อนส่ง Bill เก่า'
+          : 'หลังปิด ระบบยังสร้าง Bill ใน Nexflow ตามปกติ แต่พนักงานต้องเปิด Bill แล้วกดส่ง SML ด้วยตนเอง'}
+        confirmLabel={autoSMLConfirmChange?.enabled ? 'เปิดส่ง SML อัตโนมัติ' : 'ปิดส่ง SML อัตโนมัติ'}
         variant={autoSMLConfirmChange?.enabled ? 'default' : 'destructive'}
         onConfirm={async () => {
-          if (autoSMLConfirmChange) await updateAutomation(autoSMLConfirmChange.setting, autoSMLConfirmChange.field, autoSMLConfirmChange.enabled)
+          if (autoSMLConfirmChange) await updateAutomation(autoSMLConfirmChange.setting, autoSMLConfirmChange.enabled)
         }}
       />
       </div>
@@ -922,13 +901,11 @@ function TikTokOperationsHealthLine({
   setting,
   diagnostics,
   webhookLabel,
-  autoSMLLabel,
 }: {
   state: ReturnType<typeof tiktokSyncState>
   setting?: TikTokOrderSyncSetting
   diagnostics: TikTokDiagnostics | null
   webhookLabel: string
-  autoSMLLabel: string
 }) {
   const Icon = state === 'active' ? CheckCircle2 : Clock3
   return (
@@ -943,7 +920,6 @@ function TikTokOperationsHealthLine({
         </span>
       )}
       <span className="text-muted-foreground">· {webhookLabel}</span>
-      <span className="text-muted-foreground">· {autoSMLLabel}</span>
       {setting?.last_error_message && <span className="text-destructive">{setting.last_error_message}</span>}
       {diagnostics && (
         <span className={diagnostics.overall === 'ready_for_controlled_enablement' ? 'text-accentStrong' : 'text-warning'}>
@@ -954,97 +930,41 @@ function TikTokOperationsHealthLine({
   )
 }
 
-function TikTokAutomationControl({
+function TikTokAutoSMLControl({
   setting,
   mode,
   saving,
-  summaryLabel,
   onRequestChange,
 }: {
   setting?: TikTokAutoSMLSetting
   mode: ReturnType<typeof tiktokAutoSMLControlState>
   saving: boolean
-  summaryLabel: string
-  onRequestChange: (setting: TikTokAutoSMLSetting, field: 'auto_bill' | 'sml_send', enabled: boolean) => Promise<void>
+  onRequestChange: (setting: TikTokAutoSMLSetting, enabled: boolean) => Promise<void>
 }) {
-  const autoBillEnabled = Boolean(setting?.auto_bill_enabled && !setting.paused_reason)
-  const smlEnabled = Boolean(setting?.sml_send_enabled && autoBillEnabled)
-  const autoBillLabel = autoBillEnabled ? 'เปิดอยู่' : setting?.paused_reason ? 'หยุดชั่วคราว' : 'ปิดอยู่'
+  const smlEnabled = Boolean(setting?.sml_send_enabled && setting?.auto_bill_enabled && !setting.paused_reason)
   const smlLabel = smlEnabled ? 'เปิดอยู่' : 'ส่งด้วยมือ'
   const readonlyReason = mode.mode === 'control' ? undefined : mode.reason
-  const readonlyLabel = mode.mode === 'summary' ? `${summaryLabel} · ${readonlyReason}` : `${autoBillLabel} · ${readonlyReason}`
+  const readonlyLabel = mode.mode === 'summary' ? `เลือกร้านก่อนจัดการ` : `${smlLabel} · ${readonlyReason}`
+  const readonly = mode.mode !== 'control' || !setting
   return (
-    <div className="flex w-full min-w-0 items-center divide-x divide-border rounded-md border border-border bg-background sm:w-auto sm:min-w-[360px]" title={readonlyReason}>
-      <AutomationSwitch
-        icon={<FilePlus2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-        label="สร้าง Bill อัตโนมัติ"
-        status={autoBillLabel}
-        enabled={autoBillEnabled}
-        setting={setting}
-        mode={mode.mode}
-        saving={saving}
-        readonlyLabel={readonlyLabel}
-        ariaLabel={`เปลี่ยนการสร้าง Bill อัตโนมัติของ ${setting?.shop_name || setting?.shop_id || 'TikTok Shop'}`}
-        onChange={(next) => { if (setting) void onRequestChange(setting, 'auto_bill', next) }}
-      />
-      <AutomationSwitch
-        icon={<Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-        label="ส่ง SML อัตโนมัติ"
-        status={smlLabel}
-        enabled={smlEnabled}
-        setting={setting}
-        mode={mode.mode}
-        saving={saving}
-        readonlyLabel={readonlyLabel}
-        disabled={!autoBillEnabled}
-        disabledTitle="เปิดสร้าง Bill อัตโนมัติก่อน จึงจะเปิดส่ง SML อัตโนมัติได้"
-        ariaLabel={`เปลี่ยนการส่ง SML อัตโนมัติของ ${setting?.shop_name || setting?.shop_id || 'TikTok Shop'}`}
-        onChange={(next) => { if (setting) void onRequestChange(setting, 'sml_send', next) }}
-      />
-    </div>
-  )
-}
-
-function AutomationSwitch({
-  icon,
-  label,
-  status,
-  enabled,
-  setting,
-  mode,
-  saving,
-  readonlyLabel,
-  disabled = false,
-  disabledTitle,
-  ariaLabel,
-  onChange,
-}: {
-  icon: ReactNode
-  label: string
-  status: string
-  enabled: boolean
-  setting?: TikTokAutoSMLSetting
-  mode: ReturnType<typeof tiktokAutoSMLControlState>['mode']
-  saving: boolean
-  readonlyLabel: string
-  disabled?: boolean
-  disabledTitle?: string
-  ariaLabel: string
-  onChange: (enabled: boolean) => void
-}) {
-  const readonly = mode !== 'control' || !setting
-  return (
-    <div className="flex h-8 min-w-0 flex-1 items-center justify-between gap-1.5 px-2.5" title={readonly ? readonlyLabel : disabled ? disabledTitle : undefined}>
+    <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5" title={readonly ? readonlyLabel : undefined}>
       <div className="flex min-w-0 items-center gap-1.5">
-        {icon}
-        <span className="truncate text-xs font-medium">{label}</span>
+        <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
       </div>
       {readonly ? (
-        <span className="max-w-[90px] truncate text-right text-[10px] text-muted-foreground">{mode === 'summary' ? readonlyLabel : status}</span>
+        <span className="max-w-[104px] truncate text-right text-[10px] text-muted-foreground">{readonlyLabel}</span>
       ) : (
-        <div className="flex shrink-0 items-center gap-1">
-          <span className={cn('whitespace-nowrap text-[10px] font-medium', enabled ? 'text-accentStrong' : 'text-muted-foreground')}>{status}</span>
-          <Switch checked={enabled} disabled={saving || disabled} onCheckedChange={onChange} aria-label={ariaLabel} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge variant="outline" className={cn('h-5 whitespace-nowrap px-1.5 text-[10px] font-medium', smlEnabled ? 'border-accentStrong/40 bg-primary/10 text-accentStrong' : 'border-border bg-muted/40 text-muted-foreground')}>
+            {smlLabel}
+          </Badge>
+          <Switch
+            checked={smlEnabled}
+            disabled={saving || !setting.auto_bill_enabled}
+            aria-label={`เปลี่ยนการส่ง SML อัตโนมัติของ ${setting.shop_name || setting.shop_id || 'TikTok Shop'}`}
+            onCheckedChange={(next) => void onRequestChange(setting, next)}
+          />
         </div>
       )}
     </div>

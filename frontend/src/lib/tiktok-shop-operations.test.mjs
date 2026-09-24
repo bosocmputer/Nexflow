@@ -64,23 +64,19 @@ test('presents TikTok operations as realtime with a truthful webhook and polling
     cancellationQueue: false,
     routeReady: true,
     webhookEnabled: true,
-    autoSML: { enabledShops: 1, configuredShops: 1 },
   }), {
     modeLabel: 'เรียลไทม์',
     routeLabel: 'เส้นทาง SML พร้อมใช้งาน',
     webhookLabel: 'Webhook พร้อมรับ',
-    autoSMLLabel: 'สร้าง Bill อัตโนมัติ เปิด',
   })
   assert.deepEqual(tiktokOperationsHeaderMeta({
     cancellationQueue: true,
     routeReady: false,
     webhookEnabled: false,
-    autoSML: { enabledShops: 0, configuredShops: 1 },
   }), {
     modeLabel: 'เรียลไทม์',
     routeLabel: 'เอกสารหลังยกเลิก SML',
     webhookLabel: 'Webhook กำลังตรวจ',
-    autoSMLLabel: 'สร้าง Bill อัตโนมัติ ปิด',
   })
 })
 
@@ -242,7 +238,7 @@ test('builds a shop-scoped TikTok order detail link without accepting malformed 
 test('uses the same safe row-create guard as Shopee while leaving preview as the authority', () => {
   assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'AWAITING_COLLECTION', canCreateDocument: true }), '')
   assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'IN_TRANSIT', canCreateDocument: true }), '')
-  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'AWAITING_SHIPMENT', canCreateDocument: true }), 'สร้างเอกสารได้เมื่อ TikTok ยืนยันว่ารอรับพัสดุหรืออยู่ระหว่างจัดส่งแล้ว')
+  assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'AWAITING_SHIPMENT', canCreateDocument: true }), '')
   assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'CANCELLED', canCreateDocument: true }), 'คำสั่งซื้อถูกยกเลิกแล้ว')
   assert.equal(tiktokReviewedBillDisabledReason({ orderStatus: 'DELIVERED', canCreateDocument: false }), 'คุณไม่มีสิทธิ์สร้างเอกสาร')
 })

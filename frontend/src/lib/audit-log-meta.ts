@@ -60,6 +60,7 @@ export const ACTION_META: Record<string, ActionMeta> = {
   tiktok_shop_product_catalog_sync_failed: { label: 'อัปเดตรายการสินค้า TikTok Shop ไม่สำเร็จ', emoji: '⚠️', tone: 'danger' },
   tiktok_auto_sml_setting_updated: { label: 'เปลี่ยนการตั้งค่าอัตโนมัติ TikTok Shop', emoji: '⚙️', tone: 'info' },
   tiktok_auto_sml_queued: { label: 'เข้าคิว Auto SML TikTok Shop', emoji: '⏳', tone: 'info' },
+  tiktok_auto_bill_queued: { label: 'เข้าคิวสร้าง Bill TikTok Shop', emoji: '⏳', tone: 'info' },
   tiktok_auto_bill_created: { label: 'สร้าง Bill อัตโนมัติจาก TikTok Shop แล้ว', emoji: '🧾', tone: 'success' },
   tiktok_auto_sml_needs_review: { label: 'Auto SML TikTok Shop ต้องตรวจสอบ', emoji: '⚠️', tone: 'warning' },
   tiktok_auto_sml_retry_or_failed: { label: 'Auto SML TikTok Shop ลองใหม่/ไม่สำเร็จ', emoji: '🔄', tone: 'danger' },
@@ -285,6 +286,7 @@ export function auditDisplaySourceKey(log: AuditLog): string {
   if (log.action.startsWith('shopee_settlement_')) return 'shopee_settlement'
   if (
     log.action.startsWith('tiktok_shop_') ||
+    log.action.startsWith('tiktok_auto_bill_') ||
     log.action.startsWith('tiktok_auto_sml_') ||
     log.detail?.flow === 'tiktok_shop_api_reviewed'
   ) return 'tiktok_shop'
@@ -439,6 +441,8 @@ export function summarize(log: AuditLog): string {
     }
     case 'tiktok_auto_sml_queued':
       return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.trigger_status || 'AWAITING_COLLECTION', 'ไม่ย้อนหลัง'].filter(Boolean).join(' · ')
+    case 'tiktok_auto_bill_queued':
+      return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.observed_status || '', d.historical_backfill === true ? 'ข้อมูลที่มีอยู่' : 'ออเดอร์ใหม่'].filter(Boolean).join(' · ')
     case 'tiktok_auto_bill_created':
       return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.bill_id ? 'สร้าง Bill แล้ว' : '', 'รอส่ง SML ด้วยมือ'].filter(Boolean).join(' · ')
     case 'tiktok_auto_sml_needs_review':

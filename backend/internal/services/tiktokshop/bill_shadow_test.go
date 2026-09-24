@@ -19,6 +19,26 @@ type billShadowSourceFake struct {
 	calls   int
 }
 
+func TestTikTokBillLifecycleReadyCreatesLocalBillBeforeCarrierCollection(t *testing.T) {
+	for _, status := range []OrderStatus{
+		OrderStatusAwaitingShipment,
+		OrderStatusPartiallyShipping,
+		OrderStatusAwaitingCollection,
+		OrderStatusInTransit,
+		OrderStatusDelivered,
+		OrderStatusCompleted,
+	} {
+		if !TikTokBillLifecycleReady(status) {
+			t.Fatalf("status %s must be ready for a local Bill", status)
+		}
+	}
+	for _, status := range []OrderStatus{OrderStatusUnpaid, OrderStatusOnHold, OrderStatusCancelled} {
+		if TikTokBillLifecycleReady(status) {
+			t.Fatalf("status %s must not create a sale Bill", status)
+		}
+	}
+}
+
 func (f *billShadowSourceFake) Load(_ context.Context, shopID, orderID string) (*TikTokBillShadowSource, error) {
 	f.calls++
 	f.shopID = shopID

@@ -11,7 +11,7 @@ import (
 	"nexflow/internal/models"
 )
 
-func TestTikTokAutoSMLEnqueueRequiresEnabledPostCutoffExactTrigger(t *testing.T) {
+func TestTikTokAutoSMLEnqueueCreatesBillJobsForEligibleSnapshots(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -20,7 +20,7 @@ func TestTikTokAutoSMLEnqueueRequiresEnabledPostCutoffExactTrigger(t *testing.T)
 	repo := NewTikTokAutoSMLRepo(db)
 	transition := time.Date(2026, 9, 19, 10, 0, 0, 0, time.UTC)
 	mock.ExpectExec("INSERT INTO tiktok_shop_auto_sml_jobs").
-		WithArgs("7494619203789490654", "586030483469993439", models.TikTokAutoSMLTriggerAwaitingCollection, transition, string64("a"), string64("c"), string64("b")).
+		WithArgs("7494619203789490654", "586030483469993439", models.TikTokAutoSMLTriggerAwaitingCollection, transition, string64("a"), string64("c"), string64("b"), false).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	inserted, err := repo.Enqueue(context.Background(), TikTokAutoSMLEnqueueInput{

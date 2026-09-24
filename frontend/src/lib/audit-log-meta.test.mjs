@@ -140,6 +140,19 @@ test('presents reviewed TikTok Shop Bill creation as API work in both logs views
   )
 })
 
+test('keeps automatic TikTok Bill backlog evidence in Thai without classifying it as an SML send', () => {
+  const log = audit('tiktok_auto_bill_queued', {
+    order_id: '586030483469993439',
+    observed_status: 'COMPLETED',
+    historical_backfill: true,
+  }, 'tiktok_shop')
+
+  assert.equal(ACTION_META.tiktok_auto_bill_queued.label, 'เข้าคิวสร้าง Bill TikTok Shop')
+  assert.equal(auditDisplaySourceKey(log), 'tiktok_shop')
+  assert.equal(isSMLAuditLog(log), false)
+  assert.equal(summarize(log), 'ออเดอร์ 586030483469993439 · COMPLETED · ข้อมูลที่มีอยู่')
+})
+
 test('labels a blocked TikTok SML action without leaking the feature key', () => {
   const log = audit('tiktok_shop_sml_send_blocked', {
     order_id: '586030483469993439',

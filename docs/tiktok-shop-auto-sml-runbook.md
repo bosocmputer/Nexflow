@@ -1,32 +1,36 @@
-# TikTok Shop automatic Bill and SML runbook
+# TikTok Shop Bill and SML runbook
 
-TikTok Shop separates two independent actions. This keeps the operating flow
-the same as reviewed/manual SML: Nexflow may prepare a local Bill automatically,
-while staff remain in control of when it is posted to SML.
+TikTok Shop follows the same operating model as Shopee: Nexflow creates a
+local Bill for a paid, fulfilment-ready order first; sending that Bill to SML
+is a separate choice. Staff may always review and send a pending Bill manually.
 
-1. **สร้าง Bill อัตโนมัติ** creates a local Nexflow Bill for a qualifying new
-   order. It does not write to SML.
-2. **ส่ง SML อัตโนมัติ** is optional and requires automatic Bill creation to be
-   enabled first. When off, staff open the pending Bill and use the ordinary
-   manual SML send flow.
+1. **สร้าง Bill ใน Nexflow** is a local, idempotent action. It never writes to
+   SML.
+2. **ส่ง SML อัตโนมัติ** is optional. When it is off, staff open the pending
+   Bill in `/sale-invoices` and use the ordinary manual SML send flow.
 
-`TIKTOK_SHOP_AUTO_SML_ENABLED=true` enables the tenant worker. Each connected
-shop must then explicitly enable automatic Bill creation. Migration 117 adds
-`sml_send_enabled=false` to every existing shop, so deployment never turns on
-automatic SML posting as a side effect. There is no historical backfill.
+`TIKTOK_SHOP_AUTO_SML_ENABLED=true` enables the tenant worker that prepares
+safe local Bills. `sml_send_enabled=false` remains the default for every shop,
+so deployment never turns on automatic SML posting as a side effect. A bounded
+AOY-only reconciliation can prepare eligible existing snapshots as local Bills;
+it never posts them to SML.
 
 ## Trigger and evidence
 
-- The only supported trigger is the first observed exact
-  `AWAITING_COLLECTION` snapshot.
-- Enabling or resuming a shop writes a new `eligible_after` cutoff. A transition
-  before that cutoff cannot enter the queue.
+- A local Bill may be prepared only for paid, fulfilment-ready states:
+  `AWAITING_SHIPMENT`, `PARTIALLY_SHIPPING`, `AWAITING_COLLECTION`,
+  `IN_TRANSIT`, `DELIVERED`, or `COMPLETED`.
+- `UNPAID`, `ON_HOLD`, and `CANCELLED` never create a sale Bill. A cancellation
+  follows the separate cancellation/return document flow.
+- The normal live queue honors the shop's `eligible_after` cutoff. The bounded
+  historical reconciliation is explicitly scoped to local Bill preparation and
+  is never an SML-send backfill.
 - `(shop_id, order_id)` is unique, so webhook and scheduled reconciliation may
   safely observe the same order without creating duplicate work.
 - The job snapshots the trigger time, configuration version, source hash,
   bill-relevant fingerprint, and SML route signature.
-- Forward states `IN_TRANSIT`, `DELIVERED`, and `COMPLETED` may finish the same
-  immutable job only when products, amounts, mappings, and route still match.
+- Later fulfilment states may finish the same immutable job only when products,
+  amounts, mappings, and route still match.
 - `CANCELLED` cancels an unstarted job. Unknown or backward states stop at
   `needs_review`.
 
@@ -46,10 +50,10 @@ and are not stored in diagnostics or Auto SML queue records.
 5. Rotate the TikTok Gateway internal shared secret before enabling production
    automation if it has appeared in any diagnostic output or transcript.
 6. Set `TIKTOK_SHOP_AUTO_SML_ENABLED=true` for AOY only and redeploy.
-7. Reopen diagnostics, select AOY, and explicitly enable **สร้าง Bill อัตโนมัติ**
-   for the shop. Record the displayed cutoff time.
-8. Use one new order that reaches `AWAITING_COLLECTION` after the cutoff.
-9. Verify the local Bill, then send it manually. Enable **ส่ง SML อัตโนมัติ**
+7. Use one paid, fulfilment-ready TikTok order and verify its local Bill appears
+   in `/sale-invoices`.
+8. Send that Bill manually and verify the ordinary SML result.
+9. Enable **ส่ง SML อัตโนมัติ**
    only after that controlled Bill/SML canary succeeds.
 
 ## Canary acceptance
@@ -61,7 +65,7 @@ For the single canary order, verify all of the following before wider use:
   `tiktok_shop_api_reviewed`;
 - product quantities, item codes, units, shipping line, VAT, and total match the
   reviewed TikTok preview;
-- the order row shows `สร้างเอกสารแล้ว (อัตโนมัติ)` and `รอส่ง SML ด้วยมือ`;
+- the order row shows the local Bill and `รอส่ง SML ด้วยมือ`;
 - staff can open the same pending Bill from `/sale-invoices` and send it through
   the ordinary manual SML flow;
 - `/logs` shows queue and automatic-Bill milestones without buyer PII;
@@ -95,8 +99,7 @@ Do not enable another shop or bulk rollout until this canary passes.
 
 ## Rollback
 
-1. Disable **ส่ง SML อัตโนมัติ**, then **สร้าง Bill อัตโนมัติ**, for the AOY
-   shop in TikTok Shop Operations.
+1. Disable **ส่ง SML อัตโนมัติ** for the AOY shop in TikTok Shop Operations.
 2. Set `TIKTOK_SHOP_AUTO_SML_ENABLED=false` and redeploy if a tenant-wide stop
    is required.
 3. Leave succeeded jobs and created SML documents intact for audit. Never

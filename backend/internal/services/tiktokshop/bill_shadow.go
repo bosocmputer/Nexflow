@@ -227,7 +227,7 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 			Message: "หลักฐาน Snapshot ไม่สมบูรณ์ กรุณาซิงก์ออเดอร์ใหม่ก่อนสร้าง Bill",
 		})
 	}
-	if !tikTokBillLifecycleReady(source.StoredOrderStatus) {
+	if !TikTokBillLifecycleReady(source.StoredOrderStatus) {
 		appendTikTokBillShadowBlocker(&preview.Blockers, TikTokBillShadowBlocker{
 			Code:    TikTokBillShadowBlockerStatusNotReady,
 			Message: "สถานะ TikTok Shop ปัจจุบันยังไม่พร้อมสำหรับการตรวจสร้างเอกสารขาย",
@@ -515,9 +515,19 @@ func tikTokBillShadowReviewDigest(preview *TikTokBillShadowPreview) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func tikTokBillLifecycleReady(status OrderStatus) bool {
+// TikTokBillLifecycleReady reports whether an order is paid and far enough
+// through the TikTok Shop lifecycle to own a local sales Bill.  It is shared
+// by preview validation and the durable Bill-creation worker.
+func TikTokBillLifecycleReady(status OrderStatus) bool {
 	switch status {
-	case OrderStatusAwaitingCollection, OrderStatusInTransit, OrderStatusDelivered, OrderStatusCompleted:
+	// A paid TikTok Shop order may be prepared for shipment before the carrier
+	// collects it.  Nexflow creates the local Bill from this point onward so
+	// staff can inspect it in the ordinary Bill queue.  Sending that Bill to
+	// SML remains a separate decision and must still wait for Auto SML's own
+	// lifecycle rule (or for a staff member to send it manually).
+	case OrderStatusAwaitingShipment, OrderStatusPartiallyShipping,
+		OrderStatusAwaitingCollection, OrderStatusInTransit,
+		OrderStatusDelivered, OrderStatusCompleted:
 		return true
 	default:
 		return false
