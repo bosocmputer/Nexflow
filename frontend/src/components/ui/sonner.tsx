@@ -16,28 +16,35 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme as ToasterProps["theme"]}
+      position="bottom-right"
+      closeButton
+      gap={8}
+      visibleToasts={3}
       className="toaster group"
       icons={{
-        success: <CircleCheck className="h-4 w-4" />,
-        info: <Info className="h-4 w-4" />,
-        warning: <TriangleAlert className="h-4 w-4" />,
-        error: <OctagonX className="h-4 w-4" />,
+        success: <CircleCheck className="h-4 w-4 text-success" />,
+        info: <Info className="h-4 w-4 text-info" />,
+        warning: <TriangleAlert className="h-4 w-4 text-warning" />,
+        error: <OctagonX className="h-4 w-4 text-destructive" />,
         loading: <LoaderCircle className="h-4 w-4 animate-spin" />,
       }}
       toastOptions={{
         classNames: {
           toast:
-            "group toast !border-border !bg-card !text-card-foreground shadow-lg",
-          title: "group-[.toast]:!text-card-foreground",
-          description: "group-[.toast]:!text-muted-foreground",
-          success: "!border-success/35 !bg-success/10 !text-foreground",
-          info: "!border-primary/35 !bg-primary/10 !text-foreground",
-          warning: "!border-warning/35 !bg-warning/10 !text-foreground",
-          error: "!border-destructive/35 !bg-destructive/10 !text-foreground",
+            "group toast !border-border !bg-card !text-card-foreground shadow-md",
+          title: "group-[.toast]:!text-card-foreground !font-medium !leading-5",
+          description: "group-[.toast]:!text-muted-foreground !leading-5",
+          // Keep semantic meaning on the border and icon, while leaving the
+          // surface opaque. Transparent success/info surfaces made controls
+          // behind the toast look like part of the notification.
+          success: "!border-success/50 !text-card-foreground",
+          info: "!border-info/50 !text-card-foreground",
+          warning: "!border-warning/50 !text-card-foreground",
+          error: "!border-destructive/50 !text-card-foreground",
           actionButton:
-            "group-[.toast]:!bg-primary group-[.toast]:!text-primary-foreground",
+            "group-[.toast]:!shrink-0 group-[.toast]:!bg-primary group-[.toast]:!text-primary-foreground",
           cancelButton:
-            "group-[.toast]:!bg-muted group-[.toast]:!text-muted-foreground",
+            "group-[.toast]:!shrink-0 group-[.toast]:!bg-muted group-[.toast]:!text-muted-foreground",
         },
       }}
       {...props}
