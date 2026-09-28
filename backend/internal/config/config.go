@@ -77,51 +77,54 @@ type Config struct {
 
 	// Shopee Open API (direct order sync). Keep sandbox/live isolated by
 	// environment and base URL; tokens live in shopee_api_connections.
-	ShopeeOpenAPIEnabled                bool
-	ShopeeOpenAPIEnv                    string
-	ShopeeOpenAPIBaseURL                string
-	ShopeeOpenAPIPartnerID              int64
-	ShopeeOpenAPIPartnerKey             string
-	ShopeeOpenAPIRedirect               string
-	ShopeeOpenAPIMode                   string
-	ShopeeGatewayBaseURL                string
-	ShopeeGatewayPublicURL              string
-	ShopeeGatewayTenant                 string
-	ShopeeGatewayInternalSecret         string
-	TikTokShopOpenAPIEnabled            bool
-	TikTokShopGatewayBaseURL            string
-	TikTokShopGatewayPublicURL          string
-	TikTokShopGatewayTenant             string
-	TikTokShopGatewayInternalSecret     string
-	TikTokShopOrderSyncEnabled          bool
-	TikTokShopWebhookEnabled            bool
-	TikTokShopProductCatalogEnabled     bool
-	TikTokShopReviewedBillEnabled       bool
-	TikTokShopSMLSendEnabled            bool
-	TikTokShopAutoSMLEnabled            bool
-	TikTokShopFinanceEnabled            bool
-	TikTokShopSettlementSMLEnabled      bool
-	TikTokShopSMLCancelDocumentsEnabled bool
-	TikTokShopCancelWebhookEnabled      bool
-	TikTokShopLineEnabled               bool
-	TikTokShopLineEligibleAfter         time.Time
-	TikTokShopInAppEnabled              bool
-	TikTokShopInAppEligibleAfter        time.Time
-	MarketplaceOperationsEnabled        bool
-	ShopeeRealtimeOpsEnabled            bool
-	ShopeeAdvancedDropoffEnabled        bool
-	ShopeeShippingActionsEnabled        bool
-	ShopeeCancelAfterSMLAlertsEnabled   bool
-	ShopeeSMLCancelDocumentsEnabled     bool
-	ShopeeRichLineFlexEnabled           bool
-	ShopeeSettlementLineAlertsEnabled   bool
-	ShopeeOrderEscrowEnrichmentEnabled  bool
-	ShopeeRealtimeWebhookSecret         string
-	ShopeeRealtimeSyncIntervalSeconds   int
-	ShopeeAutoSMLEnabled                bool
-	ShopeeAutoSMLCancelEnabled          bool
-	LineMyShopEnabled                   bool
-	PurchaseFlowEnabled                 bool
+	ShopeeOpenAPIEnabled                     bool
+	ShopeeOpenAPIEnv                         string
+	ShopeeOpenAPIBaseURL                     string
+	ShopeeOpenAPIPartnerID                   int64
+	ShopeeOpenAPIPartnerKey                  string
+	ShopeeOpenAPIRedirect                    string
+	ShopeeOpenAPIMode                        string
+	ShopeeGatewayBaseURL                     string
+	ShopeeGatewayPublicURL                   string
+	ShopeeGatewayTenant                      string
+	ShopeeGatewayInternalSecret              string
+	TikTokShopOpenAPIEnabled                 bool
+	TikTokShopGatewayBaseURL                 string
+	TikTokShopGatewayPublicURL               string
+	TikTokShopGatewayTenant                  string
+	TikTokShopGatewayInternalSecret          string
+	TikTokShopOrderSyncEnabled               bool
+	TikTokShopWebhookEnabled                 bool
+	TikTokShopProductCatalogEnabled          bool
+	TikTokShopReviewedBillEnabled            bool
+	TikTokShopSMLSendEnabled                 bool
+	TikTokShopAutoSMLEnabled                 bool
+	TikTokShopFinanceEnabled                 bool
+	TikTokShopSettlementSMLEnabled           bool
+	TikTokShopSMLCancelDocumentsEnabled      bool
+	TikTokShopCancelWebhookEnabled           bool
+	TikTokShopLineEnabled                    bool
+	TikTokShopLineEligibleAfter              time.Time
+	TikTokShopCancellationLineEnabled        bool
+	TikTokShopCancellationLineEligibleAfter  time.Time
+	TikTokShopInAppEnabled                   bool
+	TikTokShopInAppEligibleAfter             time.Time
+	MarketplaceOperationsEnabled             bool
+	ShopeeRealtimeOpsEnabled                 bool
+	ShopeeAdvancedDropoffEnabled             bool
+	ShopeeShippingActionsEnabled             bool
+	ShopeeCancelAfterSMLAlertsEnabled        bool
+	ShopeeOrderCancellationLineAlertsEnabled bool
+	ShopeeSMLCancelDocumentsEnabled          bool
+	ShopeeRichLineFlexEnabled                bool
+	ShopeeSettlementLineAlertsEnabled        bool
+	ShopeeOrderEscrowEnrichmentEnabled       bool
+	ShopeeRealtimeWebhookSecret              string
+	ShopeeRealtimeSyncIntervalSeconds        int
+	ShopeeAutoSMLEnabled                     bool
+	ShopeeAutoSMLCancelEnabled               bool
+	LineMyShopEnabled                        bool
+	PurchaseFlowEnabled                      bool
 
 	// Cron
 	BackupCronHour        int
@@ -174,102 +177,113 @@ func Load() *Config {
 	if err != nil {
 		log.Fatal(err)
 	}
+	tikTokShopCancellationLineNotificationsEnabled := getEnvBool("TIKTOK_SHOP_CANCELLATION_LINE_NOTIFICATIONS_ENABLED", false)
+	tikTokShopCancellationLineNotificationsEligibleAfter, err := parseTikTokShopCancellationLineNotificationCutoff(
+		tikTokShopCancellationLineNotificationsEnabled,
+		getEnv("TIKTOK_SHOP_CANCELLATION_LINE_NOTIFICATIONS_ELIGIBLE_AFTER", ""),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	c := &Config{
-		Port:                                getEnv("PORT", "8090"),
-		Env:                                 getEnv("ENV", "development"),
-		DatabaseURL:                         getEnv("DATABASE_URL", ""),
-		DBUser:                              getEnv("DB_USER", "nexflow"),
-		DBPassword:                          getEnv("DB_PASSWORD", "changeme"),
-		JWTSecret:                           getEnv("JWT_SECRET", ""),
-		JWTExpireHours:                      getEnvInt("JWT_EXPIRE_HOURS", 24),
-		LineChannelSecret:                   getEnv("LINE_CHANNEL_SECRET", ""),
-		LineChannelAccessToken:              getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
-		LineAdminUserID:                     getEnv("LINE_ADMIN_USER_ID", ""),
-		LineGreeting:                        getEnv("LINE_GREETING", ""),
-		PublicBaseURL:                       getEnv("PUBLIC_BASE_URL", ""),
-		MediaSigningKey:                     getEnv("MEDIA_SIGNING_KEY", ""),
-		ShopeeSMLURL:                        getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
-		ShopeeSMLGUID:                       getEnv("SHOPEE_SML_GUID", "SMLX"),
-		ShopeeSMLProvider:                   getEnv("SHOPEE_SML_PROVIDER", "SML1"),
-		ShopeeSMLConfigFile:                 getEnv("SHOPEE_SML_CONFIG_FILE", "SMLConfigSML1.xml"),
-		ShopeeSMLDatabase:                   getEnv("SHOPEE_SML_DATABASE", "SMLPLOY"),
-		ShopeeSMLDocFormat:                  getEnv("SHOPEE_SML_DOC_FORMAT", ""),
-		ShopeeSMLSaleCode:                   getEnv("SHOPEE_SML_SALE_CODE", ""),
-		ShopeeSMLBranchCode:                 getEnv("SHOPEE_SML_BRANCH_CODE", ""),
-		ShopeeSMLWHCode:                     getEnv("SHOPEE_SML_WH_CODE", ""),
-		ShopeeSMLShelfCode:                  getEnv("SHOPEE_SML_SHELF_CODE", ""),
-		ShopeeSMLUnitCode:                   getEnv("SHOPEE_SML_UNIT_CODE", ""),
-		ShopeeSMLVATType:                    getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
-		ShopeeSMLVATRate:                    getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
-		ShopeeSMLDocTime:                    getEnv("SHOPEE_SML_DOC_TIME", ""),
-		SMLSetProductExpansionEnabled:       getEnvBool("SML_SET_PRODUCT_EXPANSION_ENABLED", false),
-		ShopeeSetStockEnabled:               getEnvBool("SHOPEE_SET_STOCK_ENABLED", false),
-		MarketplaceGroupedUIEnabled:         getEnvBool("MARKETPLACE_GROUPED_UI_ENABLED", false),
-		MarketplaceUnitCatalogEnabled:       getEnvBool("MARKETPLACE_UNIT_CATALOG_ENABLED", false),
-		MarketplaceConversionMode:           conversionMode,
-		MarketplaceReservationLedgerEnabled: getEnvBool("MARKETPLACE_RESERVATION_LEDGER_ENABLED", false),
-		SMLStockAvailabilityMode:            stockAvailabilityMode,
-		SMLStockSourceFingerprint:           strings.TrimSpace(getEnv("SML_STOCK_SOURCE_FINGERPRINT", "")),
-		SMLDocumentProfileMode:              documentProfileMode,
-		SMLDocumentProfileRouteModes:        documentProfileRouteModes,
-		MarketplaceStockControlEnabled:      getEnvBool("MARKETPLACE_STOCK_CONTROL_ENABLED", false),
-		MarketplaceStockWriteEnabled:        getEnvBool("MARKETPLACE_STOCK_WRITE_ENABLED", false),
-		ShopeeOpenAPIEnabled:                getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
-		ShopeeOpenAPIEnv:                    getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
-		ShopeeOpenAPIBaseURL:                getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
-		ShopeeOpenAPIPartnerID:              getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
-		ShopeeOpenAPIPartnerKey:             getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
-		ShopeeOpenAPIRedirect:               getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
-		ShopeeOpenAPIMode:                   getEnv("SHOPEE_OPEN_API_MODE", "direct"),
-		ShopeeGatewayBaseURL:                getEnv("SHOPEE_GATEWAY_BASE_URL", ""),
-		ShopeeGatewayPublicURL:              getEnv("SHOPEE_GATEWAY_PUBLIC_URL", ""),
-		ShopeeGatewayTenant:                 getEnv("SHOPEE_GATEWAY_TENANT", ""),
-		ShopeeGatewayInternalSecret:         getEnv("SHOPEE_GATEWAY_INTERNAL_SECRET", ""),
-		TikTokShopOpenAPIEnabled:            getEnvBool("TIKTOK_SHOP_OPEN_API_ENABLED", false),
-		TikTokShopGatewayBaseURL:            getEnv("TIKTOK_SHOP_GATEWAY_BASE_URL", ""),
-		TikTokShopGatewayPublicURL:          getEnv("TIKTOK_SHOP_GATEWAY_PUBLIC_URL", ""),
-		TikTokShopGatewayTenant:             getEnv("TIKTOK_SHOP_GATEWAY_TENANT", ""),
-		TikTokShopGatewayInternalSecret:     getEnv("TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET", ""),
-		TikTokShopOrderSyncEnabled:          getEnvBool("TIKTOK_SHOP_ORDER_SYNC_ENABLED", false),
-		TikTokShopWebhookEnabled:            getEnvBool("TIKTOK_SHOP_WEBHOOK_ENABLED", false),
-		TikTokShopProductCatalogEnabled:     getEnvBool("TIKTOK_SHOP_PRODUCT_CATALOG_ENABLED", false),
-		TikTokShopReviewedBillEnabled:       getEnvBool("TIKTOK_SHOP_REVIEWED_BILL_ENABLED", false),
-		TikTokShopSMLSendEnabled:            getEnvBool("TIKTOK_SHOP_SML_SEND_ENABLED", false),
-		TikTokShopAutoSMLEnabled:            getEnvBool("TIKTOK_SHOP_AUTO_SML_ENABLED", false),
-		TikTokShopFinanceEnabled:            getEnvBool("TIKTOK_SHOP_FINANCE_ENABLED", false),
-		TikTokShopSettlementSMLEnabled:      getEnvBool("TIKTOK_SHOP_SETTLEMENT_SML_ENABLED", false),
-		TikTokShopSMLCancelDocumentsEnabled: getEnvBool("TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED", false),
-		TikTokShopCancelWebhookEnabled:      getEnvBool("TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED", false),
-		TikTokShopLineEnabled:               tikTokShopLineNotificationsEnabled,
-		TikTokShopLineEligibleAfter:         tikTokShopLineNotificationsEligibleAfter,
-		TikTokShopInAppEnabled:              tikTokShopInAppNotificationsEnabled,
-		TikTokShopInAppEligibleAfter:        tikTokShopInAppNotificationsEligibleAfter,
-		MarketplaceOperationsEnabled:        getEnvBool("MARKETPLACE_OPERATIONS_ENABLED", false),
-		ShopeeRealtimeOpsEnabled:            getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
-		ShopeeAdvancedDropoffEnabled:        getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
-		ShopeeShippingActionsEnabled:        getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
-		ShopeeCancelAfterSMLAlertsEnabled:   getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
-		ShopeeSMLCancelDocumentsEnabled:     getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
-		ShopeeRichLineFlexEnabled:           getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
-		ShopeeSettlementLineAlertsEnabled:   getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
-		ShopeeOrderEscrowEnrichmentEnabled:  getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
-		ShopeeRealtimeWebhookSecret:         getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
-		ShopeeRealtimeSyncIntervalSeconds:   getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
-		ShopeeAutoSMLEnabled:                getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
-		ShopeeAutoSMLCancelEnabled:          getEnvBool("SHOPEE_AUTO_SML_CANCEL_ENABLED", false),
-		LineMyShopEnabled:                   getEnvBool("ENABLE_LINE_MYSHOP", true),
-		PurchaseFlowEnabled:                 false,
-		BackupCronHour:                      getEnvInt("BACKUP_CRON_HOUR", 0),
-		DiskWarnPercent:                     getEnvInt("DISK_WARN_PERCENT", 90),
-		DataLifecycleEnabled:                getEnvBool("DATA_LIFECYCLE_ENABLED", true),
-		DataLifecycleCronHour:               getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
-		HotLogDays:                          getEnvInt("HOT_LOG_DAYS", 90),
-		AutoArchiveDays:                     getEnvInt("AUTO_ARCHIVE_DAYS", 180),
-		SummaryRetentionDays:                getEnvInt("SUMMARY_RETENTION_DAYS", 730),
-		PurgeBatchSize:                      getEnvInt("PURGE_BATCH_SIZE", 1000),
-		ArtifactsDir:                        getEnv("ARTIFACTS_DIR", "/app/artifacts"),
-		ArtifactsMaxBytes:                   int64(getEnvInt("ARTIFACTS_MAX_BYTES", 20*1024*1024)), // 20 MB
+		Port:                                     getEnv("PORT", "8090"),
+		Env:                                      getEnv("ENV", "development"),
+		DatabaseURL:                              getEnv("DATABASE_URL", ""),
+		DBUser:                                   getEnv("DB_USER", "nexflow"),
+		DBPassword:                               getEnv("DB_PASSWORD", "changeme"),
+		JWTSecret:                                getEnv("JWT_SECRET", ""),
+		JWTExpireHours:                           getEnvInt("JWT_EXPIRE_HOURS", 24),
+		LineChannelSecret:                        getEnv("LINE_CHANNEL_SECRET", ""),
+		LineChannelAccessToken:                   getEnv("LINE_CHANNEL_ACCESS_TOKEN", ""),
+		LineAdminUserID:                          getEnv("LINE_ADMIN_USER_ID", ""),
+		LineGreeting:                             getEnv("LINE_GREETING", ""),
+		PublicBaseURL:                            getEnv("PUBLIC_BASE_URL", ""),
+		MediaSigningKey:                          getEnv("MEDIA_SIGNING_KEY", ""),
+		ShopeeSMLURL:                             getEnv("SHOPEE_SML_URL", "http://192.168.2.248:8080"),
+		ShopeeSMLGUID:                            getEnv("SHOPEE_SML_GUID", "SMLX"),
+		ShopeeSMLProvider:                        getEnv("SHOPEE_SML_PROVIDER", "SML1"),
+		ShopeeSMLConfigFile:                      getEnv("SHOPEE_SML_CONFIG_FILE", "SMLConfigSML1.xml"),
+		ShopeeSMLDatabase:                        getEnv("SHOPEE_SML_DATABASE", "SMLPLOY"),
+		ShopeeSMLDocFormat:                       getEnv("SHOPEE_SML_DOC_FORMAT", ""),
+		ShopeeSMLSaleCode:                        getEnv("SHOPEE_SML_SALE_CODE", ""),
+		ShopeeSMLBranchCode:                      getEnv("SHOPEE_SML_BRANCH_CODE", ""),
+		ShopeeSMLWHCode:                          getEnv("SHOPEE_SML_WH_CODE", ""),
+		ShopeeSMLShelfCode:                       getEnv("SHOPEE_SML_SHELF_CODE", ""),
+		ShopeeSMLUnitCode:                        getEnv("SHOPEE_SML_UNIT_CODE", ""),
+		ShopeeSMLVATType:                         getEnvInt("SHOPEE_SML_VAT_TYPE", -1),
+		ShopeeSMLVATRate:                         getEnvFloat("SHOPEE_SML_VAT_RATE", -1),
+		ShopeeSMLDocTime:                         getEnv("SHOPEE_SML_DOC_TIME", ""),
+		SMLSetProductExpansionEnabled:            getEnvBool("SML_SET_PRODUCT_EXPANSION_ENABLED", false),
+		ShopeeSetStockEnabled:                    getEnvBool("SHOPEE_SET_STOCK_ENABLED", false),
+		MarketplaceGroupedUIEnabled:              getEnvBool("MARKETPLACE_GROUPED_UI_ENABLED", false),
+		MarketplaceUnitCatalogEnabled:            getEnvBool("MARKETPLACE_UNIT_CATALOG_ENABLED", false),
+		MarketplaceConversionMode:                conversionMode,
+		MarketplaceReservationLedgerEnabled:      getEnvBool("MARKETPLACE_RESERVATION_LEDGER_ENABLED", false),
+		SMLStockAvailabilityMode:                 stockAvailabilityMode,
+		SMLStockSourceFingerprint:                strings.TrimSpace(getEnv("SML_STOCK_SOURCE_FINGERPRINT", "")),
+		SMLDocumentProfileMode:                   documentProfileMode,
+		SMLDocumentProfileRouteModes:             documentProfileRouteModes,
+		MarketplaceStockControlEnabled:           getEnvBool("MARKETPLACE_STOCK_CONTROL_ENABLED", false),
+		MarketplaceStockWriteEnabled:             getEnvBool("MARKETPLACE_STOCK_WRITE_ENABLED", false),
+		ShopeeOpenAPIEnabled:                     getEnvBool("SHOPEE_OPEN_API_ENABLED", false),
+		ShopeeOpenAPIEnv:                         getEnv("SHOPEE_OPEN_API_ENV", "sandbox"),
+		ShopeeOpenAPIBaseURL:                     getEnv("SHOPEE_OPEN_API_BASE_URL", "https://openplatform.sandbox.test-stable.shopee.sg"),
+		ShopeeOpenAPIPartnerID:                   getEnvInt64("SHOPEE_OPEN_API_PARTNER_ID", 0),
+		ShopeeOpenAPIPartnerKey:                  getEnv("SHOPEE_OPEN_API_PARTNER_KEY", ""),
+		ShopeeOpenAPIRedirect:                    getEnv("SHOPEE_OPEN_API_REDIRECT_URL", ""),
+		ShopeeOpenAPIMode:                        getEnv("SHOPEE_OPEN_API_MODE", "direct"),
+		ShopeeGatewayBaseURL:                     getEnv("SHOPEE_GATEWAY_BASE_URL", ""),
+		ShopeeGatewayPublicURL:                   getEnv("SHOPEE_GATEWAY_PUBLIC_URL", ""),
+		ShopeeGatewayTenant:                      getEnv("SHOPEE_GATEWAY_TENANT", ""),
+		ShopeeGatewayInternalSecret:              getEnv("SHOPEE_GATEWAY_INTERNAL_SECRET", ""),
+		TikTokShopOpenAPIEnabled:                 getEnvBool("TIKTOK_SHOP_OPEN_API_ENABLED", false),
+		TikTokShopGatewayBaseURL:                 getEnv("TIKTOK_SHOP_GATEWAY_BASE_URL", ""),
+		TikTokShopGatewayPublicURL:               getEnv("TIKTOK_SHOP_GATEWAY_PUBLIC_URL", ""),
+		TikTokShopGatewayTenant:                  getEnv("TIKTOK_SHOP_GATEWAY_TENANT", ""),
+		TikTokShopGatewayInternalSecret:          getEnv("TIKTOK_SHOP_GATEWAY_INTERNAL_SECRET", ""),
+		TikTokShopOrderSyncEnabled:               getEnvBool("TIKTOK_SHOP_ORDER_SYNC_ENABLED", false),
+		TikTokShopWebhookEnabled:                 getEnvBool("TIKTOK_SHOP_WEBHOOK_ENABLED", false),
+		TikTokShopProductCatalogEnabled:          getEnvBool("TIKTOK_SHOP_PRODUCT_CATALOG_ENABLED", false),
+		TikTokShopReviewedBillEnabled:            getEnvBool("TIKTOK_SHOP_REVIEWED_BILL_ENABLED", false),
+		TikTokShopSMLSendEnabled:                 getEnvBool("TIKTOK_SHOP_SML_SEND_ENABLED", false),
+		TikTokShopAutoSMLEnabled:                 getEnvBool("TIKTOK_SHOP_AUTO_SML_ENABLED", false),
+		TikTokShopFinanceEnabled:                 getEnvBool("TIKTOK_SHOP_FINANCE_ENABLED", false),
+		TikTokShopSettlementSMLEnabled:           getEnvBool("TIKTOK_SHOP_SETTLEMENT_SML_ENABLED", false),
+		TikTokShopSMLCancelDocumentsEnabled:      getEnvBool("TIKTOK_SHOP_SML_CANCEL_DOCUMENTS_ENABLED", false),
+		TikTokShopCancelWebhookEnabled:           getEnvBool("TIKTOK_SHOP_CANCELLATION_WEBHOOK_ENABLED", false),
+		TikTokShopLineEnabled:                    tikTokShopLineNotificationsEnabled,
+		TikTokShopLineEligibleAfter:              tikTokShopLineNotificationsEligibleAfter,
+		TikTokShopCancellationLineEnabled:        tikTokShopCancellationLineNotificationsEnabled,
+		TikTokShopCancellationLineEligibleAfter:  tikTokShopCancellationLineNotificationsEligibleAfter,
+		TikTokShopInAppEnabled:                   tikTokShopInAppNotificationsEnabled,
+		TikTokShopInAppEligibleAfter:             tikTokShopInAppNotificationsEligibleAfter,
+		MarketplaceOperationsEnabled:             getEnvBool("MARKETPLACE_OPERATIONS_ENABLED", false),
+		ShopeeRealtimeOpsEnabled:                 getEnvBool("ENABLE_SHOPEE_REALTIME_OPS", false),
+		ShopeeAdvancedDropoffEnabled:             getEnvBool("ENABLE_SHOPEE_ADVANCED_DROPOFF", false),
+		ShopeeShippingActionsEnabled:             getEnvBool("ENABLE_SHOPEE_SHIPPING_ACTIONS", false),
+		ShopeeCancelAfterSMLAlertsEnabled:        getEnvBool("ENABLE_SHOPEE_CANCEL_AFTER_SML_ALERTS", true),
+		ShopeeOrderCancellationLineAlertsEnabled: getEnvBool("ENABLE_SHOPEE_ORDER_CANCELLATION_LINE_ALERTS", false),
+		ShopeeSMLCancelDocumentsEnabled:          getEnvBool("ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS", false),
+		ShopeeRichLineFlexEnabled:                getEnvBool("ENABLE_SHOPEE_RICH_LINE_FLEX", true),
+		ShopeeSettlementLineAlertsEnabled:        getEnvBool("ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS", true),
+		ShopeeOrderEscrowEnrichmentEnabled:       getEnvBool("ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT", true),
+		ShopeeRealtimeWebhookSecret:              getEnv("SHOPEE_REALTIME_WEBHOOK_SECRET", ""),
+		ShopeeRealtimeSyncIntervalSeconds:        getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
+		ShopeeAutoSMLEnabled:                     getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
+		ShopeeAutoSMLCancelEnabled:               getEnvBool("SHOPEE_AUTO_SML_CANCEL_ENABLED", false),
+		LineMyShopEnabled:                        getEnvBool("ENABLE_LINE_MYSHOP", true),
+		PurchaseFlowEnabled:                      false,
+		BackupCronHour:                           getEnvInt("BACKUP_CRON_HOUR", 0),
+		DiskWarnPercent:                          getEnvInt("DISK_WARN_PERCENT", 90),
+		DataLifecycleEnabled:                     getEnvBool("DATA_LIFECYCLE_ENABLED", true),
+		DataLifecycleCronHour:                    getEnvInt("DATA_LIFECYCLE_CRON_HOUR", 2),
+		HotLogDays:                               getEnvInt("HOT_LOG_DAYS", 90),
+		AutoArchiveDays:                          getEnvInt("AUTO_ARCHIVE_DAYS", 180),
+		SummaryRetentionDays:                     getEnvInt("SUMMARY_RETENTION_DAYS", 730),
+		PurgeBatchSize:                           getEnvInt("PURGE_BATCH_SIZE", 1000),
+		ArtifactsDir:                             getEnv("ARTIFACTS_DIR", "/app/artifacts"),
+		ArtifactsMaxBytes:                        int64(getEnvInt("ARTIFACTS_MAX_BYTES", 20*1024*1024)), // 20 MB
 	}
 
 	if c.JWTSecret == "" {
@@ -373,6 +387,10 @@ func parseSMLDocumentProfileRouteModes(raw, legacySaleInvoiceMode string) (map[s
 
 func parseTikTokShopLineNotificationCutoff(enabled bool, raw string) (time.Time, error) {
 	return parseTikTokShopNotificationCutoff(enabled, raw, "TIKTOK_SHOP_LINE_NOTIFICATIONS_ELIGIBLE_AFTER")
+}
+
+func parseTikTokShopCancellationLineNotificationCutoff(enabled bool, raw string) (time.Time, error) {
+	return parseTikTokShopNotificationCutoff(enabled, raw, "TIKTOK_SHOP_CANCELLATION_LINE_NOTIFICATIONS_ELIGIBLE_AFTER")
 }
 
 func parseTikTokShopInAppNotificationCutoff(enabled bool, raw string) (time.Time, error) {

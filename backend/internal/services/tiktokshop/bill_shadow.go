@@ -698,3 +698,27 @@ func (s *TikTokBillShadowStore) Load(ctx context.Context, shopID, orderID string
 	}
 	return &source, nil
 }
+
+// ExistingBillSMLDocNo is deliberately small because it is used by the
+// cancellation notifier. It must not load mapping or product data merely to
+// describe whether an already-created bill reached SML.
+func (s *TikTokBillShadowStore) ExistingBillSMLDocNo(ctx context.Context, orderID string) (string, error) {
+	if s == nil || s.database == nil || strings.TrimSpace(orderID) == "" {
+		return "", nil
+	}
+	var docNo string
+	err := s.database.QueryRowContext(ctx,
+		`SELECT COALESCE(sml_doc_no, '')
+		   FROM bills
+		  WHERE source='tiktok' AND sml_order_id=$1 AND archived_at IS NULL
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT 1`, strings.TrimSpace(orderID),
+	).Scan(&docNo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load existing TikTok Shop bill SML document: %w", err)
+	}
+	return strings.TrimSpace(docNo), nil
+}

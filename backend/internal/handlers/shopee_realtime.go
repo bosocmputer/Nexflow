@@ -84,6 +84,7 @@ func NewShopeeRealtimeHandler(repo *repository.ShopeeRealtimeRepo, notificationR
 
 type lineOrderNotifier interface {
 	EnqueueShopeeNewOrder(ctx context.Context, snap *models.ShopeeOrderSnapshot, payment *models.ShopeeOrderPaymentSnapshot, dedupeKey string) (int, error)
+	EnqueueShopeeOrderCancelled(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error)
 	EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error)
 	EnqueueShopeeSMLCancellationCreated(ctx context.Context, snap *models.ShopeeOrderSnapshot, cancelDocNo, documentLabel, dedupeKey string) (int, error)
 }
@@ -3535,10 +3536,14 @@ func (h *ShopeeRealtimeHandler) notifySnapshotChange(ctx context.Context, before
 	if after.ERPStatus == "failed" && (before == nil || before.ERPStatus != "failed") {
 		h.notifySnapshotIssue(ctx, after, nil, "error", "บันทึก Shopee เข้า ERP ไม่สำเร็จ", shopeeNotificationBody(after), "erp_failed")
 	}
+	justCancelled := before != nil && !strings.EqualFold(strings.TrimSpace(before.OrderStatus), "CANCELLED") && strings.EqualFold(strings.TrimSpace(after.OrderStatus), "CANCELLED")
+	if justCancelled && h.cfg != nil && h.cfg.ShopeeOrderCancellationLineAlertsEnabled {
+		h.notifySnapshotIssue(ctx, after, nil, "warning", "คำสั่งซื้อ Shopee ถูกยกเลิก", shopeeNotificationBody(after), "cancelled")
+	}
 	if strings.EqualFold(strings.TrimSpace(after.OrderStatus), "CANCELLED") && strings.TrimSpace(after.SMLDocNo) != "" &&
 		(before == nil || !strings.EqualFold(strings.TrimSpace(before.OrderStatus), "CANCELLED") || before.SMLDocNo != after.SMLDocNo) {
 		autoHandled := h.maybeEnqueueAutoSMLCancellation(ctx, before, after)
-		if !autoHandled && h.cfg != nil && h.cfg.ShopeeCancelAfterSMLAlertsEnabled {
+		if !autoHandled && h.cfg != nil && h.cfg.ShopeeCancelAfterSMLAlertsEnabled && !h.cfg.ShopeeOrderCancellationLineAlertsEnabled {
 			h.notifySnapshotIssue(ctx, after, nil, "error", "ออเดอร์ Shopee ถูกยกเลิกหลังส่ง SML", "ต้องสร้างเอกสารยกเลิก SML สำหรับใบขาย "+strings.TrimSpace(after.SMLDocNo), "cancelled_after_sml")
 		}
 	}
@@ -3586,6 +3591,8 @@ func (h *ShopeeRealtimeHandler) notifySnapshotIssue(ctx context.Context, snap *m
 		switch kind {
 		case "new_order":
 			_, err = h.lineNotifier.EnqueueShopeeNewOrder(ctx, snap, payment, key)
+		case "cancelled":
+			_, err = h.lineNotifier.EnqueueShopeeOrderCancelled(ctx, snap, key)
 		case "cancelled_after_sml":
 			_, err = h.lineNotifier.EnqueueShopeeCancelledAfterSML(ctx, snap, key)
 		}

@@ -141,6 +141,38 @@ func (s *Service) EnqueueTikTokShopNewOrder(ctx context.Context, in models.TikTo
 	})
 }
 
+// EnqueueTikTokShopOrderCancelled records one durable, PII-free alert per
+// recipient. Replayed polling and webhook snapshots reuse the same dedupe key.
+func (s *Service) EnqueueTikTokShopOrderCancelled(ctx context.Context, in models.TikTokShopOrderCancellationNotification, dedupeKey string) (int, error) {
+	if s == nil || s.repo == nil || strings.TrimSpace(in.ShopID) == "" || strings.TrimSpace(in.OrderID) == "" {
+		return 0, nil
+	}
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		dedupeKey = fmt.Sprintf("tiktok_shop:cancelled:%s:%s", strings.TrimSpace(in.ShopID), strings.TrimSpace(in.OrderID))
+	}
+	message := BuildTikTokShopOrderCancelledLineText(in, s.publicBaseURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := BuildTikTokShopOrderCancelledLineFlex(in); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText, flexPayload, payloadVersion = alt, raw, 1
+			} else if s.logger != nil {
+				s.logger.Warn("line TikTok Shop cancellation flex marshal failed", zap.String("shop_id", in.ShopID), zap.String("order_id", in.OrderID), zap.Error(err))
+			}
+		}
+	}
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source: "tiktok_shop", Severity: "warning", Title: "คำสั่งซื้อ TikTok Shop ถูกยกเลิก",
+		Body:       marketplaceCancellationBody(in.ShopName, in.OrderID, in.SMLDocNo),
+		ActionURL:  TikTokShopOrderActionURL(s.publicBaseURL, in.ShopID, in.OrderID),
+		EntityType: "tiktok_shop_order", EntityID: strings.TrimSpace(in.ShopID) + ":" + strings.TrimSpace(in.OrderID),
+		DedupeKey: dedupeKey, MessageText: message, AltText: altText, FlexPayload: flexPayload, PayloadVersion: payloadVersion,
+	})
+}
+
 func (s *Service) EnqueueTikTokShopAutoSMLSuccess(ctx context.Context, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
 	return s.enqueueTikTokShopAutoSML(ctx, "success", in, dedupeKey)
 }
@@ -215,6 +247,39 @@ func (s *Service) EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *mode
 		EntityID:    fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
 		DedupeKey:   dedupeKey,
 		MessageText: message,
+	})
+}
+
+// EnqueueShopeeOrderCancelled is the general cancellation alert. It covers
+// cancellations before SML as well as those after SML, unlike the legacy
+// after-SML-only notice kept for backwards-compatible tenants.
+func (s *Service) EnqueueShopeeOrderCancelled(ctx context.Context, snap *models.ShopeeOrderSnapshot, dedupeKey string) (int, error) {
+	if s == nil || s.repo == nil || snap == nil || strings.TrimSpace(snap.OrderSN) == "" {
+		return 0, nil
+	}
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		dedupeKey = fmt.Sprintf("shopee:cancelled:%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN))
+	}
+	message := BuildShopeeOrderCancelledLineText(snap, s.publicBaseURL)
+	altText := ""
+	var flexPayload json.RawMessage
+	payloadVersion := 0
+	if s.richFlexEnabled {
+		if alt, contents := BuildShopeeOrderCancelledLineFlex(snap); contents != nil {
+			if raw, err := json.Marshal(contents); err == nil {
+				altText, flexPayload, payloadVersion = alt, raw, 1
+			} else if s.logger != nil {
+				s.logger.Warn("line Shopee cancellation flex marshal failed", zap.Int64("shop_id", snap.ShopID), zap.String("order_sn", snap.OrderSN), zap.Error(err))
+			}
+		}
+	}
+	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		Source: "shopee_realtime", Severity: "warning", Title: "คำสั่งซื้อ Shopee ถูกยกเลิก",
+		Body:       marketplaceCancellationBody(snap.ShopLabel, snap.OrderSN, snap.SMLDocNo),
+		ActionURL:  ShopeeOrderActionURL(s.publicBaseURL, snap.OrderSN),
+		EntityType: "shopee_order", EntityID: fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
+		DedupeKey: dedupeKey, MessageText: message, AltText: altText, FlexPayload: flexPayload, PayloadVersion: payloadVersion,
 	})
 }
 
@@ -756,6 +821,14 @@ func BuildTikTokShopNewOrderLineFlex(in models.TikTokShopNewOrderNotification, _
 		"type": "bubble", "size": "mega",
 		"body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "contents": body},
 	}
+}
+
+func BuildTikTokShopOrderCancelledLineText(in models.TikTokShopOrderCancellationNotification, publicBaseURL string) string {
+	return buildMarketplaceCancellationLineText("TikTok Shop", "Order ID", in.ShopName, in.OrderID, in.PaymentTotalAmount, in.Currency, in.SMLDocNo, TikTokShopOrderActionURL(publicBaseURL, in.ShopID, in.OrderID))
+}
+
+func BuildTikTokShopOrderCancelledLineFlex(in models.TikTokShopOrderCancellationNotification) (string, map[string]any) {
+	return buildMarketplaceCancellationLineFlex("TikTok Shop", tikTokFlexBaseColor, "Order ID", in.ShopName, in.ShopID, in.OrderID, in.PaymentTotalAmount, in.Currency, in.SMLDocNo)
 }
 
 func buildTikTokShopAutoSMLText(title string, in models.TikTokAutoSMLNotification, actionURL string) string {
@@ -2110,6 +2183,73 @@ func BuildShopeeCancelledAfterSMLLineText(snap *models.ShopeeOrderSnapshot, publ
 		parts = append(parts, "เปิดใน Nexflow: "+url)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func BuildShopeeOrderCancelledLineText(snap *models.ShopeeOrderSnapshot, publicBaseURL string) string {
+	if snap == nil {
+		return "คำสั่งซื้อ Shopee ถูกยกเลิก"
+	}
+	return buildMarketplaceCancellationLineText("Shopee", "Order SN", snap.ShopLabel, snap.OrderSN, strconv.FormatFloat(snap.TotalAmount, 'f', 2, 64), "THB", snap.SMLDocNo, ShopeeOrderActionURL(publicBaseURL, snap.OrderSN))
+}
+
+func BuildShopeeOrderCancelledLineFlex(snap *models.ShopeeOrderSnapshot) (string, map[string]any) {
+	if snap == nil {
+		return "คำสั่งซื้อ Shopee ถูกยกเลิก", nil
+	}
+	return buildMarketplaceCancellationLineFlex("Shopee", shopeeFlexBaseColor, "Order SN", snap.ShopLabel, fmt.Sprintf("%d", snap.ShopID), snap.OrderSN, strconv.FormatFloat(snap.TotalAmount, 'f', 2, 64), "THB", snap.SMLDocNo)
+}
+
+func buildMarketplaceCancellationLineText(channel, orderLabel, shop, orderID, rawAmount, currency, smlDocNo, actionURL string) string {
+	parts := []string{
+		"คำสั่งซื้อ " + strings.TrimSpace(channel) + " ถูกยกเลิก",
+		"ร้าน: " + fallbackDash(strings.TrimSpace(shop)),
+		strings.TrimSpace(orderLabel) + ": " + fallbackDash(strings.TrimSpace(orderID)),
+	}
+	if amount := tikTokShopLineMoney(rawAmount); amount != "" {
+		parts = append(parts, "ยอดรวม: "+amount+" "+firstNonEmpty(strings.ToUpper(strings.TrimSpace(currency)), "THB"))
+	}
+	if docNo := strings.TrimSpace(smlDocNo); docNo != "" {
+		parts = append(parts, "สถานะ SML: ส่งแล้ว ("+docNo+")", "ตรวจเอกสารยกเลิกใน Nexflow")
+	} else {
+		parts = append(parts, "สถานะ SML: ยังไม่ส่ง SML", "ไม่ต้องสร้างเอกสารยกเลิก")
+	}
+	if actionURL = strings.TrimSpace(actionURL); actionURL != "" {
+		parts = append(parts, "เปิดใน Nexflow: "+actionURL)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func buildMarketplaceCancellationLineFlex(channel, chipColor, orderLabel, shop, shopID, orderID, rawAmount, currency, smlDocNo string) (string, map[string]any) {
+	shop = strings.TrimSpace(shop)
+	if shop == "" {
+		shop = "shop_id " + strings.TrimSpace(shopID)
+	}
+	status, nextStep := "ยังไม่ส่ง SML", "ไม่ต้องสร้างเอกสารยกเลิก"
+	if docNo := strings.TrimSpace(smlDocNo); docNo != "" {
+		status, nextStep = "ส่งแล้ว ("+docNo+")", "ตรวจเอกสารยกเลิกใน Nexflow"
+	}
+	title := "คำสั่งซื้อ " + strings.TrimSpace(channel) + " ถูกยกเลิก"
+	body := []map[string]any{
+		flexMarketplaceSourceChip(channel, chipColor),
+		flexText(title, "lg", "bold", "#DC2626", "", true),
+		flexText(shop, "sm", "", "#64748B", "", true),
+	}
+	if amount := tikTokShopLineMoney(rawAmount); amount != "" {
+		body = append(body, flexAmountRow("ยอดรวม", amount+" "+firstNonEmpty(strings.ToUpper(strings.TrimSpace(currency)), "THB"), "#DC2626"))
+	}
+	body = appendFlexSection(body, "คำสั่งซื้อ", []flexKVRow{{Label: orderLabel, Value: strings.TrimSpace(orderID)}, {Label: "สถานะ SML", Value: status}})
+	body = append(body, map[string]any{"type": "separator", "margin": "md"}, flexText("สิ่งที่ต้องดำเนินการ", "sm", "bold", "#334155", "md", true), flexText(nextStep, "sm", "", "#DC2626", "", true))
+	return strings.Join(filterNonEmpty([]string{title, shop, strings.TrimSpace(orderID)}), " · "), map[string]any{"type": "bubble", "size": "mega", "body": map[string]any{"type": "box", "layout": "vertical", "spacing": "sm", "backgroundColor": "#FFF7F7", "contents": body}}
+}
+
+func marketplaceCancellationBody(shop, orderID, smlDocNo string) string {
+	parts := []string{strings.TrimSpace(shop), strings.TrimSpace(orderID)}
+	if docNo := strings.TrimSpace(smlDocNo); docNo != "" {
+		parts = append(parts, "ส่ง SML แล้ว "+docNo)
+	} else {
+		parts = append(parts, "ยังไม่ส่ง SML")
+	}
+	return strings.Join(filterNonEmpty(parts), " · ")
 }
 
 func BuildShopeeSMLCancellationCreatedLineText(snap *models.ShopeeOrderSnapshot, cancelDocNo, documentLabel, publicBaseURL string) string {

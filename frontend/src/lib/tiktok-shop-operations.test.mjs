@@ -194,7 +194,7 @@ test('keeps the TikTok document cell to a compact two-line operational summary',
 
 test('cancelled TikTok order guidance never tells staff to send its unsent sale to SML', () => {
   assert.equal(tiktokOrderDocumentGuidance('CANCELLED', 'not_required', true),
-    'เก็บใบขายเดิมไว้เป็นหลักฐาน ห้ามส่งเข้า SML และไม่ต้องสร้างเอกสารยกเลิก')
+    'คำสั่งซื้อยกเลิกแล้ว เก็บเอกสาร Nexflow ไว้เป็นหลักฐาน ห้ามส่งเข้า SML และไม่ต้องสร้างเอกสารยกเลิก')
   assert.equal(tiktokOrderDocumentGuidance('CANCELLED', 'not_required', false),
     'คำสั่งซื้อยกเลิกแล้ว ไม่ต้องสร้างใบขายหรือเอกสารยกเลิก SML')
   assert.equal(tiktokOrderDocumentGuidance('CANCELLED', 'review_required', true),
@@ -266,8 +266,8 @@ test('does not reopen the TikTok detail sheet from the stale query rendered duri
 test('never offers a new sale document from the TikTok cancelled queue', () => {
   assert.deepEqual(tiktokCancellationState({}), {
     status: 'not_required',
-    label: 'ไม่มีใบขายเดิม',
-    detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
+    label: 'ไม่มีเอกสาร Nexflow',
+    detail: 'คำสั่งซื้อยกเลิกแล้ว · ไม่ต้องส่ง SML หรือสร้างเอกสารยกเลิก',
     tone: 'muted',
     canReviewCancellation: false,
   })
@@ -277,8 +277,8 @@ test('never offers a new sale document from the TikTok cancelled queue', () => {
     documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
   }), {
     status: 'not_required',
-    label: 'ใบขายเดิมยังไม่ส่ง SML',
-    detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
+    label: 'สร้างเอกสารแล้ว · ยังไม่ส่ง SML',
+    detail: 'คำสั่งซื้อยกเลิกแล้ว · ไม่ต้องส่ง SML หรือสร้างเอกสารยกเลิก',
     tone: 'muted',
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
     canReviewCancellation: false,

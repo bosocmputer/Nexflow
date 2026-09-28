@@ -379,6 +379,14 @@ func main() {
 		lineNotificationSvc,
 		logger,
 	)
+	tiktokCancellationLineObserver := tiktokshop.NewTikTokCancellationLineObserver(
+		cfg.TikTokShopCancellationLineEnabled,
+		cfg.TikTokShopCancellationLineEligibleAfter,
+		tiktokConnectionStore,
+		tiktokBillShadowStore,
+		lineNotificationSvc,
+		logger,
+	)
 	tiktokInAppObserver := tiktokshop.NewTikTokNewOrderInAppObserver(
 		cfg.TikTokShopInAppEnabled,
 		cfg.TikTokShopInAppEligibleAfter,
@@ -387,7 +395,7 @@ func main() {
 		eventBroker,
 		logger,
 	)
-	tiktokSnapshotService.WithObserver(tiktokAutoSMLController).WithObserver(tiktokInAppObserver).WithObserver(tiktokLineObserver)
+	tiktokSnapshotService.WithObserver(tiktokAutoSMLController).WithObserver(tiktokInAppObserver).WithObserver(tiktokLineObserver).WithObserver(tiktokCancellationLineObserver)
 	tiktokReconcileStore := tiktokshop.NewTikTokOrderReconcileStore(db)
 	tiktokReconcileService := tiktokshop.NewTikTokOrderReconciler(tiktokGatewayClient, tiktokSnapshotService, tiktokReconcileStore)
 	tiktokProductCatalogStore := tiktokshop.NewProductCatalogStore(db)

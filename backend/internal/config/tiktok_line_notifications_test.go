@@ -38,3 +38,17 @@ func TestParseTikTokShopInAppNotificationCutoffRequiresExplicitRFC3339WhenEnable
 		t.Fatalf("disabled cutoff got=%s err=%v", got, err)
 	}
 }
+
+func TestParseTikTokShopCancellationLineNotificationCutoffRequiresExplicitRFC3339WhenEnabled(t *testing.T) {
+	if _, err := parseTikTokShopCancellationLineNotificationCutoff(true, ""); err == nil {
+		t.Fatal("enabled cancellation notifications must require an explicit cutoff")
+	}
+	want := time.Date(2026, 9, 28, 4, 0, 0, 0, time.UTC)
+	got, err := parseTikTokShopCancellationLineNotificationCutoff(true, "2026-09-28T11:00:00+07:00")
+	if err != nil || !got.Equal(want) {
+		t.Fatalf("got=%s err=%v want=%s", got, err, want)
+	}
+	if got, err := parseTikTokShopCancellationLineNotificationCutoff(false, "not-used"); err != nil || !got.IsZero() {
+		t.Fatalf("disabled cutoff got=%s err=%v", got, err)
+	}
+}

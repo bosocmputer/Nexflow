@@ -128,6 +128,20 @@ type TikTokShopNewOrderNotificationItem struct {
 	Quantity    int
 }
 
+// TikTokShopOrderCancellationNotification intentionally excludes buyer data.
+// It carries only the operational evidence needed for a cancellation alert.
+type TikTokShopOrderCancellationNotification struct {
+	ShopID             string
+	ShopName           string
+	OrderID            string
+	Currency           string
+	PaymentTotalAmount string
+	ItemCount          int
+	SKUCount           int
+	SMLDocNo           string
+	OrderUpdatedAt     time.Time
+}
+
 type LineNotificationDeliveryJob struct {
 	LineNotificationDelivery
 	DestinationType    string

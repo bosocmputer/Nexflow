@@ -157,7 +157,7 @@ export function TikTokOrderDetailDrawer({
               <Button asChild variant="outline" className="gap-2">
                 <Link to={rawDocument.path}>
                   <Eye className="h-4 w-4" />
-                  {isCancelled ? 'ใบขายเดิม' : 'เปิดเอกสาร'}
+                  เปิดเอกสาร
                 </Link>
               </Button>
             ) : order ? (

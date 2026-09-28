@@ -271,7 +271,7 @@ const TIKTOK_DOCUMENT_STATUS_HELP = [
   { value: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจสาเหตุและลองส่งใหม่' },
 ] as const
 const TIKTOK_CANCELLATION_STATUS_HELP = [
-  { value: 'ไม่ต้องสร้าง', detail: 'ออเดอร์ไม่มีใบขายใน Nexflow หรือใบขายยังไม่เคยส่งเข้า SML' },
+  { value: 'ไม่ต้องสร้าง', detail: 'ออเดอร์ยกเลิกก่อนส่ง SML จึงไม่ต้องสร้างเอกสารยกเลิก' },
   { value: 'รอตรวจเอกสารยกเลิก', detail: 'พบใบขายเดิมใน SML ต้องตรวจหลักฐานก่อนเปิดการสร้างเอกสารยกเลิกแบบ canary' },
   { value: 'ต้องตรวจเอกสารเดิม', detail: 'สถานะเอกสารไม่ครบหรือขัดกัน ระบบจึงหยุดไว้ก่อนเพื่อป้องกันเอกสารซ้ำ' },
 ] as const
@@ -986,7 +986,7 @@ export default function TikTokShopOperations() {
                 </th>
                 <th className="px-3 py-2 text-left">
                   <StatusColumnHelp
-                    label={cancellationQueue ? 'ใบขายเดิม / หลังยกเลิก' : 'เอกสาร Nexflow / SML'}
+                    label={cancellationQueue ? 'ใบขาย / เอกสารหลังยกเลิก' : 'เอกสาร Nexflow / SML'}
                     title={cancellationQueue ? 'หลักฐานเอกสารก่อนยกเลิก' : 'ความหมายสถานะเอกสาร'}
                     description={cancellationQueue
                       ? 'ระบบจะสร้างเอกสารยกเลิกได้เฉพาะเมื่อพบใบขายเดิมที่ส่งเข้า SML สำเร็จแล้ว'
@@ -1505,7 +1505,7 @@ function DesktopRow({
           )}
           {isCancellationRow && document.path ? (
             <Button asChild variant="outline" size="sm" className="h-8 gap-1.5">
-              <Link to={document.path}><Eye className="h-3.5 w-3.5" />ใบขายเดิม</Link>
+              <Link to={document.path}><Eye className="h-3.5 w-3.5" />เอกสาร</Link>
             </Button>
           ) : isCancellationRow && !cancellationDocument?.canReviewCancellation ? (
             <GuardedButton

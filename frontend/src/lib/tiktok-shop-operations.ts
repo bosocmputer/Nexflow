@@ -215,8 +215,8 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
   if (!billID) {
     return {
       status: 'not_required',
-      label: 'ไม่มีใบขายเดิม',
-      detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
+      label: 'ไม่มีเอกสาร Nexflow',
+      detail: 'คำสั่งซื้อยกเลิกแล้ว · ไม่ต้องส่ง SML หรือสร้างเอกสารยกเลิก',
       tone: 'muted',
       canReviewCancellation: false,
     }
@@ -224,8 +224,8 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
   if (!smlDocNo && billStatus !== 'sent') {
     return {
       status: 'not_required',
-      label: 'ใบขายเดิมยังไม่ส่ง SML',
-      detail: 'ไม่ต้องสร้างเอกสารยกเลิก',
+      label: 'สร้างเอกสารแล้ว · ยังไม่ส่ง SML',
+      detail: 'คำสั่งซื้อยกเลิกแล้ว · ไม่ต้องส่ง SML หรือสร้างเอกสารยกเลิก',
       tone: 'muted',
       ...(path ? { path } : {}),
       canReviewCancellation: false,
@@ -294,7 +294,7 @@ export function tiktokOrderDocumentGuidance(
   if (orderStatus === 'CANCELLED') {
     if (cancellationStatus === 'not_required') {
       return hasDocument
-        ? 'เก็บใบขายเดิมไว้เป็นหลักฐาน ห้ามส่งเข้า SML และไม่ต้องสร้างเอกสารยกเลิก'
+        ? 'คำสั่งซื้อยกเลิกแล้ว เก็บเอกสาร Nexflow ไว้เป็นหลักฐาน ห้ามส่งเข้า SML และไม่ต้องสร้างเอกสารยกเลิก'
         : 'คำสั่งซื้อยกเลิกแล้ว ไม่ต้องสร้างใบขายหรือเอกสารยกเลิก SML'
     }
     if (cancellationStatus === 'evidence_missing') {

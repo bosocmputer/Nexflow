@@ -105,6 +105,70 @@ func TestEnqueueTikTokShopNewOrderUsesDurableRecipientDedupe(t *testing.T) {
 	}
 }
 
+func TestTikTokShopCancellationFlexIsCompactAndPIIFree(t *testing.T) {
+	in := models.TikTokShopOrderCancellationNotification{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586291320330093597",
+		Currency: "THB", PaymentTotalAmount: "307.49", ItemCount: 1, SKUCount: 1,
+		SMLDocNo: "", OrderUpdatedAt: time.Date(2026, 9, 28, 4, 11, 0, 0, time.UTC),
+	}
+	text := BuildTikTokShopOrderCancelledLineText(in, "https://nexflow-aoy.nextstep-soft.com")
+	for _, want := range []string{
+		"คำสั่งซื้อ TikTok Shop ถูกยกเลิก", "ร้าน: henna_milkford", "Order ID: 586291320330093597",
+		"สถานะ SML: ยังไม่ส่ง SML", "ไม่ต้องสร้างเอกสารยกเลิก", "/tiktok-shop-operations?order=586291320330093597&shop_id=7494619203789490654",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("TikTok cancellation text missing %q:\n%s", want, text)
+		}
+	}
+	alt, flex := BuildTikTokShopOrderCancelledLineFlex(in)
+	if alt == "" || flex == nil {
+		t.Fatal("expected TikTok cancellation Flex payload")
+	}
+	raw, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{"TikTok Shop", "#111817", "#DC2626", "586291320330093597", "ยังไม่ส่ง SML", "ไม่ต้องสร้างเอกสารยกเลิก"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("TikTok cancellation Flex missing %q: %s", want, body)
+		}
+	}
+	if _, ok := flex["footer"]; ok || strings.Contains(body, "เปิดใน Nexflow") {
+		t.Fatalf("TikTok cancellation Flex must not have footer action: %s", body)
+	}
+}
+
+func TestEnqueueTikTokShopOrderCancelledUsesDurableRecipientDedupe(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
+		WithArgs(
+			"tiktok_shop", "warning", "คำสั่งซื้อ TikTok Shop ถูกยกเลิก", sqlmock.AnyArg(),
+			"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order=586291320330093597&shop_id=7494619203789490654",
+			"tiktok_shop_order", "7494619203789490654:586291320330093597",
+			"tiktok_shop:cancelled:7494619203789490654:586291320330093597",
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), 1,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("delivery-1"))
+
+	svc := &Service{repo: repository.NewLineNotificationRepo(db), publicBaseURL: "https://nexflow-aoy.nextstep-soft.com", richFlexEnabled: true}
+	inserted, err := svc.EnqueueTikTokShopOrderCancelled(t.Context(), models.TikTokShopOrderCancellationNotification{
+		ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586291320330093597",
+		Currency: "THB", PaymentTotalAmount: "307.49", ItemCount: 1,
+	}, "")
+	if err != nil || inserted != 1 {
+		t.Fatalf("inserted=%d err=%v", inserted, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTikTokShopAutoSMLMessagesAreDistinctAndPIIFree(t *testing.T) {
 	in := models.TikTokAutoSMLNotification{
 		ShopID: "7494619203789490654", ShopName: "henna_milkford", OrderID: "586180035911386153",

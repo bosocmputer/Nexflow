@@ -229,6 +229,38 @@ func TestBuildShopeeCancelledAfterSMLLineTextIsFocusedAndTextOnly(t *testing.T) 
 	}
 }
 
+func TestShopeeOrderCancellationFlexIsCompactAndPIIFree(t *testing.T) {
+	snap := &models.ShopeeOrderSnapshot{
+		ShopID: 264993963, ShopLabel: "Henna.milkford", OrderSN: "260927A7NUQ4BJ", TotalAmount: 307.49,
+		BuyerUsername: "buyer-secret", RawDetail: []byte(`{"recipient_address":{"phone":"0999999999"}}`),
+	}
+	text := BuildShopeeOrderCancelledLineText(snap, "https://nexflow-aoy.nextstep-soft.com")
+	for _, want := range []string{"คำสั่งซื้อ Shopee ถูกยกเลิก", "Order SN: 260927A7NUQ4BJ", "สถานะ SML: ยังไม่ส่ง SML", "ไม่ต้องสร้างเอกสารยกเลิก"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Shopee cancellation text missing %q: %s", want, text)
+		}
+	}
+	alt, flex := BuildShopeeOrderCancelledLineFlex(snap)
+	if alt == "" || flex == nil {
+		t.Fatal("expected Shopee cancellation Flex payload")
+	}
+	raw, err := json.Marshal(flex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{"Shopee", "#EE4D2D", "#DC2626", "260927A7NUQ4BJ", "ยังไม่ส่ง SML", "ไม่ต้องสร้างเอกสารยกเลิก"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("Shopee cancellation Flex missing %q: %s", want, body)
+		}
+	}
+	for _, leak := range []string{"buyer-secret", "0999999999"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("Shopee cancellation Flex leaked %q: %s", leak, body)
+		}
+	}
+}
+
 func TestBuildShopeeSMLCancellationCreatedLineText(t *testing.T) {
 	snap := &models.ShopeeOrderSnapshot{
 		ShopID: 264993963, OrderSN: "260826TEST", SMLDocNo: "BF-INV26080060",
