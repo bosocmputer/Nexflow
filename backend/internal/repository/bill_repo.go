@@ -350,15 +350,19 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 	                   SELECT 1
 	                     FROM shopee_order_snapshots sos
 	                    WHERE sos.bill_id = b.id
-	                 ) AS shopee_realtime_linked
+	                 ) AS shopee_realtime_linked,
+	                 COALESCE(ts.order_status,'') AS source_order_status
 	          FROM bills b
 	          LEFT JOIN bill_items bi ON bi.bill_id = b.id
 	          LEFT JOIN shopee_api_connections sc ON b.source='shopee' AND b.source_account_key='shop:'||sc.shop_id::text
 	          LEFT JOIN tiktok_shop_connections tc ON b.source='tiktok' AND b.source_account_key='shop:'||tc.shop_id
+	          LEFT JOIN tiktok_shop_order_snapshots ts ON b.source='tiktok'
+	            AND b.raw_data->>'flow'='tiktok_shop_api_reviewed'
+	            AND b.source_account_key='shop:'||ts.shop_id AND b.sml_order_id=ts.order_id
 	          ` + where + `
 	          GROUP BY b.id, b.bill_type, b.source, b.source_account_key, b.status, b.document_route, b.raw_data, b.sml_doc_no, b.ai_confidence,
 	                   b.anomalies, b.error_msg, b.created_at, b.sent_at, b.archived_at, b.archived_by, b.archive_reason,
-	                   sc.label, sc.shop_name, tc.label, tc.shop_name
+	                   sc.label, sc.shop_name, tc.label, tc.shop_name, ts.order_status
 		          ORDER BY ` + billOrderBy(f, useCursor) +
 		fmt.Sprintf(" LIMIT $%d", argN)
 	args = append(args, queryLimit)
@@ -382,7 +386,7 @@ func (r *BillRepo) List(f models.BillListFilter) (*BillListResult, error) {
 			&b.ID, &b.BillType, &b.Source, &b.SourceAccountKey, &b.SourceAccountName,
 			&b.Status, &b.DocumentRoute, &b.RawData, &b.SMLDocNo, &b.AIConfidence,
 			&anomaliesRaw, &b.ErrorMsg, &b.CreatedAt, &b.SentAt, &b.ArchivedAt, &b.ArchivedBy, &b.ArchiveReason,
-			&b.TotalAmount, &itemCount, &b.ShopeeRealtimeLinked,
+			&b.TotalAmount, &itemCount, &b.ShopeeRealtimeLinked, &b.SourceOrderStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -474,9 +478,16 @@ func billWhere(f models.BillListFilter) (string, []interface{}, int) {
 		argN += 2
 	}
 	if f.SMLSendQueue {
-		where += fmt.Sprintf(" AND NOT (b.source = $%d AND b.raw_data->>'flow' = $%d)", argN, argN+1)
-		args = append(args, "tiktok", "tiktok_shop_api_reviewed")
-		argN += 2
+		if f.TikTokShopSendEnabled {
+			where += ` AND (b.source <> 'tiktok' OR COALESCE(b.raw_data->>'flow','') <> 'tiktok_shop_api_reviewed'
+				OR EXISTS (SELECT 1 FROM tiktok_shop_order_snapshots ts
+					WHERE b.source_account_key='shop:'||ts.shop_id AND b.sml_order_id=ts.order_id
+					AND ts.order_status IN ('AWAITING_SHIPMENT','PARTIALLY_SHIPPING','AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')))`
+		} else {
+			where += fmt.Sprintf(" AND NOT (b.source = $%d AND b.raw_data->>'flow' = $%d)", argN, argN+1)
+			args = append(args, "tiktok", "tiktok_shop_api_reviewed")
+			argN += 2
+		}
 	}
 	if f.BillType != "" {
 		where += fmt.Sprintf(" AND b.bill_type = $%d", argN)

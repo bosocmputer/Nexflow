@@ -4,6 +4,7 @@ import { Archive, Mail, Printer, RotateCcw, Store, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import BillStatusBadge from '@/components/BillStatusBadge'
+import { StatusDot } from '@/components/common/StatusDot'
 import { DataTable } from '@/components/common/DataTable'
 import { BillInputChannelBadge } from '@/components/BillInputChannelBadge'
 import {
@@ -189,7 +190,7 @@ export default function BillTable({
           className: 'py-2 text-center',
           cell: (b) => (
             <div className="flex justify-center">
-              <BillStatusBadge status={b.status} />
+              <BillQueueStatus bill={b} />
             </div>
           ),
         },
@@ -311,7 +312,7 @@ function MobileBillCard({
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/70 pt-2">
-        <BillStatusBadge status={bill.status} />
+        <BillQueueStatus bill={bill} />
         <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
           <BillRowActions
             bill={bill}
@@ -324,6 +325,21 @@ function MobileBillCard({
           />
         </div>
       </div>
+    </div>
+  )
+}
+
+function BillQueueStatus({ bill }: { bill: Bill }) {
+  const cancelledTikTok = bill.source === 'tiktok' &&
+    rawString(bill.raw_data, 'flow') === 'tiktok_shop_api_reviewed' &&
+    bill.source_order_status === 'CANCELLED'
+  if (cancelledTikTok && bill.status !== 'sent') {
+    return <StatusDot variant="danger" label="ยกเลิกก่อนส่ง SML" />
+  }
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <BillStatusBadge status={bill.status} />
+      {cancelledTikTok && <span className="text-[11px] text-destructive">TikTok ยกเลิกแล้ว</span>}
     </div>
   )
 }

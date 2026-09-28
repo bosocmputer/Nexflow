@@ -38,8 +38,21 @@ export function BillTotal({
       bill.status === 'needs_review')
   const smlReady = isSMLReady(smlReadiness)
   const smlSendAllowed = bill.preview?.send_allowed !== false
+  const cancelledBeforeSML = bill.preview?.send_block_code === 'tiktok_shop_order_cancelled'
 
   if (!canShowSendButton || (smlReady && validation.canSend && smlSendAllowed)) return null
+
+  if (cancelledBeforeSML) return (
+    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" role="status">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        <div>
+          <div className="text-sm font-semibold text-foreground">ยกเลิกก่อนส่ง SML</div>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{bill.preview?.send_block_message}</p>
+        </div>
+      </div>
+    </div>
+  )
 
   return (
     <div className="space-y-2.5">
@@ -66,7 +79,7 @@ export function BillTotal({
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" strokeWidth={2.25} />
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground">รอตรวจ UAT ก่อนส่ง TikTok เข้า SML</div>
+              <div className="text-sm font-semibold text-foreground">ยังส่ง TikTok เข้า SML ไม่ได้</div>
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {bill.preview?.send_block_message || 'ระบบเก็บ Bill นี้ไว้ตรวจข้อมูลใน Nexflow และปิดการส่ง SML ไว้สำหรับร้านนี้'}
               </p>

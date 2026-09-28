@@ -11,6 +11,7 @@ type Bill struct {
 	Source                  string             `json:"source"`
 	SourceAccountKey        string             `json:"source_account_key"`
 	SourceAccountName       string             `json:"source_account_name,omitempty"`
+	SourceOrderStatus       string             `json:"source_order_status,omitempty"`
 	Status                  string             `json:"status"`
 	DocumentRoute           string             `json:"document_route"`
 	RawData                 json.RawMessage    `json:"raw_data,omitempty"`
@@ -219,27 +220,28 @@ const LazadaShippingSourceSKU = "__lazada_shipping__"
 const TikTokShippingSourceSKU = "__tiktok_shipping__"
 
 type BillListFilter struct {
-	Status         string `form:"status"`
-	Source         string `form:"source"`
-	InputChannel   string `form:"input_channel"`
-	BillType       string `form:"bill_type"`
-	DocumentRoute  string `form:"document_route"`
-	EmailAccountID string `form:"email_account_id"`
-	ShopeeStatus   string `form:"shopee_status"`
-	ShopeeShopID   string `form:"shopee_shop_id"`
-	Search         string `form:"search"`
-	Archived       string `form:"archived"` // ""/"active" | "include" | "only"
-	DateFrom       string `form:"date_from"`
-	DateTo         string `form:"date_to"`
-	Sort           string `form:"sort"`
-	Cursor         string `form:"cursor"`
-	Limit          int    `form:"limit"`
-	CursorMode     bool   `form:"-"`
-	IncludeTotal   bool   `form:"include_total"`
-	SMLSendQueue   bool   `form:"sml_send_queue"`
-	Page           int    `form:"page,default=1"`
-	PageSize       int    `form:"page_size,default=20"`
-	PerPage        int    `form:"per_page"`
+	Status                string `form:"status"`
+	Source                string `form:"source"`
+	InputChannel          string `form:"input_channel"`
+	BillType              string `form:"bill_type"`
+	DocumentRoute         string `form:"document_route"`
+	EmailAccountID        string `form:"email_account_id"`
+	ShopeeStatus          string `form:"shopee_status"`
+	ShopeeShopID          string `form:"shopee_shop_id"`
+	Search                string `form:"search"`
+	Archived              string `form:"archived"` // ""/"active" | "include" | "only"
+	DateFrom              string `form:"date_from"`
+	DateTo                string `form:"date_to"`
+	Sort                  string `form:"sort"`
+	Cursor                string `form:"cursor"`
+	Limit                 int    `form:"limit"`
+	CursorMode            bool   `form:"-"`
+	IncludeTotal          bool   `form:"include_total"`
+	SMLSendQueue          bool   `form:"sml_send_queue"`
+	TikTokShopSendEnabled bool   `form:"-"`
+	Page                  int    `form:"page,default=1"`
+	PageSize              int    `form:"page_size,default=20"`
+	PerPage               int    `form:"per_page"`
 }
 
 type Anomaly struct {

@@ -231,6 +231,16 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
       canReviewCancellation: false,
     }
   }
+  if (smlDocNo && billStatus !== 'sent') {
+    return {
+      status: 'evidence_missing',
+      label: 'ต้องตรวจผลใบขายเดิม',
+      detail: 'พบเลขเอกสารที่ยังไม่ยืนยันผลการส่ง SML ห้ามสร้างเอกสารยกเลิกจนกว่าจะตรวจผล',
+      tone: 'danger',
+      ...(path ? { path } : {}),
+      canReviewCancellation: false,
+    }
+  }
   if (!smlDocNo) {
     return {
       status: 'evidence_missing',
@@ -274,6 +284,27 @@ export function tiktokCancellationState(input: TikTokDocumentStateInput): TikTok
     ...(path ? { path } : {}),
     canReviewCancellation: true,
   }
+}
+
+export function tiktokOrderDocumentGuidance(
+  orderStatus: string,
+  cancellationStatus: TikTokCancellationState['status'] | undefined,
+  hasDocument: boolean,
+): string {
+  if (orderStatus === 'CANCELLED') {
+    if (cancellationStatus === 'not_required') {
+      return hasDocument
+        ? 'เก็บใบขายเดิมไว้เป็นหลักฐาน ห้ามส่งเข้า SML และไม่ต้องสร้างเอกสารยกเลิก'
+        : 'คำสั่งซื้อยกเลิกแล้ว ไม่ต้องสร้างใบขายหรือเอกสารยกเลิก SML'
+    }
+    if (cancellationStatus === 'evidence_missing') {
+      return 'ตรวจผลการส่งใบขายเดิมใน SML ก่อน ยังห้ามส่งซ้ำหรือสร้างเอกสารยกเลิก'
+    }
+    return 'ใบขายเดิมส่ง SML แล้ว ตรวจเอกสารยกเลิกจากคิวยกเลิก TikTok Shop'
+  }
+  return hasDocument
+    ? 'เปิดเอกสารเพื่อตรวจข้อมูล แล้วส่ง SML ทีละใบจากหน้าเอกสาร'
+    : 'ตรวจสินค้า การจับคู่ และยอดก่อนยืนยันสร้างเอกสารใน Nexflow'
 }
 
 export function tiktokRowActions(input: TikTokRowActionsInput): TikTokRowActions {

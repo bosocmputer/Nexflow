@@ -15,7 +15,9 @@ import {
 import {
   formatTikTokMoney,
   tiktokCompactDocumentState,
+  tiktokCancellationState,
   tiktokDocumentState,
+  tiktokOrderDocumentGuidance,
   tiktokOrderStatusLabel,
 } from '@/lib/tiktok-shop-operations'
 import { cn } from '@/lib/utils'
@@ -61,21 +63,24 @@ export function TikTokOrderDetailDrawer({
   onReviewBill,
   onCopyOrder,
 }: Props) {
-  const document = order
-    ? tiktokCompactDocumentState({
-      billID: order.bill_id,
-      billStatus: order.bill_status,
-      smlDocNo: order.sml_doc_no,
-      documentPath: order.document_path,
-    }, order.auto_sml)
+  const isCancelled = order?.order_status === 'CANCELLED'
+  const documentInput = order ? {
+    billID: order.bill_id,
+    billStatus: order.bill_status,
+    smlDocNo: order.sml_doc_no,
+    documentPath: order.document_path,
+    cancellation: order.cancellation ? {
+      status: order.cancellation.status,
+      cancelSMLDocNo: order.cancellation.cancel_sml_doc_no,
+      errorMessage: order.cancellation.error_message,
+    } : undefined,
+  } : null
+  const cancellationDocument = isCancelled && documentInput ? tiktokCancellationState(documentInput) : null
+  const document = order && documentInput
+    ? cancellationDocument ?? tiktokCompactDocumentState(documentInput, order.auto_sml)
     : null
-  const rawDocument = order
-    ? tiktokDocumentState({
-      billID: order.bill_id,
-      billStatus: order.bill_status,
-      smlDocNo: order.sml_doc_no,
-      documentPath: order.document_path,
-    })
+  const rawDocument = order && documentInput
+    ? tiktokDocumentState(documentInput)
     : null
 
   return (
@@ -119,16 +124,14 @@ export function TikTokOrderDetailDrawer({
                 <div className="rounded-lg border border-border bg-muted/20 p-3">
                   <p className="text-sm font-medium text-foreground">{document.detail}</p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {rawDocument.path
-                      ? 'เปิดเอกสารเพื่อตรวจข้อมูล แล้วกดส่ง SML ทีละใบจากหน้าเอกสารเดียวกับ Shopee'
-                      : canCreateDocument
-                        ? 'ตรวจสินค้า การจับคู่ และยอดก่อนยืนยันสร้างเอกสารใน Nexflow'
-                        : 'ผู้ที่มีสิทธิ์สร้างเอกสารสามารถตรวจข้อมูลและสร้าง Bill ได้'}
+                    {!isCancelled && !rawDocument.path && !canCreateDocument
+                      ? 'ผู้ที่มีสิทธิ์สร้างเอกสารสามารถตรวจข้อมูลและสร้างใบขายได้'
+                      : tiktokOrderDocumentGuidance(order.order_status, cancellationDocument?.status, Boolean(rawDocument.path))}
                   </p>
                 </div>
               </section>
 
-              <ManualSMLFlow hasDocument={Boolean(rawDocument.path)} sentToSML={Boolean(order.sml_doc_no)} />
+              <ManualSMLFlow hasDocument={Boolean(rawDocument.path)} sentToSML={order.bill_status === 'sent' && Boolean(order.sml_doc_no)} cancelled={isCancelled} cancellationStatus={cancellationDocument?.status} />
 
               {order.cancellation && (
                 <Alert className={cn(
@@ -154,7 +157,7 @@ export function TikTokOrderDetailDrawer({
               <Button asChild variant="outline" className="gap-2">
                 <Link to={rawDocument.path}>
                   <Eye className="h-4 w-4" />
-                  เปิดเอกสาร
+                  {isCancelled ? 'ใบขายเดิม' : 'เปิดเอกสาร'}
                 </Link>
               </Button>
             ) : order ? (
@@ -183,7 +186,12 @@ export function TikTokOrderDetailDrawer({
   )
 }
 
-function ManualSMLFlow({ hasDocument, sentToSML }: { hasDocument: boolean; sentToSML: boolean }) {
+function ManualSMLFlow({ hasDocument, sentToSML, cancelled, cancellationStatus }: {
+  hasDocument: boolean
+  sentToSML: boolean
+  cancelled: boolean
+  cancellationStatus?: string
+}) {
   const steps = [
     {
       label: 'ตรวจคำสั่งซื้อ',
@@ -192,20 +200,25 @@ function ManualSMLFlow({ hasDocument, sentToSML }: { hasDocument: boolean; sentT
     },
     {
       label: 'สร้างเอกสาร Nexflow',
-      detail: hasDocument ? 'สร้างเอกสารแล้ว' : 'รอตรวจและยืนยันสร้าง',
+      detail: hasDocument ? 'สร้างเอกสารแล้ว' : cancelled ? 'ไม่ต้องสร้างใบขาย' : 'รอตรวจและยืนยันสร้าง',
       complete: hasDocument,
     },
     {
       label: 'ส่งเข้า SML',
-      detail: sentToSML ? 'ส่ง SML แล้ว' : hasDocument ? 'เปิดเอกสารเพื่อส่งทีละใบ' : 'ทำหลังสร้างเอกสาร',
+      detail: sentToSML ? 'ส่ง SML แล้ว' : cancellationStatus === 'evidence_missing' ? 'ต้องตรวจผลเดิมก่อน' : cancelled ? 'ไม่ต้องส่ง — ออเดอร์ยกเลิก' : hasDocument ? 'เปิดเอกสารเพื่อส่งทีละใบ' : 'ทำหลังสร้างเอกสาร',
       complete: sentToSML,
     },
+    ...(cancelled ? [{
+      label: 'เอกสารยกเลิก SML',
+      detail: cancellationStatus === 'not_required' ? 'ไม่ต้องสร้าง' : cancellationStatus === 'completed' ? 'สร้างแล้ว' : cancellationStatus === 'evidence_missing' ? 'รอผลใบขายเดิม' : 'ตรวจจากคิวยกเลิก',
+      complete: cancellationStatus === 'completed',
+    }] : []),
   ]
 
   return (
     <section aria-labelledby="tiktok-manual-sml-flow">
       <h2 id="tiktok-manual-sml-flow" className="mb-2 text-sm font-semibold">Timeline เอกสาร Nexflow และ SML</h2>
-      <ol className="overflow-hidden rounded-lg border border-border bg-card sm:grid sm:grid-cols-3 sm:divide-x sm:divide-border">
+      <ol className={cn('overflow-hidden rounded-lg border border-border bg-card sm:grid sm:divide-x sm:divide-border', cancelled ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
         {steps.map((step, index) => (
           <li key={step.label} className="flex min-w-0 gap-2.5 border-b border-border px-3 py-3 last:border-b-0 sm:border-b-0">
             <span className={cn(

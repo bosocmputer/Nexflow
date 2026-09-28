@@ -30,3 +30,7 @@ export function smlBlockedMessage(readiness?: SMLReadiness | null) {
 export function isSMLReady(readiness?: SMLReadiness | null) {
   return readiness?.ready === true
 }
+
+export function canQueueBillForSML(itemsValid: boolean, sendAllowed?: boolean) {
+  return itemsValid && sendAllowed !== false
+}

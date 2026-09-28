@@ -19,6 +19,7 @@ const {
   normalizeTikTokStatusGroup,
   tiktokStatusGroupCount,
   tiktokOrderStatusLabel,
+  tiktokOrderDocumentGuidance,
   tiktokOperationsHeaderMeta,
   tiktokBillShadowMappingLabel,
   tiktokBillShadowRouteLabel,
@@ -191,6 +192,18 @@ test('keeps the TikTok document cell to a compact two-line operational summary',
   })
 })
 
+test('cancelled TikTok order guidance never tells staff to send its unsent sale to SML', () => {
+  assert.equal(tiktokOrderDocumentGuidance('CANCELLED', 'not_required', true),
+    'เก็บใบขายเดิมไว้เป็นหลักฐาน ห้ามส่งเข้า SML และไม่ต้องสร้างเอกสารยกเลิก')
+  assert.equal(tiktokOrderDocumentGuidance('CANCELLED', 'not_required', false),
+    'คำสั่งซื้อยกเลิกแล้ว ไม่ต้องสร้างใบขายหรือเอกสารยกเลิก SML')
+  assert.equal(tiktokOrderDocumentGuidance('CANCELLED', 'review_required', true),
+    'ใบขายเดิมส่ง SML แล้ว ตรวจเอกสารยกเลิกจากคิวยกเลิก TikTok Shop')
+  assert.match(tiktokOrderDocumentGuidance('CANCELLED', 'evidence_missing', true), /ตรวจผลการส่ง/)
+  assert.equal(tiktokOrderDocumentGuidance('AWAITING_SHIPMENT', undefined, true),
+    'เปิดเอกสารเพื่อตรวจข้อมูล แล้วส่ง SML ทีละใบจากหน้าเอกสาร')
+})
+
 test('keeps TikTok row actions in the same create, document, and detail pattern as Shopee', () => {
   assert.deepEqual(tiktokRowActions({}), {
     primary: 'create_document',
@@ -285,6 +298,16 @@ test('fails closed when a cancelled TikTok order has incomplete SML evidence', (
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
     canReviewCancellation: false,
   })
+})
+
+test('a reserved SML number on a failed TikTok sale is not proof it was sent', () => {
+  const state = tiktokCancellationState({
+    billID: 'bill-1', billStatus: 'failed', smlDocNo: 'BF-INV26090119',
+    documentPath: '/sale-invoices/bill-1',
+  })
+  assert.equal(state.status, 'evidence_missing')
+  assert.equal(state.canReviewCancellation, false)
+  assert.match(state.detail, /ผลการส่ง/)
 })
 
 test('marks only a sent TikTok sale with an SML document for cancellation review', () => {

@@ -196,6 +196,7 @@ export interface BillRoutePreview {
   send_allowed?: boolean
   send_block_code?: string
   send_block_message?: string
+  source_order_status?: string // latest local marketplace snapshot, not Bill creation-time status
   party_code?: string        // legacy channel value; purchase flow now selects seller in the send dialog
   party_name?: string
   sml_defaults?: {
@@ -269,6 +270,7 @@ export interface Bill {
   source: string
   source_account_key?: string
   source_account_name?: string
+  source_order_status?: string
   status: BillStatus
   document_route?: string
   raw_data?: Record<string, unknown> | null

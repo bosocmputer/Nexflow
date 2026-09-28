@@ -107,7 +107,8 @@ export function BillHeader({
   const shopeeShopLabel = rawString(rawData, 'shopee_shop_label')
   const tiktokShopID = rawString(rawData, 'tiktok_shop_id')
   const tiktokShopName = rawString(rawData, 'tiktok_shop_name')
-  const tiktokOrderStatus = rawString(rawData, 'order_status')
+  const tiktokOrderStatus = bill.preview?.source_order_status || rawString(rawData, 'order_status')
+  const tiktokCancelledBeforeSML = isTikTokShopSale && bill.preview?.send_block_code === 'tiktok_shop_order_cancelled'
   const docDate = (rawData?.doc_date as string) || ''
   const rawItemCount = rawNumber(rawData, 'item_count')
   const itemCount = bill.items?.length ?? 0
@@ -173,8 +174,10 @@ export function BillHeader({
                     {saleDestinationLabel}
                   </Badge>
                 )}
-                {isTikTokShopSale && !smlSendAllowed && !sentStatusLabel
-                  ? <StatusDot variant="warning" label="รอตรวจ UAT ก่อนส่ง SML" />
+                {tiktokCancelledBeforeSML && !sentStatusLabel
+                  ? <StatusDot variant="danger" label="ยกเลิกก่อนส่ง SML" />
+                  : isTikTokShopSale && !smlSendAllowed && !sentStatusLabel
+                  ? <StatusDot variant="warning" label="ยังส่ง SML ไม่ได้" />
                   : sentStatusLabel
                   ? <StatusDot variant="success" label={sentStatusLabel} />
                   : <BillStatusBadge status={bill.status} />}

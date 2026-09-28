@@ -731,7 +731,7 @@ func (h *BillHandler) List(c *gin.Context) {
 	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
 		f.BillType = "sale"
 	}
-	f.SMLSendQueue = f.SMLSendQueue && tikTokShopSMLQueueMustExclude(h.cfg)
+	f.TikTokShopSendEnabled = !tikTokShopSMLQueueMustExclude(h.cfg)
 	if f.PerPage > 0 {
 		f.PageSize = f.PerPage
 	}
@@ -781,7 +781,8 @@ func (h *BillHandler) Counts(c *gin.Context) {
 	if h.cfg != nil && !h.cfg.PurchaseFlowEnabled {
 		f.BillType = "sale"
 	}
-	f.SMLSendQueue = tikTokShopSMLQueueMustExclude(h.cfg)
+	f.SMLSendQueue = true
+	f.TikTokShopSendEnabled = !tikTokShopSMLQueueMustExclude(h.cfg)
 	counts, err := h.billRepo.QueueCounts(f)
 	if err != nil {
 		h.log.Error("Bill counts", zap.Error(err))
@@ -825,8 +826,11 @@ func (h *BillHandler) Get(c *gin.Context) {
 		"channel":   channel,
 		"bill_type": bill.BillType,
 	}
-	sendPolicy := billSMLSendPolicy(h.cfg, bill)
+	sendPolicy := h.currentTikTokShopSendPolicy(c.Request.Context(), bill)
 	preview["send_allowed"] = sendPolicy.Allowed
+	if sendPolicy.OrderStatus != "" {
+		preview["source_order_status"] = sendPolicy.OrderStatus
+	}
 	if sendPolicy.Code != "" {
 		preview["send_block_code"] = sendPolicy.Code
 		preview["send_block_message"] = sendPolicy.Message
@@ -1734,18 +1738,23 @@ func (h *BillHandler) sendBillToSML(bill *models.Bill, req RetryRequest, opts re
 	if bill == nil {
 		return retrySendResult{HTTPStatus: http.StatusNotFound, Error: "bill not found"}
 	}
-	if tikTokShopSMLSendBlocked(h.cfg, bill) {
-		h.logTikTokShopSMLSendBlocked(bill, opts)
-		return retrySendResult{
-			HTTPStatus: http.StatusForbidden,
-			Error:      "การส่ง SML สำหรับคำสั่งซื้อ TikTok Shop ยังไม่เปิดใช้งาน",
-			Message:    "Bill นี้เก็บไว้ตรวจสอบใน Nexflow และยังไม่ถูกส่งเข้า SML",
-			Skipped:    true,
-		}
-	}
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	policy := h.currentTikTokShopSendPolicy(ctx, bill)
+	if !policy.Allowed {
+		h.logTikTokShopSMLSendBlocked(bill, opts, policy.Code)
+		status := http.StatusConflict
+		if policy.Code == "tiktok_shop_sml_send_disabled" {
+			status = http.StatusForbidden
+		}
+		return retrySendResult{
+			HTTPStatus: status,
+			Error:      policy.Message,
+			Message:    policy.Message,
+			Skipped:    true,
+		}
 	}
 	opts.Context = ctx
 	defer func() {

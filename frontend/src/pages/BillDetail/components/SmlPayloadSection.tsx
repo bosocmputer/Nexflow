@@ -63,6 +63,9 @@ function SummaryItem({
 export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin')
   const isTikTokShopPrepared = classifyBillInputChannel(bill) === 'tiktok_shop' && !smlPayload && !smlResponse
+  const cancelledUnsent = classifyBillInputChannel(bill) === 'tiktok_shop' &&
+    bill.status !== 'sent' && bill.preview?.send_block_code === 'tiktok_shop_order_cancelled'
+  const cancelledBeforeSML = isTikTokShopPrepared && cancelledUnsent
   if (!smlPayload && !smlResponse && !isTikTokShopPrepared) return null
   const items = documentItems(smlPayload)
   const { whCode, shelfCode } = documentLocation(smlPayload)
@@ -91,27 +94,29 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold">
-          {isTikTokShopPrepared ? 'สรุปข้อมูลเตรียมส่งเข้า SML' : 'สรุปข้อมูลที่ส่งเข้า SML'}
+          {cancelledBeforeSML ? 'หลักฐานใบขายเดิม' : cancelledUnsent ? 'หลักฐานการส่งใบขายเดิม · ต้องตรวจผล' : isTikTokShopPrepared ? 'สรุปข้อมูลเตรียมส่งเข้า SML' : 'สรุปข้อมูลที่ส่งเข้า SML'}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 pt-0">
         {isTikTokShopPrepared && (
           <div className="space-y-2">
             <p className="text-xs leading-5 text-muted-foreground">
-              รูปแบบเดียวกับข้อมูลสรุปหลังส่งของ Shopee แต่ชุดนี้เป็นข้อมูลตรวจ UAT จาก Bill และเส้นทางปัจจุบัน ยังไม่มีการส่งหรือสร้างเอกสารใน SML
+              {cancelledBeforeSML
+                ? 'คำสั่งซื้อยกเลิกก่อนส่ง SML ข้อมูลนี้เก็บไว้ตรวจสอบย้อนหลัง ไม่ต้องส่งใบขายเดิมหรือสร้างเอกสารยกเลิก'
+                : 'ข้อมูลนี้เตรียมจากใบขายใน Nexflow ยังไม่มีการส่งหรือสร้างเอกสารใน SML'}
             </p>
             <dl className="grid gap-x-6 rounded-md border border-warning/25 bg-warning/[0.04] px-3 sm:grid-cols-2">
-              <SummaryItem label="สถานะ" value="ยังไม่ส่ง · รอตรวจ UAT" />
+              <SummaryItem label="สถานะ" value={cancelledBeforeSML ? 'ยกเลิกก่อนส่ง SML' : 'ยังไม่ส่ง SML'} />
               <SummaryItem label="ปลายทาง SML" value={smlRouteLabel(bill.preview?.route)} />
-              <SummaryItem label="ตัวอย่างเลขเอกสาร" value={text(bill.preview?.doc_no)} mono />
+              {!cancelledBeforeSML && <SummaryItem label="ตัวอย่างเลขเอกสาร" value={text(bill.preview?.doc_no)} mono />}
               <SummaryItem label="อ้างอิงคำสั่งซื้อ" value={preparedOrderID} mono />
               <SummaryItem label="รูปแบบเอกสาร" value={text(bill.preview?.doc_format_code)} mono />
-              <SummaryItem label="วิธีส่ง" value="ยังไม่ส่งเข้า SML" />
+              <SummaryItem label="การดำเนินการ" value={cancelledBeforeSML ? 'ไม่ต้องส่ง SML' : 'ยังไม่ส่งเข้า SML'} />
               <SummaryItem label="ลูกค้า SML" value={preparedParty} />
               <SummaryItem label="คลัง / พื้นที่เก็บ" value={`${text(defaults?.wh_code)} / ${text(defaults?.shelf_code)}`} mono />
               <SummaryItem label="ภาษี" value={`${vatLabel(defaults?.vat_type)} · ${text(defaults?.vat_rate)}%`} />
               <SummaryItem label="จำนวนรายการ" value={`${(bill.items ?? []).length.toLocaleString('th-TH')} รายการ`} />
-              <SummaryItem label="ยอดสุทธิที่จะส่ง SML" value={money(preparedTotal)} />
+              <SummaryItem label={cancelledBeforeSML ? 'ยอดในใบขายเดิม' : 'ยอดสุทธิที่จะส่ง SML'} value={money(preparedTotal)} />
               {excludedBuyerCharges != null && Number(excludedBuyerCharges) > 0 && (
                 <SummaryItem
                   label="ยอดที่ TikTok เรียกเก็บเพิ่มจากผู้ซื้อ"
@@ -119,15 +124,15 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
                 />
               )}
             </dl>
-            <p className="text-[11px] leading-4 text-muted-foreground">
-              เลขเอกสารด้านบนเป็นเพียงตัวอย่างและยังไม่ถูกจอง เลขจริงจะยืนยันเมื่อได้รับอนุมัติและเริ่มส่ง SML เท่านั้น
-            </p>
+            {!cancelledBeforeSML && <p className="text-[11px] leading-4 text-muted-foreground">
+              เลขเอกสารด้านบนเป็นเพียงตัวอย่างและยังไม่ถูกจอง เลขจริงจะยืนยันเมื่อเริ่มส่ง SML เท่านั้น
+            </p>}
           </div>
         )}
         {smlPayload && (
           <div className="space-y-2">
             <dl className="grid gap-x-6 rounded-md bg-muted/20 px-3 sm:grid-cols-2">
-              <SummaryItem label="เลขเอกสาร SML" value={text(smlPayload.doc_no ?? bill.sml_doc_no)} mono />
+              <SummaryItem label={cancelledUnsent ? 'เลขเอกสารที่ใช้ตอนเริ่มส่ง' : 'เลขเอกสาร SML'} value={text(smlPayload.doc_no ?? bill.sml_doc_no)} mono />
               <SummaryItem label="อ้างอิงคำสั่งซื้อ" value={text(smlPayload.doc_ref)} mono />
               <SummaryItem label="วิธีส่ง" value={bill.sml_sent_automatically ? 'อัตโนมัติจาก Shopee (AUTO)' : 'ส่งโดยผู้ใช้'} />
               <SummaryItem label="รูปแบบเอกสาร" value={text(smlPayload.doc_format_code)} mono />

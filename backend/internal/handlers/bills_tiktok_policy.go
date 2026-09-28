@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
@@ -8,12 +9,14 @@ import (
 
 	"nexflow/internal/config"
 	"nexflow/internal/models"
+	"nexflow/internal/services/tiktokshop"
 )
 
 type smlSendPolicy struct {
-	Allowed bool
-	Code    string
-	Message string
+	Allowed     bool
+	Code        string
+	Message     string
+	OrderStatus string
 }
 
 func billSMLSendPolicy(cfg *config.Config, bill *models.Bill) smlSendPolicy {
@@ -25,6 +28,50 @@ func billSMLSendPolicy(cfg *config.Config, bill *models.Bill) smlSendPolicy {
 		Code:    "tiktok_shop_sml_send_disabled",
 		Message: "Bill TikTok Shop ใบนี้อยู่ระหว่างตรวจ UAT และยังไม่อนุญาตให้ส่งเข้า SML",
 	}
+}
+
+// A reviewed Bill stores the order state at creation time. Sending must use
+// the current local snapshot, which webhook/poll reconciliation updates.
+func (h *BillHandler) currentTikTokShopSendPolicy(ctx context.Context, bill *models.Bill) smlSendPolicy {
+	policy := billSMLSendPolicy(h.cfg, bill)
+	if !isTikTokShopReviewedBill(bill) {
+		return policy
+	}
+	unavailable := smlSendPolicy{Code: "tiktok_shop_order_status_unavailable", Message: "ตรวจสถานะคำสั่งซื้อ TikTok Shop ล่าสุดไม่ได้ จึงยังไม่ส่งใบขายเข้า SML"}
+	shopID, orderID := tikTokShopBillAuditIdentity(bill)
+	if h.billRepo == nil || shopID == "" || orderID == "" || bill.SourceAccountKey != "shop:"+shopID ||
+		(bill.SMLOrderID != "" && strings.TrimSpace(bill.SMLOrderID) != orderID) {
+		if !policy.Allowed {
+			return policy
+		}
+		return unavailable
+	}
+	status, err := h.billRepo.TikTokShopOrderStatus(ctx, shopID, orderID)
+	if err != nil || status == "" {
+		if !policy.Allowed {
+			return policy
+		}
+		return unavailable
+	}
+	if status == "CANCELLED" {
+		message := "คำสั่งซื้อ TikTok Shop ยกเลิกแล้ว ใบขายเดิมยังไม่ส่ง SML จึงไม่ต้องสร้างเอกสารยกเลิก และห้ามส่งใบขายเดิม"
+		if bill.Status == "sent" {
+			message = "คำสั่งซื้อ TikTok Shop ยกเลิกหลังส่ง SML แล้ว ให้ตรวจเอกสารยกเลิกจากคิวยกเลิก TikTok Shop"
+		} else if bill.CurrentSMLAttemptID != nil {
+			message = "คำสั่งซื้อ TikTok Shop ยกเลิกแล้ว แต่มีประวัติเริ่มส่ง SML ต้องตรวจผลเดิมก่อน ห้ามส่งซ้ำหรือสร้างเอกสารยกเลิกทันที"
+		}
+		return smlSendPolicy{Code: "tiktok_shop_order_cancelled", OrderStatus: status,
+			Message: message}
+	}
+	if !policy.Allowed {
+		policy.OrderStatus = status
+		return policy
+	}
+	if !tiktokshop.TikTokBillLifecycleReady(tiktokshop.OrderStatus(status)) {
+		return smlSendPolicy{Code: "tiktok_shop_order_not_sendable", OrderStatus: status,
+			Message: "สถานะคำสั่งซื้อ TikTok Shop ล่าสุดยังไม่พร้อมส่งใบขายเข้า SML"}
+	}
+	return smlSendPolicy{Allowed: true, OrderStatus: status}
 }
 
 func tikTokShopBillAuditIdentity(bill *models.Bill) (shopID, orderID string) {
@@ -67,7 +114,7 @@ func billTotalForAudit(bill *models.Bill) float64 {
 	return total
 }
 
-func (h *BillHandler) logTikTokShopSMLSendBlocked(bill *models.Bill, opts retrySendOptions) {
+func (h *BillHandler) logTikTokShopSMLSendBlocked(bill *models.Bill, opts retrySendOptions, reason string) {
 	if h == nil || bill == nil {
 		return
 	}
@@ -91,7 +138,7 @@ func (h *BillHandler) logTikTokShopSMLSendBlocked(bill *models.Bill, opts retryS
 		Detail: map[string]interface{}{
 			"shop_id": shopID, "order_id": orderID, "items_count": len(bill.Items),
 			"total_amount": billTotalForAudit(bill), "via": opts.Via,
-			"reason": "tiktok_shop_sml_send_disabled",
+			"reason": reason,
 		},
 	})
 }

@@ -29,7 +29,7 @@ import { ShelfPicker, WarehousePicker } from '@/pages/BillDetail/components/Ware
 import { REMARK2_NONE, SML_REMARK2_OPTIONS, normalizeRemark2, remark2PayloadValue } from '@/lib/smlRemark2'
 import { ENABLE_REMARK2 } from '@/lib/featureFlags'
 import { billInputChannelLabel } from '@/lib/billInputChannel'
-import { isSMLReady, smlBlockedMessage, humanizeSMLConnectionError } from '@/lib/sml-readiness'
+import { canQueueBillForSML, isSMLReady, smlBlockedMessage, humanizeSMLConnectionError } from '@/lib/sml-readiness'
 import {
   createBulkSendJob,
   getActiveBulkSendJob,
@@ -572,8 +572,13 @@ export function BulkSendDialog({
           const validation = validateForSML(bill)
           return {
             bill,
-            ready: validation.canSend,
-            issues: validation.issues.map((issue) => `${issue.count} รายการ${issueLabel(issue.kind)}`),
+            ready: canQueueBillForSML(validation.canSend, bill.preview?.send_allowed),
+            issues: [
+              ...validation.issues.map((issue) => `${issue.count} รายการ${issueLabel(issue.kind)}`),
+              ...(bill.preview?.send_allowed === false
+                ? [bill.preview.send_block_message || 'ยังส่งเอกสารนี้เข้า SML ไม่ได้']
+                : []),
+            ],
           }
         })
         if (!alive) return

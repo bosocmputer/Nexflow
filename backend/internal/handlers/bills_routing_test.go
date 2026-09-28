@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -281,6 +284,80 @@ func TestTikTokShopSMLSendPolicyExplainsTheTenantGate(t *testing.T) {
 	})
 	if !excel.Allowed {
 		t.Fatalf("TikTok Excel policy = %#v, want allowed", excel)
+	}
+}
+
+func TestTikTokShopSendPolicyUsesCurrentOrderStatus(t *testing.T) {
+	const shopID = "7494619203789490654"
+	const orderID = "586291320330093597"
+	bill := &models.Bill{
+		Source: "tiktok", SourceAccountKey: "shop:" + shopID,
+		RawData: json.RawMessage(`{"flow":"tiktok_shop_api_reviewed","tiktok_shop_id":"` + shopID + `","tiktok_order_id":"` + orderID + `"}`),
+	}
+	for _, test := range []struct {
+		name, status, wantCode string
+	}{
+		{"cancelled", "CANCELLED", "tiktok_shop_order_cancelled"},
+		{"paid", "AWAITING_SHIPMENT", ""},
+		{"unpaid", "UNPAID", "tiktok_shop_order_not_sendable"},
+		{"missing", "", "tiktok_shop_order_status_unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT order_status FROM tiktok_shop_order_snapshots").
+				WithArgs(shopID, orderID).
+				WillReturnRows(sqlmock.NewRows([]string{"order_status"}).AddRow(test.status))
+			h := &BillHandler{cfg: &config.Config{TikTokShopSMLSendEnabled: true}, billRepo: repository.NewBillRepo(db)}
+			policy := h.currentTikTokShopSendPolicy(context.Background(), bill)
+			if policy.Code != test.wantCode || policy.Allowed != (test.wantCode == "") || policy.OrderStatus != test.status {
+				t.Fatalf("policy = %#v", policy)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestTikTokShopCancelledOrUnavailableOrderNeverStartsSMLSend(t *testing.T) {
+	const shopID = "7494619203789490654"
+	const orderID = "586291320330093597"
+	for _, test := range []struct {
+		name     string
+		status   string
+		err      error
+		wantCode string
+	}{
+		{"cancelled", "CANCELLED", nil, "ยกเลิกแล้ว"},
+		{"snapshot unavailable", "", errors.New("database unavailable"), "ตรวจสถานะ"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			query := mock.ExpectQuery("SELECT order_status FROM tiktok_shop_order_snapshots").WithArgs(shopID, orderID)
+			if test.err != nil {
+				query.WillReturnError(test.err)
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"order_status"}).AddRow(test.status))
+			}
+			bill := &models.Bill{Source: "tiktok", SourceAccountKey: "shop:" + shopID,
+				RawData: json.RawMessage(`{"flow":"tiktok_shop_api_reviewed","tiktok_shop_id":"` + shopID + `","tiktok_order_id":"` + orderID + `"}`)}
+			h := &BillHandler{cfg: &config.Config{TikTokShopSMLSendEnabled: true}, billRepo: repository.NewBillRepo(db)}
+			result := h.sendBillToSML(bill, RetryRequest{}, retrySendOptions{Context: context.Background()})
+			if result.HTTPStatus != http.StatusConflict || !result.Skipped || !strings.Contains(result.Error, test.wantCode) {
+				t.Fatalf("result = %#v", result)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

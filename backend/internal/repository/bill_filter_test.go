@@ -101,6 +101,18 @@ func TestBillWhereSMLSendQueueExcludesGatedTikTokReviewedBills(t *testing.T) {
 	}
 }
 
+func TestBillWhereSMLSendQueueRequiresCurrentSendableTikTokSnapshot(t *testing.T) {
+	where, args, _ := billWhere(models.BillListFilter{SMLSendQueue: true, TikTokShopSendEnabled: true})
+	for _, want := range []string{"EXISTS (SELECT 1 FROM tiktok_shop_order_snapshots", "b.source_account_key='shop:'||ts.shop_id", "b.sml_order_id=ts.order_id", "ts.order_status IN ("} {
+		if !strings.Contains(where, want) {
+			t.Fatalf("where = %q, missing %q", where, want)
+		}
+	}
+	if strings.Contains(where, "CANCELLED") || len(args) != 0 {
+		t.Fatalf("cancelled orders must not enter the send queue: where = %q args = %#v", where, args)
+	}
+}
+
 func TestBillWhereOrderLikeSearchUsesExactOrderPredicate(t *testing.T) {
 	where, args, _ := billWhere(models.BillListFilter{Search: "260518Q4C1HSMB"})
 	for _, want := range []string{
