@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -10,6 +11,7 @@ interface MarketplaceOperationsHeaderProps {
   modeClassName?: string
   routeLabel: string
   routeTitle?: string
+  routeTo?: string
   description: ReactNode
   health: ReactNode
   actions: ReactNode
@@ -25,6 +27,7 @@ export function MarketplaceOperationsHeader({
   modeClassName,
   routeLabel,
   routeTitle,
+  routeTo,
   description,
   health,
   actions,
@@ -37,12 +40,22 @@ export function MarketplaceOperationsHeader({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h1 id={titleID} className="text-lg font-semibold tracking-normal">{title}</h1>
             <Badge className={cn('h-6 px-2 text-[11px] text-white', modeClassName)}>{modeLabel}</Badge>
-            <span
-              className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground"
-              title={routeTitle}
-            >
-              {routeLabel}
-            </span>
+            {routeTo ? (
+              <Link
+                to={routeTo}
+                className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                title={routeTitle}
+              >
+                {routeLabel}
+              </Link>
+            ) : (
+              <span
+                className="inline-flex h-6 items-center rounded-full border border-border bg-background px-2 text-xs text-muted-foreground"
+                title={routeTitle}
+              >
+                {routeLabel}
+              </span>
+            )}
           </div>
           <p className="max-w-3xl text-xs leading-5 text-muted-foreground">{description}</p>
           {health}

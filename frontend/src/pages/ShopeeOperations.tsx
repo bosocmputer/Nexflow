@@ -1440,6 +1440,7 @@ export default function ShopeeOperations() {
             ? 'เอกสารหลังยกเลิก SML'
             : `${readiness?.sml.doc_format_code || 'route'} · ${readiness?.sml.route || 'ยังไม่ตั้งค่า'}`}
           routeTitle="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
+          routeTo="/settings/channels"
           description={statusGroup === 'cancelled' ? (
             'ติดตาม Order ที่ยกเลิก พร้อมประเภทเอกสาร เลขที่ SML วิธีสร้าง และผลคำนวณสต๊อกใหม่'
           ) : (

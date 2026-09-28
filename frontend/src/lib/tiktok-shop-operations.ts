@@ -105,14 +105,11 @@ export function tiktokSyncState(workerEnabled: boolean, shopEnabled: boolean, er
 }
 
 export interface TikTokOperationsHeaderMetaInput {
-  cancellationQueue: boolean
-  routeReady: boolean
   webhookEnabled: boolean
 }
 
 export interface TikTokOperationsHeaderMeta {
   modeLabel: 'เรียลไทม์'
-  routeLabel: string
   webhookLabel: string
 }
 
@@ -121,9 +118,6 @@ export interface TikTokOperationsHeaderMeta {
 export function tiktokOperationsHeaderMeta(input: TikTokOperationsHeaderMetaInput): TikTokOperationsHeaderMeta {
   return {
     modeLabel: 'เรียลไทม์',
-    routeLabel: input.cancellationQueue
-      ? 'เอกสารหลังยกเลิก SML'
-      : input.routeReady ? 'เส้นทาง SML พร้อมใช้งาน' : 'เส้นทาง SML ต้องตรวจ',
     webhookLabel: input.webhookEnabled ? 'Webhook พร้อมรับ' : 'Webhook กำลังตรวจ',
   }
 }

@@ -62,21 +62,15 @@ test('sync state remains fail-closed when either worker or shop is disabled', ()
 
 test('presents TikTok operations as realtime with a truthful webhook and polling fallback summary', () => {
   assert.deepEqual(tiktokOperationsHeaderMeta({
-    cancellationQueue: false,
-    routeReady: true,
     webhookEnabled: true,
   }), {
     modeLabel: 'เรียลไทม์',
-    routeLabel: 'เส้นทาง SML พร้อมใช้งาน',
     webhookLabel: 'Webhook พร้อมรับ',
   })
   assert.deepEqual(tiktokOperationsHeaderMeta({
-    cancellationQueue: true,
-    routeReady: false,
     webhookEnabled: false,
   }), {
     modeLabel: 'เรียลไทม์',
-    routeLabel: 'เอกสารหลังยกเลิก SML',
     webhookLabel: 'Webhook กำลังตรวจ',
   })
 })

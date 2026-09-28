@@ -851,8 +851,6 @@ export default function TikTokShopOperations() {
     }
   }
   const headerMeta = tiktokOperationsHeaderMeta({
-    cancellationQueue,
-    routeReady: diagnostics?.document.route_ready === true,
     webhookEnabled: summary?.webhook_enabled === true,
   })
 
@@ -863,12 +861,18 @@ export default function TikTokShopOperations() {
         titleID="tiktok-operations-title"
         title={cancellationQueue ? 'เอกสารยกเลิก TikTok Shop' : 'คำสั่งซื้อ TikTok Shop'}
         modeLabel={headerMeta.modeLabel}
-        modeClassName="border-primary bg-primary hover:bg-primary"
-        routeLabel={headerMeta.routeLabel}
-        routeTitle={cancellationQueue ? 'ตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก' : 'ตรวจ route ที่ใช้งานจริงได้จาก ตรวจระบบ'}
+        modeClassName="border-[#EE4D2D] bg-[#EE4D2D] hover:bg-[#EE4D2D]"
+        routeLabel={cancellationQueue ? 'เอกสารหลังยกเลิก SML' : 'BF-INV · เอกสารขายสินค้าและบริการ'}
+        routeTitle="สร้างเอกสารใน Nexflow แล้วส่ง SML จากหน้าคิวเอกสาร ส่วนจัดส่งและใบปะหน้าทำใน Seller Center"
+        routeTo="/settings/channels"
         description={cancellationQueue
           ? 'ติดตามออเดอร์ที่ TikTok Shop ยืนยันการยกเลิกแล้ว พร้อมตรวจหลักฐานใบขายเดิมก่อนสร้างเอกสารหลังยกเลิก'
-          : 'TikTok Shop จะสร้าง Bill ใน Nexflow สำหรับออเดอร์ที่ชำระเงินและพร้อมจัดส่ง เพื่อให้ตรวจและส่ง SML ด้วยมือได้ตามปกติ เปิด Auto SML เฉพาะเมื่อพร้อมใช้งานจริง'}
+          : <>
+              ติดตาม order สดจาก TikTok Shop; ร้านที่เปิดอัตโนมัติจะส่ง SML เมื่อถึงสถานะที่ร้านกำหนดและข้อมูลครบ ส่วนรายการที่ต้องตรวจยังแก้และส่งด้วยมือได้{' '}
+              <Button asChild variant="link" className="h-auto px-0 py-0 text-xs font-medium">
+                <Link to="/import/tiktok">ต้องนำเข้าย้อนหลังหรือ order ไม่เข้า? ไปนำเข้า TikTok</Link>
+              </Button>
+            </>}
         health={<TikTokOperationsHealthLine
           state={syncState}
           setting={selectedSetting}
