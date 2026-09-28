@@ -224,6 +224,7 @@ interface TikTokBulkBillCreateResponse {
 
 const ALL = 'all'
 const DEFAULT_PER_PAGE = 20
+const TRACKING_CACHE_TTL_MS = 60_000
 const PAGE_SIZE_OPTIONS = [20, 50] as const
 const STATUSES = [
   'UNPAID',
@@ -334,6 +335,8 @@ export default function TikTokShopOperations() {
   const operationsRequestSequence = useRef(0)
   const diagnosticsRequestSequence = useRef(0)
   const detailRequestSequence = useRef(0)
+  const detailTrackingRequestSequence = useRef(0)
+  const detailTrackingCacheRef = useRef(new Map<string, { fetchedAt: number; tracking: TikTokTrackingEvent[] }>())
   const dismissedDetailOrderRef = useRef('')
   const total = orders?.total_items ?? 0
   const totalPages = Math.max(1, orders?.total_pages ?? 1)
@@ -432,6 +435,7 @@ export default function TikTokShopOperations() {
       if (requestSequence !== detailRequestSequence.current) return
       const row = response.data.data.find((item) => item.order_id === targetOrderID && item.shop_id === targetShopID)
       if (row) {
+        detailTrackingRequestSequence.current += 1
         setDetailTracking([])
         setDetailTrackingError('')
         setDetailOrder(row)
@@ -448,6 +452,34 @@ export default function TikTokShopOperations() {
     }
   }, [setQuery])
 
+  const refreshDetailTracking = useCallback(async (targetOrder = detailOrder, force = false) => {
+    if (!targetOrder) return
+    const key = tiktokOrderDetailKey(targetOrder.shop_id, targetOrder.order_id)
+    const cached = detailTrackingCacheRef.current.get(key)
+    if (!force && cached && Date.now() - cached.fetchedAt < TRACKING_CACHE_TTL_MS) {
+      setDetailTracking(cached.tracking)
+      setDetailTrackingError('')
+      return
+    }
+    const requestSequence = ++detailTrackingRequestSequence.current
+    setDetailTrackingLoading(true)
+    setDetailTrackingError('')
+    try {
+      const response = await client.get<{ data: { tracking?: TikTokTrackingEvent[] } }>(
+        `/api/tiktok-shop-api/orders/${encodeURIComponent(targetOrder.shop_id)}/${encodeURIComponent(targetOrder.order_id)}/tracking`,
+      )
+      const tracking = response.data.data.tracking ?? []
+      detailTrackingCacheRef.current.set(key, { fetchedAt: Date.now(), tracking })
+      if (requestSequence === detailTrackingRequestSequence.current) setDetailTracking(tracking)
+    } catch (cause: unknown) {
+      if (requestSequence === detailTrackingRequestSequence.current) {
+        setDetailTrackingError(apiErrorMessage(cause, 'ตรวจสถานะขนส่งจาก TikTok Shop ไม่สำเร็จ'))
+      }
+    } finally {
+      if (requestSequence === detailTrackingRequestSequence.current) setDetailTrackingLoading(false)
+    }
+  }, [detailOrder])
+
   useEffect(() => {
     if (!requestedDetailOrderID) {
       dismissedDetailOrderRef.current = ''
@@ -456,6 +488,7 @@ export default function TikTokShopOperations() {
     if (loading || shopID === ALL || !shouldOpenTikTokDetailFromQuery(shopID, requestedDetailOrderID, true, Boolean(detailOrder), dismissedDetailOrderRef.current)) return
     const row = orders?.data.find((item) => item.order_id === requestedDetailOrderID && item.shop_id === shopID)
     if (row) {
+      detailTrackingRequestSequence.current += 1
       setDetailTracking([])
       setDetailTrackingError('')
       setDetailOrder(row)
@@ -463,6 +496,14 @@ export default function TikTokShopOperations() {
     }
     if (orders) void loadDetailOrder(shopID, requestedDetailOrderID)
   }, [detailOrder, loadDetailOrder, loading, orders, requestedDetailOrderID, shopID])
+
+  useEffect(() => {
+    if (!detailOrder) return
+    // Opening a timeline performs one bounded read of current carrier events.
+    // The result stays in this page's short cache; use the explicit button to
+    // bypass that cache when an operator needs a fresh answer immediately.
+    void refreshDetailTracking(detailOrder)
+  }, [detailOrder, refreshDetailTracking])
 
   useEffect(() => {
     if (!previewOpen || !previewOrder) return
@@ -627,6 +668,7 @@ export default function TikTokShopOperations() {
       return
     }
     dismissedDetailOrderRef.current = ''
+    detailTrackingRequestSequence.current += 1
     setDetailTracking([])
     setDetailTrackingError('')
     setDetailOrder(row)
@@ -640,6 +682,7 @@ export default function TikTokShopOperations() {
       detailOrder?.shop_id ?? shopID,
       detailOrder?.order_id ?? requestedDetailOrderID,
     )
+    detailTrackingRequestSequence.current += 1
     setDetailOrder(null)
     setDetailTracking([])
     setDetailTrackingError('')
@@ -656,21 +699,6 @@ export default function TikTokShopOperations() {
       toast.error('คัดลอก Order ID ไม่สำเร็จ')
     }
   }, [])
-  const refreshDetailTracking = useCallback(async () => {
-    if (!detailOrder) return
-    setDetailTrackingLoading(true)
-    setDetailTrackingError('')
-    try {
-      const response = await client.get<{ data: { tracking?: TikTokTrackingEvent[] } }>(
-        `/api/tiktok-shop-api/orders/${encodeURIComponent(detailOrder.shop_id)}/${encodeURIComponent(detailOrder.order_id)}/tracking`,
-      )
-      setDetailTracking(response.data.data.tracking ?? [])
-    } catch (cause: unknown) {
-      setDetailTrackingError(apiErrorMessage(cause, 'ตรวจสถานะขนส่งจาก TikTok Shop ไม่สำเร็จ'))
-    } finally {
-      setDetailTrackingLoading(false)
-    }
-  }, [detailOrder])
   const setBillPreviewOpen = (open: boolean) => {
     setPreviewOpen(open)
     if (!open) {
@@ -1151,7 +1179,7 @@ export default function TikTokShopOperations() {
         tracking={detailTracking}
         trackingLoading={detailTrackingLoading}
         trackingError={detailTrackingError}
-        onRefreshTracking={() => void refreshDetailTracking()}
+        onRefreshTracking={() => void refreshDetailTracking(detailOrder, true)}
       />
       <TikTokProductMappingDialog
         open={mappingOpen}
