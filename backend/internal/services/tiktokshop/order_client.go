@@ -216,10 +216,11 @@ type OrderPackage struct {
 	ID string `json:"id"`
 }
 
-// TrackingEvent is the PII-minimized carrier milestone returned by TikTok
-// Shop.  Nexflow deliberately keeps only the label, timestamp and action
-// code; package addresses, recipient data and raw upstream payloads never
-// cross the Gateway boundary.
+// TrackingEvent is the PII-safe carrier milestone returned by TikTok Shop.
+// Nexflow derives Description solely from TikTok's action code: upstream
+// carrier descriptions are free-form and can include a recipient name,
+// address, or phone number. Raw carrier text therefore never crosses the
+// Gateway boundary.
 type TrackingEvent struct {
 	Description      string `json:"description"`
 	UpdateTimeMillis int64  `json:"update_time_millis"`
@@ -491,15 +492,38 @@ func (c *OrderClient) GetTracking(ctx context.Context, accessToken, shopCipher, 
 	}
 	for index := range result.Events {
 		event := &result.Events[index]
-		event.Description = strings.TrimSpace(event.Description)
-		if event.UpdateTimeMillis < 0 || len(event.Description) > 512 {
+		if event.UpdateTimeMillis < 0 || len(strings.TrimSpace(event.Description)) > 512 {
 			return nil, requestID, ErrInvalidOrderResponse
 		}
+		event.Description = trackingDescription(event.ActionCode)
 	}
 	if result.Events == nil {
 		result.Events = []TrackingEvent{}
 	}
 	return &result, requestID, nil
+}
+
+// trackingDescription intentionally does not accept the upstream description.
+// Carrier wording is not a stable API contract and may contain buyer PII.
+func trackingDescription(actionCode int64) string {
+	switch actionCode {
+	case 20101:
+		return "ผู้ขายกำลังเตรียมพัสดุ"
+	case 30901, 36201:
+		return "ส่งพัสดุให้บริษัทขนส่งแล้ว"
+	case 31301:
+		return "พัสดุถึงศูนย์คัดแยกแล้ว"
+	case 31401:
+		return "พัสดุออกจากศูนย์คัดแยกแล้ว"
+	case 40101:
+		return "พัสดุถึงศูนย์กระจายสินค้าแล้ว"
+	case 40501:
+		return "พัสดุกำลังนำจ่าย"
+	case 50101:
+		return "นำส่งพัสดุสำเร็จ"
+	default:
+		return "TikTok Shop อัปเดตสถานะการจัดส่ง"
+	}
 }
 
 func (c *OrderClient) baseQuery(shopCipher string) url.Values {

@@ -218,7 +218,7 @@ func TestOrderClientGetsTrackingWithSignedShopCipher(t *testing.T) {
 		if providedSign != expectedSign || query.Get("shop_cipher") != "shop-cipher" || r.Header.Get("x-tts-access-token") != "seller-access-token" {
 			t.Fatalf("query=%v sign=%q headers=%v", query, providedSign, r.Header)
 		}
-		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-tracking","data":{"tracking":[{"description":"Package was accepted by carrier","update_time_millis":1725000000123,"action_code":30901}]}}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-tracking","data":{"tracking":[{"description":"Your package has been delivered. Recipient: Alice Example","update_time_millis":1725000000123,"action_code":30901}]}}`))
 	}))
 	defer server.Close()
 
@@ -226,6 +226,9 @@ func TestOrderClientGetsTrackingWithSignedShopCipher(t *testing.T) {
 	tracking, requestID, err := client.GetTracking(context.Background(), "seller-access-token", "shop-cipher", "576461413038785752")
 	if err != nil || requestID != "req-tracking" || len(tracking.Events) != 1 || tracking.Events[0].ActionCode != 30901 || tracking.Events[0].UpdateTimeMillis != 1725000000123 {
 		t.Fatalf("GetTracking()=%+v requestID=%q err=%v", tracking, requestID, err)
+	}
+	if got, want := tracking.Events[0].Description, "ส่งพัสดุให้บริษัทขนส่งแล้ว"; got != want {
+		t.Fatalf("tracking description=%q, want safe label %q", got, want)
 	}
 	if _, _, err := client.GetTracking(context.Background(), "seller-access-token", "shop-cipher", "not-an-order-id"); !errors.Is(err, ErrInvalidOrderInput) {
 		t.Fatalf("invalid order ID error=%v", err)
