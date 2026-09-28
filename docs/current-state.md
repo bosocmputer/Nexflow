@@ -1,6 +1,6 @@
 # Nexflow — Current State
 
-Updated: 2026-08-27
+Updated: 2026-09-28
 
 Production capability mode is **sales-only and deterministic**. AI, OCR,
 embedding, Daily Insight, IMAP ingestion, LINE chat, and purchase workflows are
@@ -28,6 +28,16 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
   current build. Feedback remains pending for the marketplace sales/SML stock
   flow, Product Master/Catalog channel tags, `/sale-invoices`, and the compact
   `/shopee-operations` UI.
+- TikTok Shop order Timeline is deployed for AOY at application commit
+  `f611b10` (Central TikTok Gateway contract at `8d60f32`). It follows the
+  Shopee information architecture: local order lifecycle, Nexflow/SML document
+  milestones, and a read-only carrier-tracking card. Opening one Timeline reads
+  tracking once through the tenant-scoped Gateway and caches it in the browser
+  for 60 seconds; `ตรวจสถานะล่าสุด` bypasses that cache. Neither action can
+  print a label, create/ship a package, change a TikTok state, create a Bill,
+  send SML, or write stock. AOY and Gateway health returned HTTP 200 after the
+  deploy; a scope/token failure remains isolated to the Tracking card and asks
+  the operator to reconnect TikTok Shop.
 - AOY shop `264993963` has Auto SML enabled at its unchanged
   `READY_TO_SHIP` trigger. Migration 090 adds an admin-selectable `PROCESSED`
   trigger with versioned future-transition cutoffs and immutable job snapshots.
