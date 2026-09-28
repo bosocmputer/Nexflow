@@ -98,6 +98,9 @@ export function BillItemsTable({
     )
   }).length
   const smlSendAllowed = bill.preview?.send_allowed !== false
+  const cancelledTikTokSale = bill.source === 'tiktok' && bill.status !== 'sent' &&
+    bill.preview?.send_block_code === 'tiktok_shop_order_cancelled'
+  const cancelledTikTokSaleHasAttempt = cancelledTikTokSale && Boolean(bill.current_sml_attempt_id)
 
   return (
     <Card className="rounded-lg border-border/70 shadow-sm">
@@ -107,7 +110,11 @@ export function BillItemsTable({
             รายการสินค้า ({items.length} รายการ)
           </CardTitle>
           <p className="mt-1 text-xs text-muted-foreground">
-            ตรวจรหัสสินค้า หน่วย จำนวน และราคาให้ครบก่อนส่งเข้า SML
+            {cancelledTikTokSaleHasAttempt
+              ? 'รายการนี้เก็บไว้ตรวจสอบผลการส่งเดิม ห้ามส่ง SML ซ้ำ'
+              : cancelledTikTokSale
+              ? 'รายการนี้เก็บไว้ตรวจสอบใบขายเดิม ไม่ต้องส่งเข้า SML'
+              : 'ตรวจรหัสสินค้า หน่วย จำนวน และราคาให้ครบก่อนส่งเข้า SML'}
           </p>
           {isShopeePurchase && (
             <div className="mt-2 max-w-3xl rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
@@ -149,8 +156,9 @@ export function BillItemsTable({
           )}
           {isMarketplaceSale && (
             <div className="mt-2 max-w-3xl rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs leading-5 text-muted-foreground">
-              รายการสินค้าเก็บยอดเต็มจาก {marketplaceName} โดยตรง ส่วนลดแพลตฟอร์มและส่วนลดร้านจะรวมเป็นส่วนลดหัวเอกสาร SML
-              ยอดสุทธิของแต่ละรายการ = ยอดเต็ม - ส่วนลด
+              {cancelledTikTokSale
+                ? 'ยอดเต็มและส่วนลดจาก TikTok เก็บไว้เป็นหลักฐานใบขายเดิม ไม่ใช้สร้างเอกสาร SML เพิ่ม'
+                : <>รายการสินค้าเก็บยอดเต็มจาก {marketplaceName} โดยตรง ส่วนลดแพลตฟอร์มและส่วนลดร้านจะรวมเป็นส่วนลดหัวเอกสาร SML ยอดสุทธิของแต่ละรายการ = ยอดเต็ม - ส่วนลด</>}
             </div>
           )}
         </div>

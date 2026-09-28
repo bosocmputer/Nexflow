@@ -65,7 +65,8 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
   const isTikTokShopPrepared = classifyBillInputChannel(bill) === 'tiktok_shop' && !smlPayload && !smlResponse
   const cancelledUnsent = classifyBillInputChannel(bill) === 'tiktok_shop' &&
     bill.status !== 'sent' && bill.preview?.send_block_code === 'tiktok_shop_order_cancelled'
-  const cancelledBeforeSML = isTikTokShopPrepared && cancelledUnsent
+  const cancelledBeforeSML = isTikTokShopPrepared && cancelledUnsent && !bill.current_sml_attempt_id
+  const cancelledAttemptUnconfirmed = isTikTokShopPrepared && cancelledUnsent && Boolean(bill.current_sml_attempt_id)
   if (!smlPayload && !smlResponse && !isTikTokShopPrepared) return null
   const items = documentItems(smlPayload)
   const { whCode, shelfCode } = documentLocation(smlPayload)
@@ -101,22 +102,24 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
         {isTikTokShopPrepared && (
           <div className="space-y-2">
             <p className="text-xs leading-5 text-muted-foreground">
-              {cancelledBeforeSML
+              {cancelledAttemptUnconfirmed
+                ? 'คำสั่งซื้อยกเลิกแล้ว แต่พบประวัติเริ่มส่ง SML ต้องตรวจผลเดิมก่อน ห้ามส่งซ้ำหรือสร้างเอกสารยกเลิกทันที'
+                : cancelledBeforeSML
                 ? 'คำสั่งซื้อยกเลิกก่อนส่ง SML ข้อมูลนี้เก็บไว้ตรวจสอบย้อนหลัง ไม่ต้องส่งใบขายเดิมหรือสร้างเอกสารยกเลิก'
                 : 'ข้อมูลนี้เตรียมจากใบขายใน Nexflow ยังไม่มีการส่งหรือสร้างเอกสารใน SML'}
             </p>
             <dl className="grid gap-x-6 rounded-md border border-warning/25 bg-warning/[0.04] px-3 sm:grid-cols-2">
-              <SummaryItem label="สถานะ" value={cancelledBeforeSML ? 'ยกเลิกก่อนส่ง SML' : 'ยังไม่ส่ง SML'} />
+              <SummaryItem label="สถานะ" value={cancelledAttemptUnconfirmed ? 'ต้องตรวจผลการส่งเดิม' : cancelledBeforeSML ? 'ยกเลิกก่อนส่ง SML' : 'ยังไม่ส่ง SML'} />
               <SummaryItem label="ปลายทาง SML" value={smlRouteLabel(bill.preview?.route)} />
-              {!cancelledBeforeSML && <SummaryItem label="ตัวอย่างเลขเอกสาร" value={text(bill.preview?.doc_no)} mono />}
+              {!cancelledUnsent && <SummaryItem label="ตัวอย่างเลขเอกสาร" value={text(bill.preview?.doc_no)} mono />}
               <SummaryItem label="อ้างอิงคำสั่งซื้อ" value={preparedOrderID} mono />
               <SummaryItem label="รูปแบบเอกสาร" value={text(bill.preview?.doc_format_code)} mono />
-              <SummaryItem label="การดำเนินการ" value={cancelledBeforeSML ? 'ไม่ต้องส่ง SML' : 'ยังไม่ส่งเข้า SML'} />
+              <SummaryItem label="การดำเนินการ" value={cancelledAttemptUnconfirmed ? 'ตรวจผลเดิม · ห้ามส่งซ้ำ' : cancelledBeforeSML ? 'ไม่ต้องส่ง SML' : 'ยังไม่ส่งเข้า SML'} />
               <SummaryItem label="ลูกค้า SML" value={preparedParty} />
               <SummaryItem label="คลัง / พื้นที่เก็บ" value={`${text(defaults?.wh_code)} / ${text(defaults?.shelf_code)}`} mono />
               <SummaryItem label="ภาษี" value={`${vatLabel(defaults?.vat_type)} · ${text(defaults?.vat_rate)}%`} />
               <SummaryItem label="จำนวนรายการ" value={`${(bill.items ?? []).length.toLocaleString('th-TH')} รายการ`} />
-              <SummaryItem label={cancelledBeforeSML ? 'ยอดในใบขายเดิม' : 'ยอดสุทธิที่จะส่ง SML'} value={money(preparedTotal)} />
+              <SummaryItem label={cancelledUnsent ? 'ยอดในใบขายเดิม' : 'ยอดสุทธิที่จะส่ง SML'} value={money(preparedTotal)} />
               {excludedBuyerCharges != null && Number(excludedBuyerCharges) > 0 && (
                 <SummaryItem
                   label="ยอดที่ TikTok เรียกเก็บเพิ่มจากผู้ซื้อ"
@@ -124,7 +127,7 @@ export function SmlPayloadSection({ smlPayload, smlResponse, bill }: Props) {
                 />
               )}
             </dl>
-            {!cancelledBeforeSML && <p className="text-[11px] leading-4 text-muted-foreground">
+            {!cancelledUnsent && <p className="text-[11px] leading-4 text-muted-foreground">
               เลขเอกสารด้านบนเป็นเพียงตัวอย่างและยังไม่ถูกจอง เลขจริงจะยืนยันเมื่อเริ่มส่ง SML เท่านั้น
             </p>}
           </div>

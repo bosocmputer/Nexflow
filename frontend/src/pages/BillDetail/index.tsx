@@ -249,6 +249,9 @@ export default function BillDetail() {
   const canEdit = canSend
   const isShopeeRealtimeBill =
     bill.source === 'shopee' && (bill.raw_data?.flow === 'shopee_realtime' || bill.shopee_realtime_linked)
+  const cancelledTikTokSale = bill.source === 'tiktok' && bill.status !== 'sent' &&
+    bill.preview?.send_block_code === 'tiktok_shop_order_cancelled'
+  const cancelledTikTokSaleHasAttempt = cancelledTikTokSale && Boolean(bill.current_sml_attempt_id)
   const canRecreateDocumentRoute =
     isShopeeRealtimeBill &&
     bill.status !== 'sent' &&
@@ -422,13 +425,19 @@ export default function BillDetail() {
           <div>
             <h3 className="text-sm font-semibold text-foreground">ข้อมูลประกอบการตรวจสอบ</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {isShopeeRealtimeBill
+              {cancelledTikTokSale
+                ? 'ใช้ย้อนดูหลักฐานใบขายเดิมและประวัติการส่ง SML (ถ้ามี)'
+                : isShopeeRealtimeBill
                 ? 'ใช้เมื่อต้องย้อนดูประวัติและข้อมูลที่ส่งเข้า SML'
                 : 'ใช้เมื่อต้องย้อนดูหลักฐานต้นฉบับ ประวัติ และข้อมูลที่ส่งเข้า SML'}
             </p>
           </div>
           <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-            ข้อมูลส่วนนี้ไม่ต้องแก้ก่อนส่ง SML
+            {cancelledTikTokSaleHasAttempt
+              ? 'ต้องตรวจผลการส่งเดิม · ห้ามส่งซ้ำ'
+              : cancelledTikTokSale
+                ? 'เก็บไว้ตรวจสอบย้อนหลัง · ไม่ต้องส่ง SML'
+                : 'ข้อมูลส่วนนี้ไม่ต้องแก้ก่อนส่ง SML'}
           </span>
         </div>
 
