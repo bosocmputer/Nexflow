@@ -554,6 +554,60 @@ func TestTikTokShopAPIHandlerCreatesReviewedBillWithExplicitConfirmation(t *test
 	}
 }
 
+func TestTikTokShopAPIHandlerBulkReviewedBillsUseLocalPreviewAndExplicitConfirmation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	firstShop, secondShop := "7494619203789490654", "7494619203789490655"
+	firstOrder, secondOrder := "586030483469993439", "586030483469993440"
+	firstDigest, secondDigest := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	previewer := &tenantTikTokBillShadowPreviewerFake{results: map[string]*tiktokshop.TikTokBillShadowPreview{
+		firstOrder:  {ShopID: firstShop, ShopName: "henna_milkford", OrderID: firstOrder, OrderStatus: tiktokshop.OrderStatusAwaitingCollection, ReadyForReviewedBill: true, ReviewDigest: firstDigest},
+		secondOrder: {ShopID: secondShop, ShopName: "another_shop", OrderID: secondOrder, OrderStatus: tiktokshop.OrderStatusCompleted, ReadyForReviewedBill: true, ReviewDigest: secondDigest},
+	}}
+	creator := &tenantTikTokReviewedBillCreatorFake{result: &tiktokshop.TikTokReviewedBillResult{
+		BillID: "11111111-1111-4111-8111-111111111111", Status: "pending", DocumentRoute: "saleinvoice",
+		ReviewPath: "/sale-invoices/11111111-1111-4111-8111-111111111111", Message: "สร้าง Bill ใน Nexflow แล้ว ยังไม่ได้ส่งเข้า SML",
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopReviewedBillEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowPreviewer(previewer).WithReviewedBillCreator(creator)
+	router := gin.New()
+	router.POST("/orders/reviewed-bills/preview", func(c *gin.Context) {
+		c.Set("user_id", "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef")
+		handler.PreviewReviewedBills(c)
+	})
+	router.POST("/orders/reviewed-bills", func(c *gin.Context) {
+		c.Set("user_id", "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef")
+		handler.CreateReviewedBills(c)
+	})
+
+	preview := httptest.NewRecorder()
+	router.ServeHTTP(preview, httptest.NewRequest(http.MethodPost, "/orders/reviewed-bills/preview", strings.NewReader(`{"orders":[{"shop_id":"`+firstShop+`","order_id":"`+firstOrder+`"},{"shop_id":"`+secondShop+`","order_id":"`+secondOrder+`"}]}`)))
+	if preview.Code != http.StatusOK || previewer.calls != 2 || !strings.Contains(preview.Body.String(), `"ready_count":2`) || creator.calls != 0 {
+		t.Fatalf("preview status=%d calls=%d creator=%d body=%s", preview.Code, previewer.calls, creator.calls, preview.Body.String())
+	}
+
+	create := httptest.NewRecorder()
+	router.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/orders/reviewed-bills", strings.NewReader(`{"confirm":"CREATE_REVIEWED_BILLS","orders":[{"shop_id":"`+firstShop+`","order_id":"`+firstOrder+`","review_digest":"`+firstDigest+`"},{"shop_id":"`+secondShop+`","order_id":"`+secondOrder+`","review_digest":"`+secondDigest+`"}]}`)))
+	if create.Code != http.StatusOK || creator.calls != 2 || !strings.Contains(create.Body.String(), `"created_count":2`) || !strings.Contains(create.Body.String(), `"sml_created":false`) {
+		t.Fatalf("create status=%d calls=%d body=%s", create.Code, creator.calls, create.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerBulkReviewedBillsRejectDuplicateReferences(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previewer := &tenantTikTokBillShadowPreviewerFake{}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopReviewedBillEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithBillShadowPreviewer(previewer)
+	router := gin.New()
+	router.POST("/orders/reviewed-bills/preview", handler.PreviewReviewedBills)
+	response := httptest.NewRecorder()
+	order := "586030483469993439"
+	shop := "7494619203789490654"
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/orders/reviewed-bills/preview", strings.NewReader(`{"orders":[{"shop_id":"`+shop+`","order_id":"`+order+`"},{"shop_id":"`+shop+`","order_id":"`+order+`"}]}`)))
+	if response.Code != http.StatusBadRequest || previewer.calls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, previewer.calls, response.Body.String())
+	}
+}
+
 func TestTikTokShopAPIHandlerReviewedBillFailsClosed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	creator := &tenantTikTokReviewedBillCreatorFake{}

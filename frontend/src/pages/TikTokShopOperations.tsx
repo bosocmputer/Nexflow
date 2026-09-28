@@ -27,6 +27,7 @@ import {
   type TikTokBillShadowItem,
   type TikTokBillShadowPreview,
 } from '@/components/tiktok/TikTokBillShadowDialog'
+import { TikTokBulkBillDialog, type TikTokBulkBillPreview } from '@/components/tiktok/TikTokBulkBillDialog'
 import { TikTokProductMappingDialog } from '@/components/tiktok/TikTokProductMappingDialog'
 import { TikTokCancellationDialog, type TikTokCancellationPreview } from '@/components/tiktok/TikTokCancellationDialog'
 import { TikTokCancellationDocumentCell } from '@/components/tiktok/TikTokCancellationDocumentCell'
@@ -34,6 +35,7 @@ import { TikTokOrderDetailDrawer } from '@/components/tiktok/TikTokOrderDetailDr
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -195,6 +197,31 @@ interface TikTokReviewedBillResponse {
   notification_created: false
 }
 
+interface TikTokBulkBillReference {
+  shop_id: string
+  order_id: string
+  review_digest?: string
+}
+
+interface TikTokBulkBillCreateResponse {
+  created: Array<{
+    shop_id: string
+    order_id: string
+    status: 'created' | 'reused'
+    bill_id: string
+    review_path?: string
+    message: string
+  }>
+  skipped: Array<{
+    shop_id: string
+    order_id: string
+    status: 'skipped'
+    message: string
+  }>
+  created_count: number
+  skipped_count: number
+}
+
 const ALL = 'all'
 const DEFAULT_PER_PAGE = 20
 const PAGE_SIZE_OPTIONS = [20, 50] as const
@@ -225,6 +252,11 @@ const EMPTY_COUNTS: TikTokStatusCounts = {
   completed: 0,
   cancelled: 0,
 }
+
+function tiktokOrderKey(row: Pick<TikTokOrderRow, 'shop_id' | 'order_id'>): string {
+  return `${row.shop_id}:${row.order_id}`
+}
+
 const TIKTOK_ORDER_STATUS_HELP = [
   { value: 'รอจัดส่ง', detail: 'TikTok Shop ยืนยันการชำระเงินแล้ว ระบบสามารถสร้าง Bill ใน Nexflow ได้ แต่ยังไม่ส่ง SML อัตโนมัติ' },
   { value: 'รอรับพัสดุ', detail: 'เตรียมการจัดส่งแล้ว สามารถตรวจ Bill และส่ง SML ด้วยมือได้' },
@@ -269,6 +301,12 @@ export default function TikTokShopOperations() {
   const [billPreviewError, setBillPreviewError] = useState('')
   const [billCreating, setBillCreating] = useState(false)
   const [billCreateError, setBillCreateError] = useState('')
+  const [selectedOrderKeys, setSelectedOrderKeys] = useState<Set<string>>(new Set())
+  const [bulkBillPreviewOpen, setBulkBillPreviewOpen] = useState(false)
+  const [bulkBillPreviewLoading, setBulkBillPreviewLoading] = useState(false)
+  const [bulkBillPreviewError, setBulkBillPreviewError] = useState('')
+  const [bulkBillPreview, setBulkBillPreview] = useState<TikTokBulkBillPreview | null>(null)
+  const [bulkBillCreating, setBulkBillCreating] = useState(false)
   const [mappingItem, setMappingItem] = useState<TikTokBillShadowItem | null>(null)
   const [mappingOpen, setMappingOpen] = useState(false)
   const [cancellationOrder, setCancellationOrder] = useState<TikTokOrderRow | null>(null)
@@ -298,6 +336,18 @@ export default function TikTokShopOperations() {
   const totalPages = Math.max(1, orders?.total_pages ?? 1)
   const pageStart = total === 0 ? 0 : (page - 1) * perPage + 1
   const pageEnd = total === 0 ? 0 : Math.min(page * perPage, total)
+  const selectedOrders = useMemo(
+    () => (orders?.data ?? []).filter((row) => selectedOrderKeys.has(tiktokOrderKey(row))),
+    [orders?.data, selectedOrderKeys],
+  )
+  const visibleBulkEligibleOrders = useMemo(() => (orders?.data ?? []).filter((row) => !tiktokReviewedBillDisabledReason({
+    orderStatus: row.order_status,
+    hasDocument: Boolean(row.bill_id && row.document_path),
+    canCreateDocument,
+  })), [canCreateDocument, orders?.data])
+  const selectedCreateCount = selectedOrders.length
+  const allVisibleEligibleSelected = visibleBulkEligibleOrders.length > 0
+    && visibleBulkEligibleOrders.every((row) => selectedOrderKeys.has(tiktokOrderKey(row)))
 
   const setQuery = useCallback((next: Record<string, string | number | null>) => {
     setParams((current) => {
@@ -623,6 +673,76 @@ export default function TikTokShopOperations() {
       setBillCreating(false)
     }
   }
+  const toggleOrderSelection = (row: TikTokOrderRow, checked: boolean) => {
+    const key = tiktokOrderKey(row)
+    setSelectedOrderKeys((current) => {
+      const next = new Set(current)
+      if (checked) next.add(key)
+      else next.delete(key)
+      return next
+    })
+  }
+  const toggleVisibleOrderSelection = (checked: boolean) => {
+    setSelectedOrderKeys((current) => {
+      const next = new Set(current)
+      visibleBulkEligibleOrders.forEach((row) => {
+        if (checked) next.add(tiktokOrderKey(row))
+        else next.delete(tiktokOrderKey(row))
+      })
+      return next
+    })
+  }
+  const openBulkBillPreview = async () => {
+    if (selectedOrders.length === 0) return
+    setBulkBillPreviewOpen(true)
+    setBulkBillPreviewLoading(true)
+    setBulkBillPreviewError('')
+    setBulkBillPreview(null)
+    try {
+      const response = await client.post<TikTokBulkBillPreview>('/api/tiktok-shop-api/orders/reviewed-bills/preview', {
+        orders: selectedOrders.map((row): TikTokBulkBillReference => ({ shop_id: row.shop_id, order_id: row.order_id })),
+      })
+      setBulkBillPreview(response.data)
+    } catch (cause: unknown) {
+      setBulkBillPreviewError(apiErrorMessage(cause, 'ตรวจออเดอร์ TikTok Shop ที่เลือกไม่สำเร็จ'))
+    } finally {
+      setBulkBillPreviewLoading(false)
+    }
+  }
+  const createBulkReviewedBills = async () => {
+    const ready = bulkBillPreview?.ready ?? []
+    if (ready.length === 0) return
+    setBulkBillCreating(true)
+    setBulkBillPreviewError('')
+    try {
+      const response = await client.post<TikTokBulkBillCreateResponse>('/api/tiktok-shop-api/orders/reviewed-bills', {
+        confirm: 'CREATE_REVIEWED_BILLS',
+        orders: ready.map((row): TikTokBulkBillReference => ({
+          shop_id: row.shop_id,
+          order_id: row.order_id,
+          review_digest: row.review_digest,
+        })),
+      })
+      const result = response.data
+      setSelectedOrderKeys(new Set())
+      setRefreshTick((value) => value + 1)
+      if (result.created_count > 0) {
+        toast.success(`สร้าง Bill TikTok Shop แล้ว ${result.created_count.toLocaleString('th-TH')} รายการ`, {
+          description: 'ยังไม่ได้ส่งเข้า SML ให้เปิดเอกสารเพื่อตรวจและส่งด้วยมือ',
+        })
+      }
+      if (result.skipped_count > 0) {
+        toast.warning(`ยังไม่สร้าง ${result.skipped_count.toLocaleString('th-TH')} รายการ`, {
+          description: 'ข้อมูลบางรายการเปลี่ยนหรือยังไม่พร้อม กรุณาตรวจรายบุคคล',
+        })
+      }
+      setBulkBillPreviewOpen(false)
+    } catch (cause: unknown) {
+      setBulkBillPreviewError(apiErrorMessage(cause, 'สร้าง Bill TikTok Shop หลายรายการไม่สำเร็จ'))
+    } finally {
+      setBulkBillCreating(false)
+    }
+  }
   const openCancellationPreview = async (row: TikTokOrderRow) => {
     setCancellationOrder(row)
     setCancellationOpen(true)
@@ -825,10 +945,35 @@ export default function TikTokShopOperations() {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
+        {!cancellationQueue && selectedCreateCount > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-primary/5 px-3 py-2">
+            <div className="text-sm">
+              <span className="font-medium">เลือกแล้ว {selectedCreateCount.toLocaleString('th-TH')} order</span>
+              <span className="ml-2 text-xs text-muted-foreground">สร้างเอกสารใน Nexflow เท่านั้น ยังไม่ส่งเข้า SML</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" variant="outline" className="h-8" onClick={() => setSelectedOrderKeys(new Set())}>ยกเลิกเลือก</Button>
+              <Button type="button" size="sm" className="h-8 gap-1.5" onClick={() => void openBulkBillPreview()}>
+                <FilePlus2 className="h-3.5 w-3.5" />
+                สร้างเอกสาร {selectedCreateCount.toLocaleString('th-TH')} รายการ
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[840px] text-sm">
+          <table className="w-full min-w-[880px] text-sm">
             <thead className="bg-muted/50 text-xs text-muted-foreground">
               <tr>
+                {!cancellationQueue && (
+                  <th className="w-10 px-3 py-2 text-left">
+                    <Checkbox
+                      checked={allVisibleEligibleSelected ? true : selectedCreateCount > 0 ? 'indeterminate' : false}
+                      disabled={!canCreateDocument || visibleBulkEligibleOrders.length === 0}
+                      onCheckedChange={(value) => toggleVisibleOrderSelection(value === true)}
+                      aria-label="เลือกคำสั่งซื้อ TikTok Shop ที่พร้อมสร้างเอกสารทั้งหมดในหน้านี้"
+                    />
+                  </th>
+                )}
                 <th className="px-3 py-2 text-left">คำสั่งซื้อ / ร้าน</th>
                 <th className="px-3 py-2 text-right">ยอดเงิน</th>
                 <th className="px-3 py-2 text-left">
@@ -855,7 +1000,7 @@ export default function TikTokShopOperations() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={cancellationQueue ? 5 : 6} className="px-3 py-8 text-center text-muted-foreground">
                     <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
                     กำลังโหลด...
                   </td>
@@ -866,6 +1011,13 @@ export default function TikTokShopOperations() {
                 <DesktopRow
                   key={`${row.shop_id}:${row.order_id}`}
                   row={row}
+                  selected={!cancellationQueue && selectedOrderKeys.has(tiktokOrderKey(row))}
+                  selectableReason={cancellationQueue ? 'คิวยกเลิกไม่สร้างเอกสารขายใหม่' : tiktokReviewedBillDisabledReason({
+                    orderStatus: row.order_status,
+                    hasDocument: Boolean(row.bill_id && row.document_path),
+                    canCreateDocument,
+                  })}
+                  onSelectionChange={(checked) => toggleOrderSelection(row, checked)}
                   previewLoading={billPreviewLoading && previewOrder?.shop_id === row.shop_id && previewOrder?.order_id === row.order_id}
                   canCreateDocument={canCreateDocument}
                   onPreview={() => openBillPreview(row)}
@@ -936,6 +1088,21 @@ export default function TikTokShopOperations() {
         onMapItem={openProductMapping}
         onCreateBill={createReviewedBill}
         onOpenChange={setBillPreviewOpen}
+      />
+      <TikTokBulkBillDialog
+        open={bulkBillPreviewOpen}
+        loading={bulkBillPreviewLoading}
+        creating={bulkBillCreating}
+        error={bulkBillPreviewError}
+        preview={bulkBillPreview}
+        onOpenChange={(open) => {
+          setBulkBillPreviewOpen(open)
+          if (!open && !bulkBillCreating) {
+            setBulkBillPreviewError('')
+            setBulkBillPreview(null)
+          }
+        }}
+        onCreate={() => void createBulkReviewedBills()}
       />
       <TikTokOrderDetailDrawer
         open={Boolean(detailOrder)}
@@ -1218,6 +1385,9 @@ function tikTokDiagnosticIssueLabel(code: string) {
 
 function DesktopRow({
   row,
+  selected,
+  selectableReason,
+  onSelectionChange,
   previewLoading,
   canCreateDocument,
   retryingAutoSML,
@@ -1230,6 +1400,9 @@ function DesktopRow({
   onReviewCancellation,
 }: {
   row: TikTokOrderRow
+  selected: boolean
+  selectableReason: string
+  onSelectionChange: (checked: boolean) => void
   previewLoading: boolean
   canCreateDocument: boolean
   retryingAutoSML: boolean
@@ -1268,7 +1441,24 @@ function DesktopRow({
   })
   const canRetry = !isCancellationRow && canRetryAutoSML && Boolean(row.auto_sml && ['needs_review', 'failed'].includes(row.auto_sml.status))
   return (
-    <tr className="border-t border-border hover:bg-muted/30">
+    <tr className={cn('border-t border-border hover:bg-muted/30', selected && 'bg-primary/5')}>
+      {!cancellationQueue && (
+        <td className="px-3 py-2 align-top">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex" onClick={(event) => event.stopPropagation()}>
+                <Checkbox
+                  checked={selected}
+                  disabled={Boolean(selectableReason)}
+                  onCheckedChange={(value) => onSelectionChange(value === true)}
+                  aria-label={`เลือก order ${row.order_id}`}
+                />
+              </span>
+            </TooltipTrigger>
+            {selectableReason && <TooltipContent>{selectableReason}</TooltipContent>}
+          </Tooltip>
+        </td>
+      )}
       <td className="px-3 py-2 align-top">
         <div className="font-mono text-xs font-medium text-foreground">{row.order_id}</div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">

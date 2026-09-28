@@ -95,6 +95,44 @@ type tikTokReviewedBillRequest struct {
 	ReviewDigest string `json:"review_digest"`
 }
 
+// tikTokReviewedBillReference is deliberately small: the server resolves all
+// Bill evidence from its local, reconciled snapshot.  The browser must never
+// be trusted to supply prices, product mappings, or SML routing data.
+type tikTokReviewedBillReference struct {
+	ShopID       string `json:"shop_id"`
+	OrderID      string `json:"order_id"`
+	ReviewDigest string `json:"review_digest,omitempty"`
+}
+
+type tikTokBulkReviewedBillPreviewRequest struct {
+	Orders []tikTokReviewedBillReference `json:"orders"`
+}
+
+type tikTokBulkReviewedBillCreateRequest struct {
+	Confirm string                        `json:"confirm"`
+	Orders  []tikTokReviewedBillReference `json:"orders"`
+}
+
+type tikTokBulkReviewedBillPreviewRow struct {
+	ShopID       string `json:"shop_id"`
+	ShopName     string `json:"shop_name,omitempty"`
+	OrderID      string `json:"order_id"`
+	OrderStatus  string `json:"order_status"`
+	ReviewDigest string `json:"review_digest,omitempty"`
+	Message      string `json:"message"`
+}
+
+type tikTokBulkReviewedBillResultRow struct {
+	ShopID     string `json:"shop_id"`
+	OrderID    string `json:"order_id"`
+	Status     string `json:"status"`
+	BillID     string `json:"bill_id,omitempty"`
+	ReviewPath string `json:"review_path,omitempty"`
+	Message    string `json:"message"`
+}
+
+const maxTikTokBulkReviewedBills = 50
+
 type TikTokShopAPIHandler struct {
 	config           *config.Config
 	gateway          TikTokShopGateway
@@ -771,6 +809,166 @@ func (h *TikTokShopAPIHandler) GetBillShadowPreview(c *gin.Context) {
 		zap.Int("blocker_count", len(preview.Blockers)), zap.String("trace_id", c.GetString("trace_id")),
 		zap.String("entry_point", "manual_api"))
 	c.JSON(http.StatusOK, preview)
+}
+
+// PreviewReviewedBills is the TikTok equivalent of Shopee's bulk document
+// preview. It reads only already-reconciled local snapshots. In particular,
+// it does not call TikTok, create a Bill, write SML, or modify stock.
+func (h *TikTokShopAPIHandler) PreviewReviewedBills(c *gin.Context) {
+	if h == nil || h.config == nil || !h.config.TikTokShopOpenAPIEnabled || !h.config.TikTokShopReviewedBillEnabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดการสร้าง Bill TikTok Shop แบบตรวจทาน")
+		return
+	}
+	if h.billShadow == nil {
+		h.error(c, http.StatusServiceUnavailable, "bill_shadow_not_configured", "ระบบตรวจตัวอย่าง Bill TikTok Shop ยังไม่พร้อม")
+		return
+	}
+	var request tikTokBulkReviewedBillPreviewRequest
+	if c.ShouldBindJSON(&request) != nil || !validTikTokReviewedBillReferences(request.Orders, false) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "เลือกคำสั่งซื้อ TikTok Shop ได้ครั้งละไม่เกิน 50 รายการ")
+		return
+	}
+
+	ready := make([]tikTokBulkReviewedBillPreviewRow, 0, len(request.Orders))
+	skipped := make([]tikTokBulkReviewedBillPreviewRow, 0)
+	for _, reference := range request.Orders {
+		preview, err := h.billShadow.Preview(c.Request.Context(), reference.ShopID, reference.OrderID)
+		if err != nil {
+			skipped = append(skipped, tikTokBulkReviewedBillPreviewRow{
+				ShopID: reference.ShopID, OrderID: reference.OrderID,
+				Message: tikTokReviewedBillPreviewErrorMessage(err),
+			})
+			continue
+		}
+		if preview == nil || preview.ExistingBill != nil {
+			skipped = append(skipped, tikTokBulkReviewedBillPreviewRow{
+				ShopID: reference.ShopID, OrderID: reference.OrderID,
+				Message: "Order นี้มีเอกสารใน Nexflow อยู่แล้ว ระบบจะไม่สร้างซ้ำ",
+			})
+			continue
+		}
+		if !preview.ReadyForReviewedBill || len(preview.Blockers) != 0 || !validLowerSHA256(preview.ReviewDigest) {
+			skipped = append(skipped, tikTokBulkReviewedBillPreviewRow{
+				ShopID: preview.ShopID, ShopName: preview.ShopName, OrderID: preview.OrderID, OrderStatus: string(preview.OrderStatus),
+				Message: "ข้อมูลออเดอร์, Product Master หรือเส้นทางเอกสารยังไม่พร้อม",
+			})
+			continue
+		}
+		ready = append(ready, tikTokBulkReviewedBillPreviewRow{
+			ShopID: preview.ShopID, ShopName: preview.ShopName, OrderID: preview.OrderID, OrderStatus: string(preview.OrderStatus),
+			ReviewDigest: preview.ReviewDigest, Message: "พร้อมสร้าง Bill ใน Nexflow",
+		})
+	}
+	h.logger.Info("tiktok_shop_bulk_reviewed_bill_previewed",
+		zap.Int("requested_count", len(request.Orders)), zap.Int("ready_count", len(ready)), zap.Int("skipped_count", len(skipped)),
+		zap.String("actor_id", c.GetString("user_id")), zap.String("trace_id", c.GetString("trace_id")))
+	c.JSON(http.StatusOK, gin.H{
+		"ready": ready, "skipped": skipped, "ready_count": len(ready), "skipped_count": len(skipped),
+		"message": "ตรวจข้อมูลจาก Snapshot ใน Nexflow แล้ว ยังไม่สร้าง Bill และยังไม่ส่ง SML",
+	})
+}
+
+// CreateReviewedBills creates the selected local Bills after a separate bulk
+// preview. Each order is revalidated by the existing single-order service,
+// including its snapshot digest and database uniqueness guard. A failure for
+// one order never makes another order appear successful.
+func (h *TikTokShopAPIHandler) CreateReviewedBills(c *gin.Context) {
+	if h == nil || h.config == nil || !h.config.TikTokShopOpenAPIEnabled || !h.config.TikTokShopReviewedBillEnabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิดการสร้าง Bill TikTok Shop แบบตรวจทาน")
+		return
+	}
+	if h.reviewedBill == nil {
+		h.error(c, http.StatusServiceUnavailable, "reviewed_bill_not_configured", "ระบบสร้าง Bill TikTok Shop แบบตรวจทานยังไม่พร้อม")
+		return
+	}
+	var request tikTokBulkReviewedBillCreateRequest
+	if c.ShouldBindJSON(&request) != nil || request.Confirm != "CREATE_REVIEWED_BILLS" || !validTikTokReviewedBillReferences(request.Orders, true) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "กรุณาตรวจข้อมูลล่าสุดและยืนยันสร้าง Bill ได้ครั้งละไม่เกิน 50 รายการ")
+		return
+	}
+	actorID := strings.TrimSpace(c.GetString("user_id"))
+	if actorID == "" {
+		h.error(c, http.StatusUnauthorized, "session_expired", "กรุณาเข้าสู่ระบบใหม่")
+		return
+	}
+
+	created := make([]tikTokBulkReviewedBillResultRow, 0, len(request.Orders))
+	failed := make([]tikTokBulkReviewedBillResultRow, 0)
+	for _, reference := range request.Orders {
+		result, err := h.reviewedBill.Create(c.Request.Context(), tiktokshop.TikTokReviewedBillInput{
+			ShopID: reference.ShopID, OrderID: reference.OrderID, ReviewDigest: reference.ReviewDigest,
+			ActorID: actorID, TraceID: c.GetString("trace_id"),
+		})
+		if err != nil || result == nil || strings.TrimSpace(result.BillID) == "" {
+			failed = append(failed, tikTokBulkReviewedBillResultRow{
+				ShopID: reference.ShopID, OrderID: reference.OrderID, Status: "skipped",
+				Message: tikTokReviewedBillCreateErrorMessage(err),
+			})
+			continue
+		}
+		status := "created"
+		if result.Reused {
+			status = "reused"
+		}
+		created = append(created, tikTokBulkReviewedBillResultRow{
+			ShopID: reference.ShopID, OrderID: reference.OrderID, Status: status,
+			BillID: result.BillID, ReviewPath: result.ReviewPath, Message: result.Message,
+		})
+	}
+	h.logger.Info("tiktok_shop_bulk_reviewed_bill_completed",
+		zap.Int("requested_count", len(request.Orders)), zap.Int("created_count", len(created)), zap.Int("skipped_count", len(failed)),
+		zap.String("actor_id", actorID), zap.String("trace_id", c.GetString("trace_id")))
+	c.JSON(http.StatusOK, gin.H{
+		"created": created, "skipped": failed, "created_count": len(created), "skipped_count": len(failed),
+		"sml_created": false, "notification_created": false,
+		"message": "สร้างเฉพาะ Bill ใน Nexflow แล้ว ยังไม่ส่ง SML",
+	})
+}
+
+func validTikTokReviewedBillReferences(references []tikTokReviewedBillReference, requireDigest bool) bool {
+	if len(references) == 0 || len(references) > maxTikTokBulkReviewedBills {
+		return false
+	}
+	seen := make(map[string]struct{}, len(references))
+	for _, reference := range references {
+		shopID := strings.TrimSpace(reference.ShopID)
+		orderID := strings.TrimSpace(reference.OrderID)
+		if !tiktokshop.ValidTikTokShopID(shopID) || !tiktokshop.ValidTikTokShopID(orderID) || (requireDigest && !validLowerSHA256(reference.ReviewDigest)) {
+			return false
+		}
+		key := shopID + ":" + orderID
+		if _, exists := seen[key]; exists {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	return true
+}
+
+func tikTokReviewedBillPreviewErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, tiktokshop.ErrTikTokBillShadowNotFound):
+		return "ไม่พบ Snapshot ของออเดอร์นี้ กรุณาซิงก์ก่อน"
+	case errors.Is(err, tiktokshop.ErrTikTokBillShadowInvalidInput):
+		return "ข้อมูลร้านหรือ Order ID ไม่ถูกต้อง"
+	default:
+		return "ตรวจข้อมูลออเดอร์นี้ไม่สำเร็จ ระบบยังไม่สร้าง Bill"
+	}
+}
+
+func tikTokReviewedBillCreateErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, tiktokshop.ErrTikTokBillShadowNotFound):
+		return "ไม่พบ Snapshot ล่าสุด กรุณาซิงก์และตรวจใหม่"
+	case errors.Is(err, tiktokshop.ErrTikTokReviewedBillNotReady):
+		return "ข้อมูลออเดอร์, Product Master หรือเส้นทางเอกสารยังไม่พร้อม"
+	case errors.Is(err, tiktokshop.ErrTikTokReviewedBillReviewChanged):
+		return "ข้อมูลเปลี่ยนระหว่างยืนยัน กรุณาตรวจรายการนี้ใหม่"
+	case errors.Is(err, tiktokshop.ErrTikTokReviewedBillConflict):
+		return "Order นี้มี Bill จากขอบเขตอื่นอยู่แล้ว"
+	default:
+		return "สร้าง Bill ไม่สำเร็จ ระบบยังไม่ส่ง SML"
+	}
 }
 
 func (h *TikTokShopAPIHandler) CreateReviewedBill(c *gin.Context) {
