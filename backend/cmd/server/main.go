@@ -663,6 +663,7 @@ func main() {
 		api.POST("/tiktok-shop-api/orders/snapshot", middleware.RequireRole("admin", "staff"), tiktokAPIH.SnapshotOrders)
 		api.POST("/tiktok-shop-api/orders/reconcile", middleware.RequireRole("admin", "staff"), tiktokAPIH.ReconcileOrders)
 		api.GET("/tiktok-shop-api/orders", middleware.RequireRole("admin", "staff"), tiktokAPIH.ListOrders)
+		api.GET("/tiktok-shop-api/orders/:shop_id/:order_id/tracking", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetTracking)
 		api.GET("/tiktok-shop-api/orders/:shop_id/:order_id/bill-shadow-preview", middleware.RequireRole("admin", "staff"), tiktokAPIH.GetBillShadowPreview)
 		api.POST("/tiktok-shop-api/orders/reviewed-bills/preview", middleware.RequireRole("admin", "staff"), tiktokAPIH.PreviewReviewedBills)
 		api.POST("/tiktok-shop-api/orders/reviewed-bills", middleware.RequireRole("admin", "staff"), tiktokAPIH.CreateReviewedBills)

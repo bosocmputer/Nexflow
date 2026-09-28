@@ -66,6 +66,7 @@ type handlerOrderServiceFake struct {
 	detailResult    *OrderDetailsResult
 	priceResult     *OrderPriceDetailResult
 	recipientResult *ShipmentRecipientResult
+	trackingResult  *OrderTrackingResult
 	err             error
 	tenant          string
 	shopID          string
@@ -159,6 +160,11 @@ func (f *handlerOrderServiceFake) GetShipmentRecipient(_ context.Context, tenant
 func (f *handlerOrderServiceFake) GetPriceDetail(_ context.Context, tenant, shopID, orderID string) (*OrderPriceDetailResult, error) {
 	f.tenant, f.shopID, f.priceOrderID = tenant, shopID, orderID
 	return f.priceResult, f.err
+}
+
+func (f *handlerOrderServiceFake) GetTracking(_ context.Context, tenant, shopID, orderID string) (*OrderTrackingResult, error) {
+	f.tenant, f.shopID, f.priceOrderID = tenant, shopID, orderID
+	return f.trackingResult, f.err
 }
 
 func (f *handlerAuditFake) RecordAPIResult(_ context.Context, tenant, nonce, operation string, statusCode, _ int, errorCode, requestID string) error {

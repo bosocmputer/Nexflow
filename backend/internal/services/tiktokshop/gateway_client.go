@@ -22,6 +22,7 @@ const (
 	GatewayOrderDetailsPath                 = "/internal/v1/tiktok-shop/orders/detail"
 	GatewayShipmentRecipientPath            = "/internal/v1/tiktok-shop/orders/shipment-recipient"
 	GatewayOrderPriceDetailPath             = "/internal/v1/tiktok-shop/orders/price-detail"
+	GatewayOrderTrackingPath                = "/internal/v1/tiktok-shop/orders/tracking"
 	GatewayWebhookDeliveryPath              = "/internal/v1/tiktok-shop/webhooks/order-status"
 	GatewayWebhookConfigurePath             = "/internal/v1/tiktok-shop/webhooks/order-status/configure"
 	GatewayCancellationWebhookConfigurePath = "/internal/v1/tiktok-shop/webhooks/cancellation-status/configure"
@@ -113,6 +114,11 @@ type GatewayOrderPriceDetailRequest struct {
 	OrderID string `json:"order_id"`
 }
 
+type GatewayOrderTrackingRequest struct {
+	ShopID  string `json:"shop_id"`
+	OrderID string `json:"order_id"`
+}
+
 type GatewayShipmentRecipientRequest struct {
 	ShopID  string `json:"shop_id"`
 	OrderID string `json:"order_id"`
@@ -173,6 +179,11 @@ type GatewayOrderDetailsResponse struct {
 type GatewayOrderPriceDetailResponse struct {
 	UpstreamRequestID string       `json:"upstream_request_id"`
 	PriceDetail       *PriceDetail `json:"price_detail"`
+}
+
+type GatewayOrderTrackingResponse struct {
+	UpstreamRequestID string          `json:"upstream_request_id"`
+	Tracking          []TrackingEvent `json:"tracking"`
 }
 
 type GatewayShipmentRecipientResponse struct {
@@ -371,6 +382,20 @@ func (c *GatewayClient) GetPriceDetail(ctx context.Context, input GatewayOrderPr
 	}
 	if output.PriceDetail == nil || strings.TrimSpace(output.PriceDetail.Currency) == "" || strings.TrimSpace(output.PriceDetail.Payment) == "" {
 		return nil, errors.New("TikTok Shop gateway returned invalid order price detail data")
+	}
+	return &output, nil
+}
+
+func (c *GatewayClient) GetTracking(ctx context.Context, input GatewayOrderTrackingRequest) (*GatewayOrderTrackingResponse, error) {
+	if strings.TrimSpace(input.ShopID) == "" || !tikTokNumericIDPattern.MatchString(strings.TrimSpace(input.OrderID)) {
+		return nil, ErrInvalidGatewayInput
+	}
+	var output GatewayOrderTrackingResponse
+	if err := c.call(ctx, GatewayOrderTrackingPath, input, &output); err != nil {
+		return nil, err
+	}
+	if output.Tracking == nil {
+		output.Tracking = []TrackingEvent{}
 	}
 	return &output, nil
 }

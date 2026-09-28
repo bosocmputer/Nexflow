@@ -27,6 +27,7 @@ type TikTokShopGateway interface {
 	SearchOrders(context.Context, tiktokshop.GatewayOrderSearchRequest) (*tiktokshop.GatewayOrderSearchResponse, error)
 	GetOrderDetails(context.Context, tiktokshop.GatewayOrderDetailsRequest) (*tiktokshop.GatewayOrderDetailsResponse, error)
 	GetPriceDetail(context.Context, tiktokshop.GatewayOrderPriceDetailRequest) (*tiktokshop.GatewayOrderPriceDetailResponse, error)
+	GetTracking(context.Context, tiktokshop.GatewayOrderTrackingRequest) (*tiktokshop.GatewayOrderTrackingResponse, error)
 }
 
 type TikTokShopConnectionSyncer interface {
@@ -400,6 +401,38 @@ func (h *TikTokShopAPIHandler) GetOrderPriceDetail(c *gin.Context) {
 	}
 	if result == nil || result.PriceDetail == nil {
 		h.error(c, http.StatusBadGateway, "gateway_response_invalid", "Gateway ส่งรายละเอียดราคาออเดอร์ไม่สมบูรณ์")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// GetTracking is an explicit, read-only user action from the order timeline.
+// It never runs while the operations page loads and cannot change TikTok Shop,
+// Nexflow Bills, SML documents, stock, or fulfillment state.
+func (h *TikTokShopAPIHandler) GetTracking(c *gin.Context) {
+	enabled, configured := h.readiness()
+	if !enabled {
+		h.error(c, http.StatusNotFound, "feature_disabled", "Tenant นี้ยังไม่ได้เปิด TikTok Shop Open API")
+		return
+	}
+	if !configured {
+		h.error(c, http.StatusServiceUnavailable, "gateway_not_configured", "TikTok Shop Gateway ของ tenant ยังไม่พร้อม")
+		return
+	}
+	shopID := strings.TrimSpace(c.Param("shop_id"))
+	orderID := strings.TrimSpace(c.Param("order_id"))
+	if !validTikTokOrderIDs([]string{shopID}) || !validTikTokOrderIDs([]string{orderID}) {
+		h.error(c, http.StatusBadRequest, "invalid_request", "ข้อมูลออเดอร์ TikTok Shop ไม่ถูกต้อง")
+		return
+	}
+	result, err := h.gateway.GetTracking(c.Request.Context(), tiktokshop.GatewayOrderTrackingRequest{ShopID: shopID, OrderID: orderID})
+	if err != nil {
+		h.logger.Warn("tiktok_shop_tracking_failed", zap.String("shop_id", shopID), zap.String("order_id", orderID), zap.Error(err))
+		h.error(c, http.StatusBadGateway, "tracking_unavailable", "ยังอ่านสถานะขนส่งจาก TikTok Shop ไม่ได้ กรุณาเชื่อมต่อ TikTok Shop ใหม่หรือลองอีกครั้ง")
+		return
+	}
+	if result == nil {
+		h.error(c, http.StatusBadGateway, "gateway_response_invalid", "Gateway ส่งข้อมูลสถานะขนส่งไม่สมบูรณ์")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result})

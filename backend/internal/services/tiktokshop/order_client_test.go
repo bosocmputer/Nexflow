@@ -202,6 +202,36 @@ func TestOrderClientGetsPriceDetailForOneOrder(t *testing.T) {
 	}
 }
 
+func TestOrderClientGetsTrackingWithSignedShopCipher(t *testing.T) {
+	now := time.Unix(1_725_000_000, 0)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/fulfillment/202309/orders/576461413038785752/tracking" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		query := r.URL.Query()
+		providedSign := query.Get("sign")
+		query.Del("sign")
+		expectedSign, err := SignRequest("app-secret", r.URL.Path, query, nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if providedSign != expectedSign || query.Get("shop_cipher") != "shop-cipher" || r.Header.Get("x-tts-access-token") != "seller-access-token" {
+			t.Fatalf("query=%v sign=%q headers=%v", query, providedSign, r.Header)
+		}
+		_, _ = w.Write([]byte(`{"code":0,"message":"Success","request_id":"req-tracking","data":{"tracking":[{"description":"Package was accepted by carrier","update_time_millis":1725000000123,"action_code":30901}]}}`))
+	}))
+	defer server.Close()
+
+	client := newTestOrderClient(t, server, now)
+	tracking, requestID, err := client.GetTracking(context.Background(), "seller-access-token", "shop-cipher", "576461413038785752")
+	if err != nil || requestID != "req-tracking" || len(tracking.Events) != 1 || tracking.Events[0].ActionCode != 30901 || tracking.Events[0].UpdateTimeMillis != 1725000000123 {
+		t.Fatalf("GetTracking()=%+v requestID=%q err=%v", tracking, requestID, err)
+	}
+	if _, _, err := client.GetTracking(context.Background(), "seller-access-token", "shop-cipher", "not-an-order-id"); !errors.Is(err, ErrInvalidOrderInput) {
+		t.Fatalf("invalid order ID error=%v", err)
+	}
+}
+
 func TestOrderClientSearchOrdersRejectsInvalidFiltersBeforeNetwork(t *testing.T) {
 	calls := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))

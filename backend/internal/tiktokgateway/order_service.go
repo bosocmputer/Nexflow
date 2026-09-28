@@ -20,6 +20,7 @@ type TikTokOrderReader interface {
 	GetOrderDetails(context.Context, string, string, []string) ([]tiktokshop.Order, string, error)
 	GetShipmentRecipient(context.Context, string, string, string) (*tiktokshop.ShipmentRecipient, string, error)
 	GetPriceDetail(context.Context, string, string, string) (*tiktokshop.PriceDetail, string, error)
+	GetTracking(context.Context, string, string, string) (*tiktokshop.TrackingResult, string, error)
 }
 
 type OrderService struct {
@@ -47,6 +48,11 @@ type OrderPriceDetailResult struct {
 type ShipmentRecipientResult struct {
 	UpstreamRequestID string                        `json:"upstream_request_id"`
 	Recipient         *tiktokshop.ShipmentRecipient `json:"recipient"`
+}
+
+type OrderTrackingResult struct {
+	UpstreamRequestID string                     `json:"upstream_request_id"`
+	Tracking          []tiktokshop.TrackingEvent `json:"tracking"`
 }
 
 func NewOrderService(credentials OrderCredentialProvider, orders TikTokOrderReader) (*OrderService, error) {
@@ -117,6 +123,24 @@ func (s *OrderService) GetPriceDetail(ctx context.Context, tenantSlug, shopID, o
 		return nil, tiktokshop.ErrInvalidOrderResponse
 	}
 	return &OrderPriceDetailResult{UpstreamRequestID: strings.TrimSpace(upstreamRequestID), PriceDetail: detail}, nil
+}
+
+func (s *OrderService) GetTracking(ctx context.Context, tenantSlug, shopID, orderID string) (*OrderTrackingResult, error) {
+	credential, err := s.credential(ctx, tenantSlug, shopID)
+	if err != nil {
+		return nil, err
+	}
+	tracking, upstreamRequestID, err := s.orders.GetTracking(ctx, credential.AccessToken, credential.ShopCipher, strings.TrimSpace(orderID))
+	if err != nil {
+		return nil, fmt.Errorf("get TikTok Shop tracking: %w", err)
+	}
+	if tracking == nil {
+		return nil, tiktokshop.ErrInvalidOrderResponse
+	}
+	return &OrderTrackingResult{
+		UpstreamRequestID: strings.TrimSpace(upstreamRequestID),
+		Tracking:          append([]tiktokshop.TrackingEvent(nil), tracking.Events...),
+	}, nil
 }
 
 func (s *OrderService) credential(ctx context.Context, tenantSlug, shopID string) (*AccessCredential, error) {

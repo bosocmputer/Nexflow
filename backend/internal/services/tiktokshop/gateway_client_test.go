@@ -156,6 +156,25 @@ func TestGatewayClientReadsOrdersThroughTenantScopedGateway(t *testing.T) {
 	}
 }
 
+func TestGatewayClientReadsTrackingThroughTenantScopedGateway(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != GatewayOrderTrackingPath {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		var input GatewayOrderTrackingRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.ShopID != "7494619203789490654" || input.OrderID != "586291320330093597" {
+			t.Fatalf("input=%+v err=%v", input, err)
+		}
+		_, _ = w.Write([]byte(`{"data":{"upstream_request_id":"tts-track","tracking":[{"description":"Carrier accepted package","update_time_millis":1725000000123,"action_code":30901}]}}`))
+	}))
+	defer server.Close()
+	client := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, Tenant: "aoy", SharedSecret: "tenant-secret", HTTPClient: server.Client()})
+	result, err := client.GetTracking(context.Background(), GatewayOrderTrackingRequest{ShopID: "7494619203789490654", OrderID: "586291320330093597"})
+	if err != nil || result.UpstreamRequestID != "tts-track" || len(result.Tracking) != 1 || result.Tracking[0].Description != "Carrier accepted package" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
 func TestGatewayClientRejectsInvalidOrderReadBeforeNetwork(t *testing.T) {
 	client := NewGatewayClient(GatewayClientConfig{BaseURL: "https://gateway.example", Tenant: "aoy", SharedSecret: "tenant-secret"})
 	if _, err := client.SearchOrders(context.Background(), GatewayOrderSearchRequest{ShopID: "shop-1", Search: SearchOrdersRequest{PageSize: 0}}); !errors.Is(err, ErrInvalidGatewayInput) {
@@ -169,6 +188,9 @@ func TestGatewayClientRejectsInvalidOrderReadBeforeNetwork(t *testing.T) {
 	}
 	if _, err := client.GetPriceDetail(context.Background(), GatewayOrderPriceDetailRequest{ShopID: "shop-1", OrderID: " "}); !errors.Is(err, ErrInvalidGatewayInput) {
 		t.Fatalf("GetPriceDetail() error = %v", err)
+	}
+	if _, err := client.GetTracking(context.Background(), GatewayOrderTrackingRequest{ShopID: "shop-1", OrderID: " "}); !errors.Is(err, ErrInvalidGatewayInput) {
+		t.Fatalf("GetTracking() error = %v", err)
 	}
 }
 

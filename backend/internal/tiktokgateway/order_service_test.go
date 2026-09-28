@@ -130,6 +130,7 @@ type fakeTikTokOrderReader struct {
 	details      []tiktokshop.Order
 	priceDetail  *tiktokshop.PriceDetail
 	recipient    *tiktokshop.ShipmentRecipient
+	tracking     *tiktokshop.TrackingResult
 	requestID    string
 	err          error
 	accessToken  string
@@ -158,4 +159,25 @@ func (f *fakeTikTokOrderReader) GetShipmentRecipient(_ context.Context, accessTo
 func (f *fakeTikTokOrderReader) GetPriceDetail(_ context.Context, accessToken, shopCipher, orderID string) (*tiktokshop.PriceDetail, string, error) {
 	f.accessToken, f.shopCipher, f.priceOrderID = accessToken, shopCipher, orderID
 	return f.priceDetail, f.requestID, f.err
+}
+
+func (f *fakeTikTokOrderReader) GetTracking(_ context.Context, accessToken, shopCipher, orderID string) (*tiktokshop.TrackingResult, string, error) {
+	f.accessToken, f.shopCipher, f.priceOrderID = accessToken, shopCipher, orderID
+	return f.tracking, f.requestID, f.err
+}
+
+func TestOrderServiceGetsTrackingWithTenantScopedCredential(t *testing.T) {
+	credentials := &fakeOrderCredentialProvider{credential: &AccessCredential{AccessToken: "access-secret", ShopID: "shop-1", ShopCipher: "cipher-1"}}
+	reader := &fakeTikTokOrderReader{tracking: &tiktokshop.TrackingResult{Events: []tiktokshop.TrackingEvent{{Description: "Carrier accepted package", UpdateTimeMillis: 1725000000000, ActionCode: 30901}}}, requestID: "tts-request-tracking"}
+	service, err := NewOrderService(credentials, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.GetTracking(context.Background(), "AOY", "shop-1", "576461413038785752")
+	if err != nil || result.UpstreamRequestID != "tts-request-tracking" || len(result.Tracking) != 1 || result.Tracking[0].ActionCode != 30901 {
+		t.Fatalf("GetTracking()=%+v err=%v", result, err)
+	}
+	if credentials.tenant != "aoy" || reader.accessToken != "access-secret" || reader.shopCipher != "cipher-1" || reader.priceOrderID != "576461413038785752" {
+		t.Fatalf("credentials=%+v reader=%+v", credentials, reader)
+	}
 }

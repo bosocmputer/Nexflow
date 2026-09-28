@@ -18,6 +18,7 @@ const (
 	PathSearchOrders     = "/order/202309/orders/search"
 	PathGetOrderDetails  = "/order/202507/orders"
 	PathPriceDetailBase  = "/order/202407/orders"
+	PathGetOrderTracking = "/fulfillment/202309/orders"
 	maxOrderResponseSize = 8 << 20
 )
 
@@ -213,6 +214,20 @@ type CombinedListingSKU struct {
 
 type OrderPackage struct {
 	ID string `json:"id"`
+}
+
+// TrackingEvent is the PII-minimized carrier milestone returned by TikTok
+// Shop.  Nexflow deliberately keeps only the label, timestamp and action
+// code; package addresses, recipient data and raw upstream payloads never
+// cross the Gateway boundary.
+type TrackingEvent struct {
+	Description      string `json:"description"`
+	UpdateTimeMillis int64  `json:"update_time_millis"`
+	ActionCode       int64  `json:"action_code"`
+}
+
+type TrackingResult struct {
+	Events []TrackingEvent `json:"tracking"`
 }
 
 // ShipmentRecipient is the minimum recipient data required by Nexflow's SML
@@ -454,6 +469,37 @@ func (c *OrderClient) GetPriceDetail(ctx context.Context, accessToken, shopCiphe
 		return nil, requestID, ErrInvalidOrderResponse
 	}
 	return &detail, requestID, nil
+}
+
+// GetTracking reads carrier milestones only.  It never creates a package,
+// schedules handover, changes fulfillment state, or downloads a label.
+func (c *OrderClient) GetTracking(ctx context.Context, accessToken, shopCipher, orderID string) (*TrackingResult, string, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	shopCipher = strings.TrimSpace(shopCipher)
+	orderID = strings.TrimSpace(orderID)
+	if c == nil || c.baseURL == nil || accessToken == "" || shopCipher == "" || !tikTokNumericIDPattern.MatchString(orderID) {
+		return nil, "", ErrInvalidOrderInput
+	}
+	var result TrackingResult
+	path := PathGetOrderTracking + "/" + orderID + "/tracking"
+	requestID, err := c.do(ctx, http.MethodGet, path, c.baseQuery(shopCipher), nil, accessToken, &result)
+	if err != nil {
+		return nil, requestID, err
+	}
+	if len(result.Events) > 100 {
+		return nil, requestID, ErrInvalidOrderResponse
+	}
+	for index := range result.Events {
+		event := &result.Events[index]
+		event.Description = strings.TrimSpace(event.Description)
+		if event.UpdateTimeMillis < 0 || len(event.Description) > 512 {
+			return nil, requestID, ErrInvalidOrderResponse
+		}
+	}
+	if result.Events == nil {
+		result.Events = []TrackingEvent{}
+	}
+	return &result, requestID, nil
 }
 
 func (c *OrderClient) baseQuery(shopCipher string) url.Values {

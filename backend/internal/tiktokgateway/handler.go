@@ -47,6 +47,7 @@ type OrderGatewayService interface {
 	GetOrderDetails(context.Context, string, string, []string) (*OrderDetailsResult, error)
 	GetShipmentRecipient(context.Context, string, string, string) (*ShipmentRecipientResult, error)
 	GetPriceDetail(context.Context, string, string, string) (*OrderPriceDetailResult, error)
+	GetTracking(context.Context, string, string, string) (*OrderTrackingResult, error)
 }
 
 type ProductGatewayService interface {
@@ -131,6 +132,11 @@ type orderPriceDetailRequest struct {
 	OrderID string `json:"order_id"`
 }
 
+type orderTrackingRequest struct {
+	ShopID  string `json:"shop_id"`
+	OrderID string `json:"order_id"`
+}
+
 type shipmentRecipientRequest struct {
 	ShopID  string `json:"shop_id"`
 	OrderID string `json:"order_id"`
@@ -203,6 +209,7 @@ func (h *Handler) Register(router *gin.Engine) {
 	router.POST(tiktokshop.GatewayOrderDetailsPath, h.GetOrderDetails)
 	router.POST(tiktokshop.GatewayShipmentRecipientPath, h.GetShipmentRecipient)
 	router.POST(tiktokshop.GatewayOrderPriceDetailPath, h.GetOrderPriceDetail)
+	router.POST(tiktokshop.GatewayOrderTrackingPath, h.GetTracking)
 	router.PUT(tiktokshop.GatewayWebhookConfigurePath, h.ConfigureOrderStatusWebhook)
 	router.PUT(tiktokshop.GatewayCancellationWebhookConfigurePath, h.ConfigureCancellationStatusWebhook)
 	router.POST(tiktokshop.GatewayProductSearchPath, h.SearchProducts)
@@ -793,6 +800,42 @@ func (h *Handler) GetOrderPriceDetail(c *gin.Context) {
 		return
 	}
 	if result == nil || result.PriceDetail == nil {
+		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// GetTracking is a read-only carrier-timeline lookup. It intentionally has no
+// fulfillment mutation, label, package, or handover operation.
+func (h *Handler) GetTracking(c *gin.Context) {
+	body, identity, ok := h.authenticate(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	requestID := newRequestID()
+	statusCode, errorCode := http.StatusOK, ""
+	defer func() { h.record(c, identity, "order_tracking", statusCode, startedAt, errorCode, requestID) }()
+	if h.orders == nil {
+		statusCode, errorCode = http.StatusServiceUnavailable, "gateway_not_ready"
+		h.respondError(c, statusCode, errorCode, oauthErrorMessage(errorCode), true, requestID)
+		return
+	}
+	var input orderTrackingRequest
+	if err := decodeStrictJSON(body, &input); err != nil || !validOrderPathInput(input.ShopID, input.OrderID) {
+		statusCode, errorCode = http.StatusBadRequest, "invalid_order_request"
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
+		return
+	}
+	result, err := h.orders.GetTracking(c.Request.Context(), identity.Tenant, strings.TrimSpace(input.ShopID), strings.TrimSpace(input.OrderID))
+	if err != nil {
+		statusCode, errorCode = orderErrorMeta(err)
+		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), orderErrorRetryable(errorCode), requestID)
+		return
+	}
+	if result == nil {
 		statusCode, errorCode = http.StatusInternalServerError, "internal_error"
 		h.respondError(c, statusCode, errorCode, orderErrorMessage(errorCode), false, requestID)
 		return

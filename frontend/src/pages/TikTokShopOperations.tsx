@@ -31,7 +31,7 @@ import { TikTokBulkBillDialog, type TikTokBulkBillPreview } from '@/components/t
 import { TikTokProductMappingDialog } from '@/components/tiktok/TikTokProductMappingDialog'
 import { TikTokCancellationDialog, type TikTokCancellationPreview } from '@/components/tiktok/TikTokCancellationDialog'
 import { TikTokCancellationDocumentCell } from '@/components/tiktok/TikTokCancellationDocumentCell'
-import { TikTokOrderDetailDrawer } from '@/components/tiktok/TikTokOrderDetailDrawer'
+import { TikTokOrderDetailDrawer, type TikTokTrackingEvent } from '@/components/tiktok/TikTokOrderDetailDrawer'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -296,6 +296,9 @@ export default function TikTokShopOperations() {
   const [previewOrder, setPreviewOrder] = useState<TikTokOrderRow | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [detailOrder, setDetailOrder] = useState<TikTokOrderRow | null>(null)
+  const [detailTracking, setDetailTracking] = useState<TikTokTrackingEvent[]>([])
+  const [detailTrackingLoading, setDetailTrackingLoading] = useState(false)
+  const [detailTrackingError, setDetailTrackingError] = useState('')
   const [billPreview, setBillPreview] = useState<TikTokBillShadowPreview | null>(null)
   const [billPreviewLoading, setBillPreviewLoading] = useState(false)
   const [billPreviewError, setBillPreviewError] = useState('')
@@ -429,6 +432,8 @@ export default function TikTokShopOperations() {
       if (requestSequence !== detailRequestSequence.current) return
       const row = response.data.data.find((item) => item.order_id === targetOrderID && item.shop_id === targetShopID)
       if (row) {
+        setDetailTracking([])
+        setDetailTrackingError('')
         setDetailOrder(row)
         return
       }
@@ -451,6 +456,8 @@ export default function TikTokShopOperations() {
     if (loading || shopID === ALL || !shouldOpenTikTokDetailFromQuery(shopID, requestedDetailOrderID, true, Boolean(detailOrder), dismissedDetailOrderRef.current)) return
     const row = orders?.data.find((item) => item.order_id === requestedDetailOrderID && item.shop_id === shopID)
     if (row) {
+      setDetailTracking([])
+      setDetailTrackingError('')
       setDetailOrder(row)
       return
     }
@@ -620,6 +627,8 @@ export default function TikTokShopOperations() {
       return
     }
     dismissedDetailOrderRef.current = ''
+    setDetailTracking([])
+    setDetailTrackingError('')
     setDetailOrder(row)
     // Keep the queue behind the drawer exactly as it was. `order` is the
     // timeline deep link; `order_id` is only a deliberate list search.
@@ -632,6 +641,9 @@ export default function TikTokShopOperations() {
       detailOrder?.order_id ?? requestedDetailOrderID,
     )
     setDetailOrder(null)
+    setDetailTracking([])
+    setDetailTrackingError('')
+    setDetailTrackingLoading(false)
     // Clear only drawer state. A user-entered `order_id` search, if present,
     // remains a real list filter after the drawer closes.
     setParams((current) => clearTikTokOrderDetailQuery(current), { replace: true })
@@ -644,6 +656,21 @@ export default function TikTokShopOperations() {
       toast.error('คัดลอก Order ID ไม่สำเร็จ')
     }
   }, [])
+  const refreshDetailTracking = useCallback(async () => {
+    if (!detailOrder) return
+    setDetailTrackingLoading(true)
+    setDetailTrackingError('')
+    try {
+      const response = await client.get<{ data: { tracking?: TikTokTrackingEvent[] } }>(
+        `/api/tiktok-shop-api/orders/${encodeURIComponent(detailOrder.shop_id)}/${encodeURIComponent(detailOrder.order_id)}/tracking`,
+      )
+      setDetailTracking(response.data.data.tracking ?? [])
+    } catch (cause: unknown) {
+      setDetailTrackingError(apiErrorMessage(cause, 'ตรวจสถานะขนส่งจาก TikTok Shop ไม่สำเร็จ'))
+    } finally {
+      setDetailTrackingLoading(false)
+    }
+  }, [detailOrder])
   const setBillPreviewOpen = (open: boolean) => {
     setPreviewOpen(open)
     if (!open) {
@@ -1107,7 +1134,6 @@ export default function TikTokShopOperations() {
       <TikTokOrderDetailDrawer
         open={Boolean(detailOrder)}
         order={detailOrder}
-        canCreateDocument={canCreateDocument}
         onOpenChange={setDetailOpen}
         onReviewBill={() => {
           if (!detailOrder) return
@@ -1122,6 +1148,10 @@ export default function TikTokShopOperations() {
         onCopyOrder={() => {
           if (detailOrder) void copyTikTokOrderID(detailOrder)
         }}
+        tracking={detailTracking}
+        trackingLoading={detailTrackingLoading}
+        trackingError={detailTrackingError}
+        onRefreshTracking={() => void refreshDetailTracking()}
       />
       <TikTokProductMappingDialog
         open={mappingOpen}

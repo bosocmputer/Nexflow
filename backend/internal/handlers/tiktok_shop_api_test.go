@@ -20,18 +20,20 @@ import (
 )
 
 type tenantTikTokGatewayFake struct {
-	configured  bool
-	auth        *tiktokshop.GatewayAuthURLResponse
-	connections []tiktokshop.GatewayConnection
-	err         error
-	authInput   tiktokshop.GatewayAuthURLRequest
-	listCalls   int
-	search      *tiktokshop.GatewayOrderSearchResponse
-	details     *tiktokshop.GatewayOrderDetailsResponse
-	price       *tiktokshop.GatewayOrderPriceDetailResponse
-	searchInput tiktokshop.GatewayOrderSearchRequest
-	detailInput tiktokshop.GatewayOrderDetailsRequest
-	priceInput  tiktokshop.GatewayOrderPriceDetailRequest
+	configured    bool
+	auth          *tiktokshop.GatewayAuthURLResponse
+	connections   []tiktokshop.GatewayConnection
+	err           error
+	authInput     tiktokshop.GatewayAuthURLRequest
+	listCalls     int
+	search        *tiktokshop.GatewayOrderSearchResponse
+	details       *tiktokshop.GatewayOrderDetailsResponse
+	price         *tiktokshop.GatewayOrderPriceDetailResponse
+	tracking      *tiktokshop.GatewayOrderTrackingResponse
+	searchInput   tiktokshop.GatewayOrderSearchRequest
+	detailInput   tiktokshop.GatewayOrderDetailsRequest
+	priceInput    tiktokshop.GatewayOrderPriceDetailRequest
+	trackingInput tiktokshop.GatewayOrderTrackingRequest
 }
 
 func (f *tenantTikTokGatewayFake) Configured() bool { return f.configured }
@@ -54,6 +56,10 @@ func (f *tenantTikTokGatewayFake) GetOrderDetails(_ context.Context, input tikto
 func (f *tenantTikTokGatewayFake) GetPriceDetail(_ context.Context, input tiktokshop.GatewayOrderPriceDetailRequest) (*tiktokshop.GatewayOrderPriceDetailResponse, error) {
 	f.priceInput = input
 	return f.price, f.err
+}
+func (f *tenantTikTokGatewayFake) GetTracking(_ context.Context, input tiktokshop.GatewayOrderTrackingRequest) (*tiktokshop.GatewayOrderTrackingResponse, error) {
+	f.trackingInput = input
+	return f.tracking, f.err
 }
 
 type tenantTikTokStoreFake struct {
@@ -344,6 +350,25 @@ func TestTikTokShopAPIHandlerGetsOrderPriceDetailReadOnly(t *testing.T) {
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"payment":"307.49"`) || gateway.priceInput.OrderID != "order-1" {
 		t.Fatalf("status=%d body=%s input=%+v", response.Code, response.Body.String(), gateway.priceInput)
+	}
+}
+
+func TestTikTokShopAPIHandlerGetsTrackingReadOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	shopID := "7494619203789490654"
+	orderID := "586291320330093597"
+	gateway := &tenantTikTokGatewayFake{configured: true, tracking: &tiktokshop.GatewayOrderTrackingResponse{
+		UpstreamRequestID: "tts-tracking",
+		Tracking:          []tiktokshop.TrackingEvent{{Description: "Carrier accepted package", UpdateTimeMillis: 1725000000123, ActionCode: 30901}},
+	}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true}, gateway, &tenantTikTokStoreFake{}, nil, nil)
+	router := gin.New()
+	router.GET("/orders/:shop_id/:order_id/tracking", handler.GetTracking)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/orders/"+shopID+"/"+orderID+"/tracking", nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"description":"Carrier accepted package"`) || gateway.trackingInput.ShopID != shopID || gateway.trackingInput.OrderID != orderID {
+		t.Fatalf("status=%d body=%s input=%+v", response.Code, response.Body.String(), gateway.trackingInput)
 	}
 }
 
