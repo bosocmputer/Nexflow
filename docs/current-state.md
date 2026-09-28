@@ -9,15 +9,19 @@ disabled. Historical schemas and AI usage logs remain for audit/rollback.
 ## Production UAT Status
 
 - Demo, AOY, and Lanboon run the same application feature baseline `966b027`.
-  Ploy remains on isolated bootstrap commit `5497558`, while the shared
-  release/edge checkout is `c74ec6a` so the four-tenant registry remains
-  current. Tenant databases, SML settings, channel routes, and feature flags
-  remain isolated. At the user's explicit risk acceptance, only the Nexflow
-  application DB role password is shared across the four tenants as of
-  2026-09-02; all other credentials remain tenant-scoped. Central SML Gateway
-  baseline: `42992f5`.
+  Ploy was updated to release `c6ea24f` on 2026-09-28 with the same Marketplace
+  and TikTok Shop capability gates as AOY. Tenant databases, SML settings,
+  channel routes, shop connections, tokens, recipients, and feature settings
+  remain isolated; Ploy receives no copied AOY data or credentials. Its SML
+  Catalog is still empty, so its integrations remain fail-closed until Ploy
+  configures its own Catalog, routes, and shops. At the user's explicit risk
+  acceptance, only the Nexflow application DB role password is shared across
+  the four tenants as of 2026-09-02; all other credentials remain tenant-scoped.
+  Central SML Gateway baseline: `42992f5`.
 - Demo, AOY, Lanboon, Ploy, and Central Shopee Gateway health endpoints returned
   HTTP 200 with database status `ok` on 2026-08-27.
+- Ploy health and `/login` returned HTTP 200 after its 2026-09-28 capability
+  deployment; the post-restart backend error scan was clean.
 - Migrations through 090 are installed on every tenant. AOY has grouped UI,
   versioned unit Catalog, active conversion, and the reservation ledger enabled
   after readiness validation. Demo has only the versioned unit Catalog enabled.
