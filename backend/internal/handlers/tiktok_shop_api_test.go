@@ -134,6 +134,20 @@ type tenantTikTokAutoSMLSettingsFake struct {
 	err      error
 }
 
+type tenantTikTokSaleRouteReaderFake struct {
+	result *models.ChannelDefault
+	err    error
+	calls  int
+}
+
+func (f *tenantTikTokSaleRouteReaderFake) Get(channel, billType string) (*models.ChannelDefault, error) {
+	f.calls++
+	if channel != "tiktok_shop" || billType != "sale" {
+		return nil, errors.New("unexpected TikTok sale route lookup")
+	}
+	return f.result, f.err
+}
+
 func (f *tenantTikTokAutoSMLSettingsFake) ListSettings(context.Context) ([]models.TikTokAutoSMLSetting, error) {
 	return append([]models.TikTokAutoSMLSetting(nil), f.settings...), f.err
 }
@@ -1089,6 +1103,146 @@ func TestTikTokShopAPIHandlerRequiresAutoBillBeforeEnablingAutoSML(t *testing.T)
 	if response.Code != http.StatusConflict || store.updated.ShopID != "" || !strings.Contains(response.Body.String(), "auto_bill_required") {
 		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
 	}
+}
+
+func TestTikTokShopAPIHandlerEnablesAutoSMLWithoutUnsentSampleAfterProvenSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	lastSuccess := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: shopID, AutoBillEnabled: true, SMLEnabled: false, ConfigVersion: 2, LastSuccessAt: &lastSuccess, RouteSignature: readyTikTokSaleRouteSignature(),
+	}}}
+	reader := &tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{Data: []tiktokshop.TikTokOrderSnapshotListItem{{
+		ShopID: shopID, OrderID: "586291320330093597", BillID: "03ee1216-acb4-4a88-842c-7edc6eb44292",
+	}}}}
+	routeReader := &tenantTikTokSaleRouteReaderFake{result: readyTikTokSaleRoute()}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, Enabled: true}}}).
+		WithOrderReader(reader).
+		WithBillShadowPreviewer(&tenantTikTokBillShadowPreviewerFake{}).
+		WithSaleRouteReader(routeReader).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/"+shopID, strings.NewReader(
+		`{"sml_send_enabled":true,"expected_config_version":2,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+	)))
+
+	if response.Code != http.StatusOK || !store.updated.SMLEnabled || store.updated.RouteSignature == "" {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
+	}
+	if routeReader.calls != 1 {
+		t.Fatalf("route calls=%d, want 1", routeReader.calls)
+	}
+}
+
+func TestTikTokShopAPIHandlerRejectsAutoSMLWithoutSampleOrPriorSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: shopID, AutoBillEnabled: true, SMLEnabled: false, ConfigVersion: 2,
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, Enabled: true}}}).
+		WithOrderReader(&tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{}}).
+		WithBillShadowPreviewer(&tenantTikTokBillShadowPreviewerFake{}).
+		WithSaleRouteReader(&tenantTikTokSaleRouteReaderFake{result: readyTikTokSaleRoute()}).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/"+shopID, strings.NewReader(
+		`{"sml_send_enabled":true,"expected_config_version":2,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+	)))
+
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "controlled_sample_not_ready") || store.updated.ShopID != "" {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerRejectsPriorCanaryAfterRouteChanged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	lastSuccess := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: shopID, AutoBillEnabled: true, ConfigVersion: 4, LastSuccessAt: &lastSuccess,
+		RouteSignature: readyTikTokSaleRouteSignature(), PausedReason: "route_changed",
+	}}}
+	changedRoute := readyTikTokSaleRoute()
+	changedRoute.ConfigVersion++
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, Enabled: true}}}).
+		WithOrderReader(&tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{}}).
+		WithBillShadowPreviewer(&tenantTikTokBillShadowPreviewerFake{}).
+		WithSaleRouteReader(&tenantTikTokSaleRouteReaderFake{result: changedRoute}).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/"+shopID, strings.NewReader(
+		`{"sml_send_enabled":true,"expected_config_version":4,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+	)))
+
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "controlled_sample_not_ready") || store.updated.ShopID != "" {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerDiagnosticsTreatsNoUnsentOrderAsInformationalWhenRouteAndCanaryAreProven(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	lastSuccess := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopReviewedBillEnabled: true, TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true, connections: []tiktokshop.GatewayConnection{{ShopID: shopID}}}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, Enabled: true}}}).
+		WithOrderReader(&tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{Data: []tiktokshop.TikTokOrderSnapshotListItem{{
+			ShopID: shopID, OrderID: "586291320330093597", BillID: "03ee1216-acb4-4a88-842c-7edc6eb44292",
+		}}}}).
+		WithBillShadowPreviewer(&tenantTikTokBillShadowPreviewerFake{}).
+		WithSaleRouteReader(&tenantTikTokSaleRouteReaderFake{result: readyTikTokSaleRoute()}).
+		WithAutoSML(&tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{ShopID: shopID, AutoBillEnabled: true, LastSuccessAt: &lastSuccess, ConfigVersion: 2, RouteSignature: readyTikTokSaleRouteSignature()}}})
+	router := gin.New()
+	router.GET("/diagnostics", handler.Diagnostics)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/diagnostics?shop_id="+shopID, nil))
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"overall":"ready_for_controlled_enablement"`) ||
+		!strings.Contains(response.Body.String(), `"route_ready":true`) || strings.Contains(response.Body.String(), "sale_route_not_ready") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func readyTikTokSaleRoute() *models.ChannelDefault {
+	return &models.ChannelDefault{
+		Channel: "tiktok_shop", BillType: "sale", Endpoint: "/api/v1/ic/sale-invoices",
+		DocFormatCode: "BF-INV", DocPrefix: "BF-INV", DocRunningFormat: "YYMM####",
+		PartyCode: "AB-2605-0002", WHCode: "AB-1", ShelfCode: "001", VATType: 1, VATRate: 7,
+		ShippingItemEnabled: true, ShippingItemCode: "AH-0061", ShippingItemUnitCode: "ชิ้น", ConfigVersion: 3,
+	}
+}
+
+func readyTikTokSaleRouteSignature() string {
+	def := readyTikTokSaleRoute()
+	return tikTokAutoSMLRouteSignature(tiktokshop.TikTokBillShadowRoute{
+		Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: def.DocFormatCode,
+		ConfigVersion: def.ConfigVersion, ShippingItemCode: def.ShippingItemCode, ShippingItemUnitCode: def.ShippingItemUnitCode,
+	})
 }
 
 func TestTikTokShopAPIHandlerOperationsSummaryAvoidsOrderPreviews(t *testing.T) {

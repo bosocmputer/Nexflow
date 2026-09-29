@@ -91,6 +91,30 @@ func TestBillWhereInputChannelFilters(t *testing.T) {
 	}
 }
 
+func TestBillWhereFiltersMarketplaceAPIShopBySourceAndAccount(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		shopID string
+	}{
+		{name: "Shopee", source: "shopee", shopID: "264993963"},
+		{name: "TikTok", source: "tiktok", shopID: "7494619203789490654"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			where, args, _ := billWhere(models.BillListFilter{MarketplaceShopSource: tt.source, MarketplaceShopID: tt.shopID})
+			for _, want := range []string{"b.source = $", "b.source_account_key = $"} {
+				if !strings.Contains(where, want) {
+					t.Fatalf("where = %q, missing %q", where, want)
+				}
+			}
+			if len(args) != 2 || args[0] != tt.source || args[1] != "shop:"+tt.shopID {
+				t.Fatalf("args = %#v", args)
+			}
+		})
+	}
+}
+
 func TestBillWhereSMLSendQueueExcludesGatedTikTokReviewedBills(t *testing.T) {
 	where, args, _ := billWhere(models.BillListFilter{SMLSendQueue: true})
 	if !strings.Contains(where, "NOT (b.source = $") || !strings.Contains(where, "b.raw_data->>'flow' = $") {

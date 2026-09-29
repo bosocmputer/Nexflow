@@ -385,7 +385,7 @@ func buildTikTokBillShadowPreview(source *TikTokBillShadowSource) (*TikTokBillSh
 		preview.Items = append(preview.Items, itemPreview)
 	}
 
-	semanticRoute := tikTokBillShadowSemanticRoute(source.Route.Endpoint)
+	semanticRoute := TikTokBillShadowSemanticRoute(source.Route.Endpoint)
 	preview.Route = TikTokBillShadowRoute{
 		Ready: source.Route.Configured && strings.TrimSpace(source.Route.DocFormatCode) != "" && semanticRoute != "" &&
 			strings.TrimSpace(source.Route.DocPrefix) != "" && strings.TrimSpace(source.Route.DocRunningFormat) != "" &&
@@ -534,7 +534,9 @@ func TikTokBillLifecycleReady(status OrderStatus) bool {
 	}
 }
 
-func tikTokBillShadowSemanticRoute(endpoint string) string {
+// TikTokBillShadowSemanticRoute normalizes the configured SML sale endpoint.
+// Diagnostics and workers share this helper so route validation cannot drift.
+func TikTokBillShadowSemanticRoute(endpoint string) string {
 	value := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(endpoint)), "/")
 	switch value {
 	case "saleinvoice", "sale-invoices", "/api/v1/ic/sale-invoices":

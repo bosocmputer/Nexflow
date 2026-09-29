@@ -30,7 +30,9 @@ import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -42,9 +44,7 @@ import { useAuth } from '@/hooks/useAuth'
 import client from '@/api/client'
 import { BulkSendDialog } from './BulkSendDialog'
 import {
-  BILL_SOURCE_LABEL,
   BILL_STATUS_LABEL,
-  BILL_TYPE_LABEL,
   PAGE_TITLE,
 } from '@/lib/labels'
 import { cn } from '@/lib/utils'
@@ -75,6 +75,24 @@ interface ShopeeShopOption {
   label: string
   shop_name?: string
   disabled_at?: string
+}
+
+interface TikTokShopOption {
+  shop_id: string
+  shop_name: string
+  shop_code?: string
+  disabled?: boolean
+}
+
+type MarketplaceShopSource = 'shopee' | 'tiktok'
+
+function inputChannelShopSources(channel: InputChannelFilter, effectiveSource: string): MarketplaceShopSource[] {
+  if (channel === 'shopee' || channel === 'shopee_excel') return ['shopee']
+  if (channel === 'tiktok_shop') return ['tiktok']
+  if (channel !== ALL) return []
+  if (effectiveSource === 'shopee') return ['shopee']
+  if (effectiveSource === 'tiktok') return ['tiktok']
+  return ['shopee', 'tiktok']
 }
 
 // Filter options pull labels from lib/labels.ts so Bills, Dashboard, and
@@ -196,8 +214,16 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   const [status, setStatus] = useState<string>(() =>
     readURLFilter(searchParams, 'status', VALID_STATUSES),
   )
-  const [shopeeShopId, setShopeeShopId] = useState(() => searchParams.get('shopee_shop_id') || ALL)
+  const [marketplaceShopSource, setMarketplaceShopSource] = useState<MarketplaceShopSource | ''>(() => {
+    const source = searchParams.get('marketplace_shop_source')
+    if (source === 'shopee' || source === 'tiktok') return source
+    return searchParams.get('shopee_shop_id') ? 'shopee' : ''
+  })
+  const [marketplaceShopId, setMarketplaceShopId] = useState(() =>
+    searchParams.get('marketplace_shop_id') || searchParams.get('shopee_shop_id') || '',
+  )
   const [shopeeShops, setShopeeShops] = useState<ShopeeShopOption[]>([])
+  const [tiktokShops, setTikTokShops] = useState<TikTokShopOption[]>([])
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
   const [debouncedSearch, setDebouncedSearch] = useState(search)
   const [inputChannel, setInputChannel] = useState<InputChannelFilter>(() =>
@@ -211,10 +237,10 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   } | null>(null)
   const legacySource = config.source || (searchParams.get('source') ?? '')
   const effectiveSource = inputChannel === ALL ? legacySource : ''
-  const showShopeeShopFilter =
-    inputChannel === 'shopee' ||
-    inputChannel === 'shopee_excel' ||
-    (inputChannel === ALL && (!effectiveSource || effectiveSource === 'shopee'))
+  const visibleShopSources = inputChannelShopSources(inputChannel, effectiveSource)
+  const showMarketplaceShopFilter = visibleShopSources.some((source) =>
+    source === 'shopee' ? shopeeShops.length > 0 : tiktokShops.length > 0,
+  )
   const canManageBills = user?.role === 'admin' || user?.role === 'staff'
   const canPermanentDelete = user?.role === 'admin'
   const countsRequestRef = useRef(0)
@@ -231,7 +257,8 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     bill_type: config.billType,
     document_route: config.documentRoute,
     sort: mode === 'sale-invoice' ? 'latest_desc' : undefined,
-    shopee_shop_id: showShopeeShopFilter && shopeeShopId !== ALL ? shopeeShopId : '',
+    marketplace_shop_source: marketplaceShopSource,
+    marketplace_shop_id: marketplaceShopId,
     search: debouncedSearch,
     archived: archiveMode === 'active' ? '' : archiveMode,
   })
@@ -262,7 +289,7 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   const hasActiveFilters =
     status !== ALL ||
     inputChannel !== ALL ||
-    shopeeShopId !== ALL ||
+    marketplaceShopId !== '' ||
     archiveMode !== 'active' ||
     search.trim() !== '' ||
     legacySource !== ''
@@ -276,8 +303,10 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     if (value !== ALL && !isBillInputChannel(value)) return
     resetPage(() => {
       setInputChannel(value as InputChannelFilter)
-      if (value !== ALL && value !== 'shopee' && value !== 'shopee_excel') {
-        setShopeeShopId(ALL)
+      const nextSources = inputChannelShopSources(value as InputChannelFilter, value === ALL ? legacySource : '')
+      if (marketplaceShopSource && !nextSources.includes(marketplaceShopSource)) {
+        setMarketplaceShopSource('')
+        setMarketplaceShopId('')
       }
     })
   }
@@ -285,7 +314,8 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   const clearFilters = () => {
     setStatus(ALL)
     setInputChannel(ALL)
-    setShopeeShopId(ALL)
+    setMarketplaceShopSource('')
+    setMarketplaceShopId('')
     setSearch('')
     setDebouncedSearch('')
     setArchiveMode('active')
@@ -329,11 +359,14 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     params.set('bill_type', config.billType)
     if (config.documentRoute) params.set('document_route', config.documentRoute)
     if (archiveMode !== 'active') params.set('archived', archiveMode)
-    if (showShopeeShopFilter && shopeeShopId !== ALL) params.set('shopee_shop_id', shopeeShopId)
+    if (marketplaceShopSource && marketplaceShopId) {
+      params.set('marketplace_shop_source', marketplaceShopSource)
+      params.set('marketplace_shop_id', marketplaceShopId)
+    }
     if (debouncedSearch) params.set('search', debouncedSearch)
     const res = await client.get<typeof counts>(`/api/bills/counts?${params}`)
     if (requestID === countsRequestRef.current) setCounts(res.data)
-  }, [effectiveSource, selectedInputChannel, config.billType, config.documentRoute, archiveMode, showShopeeShopFilter, shopeeShopId, debouncedSearch])
+  }, [effectiveSource, selectedInputChannel, config.billType, config.documentRoute, archiveMode, marketplaceShopSource, marketplaceShopId, debouncedSearch])
 
   const handleConfirmedAction = async () => {
     if (!confirmAction) return
@@ -363,14 +396,27 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
   }, [search])
 
   useEffect(() => {
+    if (marketplaceShopSource && !visibleShopSources.includes(marketplaceShopSource)) {
+      setMarketplaceShopSource('')
+      setMarketplaceShopId('')
+      setPage(1)
+    }
+  }, [inputChannel, effectiveSource, marketplaceShopSource])
+
+  useEffect(() => {
     let alive = true
-    client.get<{ data: ShopeeShopOption[] }>('/api/shopee-api/connections')
-      .then((res) => {
-        if (alive) setShopeeShops((res.data.data ?? []).filter((shop) => !shop.disabled_at))
-      })
-      .catch(() => {
-        if (alive) setShopeeShops([])
-      })
+    Promise.allSettled([
+      client.get<{ data: ShopeeShopOption[] }>('/api/shopee-api/connections'),
+      client.get<{ data: TikTokShopOption[] }>('/api/tiktok-shop-api/local-connections'),
+    ]).then(([shopeeResult, tiktokResult]) => {
+      if (!alive) return
+      setShopeeShops(shopeeResult.status === 'fulfilled'
+        ? (shopeeResult.value.data.data ?? []).filter((shop) => !shop.disabled_at)
+        : [])
+      setTikTokShops(tiktokResult.status === 'fulfilled'
+        ? (tiktokResult.value.data.data ?? []).filter((shop) => !shop.disabled)
+        : [])
+    })
     return () => { alive = false }
   }, [])
 
@@ -411,8 +457,14 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
       next.delete('source')
     }
     next.delete('shopee_status')
-    if (showShopeeShopFilter && shopeeShopId !== ALL) next.set('shopee_shop_id', shopeeShopId)
-    else next.delete('shopee_shop_id')
+    if (marketplaceShopSource && marketplaceShopId) {
+      next.set('marketplace_shop_source', marketplaceShopSource)
+      next.set('marketplace_shop_id', marketplaceShopId)
+    } else {
+      next.delete('marketplace_shop_source')
+      next.delete('marketplace_shop_id')
+    }
+    next.delete('shopee_shop_id')
     if (archiveMode === 'active') next.delete('archived')
     else next.set('archived', archiveMode)
     next.delete('email_account_id')
@@ -433,8 +485,8 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
     debouncedSearch,
     page,
     perPage,
-    showShopeeShopFilter,
-    shopeeShopId,
+    marketplaceShopSource,
+    marketplaceShopId,
     searchParams,
     setSearchParams,
   ])
@@ -455,7 +507,7 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
               <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
               <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
                 <Info className="h-3.5 w-3.5 shrink-0 text-accent-strong" />
-                <span>Shopee และไฟล์ Marketplace</span>
+                <span>Marketplace API และไฟล์นำเข้า</span>
                 <span aria-hidden="true">→</span>
                 <span className="font-medium text-foreground">ปลายทาง SML: {config.destination}</span>
               </span>
@@ -537,7 +589,10 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
                       {option.excel ? (
                         <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
                       ) : (
-                        <span className="h-2 w-2 rounded-full bg-[#ee4d2d]" aria-hidden="true" />
+                        <span
+                          className={cn('h-2 w-2 rounded-full', option.value === 'tiktok_shop' ? 'bg-[#111817]' : 'bg-[#EE4D2D]')}
+                          aria-hidden="true"
+                        />
                       )}
                       {option.label}
                     </span>
@@ -546,19 +601,52 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
               </SelectContent>
             </Select>
 
-            {showShopeeShopFilter && shopeeShops.length > 0 && (
-              <Select value={shopeeShopId} onValueChange={(value) => resetPage(() => setShopeeShopId(value))}>
-                <SelectTrigger className="h-8 w-full text-xs lg:w-[230px]" aria-label="กรองตามร้าน Shopee">
-                  <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-[#9f2f16]" />
-                  <SelectValue placeholder="ร้าน Shopee" />
+            {showMarketplaceShopFilter && (
+              <Select
+                value={marketplaceShopSource && marketplaceShopId ? `${marketplaceShopSource}:${marketplaceShopId}` : ALL}
+                onValueChange={(value) => resetPage(() => {
+                  if (value === ALL) {
+                    setMarketplaceShopSource('')
+                    setMarketplaceShopId('')
+                    return
+                  }
+                  const separator = value.indexOf(':')
+                  setMarketplaceShopSource(value.slice(0, separator) as MarketplaceShopSource)
+                  setMarketplaceShopId(value.slice(separator + 1))
+                })}
+              >
+                <SelectTrigger className="h-8 w-full text-xs lg:w-[260px]" aria-label="กรองตามร้าน Marketplace API">
+                  <Store className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <SelectValue placeholder="ร้าน Marketplace API" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>ทุกร้าน Shopee</SelectItem>
-                  {shopeeShops.map((shop) => (
-                    <SelectItem key={shop.id} value={String(shop.shop_id)}>
-                      {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value={ALL}>{visibleShopSources.length > 1 ? 'ทุกร้าน API' : visibleShopSources[0] === 'tiktok' ? 'ทุกร้าน TikTok' : 'ทุกร้าน Shopee'}</SelectItem>
+                  {visibleShopSources.includes('shopee') && shopeeShops.length > 0 && (
+                    <SelectGroup>
+                      {visibleShopSources.length > 1 && <SelectLabel>Shopee</SelectLabel>}
+                      {shopeeShops.map((shop) => (
+                        <SelectItem key={`shopee:${shop.shop_id}`} value={`shopee:${shop.shop_id}`}>
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-[#EE4D2D]" aria-hidden="true" />
+                            {shop.label || shop.shop_name || 'Shopee shop'} · {shop.shop_id}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {visibleShopSources.includes('tiktok') && tiktokShops.length > 0 && (
+                    <SelectGroup>
+                      {visibleShopSources.length > 1 && <SelectLabel>TikTok Shop</SelectLabel>}
+                      {tiktokShops.map((shop) => (
+                        <SelectItem key={`tiktok:${shop.shop_id}`} value={`tiktok:${shop.shop_id}`}>
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-[#111817]" aria-hidden="true" />
+                            {shop.shop_name || shop.shop_code || 'TikTok Shop'} · {shop.shop_id}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
             )}
@@ -799,7 +887,8 @@ export default function Bills({ mode = 'sales-order' }: { mode?: BillsMode }) {
           input_channel: selectedInputChannel,
           bill_type: config.billType,
           document_route: config.documentRoute,
-          shopee_shop_id: showShopeeShopFilter && shopeeShopId !== ALL ? shopeeShopId : '',
+          marketplace_shop_source: marketplaceShopSource,
+          marketplace_shop_id: marketplaceShopId,
           search: debouncedSearch,
         }}
         onDone={() => {

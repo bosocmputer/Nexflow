@@ -407,6 +407,7 @@ func main() {
 		WithOrderSyncSettings(tiktokReconcileStore).
 		WithOrderReader(tiktokSnapshotStore).
 		WithBillShadowPreviewer(tiktokBillShadowService).
+		WithSaleRouteReader(channelDefaultRepo).
 		WithBillShadowMapper(tiktokBillShadowMappingService).
 		WithReviewedBillCreator(tiktokReviewedBillService).
 		WithCancellation(tiktokCancellationCoordinator).

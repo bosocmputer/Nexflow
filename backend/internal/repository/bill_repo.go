@@ -512,7 +512,11 @@ func billWhere(f models.BillListFilter) (string, []interface{}, int) {
 		args = append(args, f.ShopeeStatus)
 		argN++
 	}
-	if f.ShopeeShopID != "" {
+	if f.MarketplaceShopSource != "" && f.MarketplaceShopID != "" {
+		where += fmt.Sprintf(" AND b.source = $%d AND b.source_account_key = $%d", argN, argN+1)
+		args = append(args, f.MarketplaceShopSource, "shop:"+f.MarketplaceShopID)
+		argN += 2
+	} else if f.ShopeeShopID != "" {
 		where += fmt.Sprintf(" AND b.raw_data->>'shopee_shop_id' = $%d", argN)
 		args = append(args, f.ShopeeShopID)
 		argN++

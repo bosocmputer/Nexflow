@@ -534,6 +534,42 @@ func tikTokAutoSMLRouteSignature(route tiktokshop.TikTokBillShadowRoute) string 
 	return hex.EncodeToString(digest[:])
 }
 
+func (h *TikTokShopAPIHandler) tikTokConfiguredSaleRoute() (tiktokshop.TikTokBillShadowRoute, error) {
+	if h == nil || h.saleRouteReader == nil {
+		return tiktokshop.TikTokBillShadowRoute{}, sql.ErrNoRows
+	}
+	def, err := h.saleRouteReader.Get("tiktok_shop", "sale")
+	if err != nil {
+		return tiktokshop.TikTokBillShadowRoute{}, err
+	}
+	if def == nil {
+		return tiktokshop.TikTokBillShadowRoute{}, sql.ErrNoRows
+	}
+	semanticRoute := tiktokshop.TikTokBillShadowSemanticRoute(def.Endpoint)
+	// Shipping is order-specific. A route may intentionally omit a shipping
+	// line; those zero-shipping orders stay valid, while any future order with a
+	// buyer-paid shipping amount is still blocked by its own Bill preview.
+	shippingReady := !def.ShippingItemEnabled || (strings.TrimSpace(def.ShippingItemCode) != "" && strings.TrimSpace(def.ShippingItemUnitCode) != "")
+	ready := semanticRoute != "" && strings.TrimSpace(def.DocFormatCode) != "" &&
+		strings.TrimSpace(def.DocPrefix) != "" && strings.TrimSpace(def.DocRunningFormat) != "" &&
+		strings.TrimSpace(def.PartyCode) != "" && strings.TrimSpace(def.WHCode) != "" &&
+		strings.TrimSpace(def.ShelfCode) != "" && def.VATType >= 0 && def.VATRate >= 0 && def.ConfigVersion > 0
+	return tiktokshop.TikTokBillShadowRoute{
+		Ready: ready, SemanticRoute: semanticRoute, DocFormatCode: strings.TrimSpace(def.DocFormatCode),
+		ConfigVersion: def.ConfigVersion, ShippingReady: shippingReady,
+		ShippingItemCode: strings.TrimSpace(def.ShippingItemCode), ShippingItemUnitCode: strings.TrimSpace(def.ShippingItemUnitCode),
+	}, nil
+}
+
+func (h *TikTokShopAPIHandler) tikTokHasSuccessfulAutoSMLCanary(ctx context.Context, shopID, routeSignature string) bool {
+	if h == nil || h.autoSML == nil {
+		return false
+	}
+	setting, err := h.autoSML.GetSetting(ctx, shopID)
+	return err == nil && setting != nil && setting.LastSuccessAt != nil && setting.PausedReason == "" &&
+		strings.TrimSpace(routeSignature) != "" && setting.RouteSignature == routeSignature
+}
+
 func tikTokAutoSMLBillFingerprint(preview *tiktokshop.TikTokBillShadowPreview) (string, error) {
 	if preview == nil || strings.TrimSpace(preview.OrderID) == "" || len(preview.Items) == 0 {
 		return "", errors.New("TikTok Bill preview is incomplete")
@@ -769,6 +805,11 @@ func (h *TikTokShopAPIHandler) tikTokAutoBillPreflight(ctx context.Context, shop
 	if !syncEnabled {
 		return "", "order_sync_disabled", "ร้านนี้ยังไม่ได้เปิดซิงก์ออเดอร์หรือมีข้อผิดพลาด"
 	}
+	configuredRoute, routeErr := h.tikTokConfiguredSaleRoute()
+	configuredSignature := tikTokAutoSMLRouteSignature(configuredRoute)
+	if h.saleRouteReader != nil && (routeErr != nil || configuredSignature == "") {
+		return "", "sale_route_not_ready", "การตั้งค่าเอกสารขาย TikTok Shop ยังไม่พร้อม กรุณาตรวจลูกค้า คลัง พื้นที่เก็บ VAT รูปแบบเอกสาร และสินค้าค่าจัดส่ง"
+	}
 	orders, err := h.orderReader.List(ctx, tiktokshop.TikTokOrderSnapshotListFilter{ShopID: shopID, Page: 1, PageSize: 20})
 	if err != nil {
 		return "", "order_evidence_unavailable", "อ่านตัวอย่างออเดอร์ไม่สำเร็จ"
@@ -782,8 +823,18 @@ func (h *TikTokShopAPIHandler) tikTokAutoBillPreflight(ctx context.Context, shop
 			continue
 		}
 		if signature := tikTokAutoSMLRouteSignature(preview.Route); signature != "" {
+			if configuredSignature != "" && signature != configuredSignature {
+				continue
+			}
 			return signature, "", ""
 		}
+	}
+	// A shop that has already completed a real Auto SML write has stronger
+	// evidence than a synthetic unsent sample. This lets an operator re-enable
+	// SML after all recent orders already received Bills, while current route
+	// evidence above still fails closed after any route change.
+	if configuredSignature != "" && h.tikTokHasSuccessfulAutoSMLCanary(ctx, shopID, configuredSignature) {
+		return configuredSignature, "", ""
 	}
 	return "", "controlled_sample_not_ready", "ยังไม่พบออเดอร์ตัวอย่างที่ mapping ยอดเงิน และเส้นทาง SML พร้อมครบ"
 }

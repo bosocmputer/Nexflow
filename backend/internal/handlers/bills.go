@@ -703,6 +703,25 @@ func validateBillInputChannel(c *gin.Context, f *models.BillListFilter) bool {
 	}
 }
 
+func validateMarketplaceShopFilter(c *gin.Context, f *models.BillListFilter) bool {
+	f.MarketplaceShopSource = strings.ToLower(strings.TrimSpace(f.MarketplaceShopSource))
+	f.MarketplaceShopID = strings.TrimSpace(f.MarketplaceShopID)
+	if f.MarketplaceShopSource == "" && f.MarketplaceShopID == "" {
+		return true
+	}
+	if (f.MarketplaceShopSource != "shopee" && f.MarketplaceShopSource != "tiktok") || f.MarketplaceShopID == "" || len(f.MarketplaceShopID) > 32 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ตัวกรองร้าน Marketplace API ไม่ถูกต้อง"})
+		return false
+	}
+	for _, value := range f.MarketplaceShopID {
+		if value < '0' || value > '9' {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ตัวกรองร้าน Marketplace API ไม่ถูกต้อง"})
+			return false
+		}
+	}
+	return true
+}
+
 func validateBillSort(c *gin.Context, f *models.BillListFilter) bool {
 	f.Sort = strings.TrimSpace(f.Sort)
 	if f.Sort == "" || f.Sort == "latest_desc" || f.Sort == "document_date_desc" {
@@ -720,6 +739,9 @@ func (h *BillHandler) List(c *gin.Context) {
 		return
 	}
 	if !validateBillInputChannel(c, &f) {
+		return
+	}
+	if !validateMarketplaceShopFilter(c, &f) {
 		return
 	}
 	if !validateBillSort(c, &f) {
@@ -773,6 +795,9 @@ func (h *BillHandler) Counts(c *gin.Context) {
 		return
 	}
 	if !validateBillInputChannel(c, &f) {
+		return
+	}
+	if !validateMarketplaceShopFilter(c, &f) {
 		return
 	}
 	if h.blockPurchaseFlow(c, f.BillType) {
@@ -2773,6 +2798,14 @@ func (h *BillHandler) GetActiveBulkSendJob(c *gin.Context) {
 		return
 	}
 	if !bulkJobMatchesSnapshotFilter(job.FilterSnapshot, "shopee_shop_id", c.Query("shopee_shop_id")) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "active bulk send job not found"})
+		return
+	}
+	if !bulkJobMatchesSnapshotFilter(job.FilterSnapshot, "marketplace_shop_source", c.Query("marketplace_shop_source")) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "active bulk send job not found"})
+		return
+	}
+	if !bulkJobMatchesSnapshotFilter(job.FilterSnapshot, "marketplace_shop_id", c.Query("marketplace_shop_id")) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "active bulk send job not found"})
 		return
 	}

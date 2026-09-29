@@ -435,6 +435,17 @@ func TestBulkJobMatchesSnapshotFilterScopesInputChannel(t *testing.T) {
 	}
 }
 
+func TestBulkJobMatchesSnapshotFilterScopesMarketplaceShop(t *testing.T) {
+	snapshot := json.RawMessage(`{"marketplace_shop_source":"tiktok","marketplace_shop_id":"7494619203789490654"}`)
+	if !bulkJobMatchesSnapshotFilter(snapshot, "marketplace_shop_source", "tiktok") ||
+		!bulkJobMatchesSnapshotFilter(snapshot, "marketplace_shop_id", "7494619203789490654") {
+		t.Fatal("expected matching Marketplace shop to resume active job")
+	}
+	if bulkJobMatchesSnapshotFilter(snapshot, "marketplace_shop_id", "264993963") {
+		t.Fatal("different Marketplace shop must not resume another active job")
+	}
+}
+
 func TestValidateBillInputChannel(t *testing.T) {
 	valid := models.BillListFilter{InputChannel: " shopee_excel "}
 	validRecorder := httptest.NewRecorder()
@@ -460,6 +471,33 @@ func TestValidateBillInputChannelAcceptsTikTokShopAPI(t *testing.T) {
 	context, _ := gin.CreateTestContext(recorder)
 	if !validateBillInputChannel(context, &filter) || filter.InputChannel != "tiktok_shop" {
 		t.Fatalf("TikTok Shop API channel was rejected or not normalized: %#v", filter)
+	}
+}
+
+func TestValidateMarketplaceShopFilter(t *testing.T) {
+	for _, filter := range []models.BillListFilter{
+		{},
+		{MarketplaceShopSource: " shopee ", MarketplaceShopID: " 264993963 "},
+		{MarketplaceShopSource: " tiktok ", MarketplaceShopID: " 7494619203789490654 "},
+	} {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		if !validateMarketplaceShopFilter(context, &filter) {
+			t.Fatalf("valid Marketplace shop filter rejected: %#v body=%s", filter, recorder.Body.String())
+		}
+	}
+
+	for _, filter := range []models.BillListFilter{
+		{MarketplaceShopSource: "tiktok"},
+		{MarketplaceShopID: "7494619203789490654"},
+		{MarketplaceShopSource: "lazada", MarketplaceShopID: "123"},
+		{MarketplaceShopSource: "tiktok", MarketplaceShopID: "shop:bad"},
+	} {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		if validateMarketplaceShopFilter(context, &filter) || recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid Marketplace shop filter accepted: %#v status=%d", filter, recorder.Code)
+		}
 	}
 }
 

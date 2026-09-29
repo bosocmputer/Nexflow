@@ -172,6 +172,8 @@ function bulkJobStorageKey(filters: Props['filters']) {
     filters.bill_type || '',
     filters.document_route || '',
     filters.shopee_shop_id || '',
+    filters.marketplace_shop_source || '',
+    filters.marketplace_shop_id || '',
     filters.input_channel || '',
   ].join(':')
 }
@@ -182,6 +184,9 @@ function bulkFilterSummary(filters: Props['filters']) {
     filters.source && !filters.input_channel ? `ช่องทาง ${filters.source}` : '',
     filters.document_route ? `ปลายทาง ${filters.document_route}` : '',
     filters.shopee_shop_id ? `ร้าน Shopee ${filters.shopee_shop_id}` : '',
+    filters.marketplace_shop_id
+      ? `ร้าน ${filters.marketplace_shop_source === 'tiktok' ? 'TikTok' : 'Shopee'} ${filters.marketplace_shop_id}`
+      : '',
     filters.shopee_status ? `order status=${filters.shopee_status}` : '',
     filters.email_account_id ? `inbox=${filters.email_account_id}` : '',
     filters.search ? `ค้นหา "${filters.search}"` : '',
@@ -236,6 +241,8 @@ interface Props {
     email_account_id?: string
     shopee_status?: string
     shopee_shop_id?: string
+    marketplace_shop_source?: string
+    marketplace_shop_id?: string
     input_channel?: string
     search?: string
   }
@@ -273,7 +280,7 @@ export function BulkSendDialog({
   const { readiness: smlReadiness, loading: smlReadinessLoading } = useSMLReadiness()
   const storageKey = useMemo(
     () => bulkJobStorageKey(filters),
-    [filters.source, filters.bill_type, filters.document_route, filters.shopee_shop_id, filters.input_channel],
+    [filters.source, filters.bill_type, filters.document_route, filters.shopee_shop_id, filters.marketplace_shop_source, filters.marketplace_shop_id, filters.input_channel],
   )
 
   const readyCount = candidates.filter((c) => c.ready).length
@@ -531,6 +538,8 @@ export function BulkSendDialog({
           bill_type: filters.bill_type,
           document_route: filters.document_route,
           shopee_shop_id: filters.shopee_shop_id,
+          marketplace_shop_source: filters.marketplace_shop_source,
+          marketplace_shop_id: filters.marketplace_shop_id,
           input_channel: filters.input_channel,
         })
         if (!alive) return
@@ -563,6 +572,8 @@ export function BulkSendDialog({
         if (filters.email_account_id) params.set('email_account_id', filters.email_account_id)
         if (filters.shopee_status) params.set('shopee_status', filters.shopee_status)
         if (filters.shopee_shop_id) params.set('shopee_shop_id', filters.shopee_shop_id)
+        if (filters.marketplace_shop_source) params.set('marketplace_shop_source', filters.marketplace_shop_source)
+        if (filters.marketplace_shop_id) params.set('marketplace_shop_id', filters.marketplace_shop_id)
         if (filters.input_channel) params.set('input_channel', filters.input_channel)
         if (filters.search) params.set('search', filters.search)
         const res = await client.get<{ data: Bill[]; total: number }>(`/api/bills?${params}`)
@@ -613,6 +624,8 @@ export function BulkSendDialog({
     filters.email_account_id,
     filters.shopee_status,
     filters.shopee_shop_id,
+    filters.marketplace_shop_source,
+    filters.marketplace_shop_id,
     filters.input_channel,
     filters.search,
     billType,

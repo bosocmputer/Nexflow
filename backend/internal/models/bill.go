@@ -228,6 +228,8 @@ type BillListFilter struct {
 	EmailAccountID        string `form:"email_account_id"`
 	ShopeeStatus          string `form:"shopee_status"`
 	ShopeeShopID          string `form:"shopee_shop_id"`
+	MarketplaceShopSource string `form:"marketplace_shop_source"`
+	MarketplaceShopID     string `form:"marketplace_shop_id"`
 	Search                string `form:"search"`
 	Archived              string `form:"archived"` // ""/"active" | "include" | "only"
 	DateFrom              string `form:"date_from"`

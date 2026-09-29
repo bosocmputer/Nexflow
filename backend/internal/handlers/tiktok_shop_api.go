@@ -59,6 +59,13 @@ type TikTokShopBillShadowPreviewer interface {
 	Preview(context.Context, string, string) (*tiktokshop.TikTokBillShadowPreview, error)
 }
 
+// TikTokShopSaleRouteReader loads the tenant-owned SML route without needing
+// an order sample. Route readiness must not become false merely because every
+// recent order already has a Nexflow Bill.
+type TikTokShopSaleRouteReader interface {
+	Get(string, string) (*models.ChannelDefault, error)
+}
+
 type TikTokShopBillShadowMapper interface {
 	Preview(context.Context, tiktokshop.TikTokBillShadowMappingSelection) (models.MarketplaceAliasImpact, error)
 	Confirm(context.Context, tiktokshop.TikTokBillShadowMappingConfirmation, string) (*repository.MarketplaceAliasCommitResult, error)
@@ -144,6 +151,7 @@ type TikTokShopAPIHandler struct {
 	syncSettings     TikTokShopOrderSyncSettings
 	orderReader      TikTokShopOrderReader
 	billShadow       TikTokShopBillShadowPreviewer
+	saleRouteReader  TikTokShopSaleRouteReader
 	billMapper       TikTokShopBillShadowMapper
 	reviewedBill     TikTokShopReviewedBillCreator
 	cancellation     *TikTokCancellationCoordinator
@@ -171,6 +179,13 @@ func (h *TikTokShopAPIHandler) WithOrderReader(reader TikTokShopOrderReader) *Ti
 func (h *TikTokShopAPIHandler) WithBillShadowPreviewer(previewer TikTokShopBillShadowPreviewer) *TikTokShopAPIHandler {
 	if h != nil {
 		h.billShadow = previewer
+	}
+	return h
+}
+
+func (h *TikTokShopAPIHandler) WithSaleRouteReader(reader TikTokShopSaleRouteReader) *TikTokShopAPIHandler {
+	if h != nil {
+		h.saleRouteReader = reader
 	}
 	return h
 }
@@ -647,6 +662,9 @@ func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
 	}
 
 	routeReady := false
+	if configuredRoute, err := h.tikTokConfiguredSaleRoute(); err == nil {
+		routeReady = tikTokAutoSMLRouteSignature(configuredRoute) != ""
+	}
 	if h == nil || h.orderReader == nil || h.billShadow == nil {
 		issues = append(issues, "review_pipeline_not_configured")
 	} else if orders, err := h.orderReader.List(c.Request.Context(), tiktokshop.TikTokOrderSnapshotListFilter{ShopID: shopID, Page: 1, PageSize: 20}); err != nil {
@@ -689,7 +707,13 @@ func (h *TikTokShopAPIHandler) Diagnostics(c *gin.Context) {
 			}
 		}
 		if coverage.SampledOrders == 0 {
-			issues = append(issues, "no_unsent_order_sample")
+			configuredSignature := ""
+			if configuredRoute, err := h.tikTokConfiguredSaleRoute(); err == nil {
+				configuredSignature = tikTokAutoSMLRouteSignature(configuredRoute)
+			}
+			if shopID == "" || !routeReady || !h.tikTokHasSuccessfulAutoSMLCanary(c.Request.Context(), shopID, configuredSignature) {
+				issues = append(issues, "controlled_sample_not_ready")
+			}
 		} else if coverage.ReadyOrders == 0 {
 			// Historical snapshots may legitimately be incomplete after mappings or
 			// routes evolve. One blocked historical order must remain visible in

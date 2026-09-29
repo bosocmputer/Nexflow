@@ -145,7 +145,7 @@ func TestTikTokBillShadowPreviewRejectsInvalidInputAndPropagatesNotFound(t *test
 }
 
 func TestTikTokBillShadowSemanticRouteRejectsCancellationEndpoint(t *testing.T) {
-	if got := tikTokBillShadowSemanticRoute("/api/v1/ic/sale-invoices/:doc_no/cancel"); got != "" {
+	if got := TikTokBillShadowSemanticRoute("/api/v1/ic/sale-invoices/:doc_no/cancel"); got != "" {
 		t.Fatalf("cancellation endpoint resolved as TikTok Shop main route %q", got)
 	}
 }
