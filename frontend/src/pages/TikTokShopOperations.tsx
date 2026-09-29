@@ -36,6 +36,14 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -64,6 +72,12 @@ import {
   type TikTokStatusCounts,
   type TikTokStatusGroup,
 } from '@/lib/tiktok-shop-operations'
+import {
+  normalizeTikTokAutoSMLTriggerStatus,
+  tiktokAutoSMLTriggerDescription,
+  tiktokAutoSMLTriggerLabel,
+  type TikTokAutoSMLTriggerStatus,
+} from '@/lib/tiktok-auto-sml-settings'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 
@@ -148,7 +162,7 @@ interface TikTokAutoSMLSetting {
   shop_name: string
   auto_bill_enabled: boolean
   sml_send_enabled: boolean
-  trigger_status: 'AWAITING_COLLECTION'
+  trigger_status: TikTokAutoSMLTriggerStatus
   config_version: number
   eligible_after?: string
   paused_reason?: string
@@ -159,7 +173,8 @@ interface TikTokAutoSMLSetting {
 
 interface TikTokAutoSMLSettingsResponse {
   global_enabled: boolean
-  trigger_status: 'AWAITING_COLLECTION'
+  trigger_status: TikTokAutoSMLTriggerStatus
+  supported_trigger_statuses?: TikTokAutoSMLTriggerStatus[]
   historical_backfill: false
   settings: TikTokAutoSMLSetting[]
 }
@@ -291,6 +306,8 @@ export default function TikTokShopOperations() {
   const [syncingNow, setSyncingNow] = useState(false)
   const [autoSMLSaving, setAutoSMLSaving] = useState(false)
   const [autoSMLConfirmChange, setAutoSMLConfirmChange] = useState<{ setting: TikTokAutoSMLSetting; enabled: boolean } | null>(null)
+  const [autoSMLDialogOpen, setAutoSMLDialogOpen] = useState(false)
+  const [autoSMLTriggerDraft, setAutoSMLTriggerDraft] = useState<TikTokAutoSMLTriggerStatus>('AWAITING_COLLECTION')
   const [autoSMLRetryingOrder, setAutoSMLRetryingOrder] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -605,15 +622,23 @@ export default function TikTokShopOperations() {
     setQuery({ diagnostics: null })
   }, [diagnosticsOpen, loadDiagnostics, params, setQuery, shopID])
 
-  const updateAutomation = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
+  const updateAutomation = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean, triggerStatus?: TikTokAutoSMLTriggerStatus) => {
+    const nextTrigger = normalizeTikTokAutoSMLTriggerStatus(triggerStatus ?? setting.trigger_status)
+    const triggerChanged = nextTrigger !== normalizeTikTokAutoSMLTriggerStatus(setting.trigger_status)
     setAutoSMLSaving(true)
     try {
       await client.put(`/api/tiktok-shop-api/auto-sml/settings/${encodeURIComponent(setting.shop_id)}`, {
         sml_send_enabled: enabled,
+        trigger_status: nextTrigger,
         expected_config_version: setting.config_version,
-        confirm: enabled ? 'ENABLE_TIKTOK_AUTO_SML' : 'DISABLE_TIKTOK_AUTO_SML',
+        confirm: enabled
+          ? setting.sml_send_enabled && triggerChanged ? 'UPDATE_TIKTOK_AUTO_SML_TRIGGER' : 'ENABLE_TIKTOK_AUTO_SML'
+          : 'DISABLE_TIKTOK_AUTO_SML',
       })
-      toast.success(enabled ? 'เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว' : 'ปิดส่ง SML อัตโนมัติแล้ว')
+      toast.success(enabled
+        ? triggerChanged && setting.sml_send_enabled ? 'เปลี่ยนสถานะเริ่มส่ง SML อัตโนมัติแล้ว' : 'เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว'
+        : 'ปิดส่ง SML อัตโนมัติแล้ว')
+      setAutoSMLDialogOpen(false)
       await loadOperationsSummary()
       if (diagnosticsOpen) await loadDiagnostics()
     } catch (cause: unknown) {
@@ -624,7 +649,17 @@ export default function TikTokShopOperations() {
   }, [diagnosticsOpen, loadDiagnostics, loadOperationsSummary])
 
   const requestAutomationUpdate = useCallback(async (setting: TikTokAutoSMLSetting, enabled: boolean) => {
-    setAutoSMLConfirmChange({ setting, enabled })
+    if (enabled) {
+      setAutoSMLTriggerDraft(normalizeTikTokAutoSMLTriggerStatus(setting.trigger_status))
+      setAutoSMLDialogOpen(true)
+      return
+    }
+    setAutoSMLConfirmChange({ setting, enabled: false })
+  }, [])
+
+  const openAutoSMLSettings = useCallback((setting: TikTokAutoSMLSetting) => {
+    setAutoSMLTriggerDraft(normalizeTikTokAutoSMLTriggerStatus(setting.trigger_status))
+    setAutoSMLDialogOpen(true)
   }, [])
 
   const retryAutoSML = useCallback(async (row: TikTokOrderRow) => {
@@ -902,6 +937,7 @@ export default function TikTokShopOperations() {
               shopCount={autoSMLShopCount}
               saving={autoSMLSaving}
               onRequestChange={requestAutomationUpdate}
+              onConfigure={openAutoSMLSettings}
             />
             <Button
               type="button"
@@ -1209,6 +1245,68 @@ export default function TikTokShopOperations() {
           if (autoSMLConfirmChange) await updateAutomation(autoSMLConfirmChange.setting, autoSMLConfirmChange.enabled)
         }}
       />
+      <Dialog open={autoSMLDialogOpen} onOpenChange={(open) => !autoSMLSaving && setAutoSMLDialogOpen(open)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>ตั้งค่าการส่ง SML อัตโนมัติ</DialogTitle>
+            <DialogDescription>
+              ร้าน {selectedAutoSMLSetting?.shop_name || selectedAutoSMLSetting?.shop_id} จะใช้ค่าใหม่กับออเดอร์ที่เข้าสถานะหลังบันทึกเท่านั้น
+            </DialogDescription>
+          </DialogHeader>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">เริ่มส่ง SML เมื่อ</legend>
+            {([
+              { value: 'AWAITING_SHIPMENT' as const, title: 'รอจัดส่ง', description: 'TikTok Shop ยืนยันการชำระเงินแล้วและออเดอร์รอร้านจัดส่ง' },
+              { value: 'AWAITING_COLLECTION' as const, title: 'รอรับพัสดุ', description: 'ร้านเตรียมจัดส่งแล้วและพัสดุพร้อมให้ขนส่งเข้ารับ', recommended: true },
+              { value: 'IN_TRANSIT' as const, title: 'กำลังขนส่ง', description: 'ขนส่งรับพัสดุและเริ่มนำส่งแล้ว' },
+              { value: 'COMPLETED' as const, title: 'สำเร็จ', description: 'คำสั่งซื้อเสร็จสมบูรณ์แล้ว' },
+            ]).map((option) => {
+              const selected = autoSMLTriggerDraft === option.value
+              return (
+                <label key={option.value} className={cn(
+                  'flex cursor-pointer gap-3 rounded-md border p-3 transition-colors',
+                  selected ? 'border-accentStrong/50 bg-primary/10' : 'border-border bg-background hover:bg-muted/40',
+                )}>
+                  <input
+                    type="radio"
+                    name="tiktok-auto-sml-trigger-status"
+                    value={option.value}
+                    checked={selected}
+                    onChange={() => setAutoSMLTriggerDraft(option.value)}
+                    className="mt-1 h-4 w-4 accent-accentStrong"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                      {option.title}
+                      {'recommended' in option && option.recommended && <Badge variant="outline" className="h-5 border-accentStrong/40 bg-primary/10 text-[10px] text-accentStrong">แนะนำ</Badge>}
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{option.description}</span>
+                  </span>
+                </label>
+              )
+            })}
+          </fieldset>
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertTitle>ไม่ส่งออเดอร์ย้อนหลัง</AlertTitle>
+            <AlertDescription>
+              หลังบันทึก ระบบจะเริ่มจากออเดอร์ที่เข้าสถานะ “{tiktokAutoSMLTriggerLabel(autoSMLTriggerDraft)}” ครั้งถัดไป งานที่เริ่มแล้วใช้ค่าที่บันทึกไว้เดิม
+            </AlertDescription>
+          </Alert>
+          <p className="text-xs text-muted-foreground">{tiktokAutoSMLTriggerDescription(autoSMLTriggerDraft)}</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={autoSMLSaving} onClick={() => setAutoSMLDialogOpen(false)}>ยกเลิก</Button>
+            <Button
+              type="button"
+              disabled={autoSMLSaving || !selectedAutoSMLSetting || (selectedAutoSMLSetting.sml_send_enabled && !selectedAutoSMLSetting.paused_reason && normalizeTikTokAutoSMLTriggerStatus(selectedAutoSMLSetting.trigger_status) === autoSMLTriggerDraft)}
+              onClick={() => selectedAutoSMLSetting && void updateAutomation(selectedAutoSMLSetting, true, autoSMLTriggerDraft)}
+            >
+              {autoSMLSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {selectedAutoSMLSetting?.sml_send_enabled && !selectedAutoSMLSetting.paused_reason ? 'บันทึกสถานะเริ่มส่ง SML' : 'ยืนยันและเปิดใช้งาน'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </TooltipProvider>
   )
@@ -1257,6 +1355,7 @@ function TikTokAutoSMLControl({
   shopCount,
   saving,
   onRequestChange,
+  onConfigure,
 }: {
   setting?: TikTokAutoSMLSetting
   shopID: string
@@ -1266,6 +1365,7 @@ function TikTokAutoSMLControl({
   shopCount: number
   saving: boolean
   onRequestChange: (setting: TikTokAutoSMLSetting, enabled: boolean) => Promise<void>
+  onConfigure: (setting: TikTokAutoSMLSetting) => void
 }) {
   const smlEnabled = Boolean(setting?.sml_send_enabled && setting?.auto_bill_enabled && !setting.paused_reason)
   const paused = shopID !== ALL && Boolean(setting?.paused_reason)
@@ -1274,7 +1374,7 @@ function TikTokAutoSMLControl({
     ? tiktokAutoSMLAllShopsStatus(enabledShopCount, shopCount)
     : tiktokAutoSMLCompactStatus(globalEnabled, setting)
   return (
-    <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5">
+    <div className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[300px]">
       <div className="flex min-w-0 items-center gap-1.5">
         <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
@@ -1288,7 +1388,7 @@ function TikTokAutoSMLControl({
             active && !paused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
           )}
         >
-          {status}
+          {shopID === ALL ? status : `${status} · ${tiktokAutoSMLTriggerLabel(setting?.trigger_status)}`}
         </Badge>
         {shopID === ALL ? (
           <Tooltip>
@@ -1303,14 +1403,26 @@ function TikTokAutoSMLControl({
             </TooltipTrigger>
             <TooltipContent>เลือกร้าน TikTok Shop หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
           </Tooltip>
-        ) : (
+        ) : <>
+          {isAdmin && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-[11px]"
+              disabled={saving || !setting}
+              onClick={() => setting && onConfigure(setting)}
+            >
+              ตั้งค่า
+            </Button>
+          )}
           <Switch
             checked={smlEnabled}
             disabled={!isAdmin || saving || !globalEnabled || !setting || !setting.auto_bill_enabled}
             aria-label={`เปลี่ยนการส่ง SML อัตโนมัติของ ${setting?.shop_name || setting?.shop_id || 'TikTok Shop'}`}
             onCheckedChange={(next) => setting && void onRequestChange(setting, next)}
           />
-        )}
+        </>}
       </div>
     </div>
   )
@@ -1403,9 +1515,9 @@ function TikTokDiagnosticsPanel({
       <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="font-medium">สร้าง Bill อัตโนมัติ และส่ง SML</div>
+            <div className="font-medium">สร้าง Bill และส่ง SML อัตโนมัติ</div>
             <div className="mt-1 text-muted-foreground">{diagnostics.auto_sml.message}</div>
-            <div className="mt-1 text-muted-foreground">เริ่มสร้าง Bill เมื่อออเดอร์อยู่ในสถานะรอรับพัสดุ · เฉพาะออเดอร์ใหม่ · ไม่ย้อนหลัง · ส่ง SML แยกตามสวิตช์ของร้าน</div>
+            <div className="mt-1 text-muted-foreground">Bill ถูกสร้างจากออเดอร์ที่ชำระเงินและพร้อมจัดส่ง · การส่ง SML ใช้สถานะที่เลือกรายร้าน · ไม่ย้อนส่งรายการเก่า</div>
             {selectedAutoSML?.eligible_after && <div className="mt-1 text-muted-foreground">เริ่มใช้ตั้งแต่: {formatDateTime(selectedAutoSML.eligible_after)}</div>}
             {selectedAutoSML?.paused_reason && <div className="mt-1 text-warning">หยุดชั่วคราว: {selectedAutoSML.paused_reason === 'route_changed' ? 'เส้นทาง SML เปลี่ยน' : 'ระบบเชื่อมต่อล้มเหลวต่อเนื่อง'}</div>}
           </div>

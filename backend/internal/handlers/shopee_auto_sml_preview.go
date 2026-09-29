@@ -58,7 +58,7 @@ func (h *ShopeeRealtimeHandler) AutoSMLSettingPreview(c *gin.Context) {
 		trigger = models.NormalizeShopeeAutoSMLTriggerStatus(setting.TriggerStatus)
 	}
 	if trigger == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "สถานะเริ่มสร้างบิลไม่ถูกต้อง"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "สถานะเริ่มส่ง SML ไม่ถูกต้อง"})
 		return
 	}
 	if code, message := h.autoSMLPreflight(c.Request.Context(), shopID); code != "" {

@@ -1465,7 +1465,7 @@ export default function ShopeeOperations() {
                 </SelectContent>
               </Select>
               <MarketplaceOperationsHelp channel="Shopee" signalLabel="Push" />
-              <div className="flex h-8 min-w-[220px] items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5">
+              <div className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[300px]">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
@@ -1481,7 +1481,7 @@ export default function ShopeeOperations() {
                   >
                     {shopID === ALL
                       ? autoSMLAllShopsStatus(enabledAutoSMLShopCount, autoSMLShopCount)
-                      : autoSMLCompactStatus(autoSML, selectedAutoSMLSetting)}
+                      : `${autoSMLCompactStatus(autoSML, selectedAutoSMLSetting)} · ${autoSMLTriggerLabel(selectedAutoSMLSetting?.trigger_status).split(' (')[0]}`}
                   </Badge>
                   {shopID === ALL ? (
                     <Tooltip>
@@ -1496,9 +1496,21 @@ export default function ShopeeOperations() {
                       </TooltipTrigger>
                       <TooltipContent>เลือกร้าน Shopee หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
                     </Tooltip>
-                  ) : (
+                  ) : <>
+                    {isAdmin && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5 text-[11px]"
+                        disabled={autoSMLSaving || !selectedAutoSMLSetting}
+                        onClick={() => openAutoSMLDialog(selectedAutoSMLSetting?.enabled ? 'change' : 'enable')}
+                      >
+                        ตั้งค่า
+                      </Button>
+                    )}
                     <Switch
-                      aria-label="เปิดสร้างบิล SML อัตโนมัติ"
+                      aria-label="เปิดส่ง SML อัตโนมัติ"
                       checked={Boolean(selectedAutoSMLSetting?.enabled && !selectedAutoSMLSetting.paused_reason)}
                       disabled={!isAdmin || autoSMLSaving || !autoSML?.global_enabled || !selectedAutoSMLSetting}
                       onCheckedChange={(checked) => {
@@ -1506,7 +1518,7 @@ export default function ShopeeOperations() {
                         else void updateAutoSML(false)
                       }}
                     />
-                  )}
+                  </>}
                 </div>
               </div>
               <Button variant="outline" size="sm" className="h-8 gap-2 bg-background" onClick={() => { setDiagnosticsOpen((v) => !v); if (!diagnosticsOpen) void loadDiagnostics() }}>
@@ -1518,28 +1530,6 @@ export default function ShopeeOperations() {
                 ซิงก์
               </Button>
           </>}>
-
-          {shopID !== ALL && selectedAutoSMLSetting?.enabled && (
-            <div className="mt-2 flex flex-col gap-1.5 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <span className="text-muted-foreground">เริ่มสร้างบิลอัตโนมัติเมื่อ </span>
-                <span className="font-medium text-foreground">{autoSMLTriggerLabel(selectedAutoSMLSetting.trigger_status)}</span>
-                <span className="ml-1 text-muted-foreground">{autoSMLTriggerDescription(selectedAutoSMLSetting.trigger_status)}</span>
-              </div>
-              {isAdmin && (
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="h-auto shrink-0 justify-start px-0 py-0 text-xs"
-                  onClick={() => openAutoSMLDialog('change')}
-                  disabled={autoSMLSaving}
-                >
-                  เปลี่ยนสถานะเริ่มสร้างบิล
-                </Button>
-              )}
-            </div>
-          )}
 
           {shopID !== ALL && selectedAutoSMLSetting?.operational_warning && (
             <div className="mt-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -1937,7 +1927,7 @@ export default function ShopeeOperations() {
         <Dialog open={autoSMLDialogOpen} onOpenChange={(open) => !autoSMLSaving && setAutoSMLDialogOpen(open)}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{autoSMLDialogMode === 'change' ? 'เปลี่ยนสถานะเริ่มสร้างบิล SML' : 'เปิดสร้างบิล SML อัตโนมัติ?'}</DialogTitle>
+              <DialogTitle>{autoSMLDialogMode === 'change' ? 'ตั้งค่าการส่ง SML อัตโนมัติ' : 'เปิดส่ง SML อัตโนมัติ?'}</DialogTitle>
               <DialogDescription>
                 {autoSMLDialogMode === 'change'
                   ? `ร้าน ${selectedAutoSMLSetting?.shop_label || shopID} จะใช้ค่าใหม่กับออเดอร์ที่เข้าสถานะหลังบันทึกเท่านั้น`
@@ -1946,18 +1936,33 @@ export default function ShopeeOperations() {
             </DialogHeader>
             <div className="space-y-3 text-sm">
               <fieldset className="space-y-2">
-                <legend className="text-sm font-medium">เริ่มสร้างบิลเมื่อ</legend>
+                <legend className="text-sm font-medium">เริ่มส่ง SML เมื่อ</legend>
+                <div className="flex cursor-not-allowed gap-3 rounded-md border border-border bg-muted/40 p-3 opacity-70">
+                  <input type="radio" disabled className="mt-1 h-4 w-4" aria-label="รอชำระเงินเลือกไม่ได้" />
+                  <span className="min-w-0">
+                    <span className="block font-medium">รอชำระเงิน (UNPAID)</span>
+                    <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">เลือกไม่ได้ เพราะผู้ซื้อยังชำระเงินไม่สำเร็จและระบบห้ามส่งเอกสารขายเข้า SML</span>
+                  </span>
+                </div>
                 {([
                   {
                     value: 'READY_TO_SHIP' as const,
                     title: 'รอจัดส่ง (READY_TO_SHIP)',
-                    description: 'เริ่มทันทีเมื่อ Shopee แจ้งว่าออเดอร์พร้อมให้ร้านเตรียมสินค้า',
                     recommended: true,
                   },
                   {
                     value: 'PROCESSED' as const,
                     title: 'เตรียมจัดส่งแล้ว (PROCESSED)',
-                    description: 'รอร้านกดเตรียมจัดส่งใน Shopee แล้วจึงเริ่มสร้างบิล',
+                    recommended: false,
+                  },
+                  {
+                    value: 'SHIPPED' as const,
+                    title: 'กำลังจัดส่ง (SHIPPED)',
+                    recommended: false,
+                  },
+                  {
+                    value: 'COMPLETED' as const,
+                    title: 'สำเร็จ (COMPLETED)',
                     recommended: false,
                   },
                 ]).map((option) => {
@@ -1986,7 +1991,7 @@ export default function ShopeeOperations() {
                           {option.title}
                           {option.recommended && <Badge variant="outline" className="h-5 border-accentStrong/40 bg-primary/10 text-[10px] text-accentStrong">แนะนำ</Badge>}
                         </span>
-                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{option.description}</span>
+                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{autoSMLTriggerDescription(option.value)}</span>
                       </span>
                     </label>
                   )
@@ -2037,7 +2042,7 @@ export default function ShopeeOperations() {
                 disabled={autoSMLSaving || autoSMLPreviewLoading || !autoSMLPreview || Boolean(autoSMLPreviewError) || autoSMLPreview.trigger_status !== autoSMLTriggerDraft || autoSMLPreview.config_version !== selectedAutoSMLSetting?.config_version || (autoSMLDialogMode === 'change' && normalizeAutoSMLTriggerStatus(selectedAutoSMLSetting?.trigger_status) === autoSMLTriggerDraft)}
               >
                 {autoSMLSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {autoSMLDialogMode === 'change' ? 'บันทึกสถานะเริ่มสร้างบิล' : 'ยืนยันและเริ่มจากออเดอร์ใหม่'}
+                {autoSMLDialogMode === 'change' ? 'บันทึกสถานะเริ่มส่ง SML' : 'ยืนยันและเริ่มจากออเดอร์ใหม่'}
               </Button>
             </DialogFooter>
           </DialogContent>

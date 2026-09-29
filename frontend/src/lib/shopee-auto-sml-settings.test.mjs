@@ -23,12 +23,16 @@ test.after(async () => {
 test('normalizes only supported Auto SML trigger statuses', () => {
   assert.equal(normalizeAutoSMLTriggerStatus(' processed '), 'PROCESSED')
   assert.equal(normalizeAutoSMLTriggerStatus('READY_TO_SHIP'), 'READY_TO_SHIP')
-  assert.equal(normalizeAutoSMLTriggerStatus('SHIPPED'), 'READY_TO_SHIP')
+  assert.equal(normalizeAutoSMLTriggerStatus('SHIPPED'), 'SHIPPED')
+  assert.equal(normalizeAutoSMLTriggerStatus('COMPLETED'), 'COMPLETED')
+  assert.equal(normalizeAutoSMLTriggerStatus('UNPAID'), 'READY_TO_SHIP')
 })
 
 test('provides user-facing Thai labels and explanations', () => {
   assert.equal(autoSMLTriggerLabel('READY_TO_SHIP'), 'รอจัดส่ง (READY_TO_SHIP)')
   assert.equal(autoSMLTriggerLabel('PROCESSED'), 'เตรียมจัดส่งแล้ว (PROCESSED)')
+  assert.equal(autoSMLTriggerLabel('SHIPPED'), 'กำลังจัดส่ง (SHIPPED)')
+  assert.equal(autoSMLTriggerLabel('COMPLETED'), 'สำเร็จ (COMPLETED)')
   assert.match(autoSMLTriggerDescription('PROCESSED'), /รอร้านเตรียมจัดส่ง/)
 })
 

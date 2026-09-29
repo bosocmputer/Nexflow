@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type TikTokAutoSMLSettingUpdate struct {
 	ShopID                string
 	AutoBillEnabled       bool
 	SMLEnabled            bool
+	TriggerStatus         string
 	ExpectedConfigVersion int64
 	RouteSignature        string
 	UserID                string
@@ -131,22 +133,35 @@ func (r *TikTokAutoSMLRepo) UpdateSetting(ctx context.Context, input TikTokAutoS
 	if _, err := tx.ExecContext(ctx, `INSERT INTO tiktok_shop_auto_sml_settings (shop_id) VALUES ($1) ON CONFLICT (shop_id) DO NOTHING`, input.ShopID); err != nil {
 		return nil, err
 	}
+	var currentAutoBillEnabled, currentSMLEnabled bool
+	var currentTrigger string
 	var currentVersion int64
-	if err := tx.QueryRowContext(ctx, `SELECT config_version FROM tiktok_shop_auto_sml_settings WHERE shop_id=$1 FOR UPDATE`, input.ShopID).Scan(&currentVersion); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT enabled,sml_send_enabled,trigger_status,config_version FROM tiktok_shop_auto_sml_settings WHERE shop_id=$1 FOR UPDATE`, input.ShopID).
+		Scan(&currentAutoBillEnabled, &currentSMLEnabled, &currentTrigger, &currentVersion); err != nil {
 		return nil, err
 	}
 	if currentVersion != input.ExpectedConfigVersion {
 		return nil, ErrTikTokAutoSMLConfigConflict
 	}
+	targetTrigger := models.NormalizeTikTokAutoSMLTriggerStatus(input.TriggerStatus)
+	if targetTrigger == "" {
+		targetTrigger = models.NormalizeTikTokAutoSMLTriggerStatus(currentTrigger)
+	}
+	if targetTrigger == "" {
+		return nil, fmt.Errorf("invalid TikTok Auto SML trigger_status")
+	}
+	resetCutoff := (!currentAutoBillEnabled && input.AutoBillEnabled) || (!currentSMLEnabled && input.SMLEnabled) ||
+		models.NormalizeTikTokAutoSMLTriggerStatus(currentTrigger) != targetTrigger
 	result, err := tx.ExecContext(ctx, `
 		UPDATE tiktok_shop_auto_sml_settings
-		   SET enabled=$2,sml_send_enabled=$3,config_version=config_version+1,
-		       eligible_after=CASE WHEN $2 AND (enabled=FALSE OR paused_reason<>'') THEN NOW() ELSE eligible_after END,
-		       route_signature=CASE WHEN $2 THEN $4 ELSE route_signature END,
-		       enabled_by=CASE WHEN $2 THEN NULLIF($5,'')::uuid ELSE enabled_by END,
+		   SET enabled=$2,sml_send_enabled=$3,trigger_status=$4,config_version=config_version+1,
+		       eligible_after=CASE WHEN $7 OR ($2 AND paused_reason<>'') THEN NOW() ELSE eligible_after END,
+		       route_signature=CASE WHEN $2 THEN $5 ELSE route_signature END,
+		       enabled_by=CASE WHEN $2 THEN NULLIF($6,'')::uuid ELSE enabled_by END,
 		       enabled_at=CASE WHEN $2 AND (enabled=FALSE OR paused_reason<>'') THEN NOW() ELSE enabled_at END,
 		       paused_reason='',paused_at=NULL,consecutive_system_failures=0,updated_at=NOW()
-		 WHERE shop_id=$1 AND config_version=$6`, input.ShopID, input.AutoBillEnabled, input.SMLEnabled, strings.TrimSpace(input.RouteSignature), strings.TrimSpace(input.UserID), input.ExpectedConfigVersion)
+		 WHERE shop_id=$1 AND config_version=$8`, input.ShopID, input.AutoBillEnabled, input.SMLEnabled, targetTrigger,
+		strings.TrimSpace(input.RouteSignature), strings.TrimSpace(input.UserID), resetCutoff, input.ExpectedConfigVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +194,7 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 	result, err := r.db.ExecContext(ctx, `
 		INSERT INTO tiktok_shop_auto_sml_jobs
 		  (shop_id,order_id,trigger_status_snapshot,trigger_transition_at,trigger_config_version,source_hash,bill_fingerprint,route_signature)
-		SELECT $1,$2,'AWAITING_COLLECTION',$3,st.config_version,$4,$5,$6
+		SELECT $1,$2,st.trigger_status,$3,st.config_version,$4,$5,$6
 		  FROM tiktok_shop_auto_sml_settings st
 		 WHERE st.shop_id=$1 AND st.enabled=TRUE AND st.paused_reason=''
 		   AND st.route_signature=$6
@@ -199,7 +214,12 @@ func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqu
 		        AND enabled_setting.sml_send_enabled=TRUE
 		        AND enabled_setting.paused_reason=''
 		   )
-		   AND $8 IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED')
+		       AND (
+		         (EXCLUDED.trigger_status_snapshot='AWAITING_SHIPMENT' AND $8 IN ('AWAITING_SHIPMENT','PARTIALLY_SHIPPING','AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED'))
+		         OR (EXCLUDED.trigger_status_snapshot='AWAITING_COLLECTION' AND $8 IN ('AWAITING_COLLECTION','IN_TRANSIT','DELIVERED','COMPLETED'))
+		         OR (EXCLUDED.trigger_status_snapshot='IN_TRANSIT' AND $8 IN ('IN_TRANSIT','DELIVERED','COMPLETED'))
+		         OR (EXCLUDED.trigger_status_snapshot='COMPLETED' AND $8='COMPLETED')
+		       )
 		 ) OR (
 		   $7=TRUE AND tiktok_shop_auto_sml_jobs.status='needs_review'
 		   AND tiktok_shop_auto_sml_jobs.last_error_code='bill_review_required'
@@ -375,7 +395,7 @@ func (r *TikTokAutoSMLRepo) RetryJob(ctx context.Context, shopID, orderID, billF
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE tiktok_shop_auto_sml_jobs j
 		   SET status='queued',attempts=0,next_run_at=NOW(),lease_until=NULL,
-		       trigger_config_version=st.config_version,bill_fingerprint=$3,route_signature=$4,
+		       trigger_status_snapshot=st.trigger_status,trigger_config_version=st.config_version,bill_fingerprint=$3,route_signature=$4,
 		       last_error_code='',last_error_message='',completed_at=NULL,updated_at=NOW()
 		  FROM tiktok_shop_auto_sml_settings st
 		 WHERE j.shop_id=$1 AND j.order_id=$2 AND j.shop_id=st.shop_id

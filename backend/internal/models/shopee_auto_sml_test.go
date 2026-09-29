@@ -9,7 +9,9 @@ func TestNormalizeShopeeAutoSMLTriggerStatus(t *testing.T) {
 	}{
 		{in: " ready_to_ship ", want: ShopeeAutoSMLTriggerReadyToShip},
 		{in: "processed", want: ShopeeAutoSMLTriggerProcessed},
-		{in: "SHIPPED", want: ""},
+		{in: "SHIPPED", want: ShopeeAutoSMLTriggerShipped},
+		{in: "completed", want: ShopeeAutoSMLTriggerCompleted},
+		{in: "UNPAID", want: ""},
 		{in: "", want: ""},
 	}
 	for _, tt := range tests {
@@ -35,6 +37,13 @@ func TestShopeeAutoSMLTriggerAllowsForwardLifecycle(t *testing.T) {
 		{ShopeeAutoSMLTriggerProcessed, "SHIPPED", true},
 		{ShopeeAutoSMLTriggerProcessed, "TO_CONFIRM_RECEIVE", true},
 		{ShopeeAutoSMLTriggerProcessed, "COMPLETED", true},
+		{ShopeeAutoSMLTriggerShipped, "PROCESSED", false},
+		{ShopeeAutoSMLTriggerShipped, "SHIPPED", true},
+		{ShopeeAutoSMLTriggerShipped, "TO_CONFIRM_RECEIVE", true},
+		{ShopeeAutoSMLTriggerShipped, "COMPLETED", true},
+		{ShopeeAutoSMLTriggerCompleted, "SHIPPED", false},
+		{ShopeeAutoSMLTriggerCompleted, "TO_CONFIRM_RECEIVE", false},
+		{ShopeeAutoSMLTriggerCompleted, "COMPLETED", true},
 		{ShopeeAutoSMLTriggerProcessed, "UNPAID", false},
 		{ShopeeAutoSMLTriggerProcessed, "IN_CANCEL", false},
 		{ShopeeAutoSMLTriggerProcessed, "CANCELLED", false},

@@ -196,7 +196,7 @@ func (r *ShopeeAutoSMLRepo) UpdateSetting(ctx context.Context, in ShopeeAutoSMLS
 	if in.TriggerStatus != nil {
 		targetTrigger = models.NormalizeShopeeAutoSMLTriggerStatus(*in.TriggerStatus)
 		if targetTrigger == "" {
-			return nil, fmt.Errorf("trigger_status must be READY_TO_SHIP or PROCESSED")
+			return nil, fmt.Errorf("trigger_status must be READY_TO_SHIP, PROCESSED, SHIPPED, or COMPLETED")
 		}
 	}
 	routeSignature := strings.TrimSpace(in.RouteSignature)
@@ -236,7 +236,7 @@ func (r *ShopeeAutoSMLRepo) UpdateSetting(ctx context.Context, in ShopeeAutoSMLS
 			UPDATE shopee_auto_sml_jobs
 			   SET status='cancelled',lease_until=NULL,completed_at=NOW(),
 			       last_error_code='automation_disabled',
-			       last_error_message='ปิดการสร้างบิล SML อัตโนมัติแล้ว',updated_at=NOW()
+			       last_error_message='ปิดการส่ง SML อัตโนมัติแล้ว',updated_at=NOW()
 			 WHERE shop_id=$1 AND status IN ('queued','retry_wait')`, in.ShopID); err != nil {
 			return nil, err
 		}

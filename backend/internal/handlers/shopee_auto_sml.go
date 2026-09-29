@@ -113,6 +113,8 @@ func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context
 	refsByTrigger := map[string][]repository.ShopeeSnapshotRef{
 		models.ShopeeAutoSMLTriggerReadyToShip: {},
 		models.ShopeeAutoSMLTriggerProcessed:   {},
+		models.ShopeeAutoSMLTriggerShipped:     {},
+		models.ShopeeAutoSMLTriggerCompleted:   {},
 	}
 	for i := range snapshots {
 		snap := &snapshots[i]
@@ -123,8 +125,13 @@ func (h *ShopeeRealtimeHandler) decorateAutoSMLManualReasons(ctx context.Context
 			refsByTrigger[triggerStatus] = append(refsByTrigger[triggerStatus], repository.ShopeeSnapshotRef{ShopID: snap.ShopID, OrderSN: snap.OrderSN})
 		}
 	}
-	transitionsByTrigger := make(map[string]map[repository.ShopeeSnapshotRef]time.Time, 2)
-	for _, triggerStatus := range []string{models.ShopeeAutoSMLTriggerReadyToShip, models.ShopeeAutoSMLTriggerProcessed} {
+	transitionsByTrigger := make(map[string]map[repository.ShopeeSnapshotRef]time.Time, 4)
+	for _, triggerStatus := range []string{
+		models.ShopeeAutoSMLTriggerReadyToShip,
+		models.ShopeeAutoSMLTriggerProcessed,
+		models.ShopeeAutoSMLTriggerShipped,
+		models.ShopeeAutoSMLTriggerCompleted,
+	} {
 		transitions, err := h.repo.OrderStatusTransitionTimes(ctx, refsByTrigger[triggerStatus], triggerStatus)
 		if err != nil {
 			return
@@ -173,7 +180,7 @@ func classifyAutoSMLJobTrigger(job models.ShopeeAutoSMLJob, orderStatus string) 
 	}
 	triggerStatus := models.NormalizeShopeeAutoSMLTriggerStatus(job.TriggerStatusSnapshot)
 	if triggerStatus == "" {
-		return autoSMLTriggerReview, "invalid_trigger_snapshot", "งานไม่มีสถานะเริ่มสร้างบิลที่ถูกต้อง กรุณาตรวจสอบก่อนส่ง SML"
+		return autoSMLTriggerReview, "invalid_trigger_snapshot", "งานไม่มีสถานะเริ่มส่ง SML ที่ถูกต้อง กรุณาตรวจสอบก่อนส่ง SML"
 	}
 	if job.TriggerTransitionAt == nil || job.TriggerTransitionAt.IsZero() {
 		return autoSMLTriggerReview, "missing_trigger_transition", "งานไม่มีหลักฐานเวลาเข้า " + triggerStatus + " กรุณาตรวจสอบก่อนส่ง SML"
@@ -665,7 +672,7 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	if req.TriggerStatus != nil && req.ExpectedConfigVersion == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ expected_config_version เมื่อเปลี่ยนสถานะเริ่มสร้างบิล", "code": "config_version_required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ expected_config_version เมื่อเปลี่ยนสถานะเริ่มส่ง SML", "code": "config_version_required"})
 		return
 	}
 	if req.ExpectedConfigVersion != nil && *req.ExpectedConfigVersion <= 0 {
@@ -688,7 +695,7 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 	if req.TriggerStatus != nil {
 		targetTrigger = models.NormalizeShopeeAutoSMLTriggerStatus(*req.TriggerStatus)
 		if targetTrigger == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "สถานะเริ่มสร้างบิลต้องเป็น READY_TO_SHIP หรือ PROCESSED", "code": "invalid_trigger_status"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "สถานะเริ่มส่ง SML ต้องเป็น READY_TO_SHIP, PROCESSED, SHIPPED หรือ COMPLETED", "code": "invalid_trigger_status"})
 			return
 		}
 	}
@@ -742,9 +749,9 @@ func (h *ShopeeRealtimeHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		})
 	}
 	h.publishShopeeRealtimeChanged(c.Request.Context(), shopID, "", "auto_sml_setting_updated")
-	message := map[bool]string{true: "เปิดสร้างบิล SML อัตโนมัติแล้ว", false: "ปิดสร้างบิล SML อัตโนมัติแล้ว"}[*req.Enabled]
+	message := map[bool]string{true: "เปิดส่ง SML อัตโนมัติแล้ว", false: "ปิดส่ง SML อัตโนมัติแล้ว"}[*req.Enabled]
 	if before.Enabled && setting.Enabled && before.TriggerStatus != setting.TriggerStatus {
-		message = "เปลี่ยนสถานะเริ่มสร้างบิล SML อัตโนมัติแล้ว"
+		message = "เปลี่ยนสถานะเริ่มส่ง SML อัตโนมัติแล้ว"
 	}
 	c.JSON(http.StatusOK, gin.H{"setting": setting, "message": message})
 }

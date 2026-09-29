@@ -138,7 +138,7 @@ func (c *TikTokAutoSMLController) queueBillSnapshot(ctx context.Context, shopID,
 	})
 	if err == nil && inserted {
 		c.logger.Info("tiktok_auto_bill_queued", zap.String("shop_id", shopID), zap.String("order_id", orderID), zap.Int64("config_version", setting.ConfigVersion), zap.Bool("historical_backfill", allowHistorical))
-		c.auditEvent("tiktok_auto_bill_queued", "info", models.TikTokAutoSMLJob{ShopID: shopID, OrderID: orderID, TriggerConfigVersion: setting.ConfigVersion}, map[string]interface{}{"observed_status": orderStatus, "historical_backfill": allowHistorical})
+		c.auditEvent("tiktok_auto_bill_queued", "info", models.TikTokAutoSMLJob{ShopID: shopID, OrderID: orderID, TriggerConfigVersion: setting.ConfigVersion}, map[string]interface{}{"observed_status": orderStatus, "trigger_status": setting.TriggerStatus, "historical_backfill": allowHistorical})
 	}
 	return err
 }
@@ -287,11 +287,12 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 	// A queued job never inherits a later decision to auto-send SML. A setting
 	// change may still safely create its local Bill when the route evidence did
 	// not change, but it must finish in the manual-SML state.
-	if !setting.SMLEnabled || setting.ConfigVersion != job.TriggerConfigVersion {
+	if !setting.SMLEnabled || setting.ConfigVersion != job.TriggerConfigVersion ||
+		setting.EligibleAfter == nil || job.TriggerTransitionAt.Before(setting.EligibleAfter.UTC()) {
 		c.completeBillCreation(ctx, job, billID, preview.ReviewDigest)
 		return
 	}
-	if !models.TikTokAutoSMLAllowsStatus(status) {
+	if !models.TikTokAutoSMLAllowsStatus(job.TriggerStatusSnapshot, status) {
 		// Bill exists for staff now. A later eligible status will requeue this
 		// durable job only when Auto SML is explicitly enabled.
 		c.completeBillCreation(ctx, job, billID, preview.ReviewDigest)
@@ -323,7 +324,8 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		c.markCancelled(ctx, job, "automation_changed", "การตั้งค่าอัตโนมัติเปลี่ยนก่อนส่ง SML")
 		return
 	}
-	if !latestSetting.SMLEnabled || latestSetting.ConfigVersion != job.TriggerConfigVersion {
+	if !latestSetting.SMLEnabled || latestSetting.ConfigVersion != job.TriggerConfigVersion ||
+		latestSetting.EligibleAfter == nil || job.TriggerTransitionAt.Before(latestSetting.EligibleAfter.UTC()) {
 		c.completeBillCreation(ctx, job, billID, preview.ReviewDigest)
 		return
 	}
@@ -643,8 +645,14 @@ func (h *TikTokShopAPIHandler) AutoSMLSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"global_enabled":      h.config != nil && h.config.TikTokShopAutoSMLEnabled,
-		"trigger_status":      models.TikTokAutoSMLTriggerAwaitingCollection,
+		"global_enabled": h.config != nil && h.config.TikTokShopAutoSMLEnabled,
+		"trigger_status": models.TikTokAutoSMLTriggerAwaitingCollection,
+		"supported_trigger_statuses": []string{
+			models.TikTokAutoSMLTriggerAwaitingShipment,
+			models.TikTokAutoSMLTriggerAwaitingCollection,
+			models.TikTokAutoSMLTriggerInTransit,
+			models.TikTokAutoSMLTriggerCompleted,
+		},
 		"historical_backfill": false, "settings": settings,
 	})
 }
@@ -656,12 +664,15 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	var request struct {
-		AutoBillEnabled       *bool  `json:"auto_bill_enabled"`
-		SMLEnabled            *bool  `json:"sml_send_enabled"`
-		ExpectedConfigVersion int64  `json:"expected_config_version"`
-		Confirm               string `json:"confirm"`
+		AutoBillEnabled       *bool   `json:"auto_bill_enabled"`
+		SMLEnabled            *bool   `json:"sml_send_enabled"`
+		TriggerStatus         *string `json:"trigger_status"`
+		ExpectedConfigVersion int64   `json:"expected_config_version"`
+		Confirm               string  `json:"confirm"`
 	}
-	if c.ShouldBindJSON(&request) != nil || request.ExpectedConfigVersion < 1 || (request.AutoBillEnabled == nil && request.SMLEnabled == nil) || (request.AutoBillEnabled != nil && request.SMLEnabled != nil) {
+	if c.ShouldBindJSON(&request) != nil || request.ExpectedConfigVersion < 1 ||
+		(request.AutoBillEnabled == nil && request.SMLEnabled == nil && request.TriggerStatus == nil) ||
+		(request.AutoBillEnabled != nil && (request.SMLEnabled != nil || request.TriggerStatus != nil)) {
 		h.error(c, http.StatusBadRequest, "invalid_request", "ระบุการตั้งค่าอัตโนมัติได้ครั้งละหนึ่งรายการ")
 		return
 	}
@@ -682,6 +693,18 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	autoBillEnabled, smlEnabled := current.AutoBillEnabled, current.SMLEnabled
+	targetTrigger := models.NormalizeTikTokAutoSMLTriggerStatus(current.TriggerStatus)
+	if targetTrigger == "" {
+		targetTrigger = models.TikTokAutoSMLTriggerAwaitingCollection
+	}
+	if request.TriggerStatus != nil {
+		targetTrigger = models.NormalizeTikTokAutoSMLTriggerStatus(*request.TriggerStatus)
+		if targetTrigger == "" {
+			h.error(c, http.StatusBadRequest, "invalid_trigger_status", "สถานะเริ่มส่ง SML ของ TikTok Shop ไม่ถูกต้อง")
+			return
+		}
+	}
+	triggerChanged := targetTrigger != models.NormalizeTikTokAutoSMLTriggerStatus(current.TriggerStatus)
 	confirmation, successMessage := "", ""
 	routeSignature := current.RouteSignature
 	if request.AutoBillEnabled != nil {
@@ -706,7 +729,9 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 			confirmation, successMessage = "DISABLE_TIKTOK_AUTO_BILL", "ปิดสร้าง Bill ใน Nexflow อัตโนมัติแล้ว"
 		}
 	} else {
-		smlEnabled = *request.SMLEnabled
+		if request.SMLEnabled != nil {
+			smlEnabled = *request.SMLEnabled
+		}
 		if smlEnabled {
 			if !autoBillEnabled {
 				h.error(c, http.StatusConflict, "auto_bill_required", "เปิดสร้าง Bill อัตโนมัติก่อน จึงจะเปิดส่ง SML อัตโนมัติได้")
@@ -722,9 +747,17 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 				h.error(c, http.StatusConflict, code, message)
 				return
 			}
-			confirmation, successMessage = "ENABLE_TIKTOK_AUTO_SML", "เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว"
+			if current.SMLEnabled && triggerChanged {
+				confirmation, successMessage = "UPDATE_TIKTOK_AUTO_SML_TRIGGER", "เปลี่ยนสถานะเริ่มส่ง SML อัตโนมัติแล้ว"
+			} else {
+				confirmation, successMessage = "ENABLE_TIKTOK_AUTO_SML", "เปิดส่ง SML อัตโนมัติสำหรับออเดอร์ใหม่แล้ว"
+			}
 		} else {
-			confirmation, successMessage = "DISABLE_TIKTOK_AUTO_SML", "ปิดส่ง SML อัตโนมัติแล้ว"
+			if triggerChanged && request.SMLEnabled == nil {
+				confirmation, successMessage = "UPDATE_TIKTOK_AUTO_SML_TRIGGER", "เปลี่ยนสถานะเริ่มส่ง SML อัตโนมัติแล้ว"
+			} else {
+				confirmation, successMessage = "DISABLE_TIKTOK_AUTO_SML", "ปิดส่ง SML อัตโนมัติแล้ว"
+			}
 		}
 	}
 	if strings.TrimSpace(request.Confirm) != confirmation {
@@ -732,7 +765,7 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 		return
 	}
 	setting, err := h.autoSML.UpdateSetting(c.Request.Context(), repository.TikTokAutoSMLSettingUpdate{
-		ShopID: shopID, AutoBillEnabled: autoBillEnabled, SMLEnabled: smlEnabled, ExpectedConfigVersion: request.ExpectedConfigVersion,
+		ShopID: shopID, AutoBillEnabled: autoBillEnabled, SMLEnabled: smlEnabled, TriggerStatus: targetTrigger, ExpectedConfigVersion: request.ExpectedConfigVersion,
 		RouteSignature: routeSignature, UserID: strings.TrimSpace(c.GetString("user_id")),
 	})
 	if errors.Is(err, repository.ErrTikTokAutoSMLConfigConflict) {
@@ -745,7 +778,11 @@ func (h *TikTokShopAPIHandler) UpdateAutoSMLSetting(c *gin.Context) {
 	}
 	if h.audit != nil {
 		userID, target := strings.TrimSpace(c.GetString("user_id")), shopID
-		_ = h.audit.Log(models.AuditEntry{Action: "tiktok_auto_sml_setting_updated", TargetID: &target, UserID: &userID, Source: "tiktok_shop", Detail: gin.H{"auto_bill_enabled": setting.AutoBillEnabled, "sml_send_enabled": setting.SMLEnabled, "config_version": setting.ConfigVersion, "eligible_after": setting.EligibleAfter, "historical_backfill": false}})
+		_ = h.audit.Log(models.AuditEntry{Action: "tiktok_auto_sml_setting_updated", TargetID: &target, UserID: &userID, Source: "tiktok_shop", Detail: gin.H{
+			"before":              gin.H{"auto_bill_enabled": current.AutoBillEnabled, "sml_send_enabled": current.SMLEnabled, "trigger_status": current.TriggerStatus, "config_version": current.ConfigVersion},
+			"after":               gin.H{"auto_bill_enabled": setting.AutoBillEnabled, "sml_send_enabled": setting.SMLEnabled, "trigger_status": setting.TriggerStatus, "config_version": setting.ConfigVersion, "eligible_after": setting.EligibleAfter},
+			"historical_backfill": false,
+		}})
 	}
 	c.JSON(http.StatusOK, gin.H{"setting": setting, "message": successMessage})
 }

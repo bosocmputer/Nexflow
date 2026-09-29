@@ -1648,7 +1648,7 @@ func (r *ShopeeRealtimeRepo) OrderTimeline(ctx context.Context, shopID int64, or
 		     UNION ALL
 		     SELECT 'Nexflow Auto SML' AS source,
 		            'auto_sml' AS kind,
-		            'สร้างบิล SML อัตโนมัติ' AS title,
+		            'ส่ง SML อัตโนมัติ' AS title,
 		            COALESCE(CONCAT_WS(' · ', NULLIF(sml_doc_no, ''), NULLIF(last_error_message, '')), '') AS detail,
 		            COALESCE(status, '') AS status,
 		            updated_at AS created_at
@@ -1779,7 +1779,7 @@ func (r *ShopeeRealtimeRepo) orderStatusEvidence(ctx context.Context, shopID int
 // OrderStatusTransitionAt returns the earliest confirmed timestamp for the
 // requested Shopee lifecycle status. Auto SML uses the configured trigger
 // transition as its activation cutoff, so an older order may be processed only
-// when it enters READY_TO_SHIP or PROCESSED after that configuration was saved.
+// when it enters the shop's configured Auto SML trigger after that configuration was saved.
 func (r *ShopeeRealtimeRepo) OrderStatusTransitionAt(ctx context.Context, shopID int64, orderSN, status string) (*time.Time, error) {
 	ref := ShopeeSnapshotRef{ShopID: shopID, OrderSN: strings.TrimSpace(orderSN)}
 	transitions, err := r.OrderStatusTransitionTimes(ctx, []ShopeeSnapshotRef{ref}, status)

@@ -186,6 +186,14 @@ test('summarizes Auto SML setting changes without raw Shopee status keys', () =>
   })), 'เปิดใช้งาน · รอจัดส่ง → เตรียมจัดส่งแล้ว · รุ่นตั้งค่า 3')
 })
 
+test('summarizes TikTok Auto SML trigger changes without raw status keys', () => {
+  assert.equal(summarize(audit('tiktok_auto_sml_setting_updated', {
+    before: { auto_bill_enabled: true, sml_send_enabled: true, trigger_status: 'AWAITING_COLLECTION', config_version: 5 },
+    after: { auto_bill_enabled: true, sml_send_enabled: true, trigger_status: 'COMPLETED', config_version: 6 },
+    historical_backfill: false,
+  }, 'tiktok_shop')), 'สร้าง Bill อัตโนมัติ: เปิด · ส่ง SML อัตโนมัติ: เปิด · รอรับพัสดุ → สำเร็จ · เวอร์ชัน 6 · ไม่ย้อนหลัง')
+})
+
 test('labels SML recovery in plain Thai without implying that the document is resent', () => {
   assert.equal(ACTION_META.core_committed.label, 'สร้างเอกสาร SML แล้ว')
   assert.equal(ACTION_META.profile_terminal_failure.label, 'ข้อมูลประกอบ SML ต้องให้ผู้ดูแลแก้ไข')

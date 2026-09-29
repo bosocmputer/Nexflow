@@ -435,9 +435,14 @@ export function summarize(log: AuditLog): string {
       return labels[String(d.error_code ?? '')] ?? 'ระบบเก็บ snapshot เดิมไว้ กรุณาลองใหม่'
     }
     case 'tiktok_auto_sml_setting_updated': {
-      const autoBill = d.auto_bill_enabled === true ? 'สร้าง Bill อัตโนมัติ: เปิด' : 'สร้าง Bill อัตโนมัติ: ปิด'
-      const sml = d.sml_send_enabled === true ? 'ส่ง SML อัตโนมัติ: เปิด' : 'ส่ง SML: ด้วยมือ'
-      return [autoBill, sml, d.config_version ? `เวอร์ชัน ${d.config_version}` : '', d.historical_backfill === false ? 'ไม่ย้อนหลัง' : ''].filter(Boolean).join(' · ')
+      const after = d.after ?? d
+      const before = d.before ?? {}
+      const autoBill = after.auto_bill_enabled === true ? 'สร้าง Bill อัตโนมัติ: เปิด' : 'สร้าง Bill อัตโนมัติ: ปิด'
+      const sml = after.sml_send_enabled === true ? 'ส่ง SML อัตโนมัติ: เปิด' : 'ส่ง SML: ด้วยมือ'
+      const changedTrigger = before.trigger_status && after.trigger_status && before.trigger_status !== after.trigger_status
+        ? `${autoSMLTriggerStatusLabel(before.trigger_status)} → ${autoSMLTriggerStatusLabel(after.trigger_status)}`
+        : after.trigger_status ? `เริ่มเมื่อ ${autoSMLTriggerStatusLabel(after.trigger_status)}` : ''
+      return [autoBill, sml, changedTrigger, after.config_version ? `เวอร์ชัน ${after.config_version}` : '', d.historical_backfill === false ? 'ไม่ย้อนหลัง' : ''].filter(Boolean).join(' · ')
     }
     case 'tiktok_auto_sml_queued':
       return [d.order_id ? `ออเดอร์ ${d.order_id}` : '', d.trigger_status || 'AWAITING_COLLECTION', 'ไม่ย้อนหลัง'].filter(Boolean).join(' · ')
@@ -776,6 +781,11 @@ function autoSMLTriggerStatusLabel(value: unknown): string {
   const status = String(value ?? '').trim().toUpperCase()
   if (status === 'READY_TO_SHIP') return 'รอจัดส่ง'
   if (status === 'PROCESSED') return 'เตรียมจัดส่งแล้ว'
+  if (status === 'SHIPPED') return 'กำลังจัดส่ง'
+  if (status === 'COMPLETED') return 'สำเร็จ'
+  if (status === 'AWAITING_SHIPMENT') return 'รอจัดส่ง'
+  if (status === 'AWAITING_COLLECTION') return 'รอรับพัสดุ'
+  if (status === 'IN_TRANSIT') return 'กำลังขนส่ง'
   return status
 }
 

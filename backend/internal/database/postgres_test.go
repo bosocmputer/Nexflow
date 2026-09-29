@@ -252,6 +252,22 @@ func TestMigration090AddsVersionedAutoSMLTriggerSnapshots(t *testing.T) {
 	}
 }
 
+func TestMigration118ExpandsMarketplaceAutoSMLTriggerStatuses(t *testing.T) {
+	data, err := migrationFS.ReadFile("migrations/118_marketplace_auto_sml_trigger_statuses.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToUpper(string(data))
+	for _, fragment := range []string{
+		"'SHIPPED'", "'COMPLETED'", "'AWAITING_SHIPMENT'", "'AWAITING_COLLECTION'", "'IN_TRANSIT'",
+		"SHOPEE_AUTO_SML_SETTINGS_TRIGGER_STATUS_CHECK", "TIKTOK_SHOP_AUTO_SML_SETTINGS_TRIGGER_STATUS_CHECK",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("migration 118 missing %s", fragment)
+		}
+	}
+}
+
 func TestMigration091SMLDocumentProfileChannelDefaultsIsAdditive(t *testing.T) {
 	data, err := migrationFS.ReadFile("migrations/091_sml_document_profile_channel_defaults.sql")
 	if err != nil {

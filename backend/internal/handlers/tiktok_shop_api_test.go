@@ -167,7 +167,7 @@ func (f *tenantTikTokAutoSMLSettingsFake) UpdateSetting(_ context.Context, input
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &models.TikTokAutoSMLSetting{ShopID: input.ShopID, AutoBillEnabled: input.AutoBillEnabled, SMLEnabled: input.SMLEnabled, ConfigVersion: input.ExpectedConfigVersion + 1}, nil
+	return &models.TikTokAutoSMLSetting{ShopID: input.ShopID, AutoBillEnabled: input.AutoBillEnabled, SMLEnabled: input.SMLEnabled, TriggerStatus: input.TriggerStatus, ConfigVersion: input.ExpectedConfigVersion + 1}, nil
 }
 
 func (f *tenantTikTokAutoSMLSettingsFake) RetryJob(context.Context, string, string, string, string) error {
@@ -1035,7 +1035,8 @@ func TestTikTokShopAPIHandlerListsDormantAutoSMLSettings(t *testing.T) {
 
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"global_enabled":false`) ||
 		!strings.Contains(response.Body.String(), `"historical_backfill":false`) ||
-		!strings.Contains(response.Body.String(), `"trigger_status":"AWAITING_COLLECTION"`) {
+		!strings.Contains(response.Body.String(), `"trigger_status":"AWAITING_COLLECTION"`) ||
+		!strings.Contains(response.Body.String(), `"supported_trigger_statuses":["AWAITING_SHIPMENT","AWAITING_COLLECTION","IN_TRANSIT","COMPLETED"]`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
@@ -1138,6 +1139,59 @@ func TestTikTokShopAPIHandlerEnablesAutoSMLWithoutUnsentSampleAfterProvenSuccess
 	}
 	if routeReader.calls != 1 {
 		t.Fatalf("route calls=%d, want 1", routeReader.calls)
+	}
+}
+
+func TestTikTokShopAPIHandlerChangesAutoSMLTriggerWithExplicitConfirmation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	lastSuccess := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: shopID, AutoBillEnabled: true, SMLEnabled: true,
+		TriggerStatus: models.TikTokAutoSMLTriggerAwaitingCollection,
+		ConfigVersion: 5, LastSuccessAt: &lastSuccess, RouteSignature: readyTikTokSaleRouteSignature(),
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{
+		TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true,
+		TikTokShopOrderSyncEnabled: true, TikTokShopWebhookEnabled: true,
+	}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithOrderSyncSettings(&tenantTikTokOrderSyncSettingsFake{settings: []tiktokshop.TikTokOrderSyncSetting{{ShopID: shopID, Enabled: true}}}).
+		WithOrderReader(&tenantTikTokOrderReaderFake{result: &tiktokshop.TikTokOrderSnapshotListResult{}}).
+		WithBillShadowPreviewer(&tenantTikTokBillShadowPreviewerFake{}).
+		WithSaleRouteReader(&tenantTikTokSaleRouteReaderFake{result: readyTikTokSaleRoute()}).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/"+shopID, strings.NewReader(
+		`{"sml_send_enabled":true,"trigger_status":"IN_TRANSIT","expected_config_version":5,"confirm":"UPDATE_TIKTOK_AUTO_SML_TRIGGER"}`,
+	)))
+
+	if response.Code != http.StatusOK || store.updated.TriggerStatus != models.TikTokAutoSMLTriggerInTransit || !store.updated.SMLEnabled {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
+	}
+}
+
+func TestTikTokShopAPIHandlerRejectsUnsafeAutoSMLTrigger(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const shopID = "7494619203789490654"
+	store := &tenantTikTokAutoSMLSettingsFake{settings: []models.TikTokAutoSMLSetting{{
+		ShopID: shopID, AutoBillEnabled: true, SMLEnabled: false,
+		TriggerStatus: models.TikTokAutoSMLTriggerAwaitingCollection, ConfigVersion: 2,
+	}}}
+	handler := NewTikTokShopAPIHandler(&config.Config{TikTokShopOpenAPIEnabled: true, TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true}, &tenantTikTokGatewayFake{configured: true}, &tenantTikTokStoreFake{}, nil, nil).
+		WithAutoSML(store)
+	router := gin.New()
+	router.PUT("/auto-sml/settings/:shop_id", handler.UpdateAutoSMLSetting)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/auto-sml/settings/"+shopID, strings.NewReader(
+		`{"sml_send_enabled":true,"trigger_status":"UNPAID","expected_config_version":2,"confirm":"ENABLE_TIKTOK_AUTO_SML"}`,
+	)))
+
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_trigger_status") || store.updated.ShopID != "" {
+		t.Fatalf("status=%d update=%+v body=%s", response.Code, store.updated, response.Body.String())
 	}
 }
 

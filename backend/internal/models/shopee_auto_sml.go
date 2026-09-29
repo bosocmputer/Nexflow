@@ -16,6 +16,8 @@ const (
 
 	ShopeeAutoSMLTriggerReadyToShip = "READY_TO_SHIP"
 	ShopeeAutoSMLTriggerProcessed   = "PROCESSED"
+	ShopeeAutoSMLTriggerShipped     = "SHIPPED"
+	ShopeeAutoSMLTriggerCompleted   = "COMPLETED"
 )
 
 func NormalizeShopeeAutoSMLTriggerStatus(status string) string {
@@ -24,6 +26,10 @@ func NormalizeShopeeAutoSMLTriggerStatus(status string) string {
 		return ShopeeAutoSMLTriggerReadyToShip
 	case ShopeeAutoSMLTriggerProcessed:
 		return ShopeeAutoSMLTriggerProcessed
+	case ShopeeAutoSMLTriggerShipped:
+		return ShopeeAutoSMLTriggerShipped
+	case ShopeeAutoSMLTriggerCompleted:
+		return ShopeeAutoSMLTriggerCompleted
 	default:
 		return ""
 	}
@@ -43,6 +49,13 @@ func ShopeeAutoSMLTriggerAllowsStatus(triggerStatus, orderStatus string) bool {
 		case "PROCESSED", "SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED":
 			return true
 		}
+	case ShopeeAutoSMLTriggerShipped:
+		switch orderStatus {
+		case "SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED":
+			return true
+		}
+	case ShopeeAutoSMLTriggerCompleted:
+		return orderStatus == "COMPLETED"
 	}
 	return false
 }

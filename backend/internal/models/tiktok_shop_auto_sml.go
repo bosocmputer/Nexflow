@@ -1,9 +1,15 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
+	TikTokAutoSMLTriggerAwaitingShipment   = "AWAITING_SHIPMENT"
 	TikTokAutoSMLTriggerAwaitingCollection = "AWAITING_COLLECTION"
+	TikTokAutoSMLTriggerInTransit          = "IN_TRANSIT"
+	TikTokAutoSMLTriggerCompleted          = "COMPLETED"
 
 	TikTokAutoSMLQueued      = "queued"
 	TikTokAutoSMLRunning     = "running"
@@ -80,15 +86,46 @@ type TikTokAutoSMLNotification struct {
 	ErrorMessage string
 }
 
-func TikTokAutoSMLAllowsStatus(status string) bool {
-	switch status {
-	case "AWAITING_COLLECTION", "IN_TRANSIT", "DELIVERED", "COMPLETED":
-		return true
+func NormalizeTikTokAutoSMLTriggerStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case TikTokAutoSMLTriggerAwaitingShipment:
+		return TikTokAutoSMLTriggerAwaitingShipment
+	case TikTokAutoSMLTriggerAwaitingCollection:
+		return TikTokAutoSMLTriggerAwaitingCollection
+	case TikTokAutoSMLTriggerInTransit:
+		return TikTokAutoSMLTriggerInTransit
+	case TikTokAutoSMLTriggerCompleted:
+		return TikTokAutoSMLTriggerCompleted
 	default:
-		return false
+		return ""
 	}
 }
 
+func TikTokAutoSMLAllowsStatus(triggerStatus, orderStatus string) bool {
+	triggerStatus = NormalizeTikTokAutoSMLTriggerStatus(triggerStatus)
+	orderStatus = strings.ToUpper(strings.TrimSpace(orderStatus))
+	switch triggerStatus {
+	case TikTokAutoSMLTriggerAwaitingShipment:
+		switch orderStatus {
+		case "AWAITING_SHIPMENT", "PARTIALLY_SHIPPING", "AWAITING_COLLECTION", "IN_TRANSIT", "DELIVERED", "COMPLETED":
+			return true
+		}
+	case TikTokAutoSMLTriggerAwaitingCollection:
+		switch orderStatus {
+		case "AWAITING_COLLECTION", "IN_TRANSIT", "DELIVERED", "COMPLETED":
+			return true
+		}
+	case TikTokAutoSMLTriggerInTransit:
+		switch orderStatus {
+		case "IN_TRANSIT", "DELIVERED", "COMPLETED":
+			return true
+		}
+	case TikTokAutoSMLTriggerCompleted:
+		return orderStatus == "COMPLETED"
+	}
+	return false
+}
+
 func TikTokAutoSMLStopStatus(status string) bool {
-	return status == "CANCELLED"
+	return strings.EqualFold(strings.TrimSpace(status), "CANCELLED")
 }
