@@ -83,6 +83,9 @@ type tikTokAutoSMLWorkStoreFake struct {
 	markedBillID       string
 	markedBillJobID    string
 	markedReviewDigest string
+	transientJobID     string
+	transientCode      string
+	transientMessage   string
 }
 
 func (f *tikTokAutoSMLWorkStoreFake) ListSettings(context.Context) ([]models.TikTokAutoSMLSetting, error) {
@@ -130,7 +133,9 @@ func (f *tikTokAutoSMLWorkStoreFake) MarkCancelled(context.Context, string, stri
 func (f *tikTokAutoSMLWorkStoreFake) MarkSucceeded(context.Context, string, string, string) error {
 	return nil
 }
-func (f *tikTokAutoSMLWorkStoreFake) MarkTransientFailure(context.Context, string, string, string, int) error {
+
+func (f *tikTokAutoSMLWorkStoreFake) MarkTransientFailure(_ context.Context, jobID, code, message string, _ int) error {
+	f.transientJobID, f.transientCode, f.transientMessage = jobID, code, message
 	return nil
 }
 func (f *tikTokAutoSMLWorkStoreFake) PauseForRouteChange(context.Context, string) error { return nil }
@@ -204,6 +209,44 @@ func TestTikTokAutoBillLinksAnExistingTikTokExcelBillWithoutSendingIt(t *testing
 	}
 	if store.markedBillJobID != job.ID || store.markedBillID != preview.ExistingBill.ID {
 		t.Fatalf("existing Bill must terminate the job: %#v", store)
+	}
+}
+
+func TestTikTokAutoSMLContinuesOwnedAPIBillWhenOrderBecomesEligible(t *testing.T) {
+	actorID := "91e80d9f-aba7-4d9e-89db-e7e4e6d262ef"
+	billID := "013f0caa-1282-4a00-9e70-3326ec50a4bb"
+	preview := &tiktokshop.TikTokBillShadowPreview{
+		ShopID: "7494619203789490654", OrderID: "586313800340309351", Currency: "THB",
+		OrderStatus: tiktokshop.OrderStatusAwaitingCollection, ReadyForReviewedBill: true,
+		ReviewDigest: strings.Repeat("f", 64),
+		Route:        tiktokshop.TikTokBillShadowRoute{Ready: true, ShippingReady: true, SemanticRoute: "sale_invoice", DocFormatCode: "BF-INV", ConfigVersion: 3, ShippingItemCode: "AH-0061", ShippingItemUnitCode: "ชิ้น"},
+		Amounts:      tiktokshop.TikTokBillShadowAmounts{ProductSubtotal: "68.00", ProposedDocumentTotal: "68.00"},
+		Items:        []tiktokshop.TikTokBillShadowItem{{ProductID: "product-1", SKUID: "sku-1", Quantity: 1, UnitSalePrice: "68.00", LineTotal: "68.00", Mapping: tiktokshop.TikTokBillShadowItemMapping{Status: tiktokshop.TikTokBillShadowMappingReady, ItemCode: "AH-0001", UnitCode: "ชิ้น", SMLQuantity: "1", MappingRevision: 3}}},
+		ExistingBill: &tiktokshop.TikTokBillShadowExistingBill{ID: billID, Status: "pending", SourceAccountKey: "shop:7494619203789490654", SourceFlow: tiktokshop.TikTokReviewedBillFlow, DocumentRoute: "saleinvoice"},
+	}
+	fingerprint, err := tikTokAutoSMLBillFingerprint(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeSignature := tikTokAutoSMLRouteSignature(preview.Route)
+	store := &tikTokAutoSMLWorkStoreFake{setting: &models.TikTokAutoSMLSetting{
+		ShopID: preview.ShopID, AutoBillEnabled: true, SMLEnabled: true, EnabledBy: &actorID,
+		ConfigVersion: 3, RouteSignature: routeSignature,
+	}}
+	controller := NewTikTokAutoSMLController(&config.Config{TikTokShopAutoSMLEnabled: true, TikTokShopSMLSendEnabled: true}, store, &tenantTikTokBillShadowPreviewerFake{result: preview}, &tenantTikTokReviewedBillCreatorFake{}, nil, nil, nil)
+	job := models.TikTokAutoSMLJob{
+		ID: "604f36a2-c56a-41e9-9cc4-9cfcd2e95b76", ShopID: preview.ShopID, OrderID: preview.OrderID,
+		Status: models.TikTokAutoSMLRunning, Attempts: 1, TriggerConfigVersion: 3,
+		BillFingerprint: fingerprint, RouteSignature: routeSignature, BillID: &billID,
+	}
+
+	controller.processJob(t.Context(), job)
+
+	if store.markedBillJobID != "" {
+		t.Fatalf("owned API Bill must continue toward SML instead of returning to manual state: marked job=%q", store.markedBillJobID)
+	}
+	if store.transientJobID != job.ID || store.transientCode != "bill_sender_unavailable" {
+		t.Fatalf("owned API Bill did not continue to the SML sender guard: job=%q code=%q message=%q", store.transientJobID, store.transientCode, store.transientMessage)
 	}
 }
 

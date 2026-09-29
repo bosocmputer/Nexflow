@@ -240,61 +240,68 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		c.markNeedsReview(ctx, job, "", "route_changed", "เส้นทาง SML เปลี่ยนหลังเข้าคิว กรุณาตรวจสอบก่อนส่ง")
 		return
 	}
+	billID := ""
 	if preview.ExistingBill != nil {
 		// An order may have reached Nexflow through the TikTok Excel importer before
 		// its API snapshot is reconciled. That is a completed local-Bill outcome,
-		// not an operator problem: link the durable job to that Bill and stop here.
-		// In particular, never promote an existing Bill into an SML send just because
-		// the API reconciliation worker happened to see it.
-		c.completeBillCreation(ctx, job, preview.ExistingBill.ID, job.ReviewDigest)
-		c.auditEvent("tiktok_auto_bill_reused", "info", job, map[string]interface{}{
-			"bill_id":            preview.ExistingBill.ID,
-			"source_account_key": preview.ExistingBill.SourceAccountKey,
-			"sml_send":           "manual",
-		})
-		return
-	}
-	if !preview.ReadyForReviewedBill || len(preview.Blockers) > 0 || preview.ReviewDigest == "" {
-		code, message := firstTikTokAutoSMLBlocker(preview.Blockers)
-		c.markNeedsReview(ctx, job, "", code, message)
-		return
-	}
-	if setting.EnabledBy == nil || strings.TrimSpace(*setting.EnabledBy) == "" {
-		c.markNeedsReview(ctx, job, "", "operator_missing", "ไม่พบผู้เปิด Auto SML กรุณาปิดและเปิดใหม่")
-		return
-	}
-	result, err := c.creator.CreateFromVerifiedPreview(ctx, preview, strings.TrimSpace(*setting.EnabledBy), "tiktok-auto-sml-"+job.ID)
-	if err != nil || result == nil || strings.TrimSpace(result.BillID) == "" {
-		if errors.Is(err, tiktokshop.ErrTikTokReviewedBillNotReady) || errors.Is(err, tiktokshop.ErrTikTokReviewedBillReviewChanged) || errors.Is(err, tiktokshop.ErrTikTokReviewedBillConflict) {
-			c.markNeedsReview(ctx, job, "", "bill_review_required", "ข้อมูลบิลเปลี่ยน กรุณาตรวจสอบก่อนส่ง")
+		// not an operator problem. Only the exact API Bill already linked to this
+		// durable job may continue into Auto SML after TikTok reaches an eligible
+		// status. Excel Bills and API Bills owned by another job remain manual-only.
+		if !tikTokAutoSMLOwnsExistingBill(job, preview.ExistingBill) {
+			c.completeBillCreation(ctx, job, preview.ExistingBill.ID, job.ReviewDigest)
+			c.auditEvent("tiktok_auto_bill_reused", "info", job, map[string]interface{}{
+				"bill_id":            preview.ExistingBill.ID,
+				"source_account_key": preview.ExistingBill.SourceAccountKey,
+				"sml_send":           "manual",
+			})
 			return
 		}
-		c.failTransient(ctx, job, "bill_create_failed", "สร้าง Bill TikTok Shop ใน Nexflow ไม่สำเร็จ")
-		return
+		billID = strings.TrimSpace(preview.ExistingBill.ID)
+		job.BillID = &billID
+	} else {
+		if !preview.ReadyForReviewedBill || len(preview.Blockers) > 0 || preview.ReviewDigest == "" {
+			code, message := firstTikTokAutoSMLBlocker(preview.Blockers)
+			c.markNeedsReview(ctx, job, "", code, message)
+			return
+		}
+		if setting.EnabledBy == nil || strings.TrimSpace(*setting.EnabledBy) == "" {
+			c.markNeedsReview(ctx, job, "", "operator_missing", "ไม่พบผู้เปิด Auto SML กรุณาปิดและเปิดใหม่")
+			return
+		}
+		result, err := c.creator.CreateFromVerifiedPreview(ctx, preview, strings.TrimSpace(*setting.EnabledBy), "tiktok-auto-sml-"+job.ID)
+		if err != nil || result == nil || strings.TrimSpace(result.BillID) == "" {
+			if errors.Is(err, tiktokshop.ErrTikTokReviewedBillNotReady) || errors.Is(err, tiktokshop.ErrTikTokReviewedBillReviewChanged) || errors.Is(err, tiktokshop.ErrTikTokReviewedBillConflict) {
+				c.markNeedsReview(ctx, job, "", "bill_review_required", "ข้อมูลบิลเปลี่ยน กรุณาตรวจสอบก่อนส่ง")
+				return
+			}
+			c.failTransient(ctx, job, "bill_create_failed", "สร้าง Bill TikTok Shop ใน Nexflow ไม่สำเร็จ")
+			return
+		}
+		billID = strings.TrimSpace(result.BillID)
+		if err := c.repo.LinkBill(ctx, job.ID, billID, preview.ReviewDigest); err != nil {
+			c.failTransient(ctx, job, "job_link_failed", "บันทึกการเชื่อมงานกับ Bill ไม่สำเร็จ")
+			return
+		}
+		job.BillID = &billID
 	}
-	if err := c.repo.LinkBill(ctx, job.ID, result.BillID, preview.ReviewDigest); err != nil {
-		c.failTransient(ctx, job, "job_link_failed", "บันทึกการเชื่อมงานกับ Bill ไม่สำเร็จ")
-		return
-	}
-	job.BillID = &result.BillID
 	// A queued job never inherits a later decision to auto-send SML. A setting
 	// change may still safely create its local Bill when the route evidence did
 	// not change, but it must finish in the manual-SML state.
 	if !setting.SMLEnabled || setting.ConfigVersion != job.TriggerConfigVersion {
-		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
+		c.completeBillCreation(ctx, job, billID, preview.ReviewDigest)
 		return
 	}
 	if !models.TikTokAutoSMLAllowsStatus(status) {
 		// Bill exists for staff now. A later eligible status will requeue this
 		// durable job only when Auto SML is explicitly enabled.
-		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
+		c.completeBillCreation(ctx, job, billID, preview.ReviewDigest)
 		return
 	}
 	if c.billH == nil || c.billH.billRepo == nil {
 		c.failTransient(ctx, job, "bill_sender_unavailable", "ระบบส่ง Bill ไป SML ยังไม่พร้อม")
 		return
 	}
-	bill, err := c.billH.billRepo.FindByID(result.BillID)
+	bill, err := c.billH.billRepo.FindByID(billID)
 	if err != nil || bill == nil {
 		c.failTransient(ctx, job, "bill_load_failed", "โหลด Bill ก่อนส่ง SML ไม่สำเร็จ")
 		return
@@ -317,7 +324,7 @@ func (c *TikTokAutoSMLController) processJob(ctx context.Context, job models.Tik
 		return
 	}
 	if !latestSetting.SMLEnabled || latestSetting.ConfigVersion != job.TriggerConfigVersion {
-		c.completeBillCreation(ctx, job, result.BillID, preview.ReviewDigest)
+		c.completeBillCreation(ctx, job, billID, preview.ReviewDigest)
 		return
 	}
 	documentTime, err := c.repo.GetOrSetDocumentTime(ctx, job.ID, time.Now().In(tikTokAutoSMLBangkok).Format("15:04"))
@@ -349,6 +356,16 @@ func (c *TikTokAutoSMLController) completeBillCreation(ctx context.Context, job 
 		return
 	}
 	c.auditEvent("tiktok_auto_bill_created", "info", job, map[string]interface{}{"bill_id": billID, "sml_send": "manual"})
+}
+
+func tikTokAutoSMLOwnsExistingBill(job models.TikTokAutoSMLJob, bill *tiktokshop.TikTokBillShadowExistingBill) bool {
+	if bill == nil || job.BillID == nil {
+		return false
+	}
+	return strings.TrimSpace(bill.ID) != "" &&
+		strings.TrimSpace(bill.ID) == strings.TrimSpace(*job.BillID) &&
+		strings.TrimSpace(bill.SourceAccountKey) == "shop:"+strings.TrimSpace(job.ShopID) &&
+		strings.TrimSpace(bill.SourceFlow) == tiktokshop.TikTokReviewedBillFlow
 }
 
 func (c *TikTokAutoSMLController) complete(ctx context.Context, job models.TikTokAutoSMLJob, bill *models.Bill) {

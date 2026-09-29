@@ -144,11 +144,14 @@ export function tiktokDocumentState(input: TikTokDocumentStateInput): TikTokDocu
     return { label: 'ส่ง SML แล้ว', detail: smlDocNo || 'บันทึกเข้า SML แล้ว', tone: 'success', ...(path ? { path } : {}) }
   }
   if (billStatus === 'failed') {
-    return { label: 'ส่ง SML ไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจสอบ', tone: 'danger', ...(path ? { path } : {}) }
+    return { label: 'ส่งไม่สำเร็จ', detail: 'เปิดเอกสารเพื่อตรวจสอบ', tone: 'danger', ...(path ? { path } : {}) }
+  }
+  if (billStatus === 'needs_review') {
+    return { label: 'ต้องตรวจ', detail: 'ข้อมูลสินค้า ยอดเงิน หรือการตั้งค่ายังต้องตรวจ', tone: 'warning', ...(path ? { path } : {}) }
   }
   return {
-    label: 'สร้างเอกสารแล้ว',
-    detail: billStatus === 'needs_review' ? 'ต้องตรวจข้อมูลก่อนส่ง SML' : 'ยังไม่ส่ง SML',
+    label: 'รอส่ง SML',
+    detail: 'สร้างเอกสารแล้ว',
     tone: 'warning',
     ...(path ? { path } : {}),
   }
@@ -166,34 +169,30 @@ export function tiktokCompactDocumentState(
 
   const status = autoSML.status.trim().toLowerCase()
   if (status === 'succeeded') {
-    return { ...document, label: 'ส่ง SML แล้ว (อัตโนมัติ)', tone: 'success' }
+    return { ...document, label: 'ส่ง SML แล้ว (AUTO)', tone: 'success' }
   }
   if (status === 'bill_created') {
-    return {
-      ...document,
-      label: 'สร้างเอกสารแล้ว (อัตโนมัติ)',
-      detail: 'รอส่ง SML ด้วยมือ',
-      tone: 'warning',
-    }
+    return document
   }
   if (status === 'failed' || status === 'needs_review') {
     return {
       ...document,
-      label: status === 'failed' ? 'งานอัตโนมัติไม่สำเร็จ' : 'งานอัตโนมัติต้องตรวจ',
+      label: status === 'failed' ? 'ส่งไม่สำเร็จ' : 'ต้องตรวจ',
       detail: status === 'failed' ? 'ตรวจสาเหตุแล้วลองใหม่' : 'เปิดเอกสารเพื่อตรวจข้อมูล',
       tone: status === 'failed' ? 'danger' : 'warning',
     }
   }
   if (status === 'queued' || status === 'retry_wait' || status === 'running') {
+    const hasDocument = Boolean(input.billID?.trim())
     return {
       ...document,
-      label: status === 'running' ? 'กำลังสร้างเอกสารอัตโนมัติ' : 'รอสร้างเอกสารอัตโนมัติ',
-      detail: status === 'retry_wait' ? 'ระบบจะลองสร้างใหม่' : 'รอคิวตามลำดับ',
+      label: hasDocument ? 'รอส่ง SML' : 'รอสร้างเอกสาร',
+      detail: status === 'running' ? 'ระบบกำลังดำเนินการ' : status === 'retry_wait' ? 'ระบบจะลองใหม่' : 'รอคิวตามลำดับ',
       tone: 'warning',
     }
   }
   if (status === 'cancelled') {
-    return { ...document, label: 'ยกเลิกงานสร้างเอกสารอัตโนมัติ', detail: 'เปิดเอกสารเพื่อตรวจต่อ', tone: 'muted' }
+    return document
   }
   return document
 }
@@ -297,7 +296,7 @@ export function tiktokOrderDocumentGuidance(
     return 'ใบขายเดิมส่ง SML แล้ว ตรวจเอกสารยกเลิกจากคิวยกเลิก TikTok Shop'
   }
   return hasDocument
-    ? 'เปิดเอกสารเพื่อตรวจข้อมูล แล้วส่ง SML ทีละใบจากหน้าเอกสาร'
+    ? 'เอกสารพร้อมตรวจ ระบบจะส่งตามการตั้งค่าร้าน หรือส่งด้วยมือจากหน้าเอกสาร'
     : 'ตรวจสินค้า การจับคู่ และยอดก่อนยืนยันสร้างเอกสารใน Nexflow'
 }
 

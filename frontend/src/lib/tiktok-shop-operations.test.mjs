@@ -143,8 +143,8 @@ test('presents TikTok Nexflow and SML document states with the same operational 
     billStatus: 'pending',
     documentPath: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
   }), {
-    label: 'สร้างเอกสารแล้ว',
-    detail: 'ยังไม่ส่ง SML',
+    label: 'รอส่ง SML',
+    detail: 'สร้างเอกสารแล้ว',
     tone: 'warning',
     path: '/sale-invoices/03ee1216-acb4-4a88-842c-7edc6eb44292',
   })
@@ -167,12 +167,12 @@ test('keeps the TikTok document cell to a compact two-line operational summary',
     billStatus: 'sent',
     smlDocNo: 'BF-INV26090001',
   }, { status: 'succeeded' }), {
-    label: 'ส่ง SML แล้ว (อัตโนมัติ)',
+    label: 'ส่ง SML แล้ว (AUTO)',
     detail: 'BF-INV26090001',
     tone: 'success',
   })
   assert.deepEqual(tiktokCompactDocumentState({}, { status: 'failed' }), {
-    label: 'งานอัตโนมัติไม่สำเร็จ',
+    label: 'ส่งไม่สำเร็จ',
     detail: 'ตรวจสาเหตุแล้วลองใหม่',
     tone: 'danger',
   })
@@ -180,8 +180,8 @@ test('keeps the TikTok document cell to a compact two-line operational summary',
     billID: 'bill-2',
     billStatus: 'pending',
   }, { status: 'bill_created' }), {
-    label: 'สร้างเอกสารแล้ว (อัตโนมัติ)',
-    detail: 'รอส่ง SML ด้วยมือ',
+    label: 'รอส่ง SML',
+    detail: 'สร้างเอกสารแล้ว',
     tone: 'warning',
   })
 })
@@ -195,7 +195,7 @@ test('cancelled TikTok order guidance never tells staff to send its unsent sale 
     'ใบขายเดิมส่ง SML แล้ว ตรวจเอกสารยกเลิกจากคิวยกเลิก TikTok Shop')
   assert.match(tiktokOrderDocumentGuidance('CANCELLED', 'evidence_missing', true), /ตรวจผลการส่ง/)
   assert.equal(tiktokOrderDocumentGuidance('AWAITING_SHIPMENT', undefined, true),
-    'เปิดเอกสารเพื่อตรวจข้อมูล แล้วส่ง SML ทีละใบจากหน้าเอกสาร')
+    'เอกสารพร้อมตรวจ ระบบจะส่งตามการตั้งค่าร้าน หรือส่งด้วยมือจากหน้าเอกสาร')
 })
 
 test('keeps TikTok row actions in the same create, document, and detail pattern as Shopee', () => {

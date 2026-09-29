@@ -164,9 +164,9 @@ func (r *TikTokAutoSMLRepo) UpdateSetting(ctx context.Context, input TikTokAutoS
 	return r.GetSetting(ctx, input.ShopID)
 }
 
-// MarkBillCreated is terminal for the automation queue but deliberately leaves
-// the Bill pending. Staff may inspect it and use the ordinary Bill detail flow
-// to send it to SML.
+// MarkBillCreated leaves the Bill pending for staff. It may later be requeued
+// when the same API order reaches an Auto SML eligible status; the worker then
+// reuses this exact Bill instead of creating a duplicate.
 func (r *TikTokAutoSMLRepo) MarkBillCreated(ctx context.Context, id, billID, reviewDigest string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE tiktok_shop_auto_sml_jobs SET status='bill_created',bill_id=COALESCE(NULLIF($2,'')::uuid,bill_id),review_digest=$3,lease_until=NULL,last_error_code='',last_error_message='',completed_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, id, strings.TrimSpace(billID), strings.TrimSpace(reviewDigest))
 	return err
