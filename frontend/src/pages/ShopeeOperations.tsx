@@ -1465,44 +1465,44 @@ export default function ShopeeOperations() {
                 </SelectContent>
               </Select>
               <MarketplaceOperationsHelp channel="Shopee" signalLabel="Push" />
-              <div className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[300px]">
+              <div className="flex min-h-8 max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-background px-2.5 py-1">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
-                      autoSMLControlPaused && 'border-warning/40 bg-warning/10 text-warning',
-                      autoSMLControlActive && !autoSMLControlPaused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
-                    )}
-                  >
-                    {shopID === ALL
-                      ? autoSMLAllShopsStatus(enabledAutoSMLShopCount, autoSMLShopCount)
-                      : `${autoSMLCompactStatus(autoSML, selectedAutoSMLSetting)} · ${autoSMLTriggerLabel(selectedAutoSMLSetting?.trigger_status).split(' (')[0]}`}
-                  </Badge>
-                  {shopID === ALL ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>เลือกร้าน Shopee หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
-                    </Tooltip>
-                  ) : <>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
+                    autoSMLControlPaused && 'border-warning/40 bg-warning/10 text-warning',
+                    autoSMLControlActive && !autoSMLControlPaused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+                  )}
+                >
+                  {shopID === ALL
+                    ? autoSMLAllShopsStatus(enabledAutoSMLShopCount, autoSMLShopCount)
+                    : `${autoSMLCompactStatus(autoSML, selectedAutoSMLSetting)} · ${autoSMLTriggerLabel(selectedAutoSMLSetting?.trigger_status).split(' (')[0]}`}
+                </Badge>
+                {shopID === ALL ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>เลือกร้าน Shopee หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <div className="flex shrink-0 items-center gap-1.5 border-l border-border pl-2">
                     {isAdmin && (
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-6 px-1.5 text-[11px]"
+                        className="h-7 px-2 text-[11px]"
                         disabled={autoSMLSaving || !selectedAutoSMLSetting}
                         onClick={() => openAutoSMLDialog(selectedAutoSMLSetting?.enabled ? 'change' : 'enable')}
                       >
@@ -1518,8 +1518,8 @@ export default function ShopeeOperations() {
                         else void updateAutoSML(false)
                       }}
                     />
-                  </>}
-                </div>
+                  </div>
+                )}
               </div>
               <Button variant="outline" size="sm" className="h-8 gap-2 bg-background" onClick={() => { setDiagnosticsOpen((v) => !v); if (!diagnosticsOpen) void loadDiagnostics() }}>
                 <Eye className="h-4 w-4" />

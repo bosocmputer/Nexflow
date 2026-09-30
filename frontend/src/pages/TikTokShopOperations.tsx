@@ -1373,43 +1373,47 @@ function TikTokAutoSMLControl({
   const status = shopID === ALL
     ? tiktokAutoSMLAllShopsStatus(enabledShopCount, shopCount)
     : tiktokAutoSMLCompactStatus(globalEnabled, setting)
+  const statusLabel = shopID === ALL
+    ? status
+    : `${status} · ${tiktokAutoSMLTriggerLabel(setting?.trigger_status)}`
   return (
-    <div className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[300px]">
+    <div className="flex min-h-8 max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-background px-2.5 py-1">
       <div className="flex min-w-0 items-center gap-1.5">
         <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Badge
-          variant="outline"
-          className={cn(
-            'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
-            paused && 'border-warning/40 bg-warning/10 text-warning',
-            active && !paused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
-          )}
-        >
-          {shopID === ALL ? status : `${status} · ${tiktokAutoSMLTriggerLabel(setting?.trigger_status)}`}
-        </Badge>
-        {shopID === ALL ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
-              >
-                <Info className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>เลือกร้าน TikTok Shop หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
-          </Tooltip>
-        ) : <>
+      <Badge
+        variant="outline"
+        title={statusLabel}
+        className={cn(
+          'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
+          paused && 'border-warning/40 bg-warning/10 text-warning',
+          active && !paused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
+        )}
+      >
+        {statusLabel}
+      </Badge>
+      {shopID === ALL ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>เลือกร้าน TikTok Shop หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
+        </Tooltip>
+      ) : (
+        <div className="flex shrink-0 items-center gap-1.5 border-l border-border pl-2">
           {isAdmin && (
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-[11px]"
+              className="h-7 px-2 text-[11px]"
               disabled={saving || !setting}
               onClick={() => setting && onConfigure(setting)}
             >
@@ -1422,8 +1426,8 @@ function TikTokAutoSMLControl({
             aria-label={`เปลี่ยนการส่ง SML อัตโนมัติของ ${setting?.shop_name || setting?.shop_id || 'TikTok Shop'}`}
             onCheckedChange={(next) => setting && void onRequestChange(setting, next)}
           />
-        </>}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
