@@ -187,6 +187,26 @@ func (r *TikTokAutoSMLRepo) MarkBillCreated(ctx context.Context, id, billID, rev
 	return err
 }
 
+// ArchiveUnsentBillForCancelledOrder keeps a cancelled TikTok order out of the
+// operational queue only when no SML write was ever attempted. It preserves the
+// Bill and Auto-SML job as auditable history instead of deleting either record.
+func (r *TikTokAutoSMLRepo) ArchiveUnsentBillForCancelledOrder(ctx context.Context, shopID, orderID string) (string, error) {
+	if r == nil || r.db == nil || strings.TrimSpace(shopID) == "" || strings.TrimSpace(orderID) == "" {
+		return "", sql.ErrNoRows
+	}
+	var billID string
+	err := r.db.QueryRowContext(ctx, `UPDATE bills
+		SET archived_at=NOW(), archived_by=NULL, archive_reason='TikTok Shop ยกเลิกคำสั่งซื้อก่อนส่ง SML'
+		WHERE source='tiktok' AND source_account_key='shop:' || $1 AND sml_order_id=$2
+			AND archived_at IS NULL AND status IN ('pending','needs_review','failed')
+			AND COALESCE(sml_doc_no,'')='' AND COALESCE(sml_attempt_state,'unattempted')='unattempted'
+		RETURNING id::text`, strings.TrimSpace(shopID), strings.TrimSpace(orderID)).Scan(&billID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return billID, err
+}
+
 func (r *TikTokAutoSMLRepo) Enqueue(ctx context.Context, input TikTokAutoSMLEnqueueInput) (bool, error) {
 	if r == nil || r.db == nil {
 		return false, sql.ErrConnDone

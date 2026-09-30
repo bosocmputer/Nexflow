@@ -54,6 +54,10 @@ type TikTokAutoSMLWorkStore interface {
 	PauseForRouteChange(context.Context, string) error
 }
 
+type tikTokCancelledBillArchiver interface {
+	ArchiveUnsentBillForCancelledOrder(context.Context, string, string) (string, error)
+}
+
 type tikTokAutoSMLLineNotifier interface {
 	EnqueueTikTokShopAutoSMLSuccess(context.Context, models.TikTokAutoSMLNotification, string) (int, error)
 	EnqueueTikTokShopAutoSMLReview(context.Context, models.TikTokAutoSMLNotification, string) (int, error)
@@ -101,11 +105,27 @@ func (c *TikTokAutoSMLController) ObserveTikTokOrderSnapshot(ctx context.Context
 	if strings.EqualFold(strings.TrimSpace(record.ObservationSource), "settlement_backfill") {
 		return nil
 	}
+	if c != nil && c.repo != nil && record.OrderStatus == tiktokshop.OrderStatusCancelled {
+		if archiver, ok := c.repo.(tikTokCancelledBillArchiver); ok {
+			billID, err := archiver.ArchiveUnsentBillForCancelledOrder(ctx, shopID, record.OrderID)
+			if err != nil {
+				return err
+			}
+			if billID != "" {
+				c.auditEvent("tiktok_pending_bill_archived_after_cancellation", "info", tiktokshopJobEvidence(shopID, record.OrderID), map[string]interface{}{"bill_id": billID, "reason": "cancelled_before_sml_send"})
+			}
+		}
+		return nil
+	}
 	if c == nil || c.cfg == nil || !c.cfg.TikTokShopAutoSMLEnabled || c.repo == nil || c.previewer == nil || record.LastOrderUpdateAt == nil ||
 		!tiktokshop.TikTokBillLifecycleReady(record.OrderStatus) {
 		return nil
 	}
 	return c.queueBillSnapshot(ctx, shopID, record.OrderID, string(record.OrderStatus), *record.LastOrderUpdateAt, record.SourceHash, false)
+}
+
+func tiktokshopJobEvidence(shopID, orderID string) models.TikTokAutoSMLJob {
+	return models.TikTokAutoSMLJob{ShopID: strings.TrimSpace(shopID), OrderID: strings.TrimSpace(orderID)}
 }
 
 // queueBillSnapshot records Bill creation independently from the SML-send

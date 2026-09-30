@@ -981,7 +981,9 @@ export default function TikTokSettlement() {
                         <p className="truncate font-medium">{item.order_id}</p>
                       )}
                       <p className="truncate text-xs text-muted-foreground">
-                        {item.sml_invoice_doc_no
+                        {item.status === "excluded"
+                          ? item.block_reason || "ไม่นำรายการนี้ไปสร้าง RC"
+                          : item.sml_invoice_doc_no
                           ? `ส่ง SML แล้ว · ${item.sml_invoice_doc_no}`
                           : item.bill_id
                             ? "เปิด Bill เพื่อตรวจและส่ง SML"
@@ -998,6 +1000,8 @@ export default function TikTokSettlement() {
                       className={
                         item.status === "ready" || item.status === "sent"
                           ? "bg-success/15 text-success"
+                          : item.status === "excluded"
+                            ? "bg-muted text-muted-foreground"
                           : "bg-warning/15 text-warning"
                       }
                     >
@@ -1005,7 +1009,9 @@ export default function TikTokSettlement() {
                         ? "ผ่าน"
                         : item.status === "sent"
                           ? "ส่งแล้ว"
-                          : "ต้องตรวจ"}
+                          : item.status === "excluded"
+                            ? "ไม่นำไปสร้าง RC"
+                            : "ต้องตรวจ"}
                     </Badge>
                   </div>
                   );

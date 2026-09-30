@@ -143,6 +143,35 @@ func TestTikTokStatementTransactionWithZeroOptionalAmounts(t *testing.T) {
 	}
 }
 
+func TestTikTokSettlementItemIsCancelledZero(t *testing.T) {
+	item := tikTokSettlementItemView{OrderID: "586187752715486506", SettlementAmount: 0, InvoiceAmount: 0}
+	candidate := settlementCandidate{Status: "not_found"}
+	if !tikTokSettlementItemIsCancelledZero(item, candidate, true) {
+		t.Fatal("cancelled zero-value order without an SML invoice must be excluded")
+	}
+	for _, test := range []struct {
+		name      string
+		item      tikTokSettlementItemView
+		candidate settlementCandidate
+		cancelled bool
+	}{
+		{"not cancelled", item, candidate, false},
+		{"non-zero settlement", tikTokSettlementItemView{SettlementAmount: 1}, candidate, true},
+		{"invoice exists", item, settlementCandidate{Status: "found"}, true},
+	} {
+		if tikTokSettlementItemIsCancelledZero(test.item, test.candidate, test.cancelled) {
+			t.Fatalf("%s must remain eligible for normal reconciliation", test.name)
+		}
+	}
+}
+
+func TestTikTokSettlementReadyItemsExcludesNonReceiptEvidence(t *testing.T) {
+	items := tikTokSettlementReadyItems([]tikTokSettlementItemView{{OrderID: "ready", Status: "ready"}, {OrderID: "excluded", Status: "excluded"}, {OrderID: "blocked", Status: "blocked"}})
+	if len(items) != 1 || items[0].OrderID != "ready" {
+		t.Fatalf("ready receipt items=%#v", items)
+	}
+}
+
 func TestTikTokStatementSettlementReadyAcceptsDocumentedAndLiveStatuses(t *testing.T) {
 	for _, status := range []tiktokshop.StatementStatus{
 		tiktokshop.StatementStatusPaid,

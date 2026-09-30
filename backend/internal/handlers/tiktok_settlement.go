@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"nexflow/internal/config"
@@ -145,6 +146,9 @@ type tikTokSettlementItemView struct {
 	BlockReason            string  `json:"block_reason,omitempty"`
 	ReceiptDocNo           string  `json:"receipt_doc_no,omitempty"`
 }
+
+const tikTokSettlementExcludedCancelledZeroReason = "คำสั่งซื้อถูกยกเลิกและ TikTok ยืนยันยอดรับชำระ 0.00 จึงไม่นำไปสร้าง RC"
+
 type tikTokSettlementCounts struct {
 	Processing  int `json:"processing"`
 	Ready       int `json:"ready"`
@@ -921,11 +925,12 @@ func (h *TikTokSettlementHandler) buildSettlementBatch(ctx context.Context, ids 
 		if run.ShopID != batch.ShopID || strings.ToUpper(run.Currency) != batch.Currency || run.ConfigVersion != batch.ConfigVersion || run.RouteConfigVersion != batch.RouteVersion {
 			return nil, errors.New("Statement ที่เลือกต้องเป็นร้าน สกุลเงิน และการตั้งค่า SML ชุดเดียวกัน")
 		}
-		if len(run.Items) == 0 || run.BlockedItemCount > 0 {
+		readyItems := tikTokSettlementReadyItems(run.Items)
+		if len(readyItems) == 0 || run.BlockedItemCount > 0 {
 			return nil, errors.New("Statement ที่เลือกมีรายการที่ต้องตรวจ")
 		}
-		for _, item := range run.Items {
-			if item.Status != "ready" || item.SMLInvoiceDocNo == "" {
+		for _, item := range readyItems {
+			if item.SMLInvoiceDocNo == "" {
 				return nil, errors.New("Statement ที่เลือกมีรายการที่ยังไม่พร้อมส่ง")
 			}
 			if customerCode == "" {
@@ -943,7 +948,7 @@ func (h *TikTokSettlementHandler) buildSettlementBatch(ctx context.Context, ids 
 		batch.SettlementAmount += run.TotalSettlementAmount
 		batch.InvoiceAmount += run.InvoiceAmountTotal
 		batch.FeeAmount += run.FeeAmountTotal
-		batch.OrderCount += len(run.Items)
+		batch.OrderCount += len(readyItems)
 	}
 	batch.StatementCount = len(runs)
 	batch.SelectionDigest = tikTokSettlementBatchDigest(batch)
@@ -1069,8 +1074,8 @@ func (h *TikTokSettlementHandler) sendSettlementBatch(batchID string, route *mod
 				docDate = t.In(tikTokSettlementBangkok).Format("2006-01-02")
 			}
 		}
-		for _, item := range run.Items {
-			if item.Status != "ready" || item.SMLInvoiceDocNo == "" {
+		for _, item := range tikTokSettlementReadyItems(run.Items) {
+			if item.SMLInvoiceDocNo == "" {
 				h.failSettlementBatch(ctx, batch, userID, "มีรายการที่ไม่พร้อมส่งระหว่างสร้าง RC")
 				return
 			}
@@ -1465,6 +1470,10 @@ func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string
 	if err != nil {
 		return err
 	}
+	cancelledOrders, err := h.cancelledSettlementOrders(ctx, run.ShopID, orders)
+	if err != nil {
+		return err
+	}
 	customer := ""
 	blocked := 0
 	invoiceTotal := 0.0
@@ -1479,6 +1488,11 @@ func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string
 		feeTotal += item.FeeAmount
 		if strings.HasPrefix(item.OrderID, "__tiktok_finance_") {
 			status, reason = "blocked", "มีรายการการเงินที่ไม่ผูกคำสั่งซื้อ ต้องตรวจ Statement"
+		} else if tikTokSettlementItemIsCancelledZero(item, cand, cancelledOrders[item.OrderID]) {
+			// TikTok may retain a cancelled order in a Statement even though it
+			// settles no money. It stays in the local evidence but must not demand
+			// a nonexistent SML invoice or become an RC line.
+			status, reason = "excluded", tikTokSettlementExcludedCancelledZeroReason
 		} else if cand.Status == "" || cand.Status == "not_found" {
 			status, reason = "blocked", "ไม่พบใบขาย SML ที่อ้างอิงคำสั่งซื้อ TikTok Shop"
 		} else if cand.AlreadyReceived {
@@ -1500,7 +1514,7 @@ func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string
 		} else {
 			customer = item.CustomerCode
 		}
-		if status != "ready" {
+		if status == "blocked" {
 			blocked++
 		}
 		_, err = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_items SET sml_invoice_doc_no=$2,customer_code=$3,invoice_amount=$4::numeric,status=$5,block_reason=$6,updated_at=NOW() WHERE id=$1::uuid`, item.ID, item.SMLInvoiceDocNo, item.CustomerCode, item.InvoiceAmount, status, reason)
@@ -1527,6 +1541,45 @@ func (h *TikTokSettlementHandler) reconcileRun(ctx context.Context, runID string
 	}
 	_, err = h.db.ExecContext(ctx, `UPDATE tiktok_settlement_runs SET status=$2,invoice_amount_total=$3::numeric,fee_amount_total=$4::numeric,error_msg='',anomaly_reason=$5,finished_at=NOW(),updated_at=NOW() WHERE id=$1::uuid`, runID, status, invoiceTotal, feeTotal, reason)
 	return err
+}
+
+// cancelledSettlementOrders reads one bounded local snapshot batch. It never
+// calls TikTok from reconciliation and avoids an N+1 query for Statements with
+// many transactions.
+func (h *TikTokSettlementHandler) cancelledSettlementOrders(ctx context.Context, shopID string, orderIDs []string) (map[string]bool, error) {
+	result := map[string]bool{}
+	if h == nil || h.db == nil || strings.TrimSpace(shopID) == "" || len(orderIDs) == 0 {
+		return result, nil
+	}
+	rows, err := h.db.QueryContext(ctx, `SELECT order_id
+		FROM tiktok_shop_order_snapshots
+		WHERE shop_id=$1 AND order_status='CANCELLED' AND order_id = ANY($2::text[])`, strings.TrimSpace(shopID), pq.Array(orderIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var orderID string
+		if err := rows.Scan(&orderID); err != nil {
+			return nil, err
+		}
+		result[orderID] = true
+	}
+	return result, rows.Err()
+}
+
+func tikTokSettlementItemIsCancelledZero(item tikTokSettlementItemView, candidate settlementCandidate, cancelled bool) bool {
+	return cancelled && item.SettlementAmount == 0 && item.InvoiceAmount == 0 && (candidate.Status == "" || candidate.Status == "not_found")
+}
+
+func tikTokSettlementReadyItems(items []tikTokSettlementItemView) []tikTokSettlementItemView {
+	ready := make([]tikTokSettlementItemView, 0, len(items))
+	for _, item := range items {
+		if item.Status == "ready" {
+			ready = append(ready, item)
+		}
+	}
+	return ready
 }
 
 func (h *TikTokSettlementHandler) lockForSend(ctx context.Context, runID string, version int, req tikTokSettlementSendRequest) error {
@@ -1557,17 +1610,13 @@ func (h *TikTokSettlementHandler) sendRun(runID string, route *models.ChannelDef
 		h.failSettlementRun(ctx, run, userID, "การตั้งค่าร้านถูกแก้ไขระหว่างส่ง กรุณาตรวจ Statement ใหม่")
 		return
 	}
-	items := run.Items
+	items := tikTokSettlementReadyItems(run.Items)
 	if len(items) == 0 {
 		h.failSettlementRun(ctx, run, userID, "ไม่มีรายการรับชำระ")
 		return
 	}
 	lines := make([]map[string]any, 0, len(items))
 	for _, i := range items {
-		if i.Status != "ready" {
-			h.failSettlementRun(ctx, run, userID, "Statement เปลี่ยนระหว่างส่ง")
-			return
-		}
 		lines = append(lines, map[string]any{"order_sn": i.OrderID, "invoice_doc_no": i.SMLInvoiceDocNo, "payout_amount": i.SettlementAmount})
 	}
 	docDate := time.Now().In(tikTokSettlementBangkok).Format("2006-01-02")
