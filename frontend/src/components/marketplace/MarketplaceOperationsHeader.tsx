@@ -34,8 +34,8 @@ export function MarketplaceOperationsHeader({
   children,
 }: MarketplaceOperationsHeaderProps) {
   return (
-    <section className="rounded-lg border border-border bg-card px-3 py-3" aria-labelledby={titleID}>
-      <div className="min-w-0">
+    <section className="rounded-lg border border-border bg-card px-3 py-2" aria-labelledby={titleID}>
+      <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h1 id={titleID} className="text-lg font-semibold tracking-normal">{title}</h1>
@@ -60,15 +60,8 @@ export function MarketplaceOperationsHeader({
           <p className="max-w-3xl text-xs leading-5 text-muted-foreground">{description}</p>
           {health}
         </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:shrink-0">{actions}</div>
       </div>
-      {/*
-        Keep operational controls in their own full-width row.  The former
-        right-aligned layout made the Auto SML status, settings button and
-        switch compete for one narrow flex item as soon as the header copy or
-        shop name became long.  A wrapping action bar preserves their order
-        without allowing controls to overlap.
-      */}
-      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">{actions}</div>
       {children && <div className="mt-2">{children}</div>}
     </section>
   )

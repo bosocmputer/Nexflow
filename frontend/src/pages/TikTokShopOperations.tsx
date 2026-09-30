@@ -13,6 +13,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Settings2,
   Zap,
 } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
@@ -550,10 +551,6 @@ export default function TikTokShopOperations() {
     () => shopID === ALL ? undefined : autoSML?.settings.find((setting) => setting.shop_id === shopID),
     [autoSML?.settings, shopID],
   )
-  const enabledAutoSMLShopCount = autoSML?.settings.filter((setting) => (
-    setting.auto_bill_enabled && setting.sml_send_enabled && !setting.paused_reason
-  )).length ?? 0
-  const autoSMLShopCount = autoSML?.settings.length ?? 0
 
   const loadOperationsSummary = useCallback(async () => {
     const requestSequence = ++operationsRequestSequence.current
@@ -933,8 +930,6 @@ export default function TikTokShopOperations() {
               shopID={shopID}
               globalEnabled={Boolean(autoSML?.global_enabled)}
               isAdmin={userRole === 'admin'}
-              enabledShopCount={enabledAutoSMLShopCount}
-              shopCount={autoSMLShopCount}
               saving={autoSMLSaving}
               onRequestChange={requestAutomationUpdate}
               onConfigure={openAutoSMLSettings}
@@ -1351,8 +1346,6 @@ function TikTokAutoSMLControl({
   shopID,
   globalEnabled,
   isAdmin,
-  enabledShopCount,
-  shopCount,
   saving,
   onRequestChange,
   onConfigure,
@@ -1361,62 +1354,32 @@ function TikTokAutoSMLControl({
   shopID: string
   globalEnabled: boolean
   isAdmin: boolean
-  enabledShopCount: number
-  shopCount: number
   saving: boolean
   onRequestChange: (setting: TikTokAutoSMLSetting, enabled: boolean) => Promise<void>
   onConfigure: (setting: TikTokAutoSMLSetting) => void
 }) {
   const smlEnabled = Boolean(setting?.sml_send_enabled && setting?.auto_bill_enabled && !setting.paused_reason)
-  const paused = shopID !== ALL && Boolean(setting?.paused_reason)
-  const active = shopID === ALL ? enabledShopCount > 0 : smlEnabled
-  const status = shopID === ALL
-    ? tiktokAutoSMLAllShopsStatus(enabledShopCount, shopCount)
-    : tiktokAutoSMLCompactStatus(globalEnabled, setting)
-  const statusLabel = shopID === ALL
-    ? status
-    : `${status} · ${tiktokAutoSMLTriggerLabel(setting?.trigger_status)}`
   return (
-    <div className="flex min-h-8 max-w-full flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-background px-2.5 py-1">
+    <div className="flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[250px]">
       <div className="flex min-w-0 items-center gap-1.5">
         <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
       </div>
-      <Badge
-        variant="outline"
-        title={statusLabel}
-        className={cn(
-          'h-5 whitespace-nowrap px-1.5 text-[10px] font-medium',
-          paused && 'border-warning/40 bg-warning/10 text-warning',
-          active && !paused && 'border-accentStrong/40 bg-primary/10 text-accentStrong',
-        )}
-      >
-        {statusLabel}
-      </Badge>
       {shopID === ALL ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label="วิธีเปิดส่ง SML อัตโนมัติ"
-            >
-              <Info className="h-3.5 w-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>เลือกร้าน TikTok Shop หนึ่งร้านเพื่อเปิดหรือปิด</TooltipContent>
-        </Tooltip>
+        <span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">เลือกร้านก่อนจัดการ</span>
       ) : (
-        <div className="flex shrink-0 items-center gap-1.5 border-l border-border pl-2">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {isAdmin && (
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className="h-7 px-2 text-[11px]"
+              className="h-7 gap-1.5 border-primary/30 bg-primary/5 px-2.5 text-xs font-semibold text-primary hover:bg-primary/10 hover:text-primary"
               disabled={saving || !setting}
               onClick={() => setting && onConfigure(setting)}
+              title={`ตั้งค่าสถานะเริ่มส่ง: ${tiktokAutoSMLTriggerLabel(setting?.trigger_status)}`}
             >
+              <Settings2 className="h-3.5 w-3.5" />
               ตั้งค่า
             </Button>
           )}
@@ -1430,23 +1393,6 @@ function TikTokAutoSMLControl({
       )}
     </div>
   )
-}
-
-function tiktokAutoSMLAllShopsStatus(enabled: number, total: number) {
-  if (total === 0) return 'ไม่มีร้าน'
-  if (total === 1) return enabled === 1 ? 'เปิด' : 'ปิด'
-  if (enabled === 0) return 'ปิดทุกร้าน'
-  if (enabled === total) return `เปิด ${total.toLocaleString('th-TH')} ร้าน`
-  return `เปิด ${enabled.toLocaleString('th-TH')} จาก ${total.toLocaleString('th-TH')} ร้าน`
-}
-
-function tiktokAutoSMLCompactStatus(globalEnabled: boolean, setting?: TikTokAutoSMLSetting) {
-  if (!globalEnabled) return 'ปิดในระบบ'
-  if (!setting) return 'ไม่พบการตั้งค่าร้าน'
-  if (setting.paused_reason) return 'หยุดชั่วคราว'
-  if (!setting.auto_bill_enabled || !setting.sml_send_enabled) return 'ปิด'
-  if (setting.queued_count > 0) return `เปิด · รอ ${setting.queued_count.toLocaleString('th-TH')}`
-  return 'เปิด'
 }
 
 function TikTokDiagnosticsPanel({
