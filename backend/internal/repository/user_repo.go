@@ -43,16 +43,12 @@ var menuPermissionDefaults = []menuPermissionDefault{
 	{"tiktok_shop_stock", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"marketplace_stock", true, true, true, false, true, true, false, false, true, false, false, false},
 	{"line_notifications", true, true, true, true, false, false, false, false, false, false, false, false},
-	{"line_myshop", true, true, true, true, false, false, false, false, false, false, false, false},
-	{"setup", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"channel_defaults", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"shopee_connections", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"tiktok_shop_connections", true, true, false, false, false, false, false, false, false, false, false, false},
-	{"instance_settings", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"settings_users", true, true, true, true, false, false, false, false, false, false, false, false},
 	{"settings_menu_permissions", true, false, true, false, false, false, false, false, false, false, false, false},
 	{"logs", true, false, false, false, true, false, false, false, false, false, false, false},
-	{"old_data", true, false, true, true, false, false, false, false, false, false, false, false},
 }
 
 func NewUserRepo(db *sql.DB) *UserRepo {
@@ -346,6 +342,9 @@ func normalizeMenuPermissionsForRole(role string, in []models.UserMenuPermission
 		if role == "admin" && isAdminLockedMenuKey(out[i].MenuKey) {
 			out[i].CanView = true
 		}
+		if role != "admin" && isAdminOnlyMenuKey(out[i].MenuKey) {
+			out[i].CanView = false
+		}
 		if !out[i].CanView {
 			out[i].CanCreate = false
 			out[i].CanUpdate = false
@@ -389,6 +388,15 @@ func isKnownMenuKey(key string) bool {
 
 func isAdminLockedMenuKey(key string) bool {
 	return key == "settings_users" || key == "settings_menu_permissions"
+}
+
+func isAdminOnlyMenuKey(key string) bool {
+	switch key {
+	case "channel_defaults", "line_notifications", "shopee_connections", "tiktok_shop_connections", "settings_users", "settings_menu_permissions":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *UserRepo) CountAdmins(exceptID string) (int, error) {

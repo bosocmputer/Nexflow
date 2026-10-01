@@ -214,9 +214,7 @@ export default function Dashboard() {
                 <p className="mt-0.5 text-xs text-muted-foreground">SML ยังไม่พร้อม: {smlSetupIssue.status}</p>
               </div>
             </div>
-            <Button asChild size="sm">
-              <Link to="/setup">ตรวจ setup</Link>
-            </Button>
+            <span className="text-xs font-medium text-foreground">แจ้งทีมดูแลระบบให้ตรวจการเชื่อมต่อ SML</span>
           </CardContent>
         </Card>
       )}

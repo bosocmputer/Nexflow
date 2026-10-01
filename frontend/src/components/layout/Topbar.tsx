@@ -59,9 +59,7 @@ export default function Topbar({ onOpenPalette }: TopbarProps) {
             ? tiktokOperationsChip
           : location.pathname.startsWith('/dashboard')
             ? 'Operations Console'
-            : location.pathname.startsWith('/setup')
-              ? 'Setup readiness'
-              : 'Nexflow'
+            : 'Nexflow'
 
   return (
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-border/70 bg-background/90 px-3 backdrop-blur-md sm:px-4">

@@ -443,9 +443,7 @@ function ConfigMessage({ message }: { message: string }) {
           <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{message}</p>
         </div>
       </div>
-      <Button asChild size="sm" variant="outline">
-        <Link to="/settings/instance">ตั้งค่า</Link>
-      </Button>
+      <span className="text-xs font-medium text-foreground">แจ้งทีมดูแลระบบให้ตรวจการเชื่อมต่อ</span>
     </div>
   )
 }

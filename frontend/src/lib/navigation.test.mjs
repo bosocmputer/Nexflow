@@ -9,7 +9,7 @@ const vite = await createServer({
   server: { middlewareMode: true },
 })
 
-const { NAV_GROUPS, isNavItemActive } = await vite.ssrLoadModule('/src/lib/navigation.tsx')
+const { NAV_GROUPS, isNavItemActive, permissionNavGroups } = await vite.ssrLoadModule('/src/lib/navigation.tsx')
 
 test.after(async () => {
   await vite.close()
@@ -35,14 +35,37 @@ test('activates only one Shopee sidebar entry for the cancelled filter', () => {
   assert.equal(isNavItemActive(cancellations, '/shopee-operations', '?status_group=cancelled'), true)
 })
 
-test('places TikTok Shop read-only orders in orders and documents with its own permission', () => {
-  const group = NAV_GROUPS.find((item) => item.label === 'ออเดอร์และเอกสาร')
+test('places TikTok Shop orders in the orders group with its own permission', () => {
+  const group = NAV_GROUPS.find((item) => item.label === 'คำสั่งซื้อ')
   const orders = group?.items.find((item) => item.label === 'คำสั่งซื้อ TikTok Shop')
 
   assert.ok(orders)
   assert.equal(orders.menuKey, 'tiktok_shop_operations')
   assert.equal(orders.to, '/tiktok-shop-operations')
   assert.match(orders.hint, /Webhook/)
+})
+
+test('groups daily work before settings and excludes retired pages', () => {
+  assert.deepEqual(NAV_GROUPS.map((group) => group.label), [
+    'ภาพรวม', 'คำสั่งซื้อ', 'เอกสารและรับชำระ', 'นำเข้าข้อมูล',
+    'สินค้าและสต๊อก', 'ตั้งค่าช่องทาง', 'ดูแลระบบ',
+  ])
+  const items = NAV_GROUPS.flatMap((group) => group.items)
+  for (const retired of ['line_myshop', 'setup', 'instance_settings', 'old_data']) {
+    assert.equal(items.some((item) => item.menuKey === retired), false)
+  }
+  assert.ok(items.find((item) => item.menuKey === 'line_notifications'))
+  assert.equal(items.find((item) => item.menuKey === 'channel_defaults')?.adminOnly, true)
+})
+
+test('permission groups contain unique actionable scopes and no admin-only staff rows', () => {
+  const adminItems = permissionNavGroups('admin').flatMap((group) => group.items)
+  const staffItems = permissionNavGroups('staff').flatMap((group) => group.items)
+  assert.equal(new Set(adminItems.map((item) => item.menuKey)).size, adminItems.length)
+  assert.ok(adminItems.filter((item) => item.menuKey === 'shopee_operations').length <= 1)
+  assert.ok(adminItems.filter((item) => item.menuKey === 'tiktok_shop_operations').length <= 1)
+  assert.equal(staffItems.some((item) => item.adminOnly), false)
+  assert.ok(staffItems.some((item) => item.menuKey === 'logs'))
 })
 
 test('adds a TikTok cancellation shortcut that reuses the TikTok operations permission', () => {

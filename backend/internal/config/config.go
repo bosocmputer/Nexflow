@@ -272,7 +272,7 @@ func Load() *Config {
 		ShopeeRealtimeSyncIntervalSeconds:        getEnvInt("SHOPEE_REALTIME_SYNC_INTERVAL_SECONDS", 0),
 		ShopeeAutoSMLEnabled:                     getEnvBool("SHOPEE_AUTO_SML_ENABLED", false),
 		ShopeeAutoSMLCancelEnabled:               getEnvBool("SHOPEE_AUTO_SML_CANCEL_ENABLED", false),
-		LineMyShopEnabled:                        getEnvBool("ENABLE_LINE_MYSHOP", true),
+		LineMyShopEnabled:                        getEnvBool("ENABLE_LINE_MYSHOP", false),
 		PurchaseFlowEnabled:                      false,
 		BackupCronHour:                           getEnvInt("BACKUP_CRON_HOUR", 0),
 		DiskWarnPercent:                          getEnvInt("DISK_WARN_PERCENT", 90),

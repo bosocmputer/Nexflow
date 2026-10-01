@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
-import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_MARKETPLACE_STOCK, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_STOCK, ENABLE_TIKTOK_SHOP_FINANCE } from './lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_MARKETPLACE_STOCK, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_STOCK, ENABLE_TIKTOK_SHOP_FINANCE } from './lib/featureFlags'
 import { canViewMenu, firstVisibleNavPath } from './lib/navigation'
 
 const Login = lazy(() => import('./pages/Login'))
@@ -19,18 +19,14 @@ const LazadaImport = lazy(() => import('./pages/LazadaImport'))
 const TikTokImport = lazy(() => import('./pages/TikTokImport'))
 const TikTokShopConnections = lazy(() => import('./pages/TikTokShopConnections'))
 const TikTokShopOperations = lazy(() => import('./pages/TikTokShopOperations'))
-const OldDataSettings = lazy(() => import('./pages/OldDataSettings'))
 const Logs = lazy(() => import('./pages/Logs'))
 const BulkSendJobs = lazy(() => import('./pages/BulkSendJobs'))
 const CatalogSettings = lazy(() => import('./pages/CatalogSettings'))
 const ChannelDefaults = lazy(() => import('./pages/ChannelDefaults'))
-const InstanceSettings = lazy(() => import('./pages/InstanceSettings'))
 const UserSettings = lazy(() => import('./pages/UserSettings'))
 const MenuPermissions = lazy(() => import('./pages/MenuPermissions'))
 const LineNotifications = lazy(() => import('./pages/LineNotifications'))
-const LineMyShopSettings = lazy(() => import('./pages/LineMyShopSettings'))
 const Showcase = lazy(() => import('./pages/Showcase'))
-const SetupCenter = lazy(() => import('./pages/SetupCenter'))
 const ShopeeStock = lazy(() => import('./pages/ShopeeStock'))
 const TikTokShopStock = lazy(() => import('./pages/TikTokShopStock'))
 const MarketplaceStock = lazy(() => import('./pages/MarketplaceStock'))
@@ -115,7 +111,7 @@ export default function App() {
           }
         >
           <Route index element={<IndexRedirect />} />
-          <Route path="setup" element={<RequireMenu menuKey="setup"><SetupCenter /></RequireMenu>} />
+          <Route path="setup" element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<RequireMenu menuKey="dashboard"><Dashboard /></RequireMenu>} />
           <Route path="nextstep-marketplace" element={<RequireMenu menuKey="nextstep_marketplace"><NextStepMarketplace /></RequireMenu>} />
           <Route path="bills" element={<Navigate to="/dashboard" replace />} />
@@ -136,20 +132,20 @@ export default function App() {
           <Route path="import/tiktok" element={ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS ? <RequireMenu menuKey="import_tiktok"><TikTokImport /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="mappings" element={<Navigate to="/marketplace-aliases" replace />} />
           <Route path="marketplace-aliases" element={ENABLE_SALES_ORDERS ? <RequireMenu menuKey="marketplace_aliases"><MarketplaceAliases /></RequireMenu> : <Navigate to="/dashboard" replace />} />
-          <Route path="settings/old-data" element={<RequireMenu menuKey="old_data"><OldDataSettings /></RequireMenu>} />
-          <Route path="settings" element={<Navigate to="/settings/instance" replace />} />
+          <Route path="settings/old-data" element={<Navigate to="/dashboard" replace />} />
+          <Route path="settings" element={<Navigate to="/settings/channels" replace />} />
           <Route path="logs" element={<RequireMenu menuKey="logs"><Logs /></RequireMenu>} />
           <Route path="bulk-send-jobs" element={<RequireMenu menuKey="bulk_send_jobs"><BulkSendJobs /></RequireMenu>} />
           <Route path="settings/catalog" element={<RequireMenu menuKey="catalog"><CatalogSettings /></RequireMenu>} />
           <Route path="settings/email" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/shopee-connections" element={<RequireAdmin><RequireMenu menuKey="shopee_connections"><ShopeeConnections /></RequireMenu></RequireAdmin>} />
-          <Route path="settings/tiktok-shop" element={ENABLE_TIKTOK_SHOP_API ? <RequireAdmin><RequireMenu menuKey="tiktok_shop_connections"><TikTokShopConnections /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
+          <Route path="settings/tiktok-shop" element={ENABLE_TIKTOK_SHOP_API ? <RequireAdmin><RequireMenu menuKey="tiktok_shop_connections"><TikTokShopConnections /></RequireMenu></RequireAdmin> : <Navigate to="/dashboard" replace />} />
           <Route path="settings/marketplace-stock" element={ENABLE_MARKETPLACE_STOCK ? <RequireMenu menuKey="marketplace_stock"><MarketplaceStock /></RequireMenu> : <Navigate to="/settings/shopee-stock" replace />} />
           <Route path="settings/shopee-stock" element={ENABLE_MARKETPLACE_STOCK ? <Navigate to="/settings/marketplace-stock" replace /> : <RequireMenu menuKey="shopee_stock"><ShopeeStock /></RequireMenu>} />
           <Route path="settings/tiktok-shop-stock" element={ENABLE_MARKETPLACE_STOCK ? <Navigate to="/settings/marketplace-stock" replace /> : ENABLE_TIKTOK_SHOP_STOCK ? <RequireMenu menuKey="tiktok_shop_stock"><TikTokShopStock /></RequireMenu> : <Navigate to="/settings/tiktok-shop" replace />} />
-          <Route path="settings/line-myshop" element={ENABLE_LINE_MYSHOP ? <RequireAdmin><RequireMenu menuKey="line_myshop"><LineMyShopSettings /></RequireMenu></RequireAdmin> : <Navigate to="/settings/instance" replace />} />
-          <Route path="settings/channels" element={<RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu>} />
-          <Route path="settings/instance" element={<RequireAdmin><RequireMenu menuKey="instance_settings"><InstanceSettings /></RequireMenu></RequireAdmin>} />
+          <Route path="settings/line-myshop" element={<Navigate to="/dashboard" replace />} />
+          <Route path="settings/channels" element={<RequireAdmin><RequireMenu menuKey="channel_defaults"><ChannelDefaults /></RequireMenu></RequireAdmin>} />
+          <Route path="settings/instance" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/ai-usage" element={<Navigate to="/dashboard" replace />} />
           <Route path="settings/users" element={<RequireAdmin><RequireMenu menuKey="settings_users"><UserSettings /></RequireMenu></RequireAdmin>} />
           <Route path="settings/menu-permissions" element={<RequireAdmin><RequireMenu menuKey="settings_menu_permissions"><MenuPermissions /></RequireMenu></RequireAdmin>} />

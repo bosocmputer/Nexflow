@@ -135,7 +135,9 @@ Post-deploy smoke for the UX redesign:
 
 - Login.
 - `/dashboard` first screen.
-- `/setup` still visible and actionable.
+- Sidebar shows the current groups: overview, orders, documents/settlements,
+  imports, stock, channel settings, and administration. Retired DEV/MyShop
+  pages are absent from Sidebar and command navigation.
 - `/shopee-operations` loads daily Shopee orders; open one Timeline drawer and
   verify order summary/payment card renders without calling Shopee during page load.
 - `/import/shopee` shows Open API status and active shop.
@@ -143,10 +145,12 @@ Post-deploy smoke for the UX redesign:
 - Open one sent bill detail and verify the route badge says `ขาย -> ขายสินค้าและบริการ`.
 - `/settings/line-notifications` loads senders/recipients, recent deliveries,
   and the Shopee rich Flex fallback sample.
-- `/settings/line-myshop` loads empty/account state, can show/copy generated
-  webhook URLs, and `/settings/channels` shows `LINE MyShop / sale` routing when
-  MyShop is enabled.
-- `/logs`, `/settings/instance`, `/settings/channels`, `/settings/email`, `/settings/catalog`.
+- `/settings/menu-permissions` shows each Shopee/TikTok scope once (including
+  its cancellation shortcut); staff cannot be granted admin-only settings.
+- Old `/setup`, `/settings/instance`, `/settings/old-data`, and
+  `/settings/line-myshop` links redirect to `/dashboard`.
+- `/logs`, `/settings/channels`, `/settings/catalog` remain reachable with the
+  appropriate role/permission.
 - Do not confirm imports, send SML, delete/purge, reset data, or save settings during visual QA unless explicitly approved.
 
 ---
@@ -247,7 +251,6 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_SHOPEE_REALTIME_OPS=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
-VITE_ENABLE_LINE_MYSHOP=true
 VITE_ENABLE_CHAT=false          # LINE chat disabled
 
 ENABLE_SHOPEE_REALTIME_OPS=true
@@ -256,7 +259,7 @@ ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
-ENABLE_LINE_MYSHOP=true
+ENABLE_LINE_MYSHOP=false         # retired user workflow; preserve historical data
 ```
 
 `ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true` allows staff/admin to confirm creation
@@ -275,26 +278,13 @@ escrow calls; existing order and settlement notifications continue with fallback
 These three rich LINE/escrow flags default to `true` in backend config; add
 explicit `false` values only for rollback.
 
-`ENABLE_LINE_MYSHOP=true` enables the backend webhook/settings routes for LINE
-MyShop, and `VITE_ENABLE_LINE_MYSHOP=true` shows the admin UI. Both default to
-enabled in code; set either explicitly to `false` for rollback.
-
-LINE MyShop production setup after deploy:
-
-- Open `/settings/line-myshop`, add one row per OA Plus / MyShop account, and
-  use the field guidance to locate the OA Plus API key/shop identifiers. Edit
-  mode can clear a saved webhook secret to return to API key based signature
-  verification. Copy the generated webhook URL after saving.
-- Register that webhook URL in OA Plus for the matching account. The public route
-  is `/webhook/line-myshop/:connection_id` behind the fixed ngrok domain.
-- Open `/settings/channels` and configure `LINE MyShop / sale` before trying to
-  send a MyShop bill to SML. The migration does not seed a default route.
-- Use the per-account `ซิงก์ย้อนหลัง 48 ชม.` button only as a bounded reconciliation or
-  backfill action after confirming the API key. It calls LINE SHOPPING API,
-  fetches order detail, and may create local bills plus LINE notifications.
-- Existing `/settings/line-notifications` recipients will receive MyShop alerts
-  when enabled by recipient filters. MyShop alerts are PII-redacted and use
-  `source=line_myshop`, separate from Shopee Flex notifications.
+LINE MyShop is retired from the user UI as of 2026-10-01. The old page now
+redirects to the dashboard; `VITE_ENABLE_LINE_MYSHOP` has no UI effect. The
+backend gate defaults to `false`, but an explicit existing tenant value of
+`true` still enables compatibility routes. Before deploying, inspect the
+tenant's effective runtime flag and stored connections, then disable the gate
+only after confirming no active ingestion depends on it. Do not delete MyShop
+bills, snapshots, routes, or audit history as part of this navigation cleanup.
 
 ---
 

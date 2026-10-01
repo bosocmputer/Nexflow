@@ -28,9 +28,6 @@ export const ENABLE_TIKTOK_SHOP_STOCK =
 export const ENABLE_MARKETPLACE_STOCK =
   import.meta.env.VITE_ENABLE_MARKETPLACE_STOCK === 'true'
 
-export const ENABLE_LINE_MYSHOP =
-  import.meta.env.VITE_ENABLE_LINE_MYSHOP !== 'false'
-
 export const ENABLE_CHAT = false
 
 export const ENABLE_REMARK2 =

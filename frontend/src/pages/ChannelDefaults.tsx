@@ -21,7 +21,7 @@ import {
 import { DataTable } from '@/components/common/DataTable'
 import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
-import { ENABLE_LAZADA_EXCEL, ENABLE_LINE_MYSHOP, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_FINANCE } from '@/lib/featureFlags'
+import { ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_FINANCE } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
@@ -55,9 +55,6 @@ const SALES_CHANNEL_SLOTS: Array<{
     : []),
   ...(ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'tiktok' as ChannelKey, bill_type: 'sale' as const }]
-    : []),
-  ...(ENABLE_LINE_MYSHOP && ENABLE_SALES_ORDERS
-    ? [{ channel: 'line_myshop' as ChannelKey, bill_type: 'sale' as const }]
     : []),
   ...(ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS
     ? [{ channel: 'shopee_settlement' as ChannelKey, bill_type: 'ar_receipt' as const }]

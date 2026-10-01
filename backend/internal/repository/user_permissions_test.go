@@ -26,8 +26,10 @@ func TestDefaultMenuPermissionsForRole(t *testing.T) {
 	if permission := permissionForKey(admin, "tiktok_shop_stock"); !permission.CanView || !permission.CanUpdate {
 		t.Fatalf("admin should view and update TikTok Shop stock workspace: %+v", permission)
 	}
-	if !permissionForKey(admin, "old_data").CanDelete {
-		t.Fatal("admin delete default should be true for old_data")
+	for _, key := range []string{"line_myshop", "setup", "instance_settings", "old_data"} {
+		if permissionForKey(admin, key).MenuKey != "" {
+			t.Fatalf("retired menu %s should not be granted to new users", key)
+		}
 	}
 
 	staff := defaultMenuPermissionsForRole("staff")
@@ -70,6 +72,26 @@ func TestNormalizeMenuPermissionsForRole(t *testing.T) {
 	}
 	if permissionForKey(perms, "unknown_menu").MenuKey != "" {
 		t.Fatal("unknown menu key should be ignored")
+	}
+}
+
+func TestNormalizeMenuPermissionsRejectsRetiredAndAdminOnlyStaffGrants(t *testing.T) {
+	perms := normalizeMenuPermissionsForRole("staff", []models.UserMenuPermission{
+		{MenuKey: "line_myshop", CanView: true},
+		{MenuKey: "old_data", CanView: true},
+		{MenuKey: "channel_defaults", CanView: true, CanUpdate: true},
+		{MenuKey: "line_notifications", CanView: true},
+	})
+	for _, key := range []string{"line_myshop", "old_data"} {
+		if permissionForKey(perms, key).MenuKey != "" {
+			t.Fatalf("retired menu %s should be ignored", key)
+		}
+	}
+	for _, key := range []string{"channel_defaults", "line_notifications"} {
+		got := permissionForKey(perms, key)
+		if got.CanView || got.CanCreate || got.CanUpdate || got.CanDelete {
+			t.Fatalf("staff must not gain admin-only menu %s: %+v", key, got)
+		}
 	}
 }
 

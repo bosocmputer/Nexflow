@@ -1,6 +1,19 @@
 # Nexflow — Current State
 
-Updated: 2026-09-28
+Updated: 2026-10-01
+
+Navigation cleanup (local code, not a production deployment record): the user
+sidebar now groups daily orders, documents/settlements, imports, stock, channel
+settings, and administration. `/setup`, `/settings/instance`,
+`/settings/old-data`, and `/settings/line-myshop` redirect to the dashboard.
+Their former menu-permission scopes are no longer presented or granted by the
+current permission model. LINE MyShop has been retired from the user UI; its
+historical bills, labels, audit records, schemas, and compatibility handlers
+remain intact. New backend deployments default `ENABLE_LINE_MYSHOP=false`, but
+an existing explicit `true` runtime setting can still enable the legacy
+webhook/API. Audit each tenant's runtime flag and connections before changing
+it; this change does not delete or migrate tenant data. LINE order alerts via
+`/settings/line-notifications` are independent and remain available.
 
 Production capability mode is **sales-only and deterministic**. AI, OCR,
 embedding, Daily Insight, IMAP ingestion, LINE chat, and purchase workflows are
@@ -206,7 +219,6 @@ VITE_ENABLE_SHOPEE_EXCEL=true
 VITE_ENABLE_LAZADA_EXCEL=true
 VITE_ENABLE_TIKTOK_EXCEL=true
 VITE_ENABLE_SHOPEE_REALTIME_OPS=true
-VITE_ENABLE_LINE_MYSHOP=true
 VITE_ENABLE_CHAT=false
 
 ENABLE_SHOPEE_REALTIME_OPS=true
@@ -215,7 +227,7 @@ ENABLE_SHOPEE_SML_CANCEL_DOCUMENTS=true
 ENABLE_SHOPEE_RICH_LINE_FLEX=true
 ENABLE_SHOPEE_SETTLEMENT_LINE_ALERTS=true
 ENABLE_SHOPEE_ORDER_ESCROW_ENRICHMENT=true
-ENABLE_LINE_MYSHOP=true
+ENABLE_LINE_MYSHOP=false
 SHOPEE_AUTO_SML_ENABLED=false
 SHOPEE_AUTO_SML_CANCEL_ENABLED=false
 Marketplace release gates (tenant-specific):
@@ -230,8 +242,9 @@ ploy:    grouped=true,  unit_catalog=false, conversion=off,    ledger=false, set
 may be absent from `.env` while still active; set them explicitly to `false` for
 rollback.
 
-`ENABLE_LINE_MYSHOP` and `VITE_ENABLE_LINE_MYSHOP` also default to enabled. Set
-either to `false` to hide or disable the LINE MyShop integration during rollback.
+The retired LINE MyShop page is no longer built into navigation. The backend
+`ENABLE_LINE_MYSHOP` default is `false`; an explicit tenant value still takes
+precedence until an audited runtime change is made.
 
 `SHOPEE_AUTO_SML_ENABLED` defaults to `false`. A tenant-level value of `true`
 only starts the durable worker; each shop remains disabled until an admin passes
@@ -300,7 +313,10 @@ sml-api-bybos:  http://172.17.0.1:8200  x-tenant from resolved tenant runtime
   `Semicolon Constructions` / `1029622928`.
 - Review-first import flow — confirm writes local bills, SML send via Retry
 
-## LINE MyShop / LINE SHOPPING API
+## LINE MyShop / LINE SHOPPING API (historical compatibility only)
+
+The following describes the previous integration for audit/recovery. Its UI is
+retired as of 2026-10-01; do not use these paths for current user setup.
 
 - Source/channel key: `line_myshop`. Do not overload `line`, which remains LINE
   OA chat/notification source.

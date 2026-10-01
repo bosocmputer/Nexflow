@@ -17,7 +17,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useAuth } from '@/hooks/useAuth'
-import { NAV_GROUPS, permissionForMenu } from '@/lib/navigation'
+import { permissionForMenu, permissionNavGroups } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { NavGroup, NavItem } from '@/lib/navigation'
 import type { User, UserMenuPermission } from '@/types'
@@ -25,20 +25,12 @@ import type { User, UserMenuPermission } from '@/types'
 type PermissionDraft = Record<string, UserMenuPermission>
 
 const ADMIN_LOCKED_MENU_KEYS = new Set(['settings_users', 'settings_menu_permissions'])
-const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
 const ROLE_LABEL: Record<User['role'], string> = {
   admin: 'ผู้ดูแลระบบ',
   staff: 'พนักงาน',
   viewer: 'ดูข้อมูลอย่างเดียว',
 }
-
-const MENU_GROUPS = NAV_GROUPS
-  .map((group) => ({
-    ...group,
-    items: group.items.filter((item) => item.enabled !== false && (!item.minPhase || PHASE >= item.minPhase)),
-  }))
-  .filter((group) => group.items.length > 0)
 
 export default function MenuPermissions() {
   const { user: currentUser, setUser } = useAuth()
@@ -155,7 +147,7 @@ export default function MenuPermissions() {
     <div className="space-y-5 p-6">
       <PageHeader
         title="สิทธิ์เมนู"
-        description="เลือก user แล้วกำหนดว่าแต่ละคนเห็นเมนูไหนใน Sidebar, Command Palette และ URL ตรง"
+        description="กำหนดหน้าใช้งานของแต่ละคน เมนูผู้ดูแลระบบจะไม่เปิดให้พนักงานหรือผู้ดูข้อมูล"
         actions={
           <Button type="button" onClick={save} disabled={!selectedUser || saving || !selectedChanged}>
             <Save className="mr-2 h-4 w-4" />
@@ -227,7 +219,7 @@ export default function MenuPermissions() {
 
             <div className="rounded-md border border-info/20 bg-info/[0.04] px-3 py-2 text-xs leading-5 text-muted-foreground">
               ตารางนี้แสดงเฉพาะสิทธิ์ <span className="font-medium text-foreground">เข้าเมนู</span> ก่อน
-              ส่วนสิทธิ์ เพิ่ม แก้ไข ลบ ยังเก็บอยู่ในระบบสำหรับ phase ถัดไป แต่ไม่แสดงให้ user สับสนในรอบนี้
+              คิวยกเลิกใช้สิทธิ์เดียวกับคำสั่งซื้อของช่องทางนั้น ส่วนสิทธิ์เพิ่ม แก้ไข ลบ และการเรียก API ยังตรวจแยกตามบทบาทผู้ใช้
             </div>
 
             {selectedUser ? (
@@ -260,6 +252,7 @@ function PermissionTable({
   onMenuChange: (menuKey: string, checked: boolean) => void
   onGroupChange: (group: NavGroup, checked: boolean) => void
 }) {
+  const groups = permissionNavGroups(user.role)
   return (
     <div className="overflow-hidden rounded-lg border">
       <div className="max-h-[calc(100vh-330px)] overflow-auto">
@@ -271,7 +264,7 @@ function PermissionTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {MENU_GROUPS.map((group) => (
+            {groups.map((group) => (
               <PermissionGroupRows
                 key={group.label}
                 group={group}
@@ -367,16 +360,9 @@ function PermissionRow({
 }
 
 function permissionsForUser(user: User): UserMenuPermission[] {
-  const seen = new Set<string>()
-  const permissions: UserMenuPermission[] = []
-  for (const group of MENU_GROUPS) {
-    for (const item of group.items) {
-      if (seen.has(item.menuKey)) continue
-      seen.add(item.menuKey)
-      permissions.push(permissionForMenu(user, item.menuKey) ?? emptyPermission(item.menuKey))
-    }
-  }
-  return permissions
+  return permissionNavGroups(user.role).flatMap((group) => group.items.map((item) => (
+    permissionForMenu(user, item.menuKey) ?? emptyPermission(item.menuKey)
+  )))
 }
 
 function toPermissionDraft(permissions: UserMenuPermission[]): PermissionDraft {

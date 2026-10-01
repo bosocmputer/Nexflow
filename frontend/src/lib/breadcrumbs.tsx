@@ -13,46 +13,45 @@ interface BreadcrumbDef {
 }
 
 const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
-  { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม' }, { label: 'ยอดขายตามแพลตฟอร์ม' }] },
-  { pattern: '/nextstep-marketplace', crumbs: [{ label: 'ภาพรวมแพลตฟอร์ม', href: '/dashboard' }, { label: 'NextStep Marketplace' }] },
-  { pattern: '/setup', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'สถานะพร้อมใช้งาน' }] },
-  { pattern: '/sales-orders', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย' }] },
-  { pattern: '/sale-invoices', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ขายสินค้าและบริการ' }] },
+  { pattern: '/dashboard', crumbs: [{ label: 'ภาพรวม' }, { label: 'ยอดขายตามแพลตฟอร์ม' }] },
+  { pattern: '/nextstep-marketplace', crumbs: [{ label: 'คำสั่งซื้อ' }, { label: 'NextStep Marketplace' }] },
+  { pattern: '/sales-orders', crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'ใบสั่งขาย' }] },
+  { pattern: '/sale-invoices', crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'ขายสินค้าและบริการ' }] },
   {
     pattern: '/sales-orders/:id',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ใบสั่งขาย', href: '/sales-orders' }, { label: ':id', dynamic: true }],
+    crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'ใบสั่งขาย', href: '/sales-orders' }, { label: ':id', dynamic: true }],
   },
   {
     pattern: '/sale-invoices/:id',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'ขายสินค้าและบริการ', href: '/sale-invoices' }, { label: ':id', dynamic: true }],
+    crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'ขายสินค้าและบริการ', href: '/sale-invoices' }, { label: ':id', dynamic: true }],
   },
   {
     pattern: '/import',
-    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'นำเข้า Marketplace' }],
+    crumbs: [{ label: 'นำเข้าข้อมูล' }, { label: 'นำเข้า Marketplace' }],
   },
   {
     pattern: '/import/lazada',
-    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'Lazada Excel' }],
+    crumbs: [{ label: 'นำเข้าข้อมูล' }, { label: 'Lazada Excel' }],
   },
   {
     pattern: '/import/shopee',
-    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'นำเข้า Shopee' }],
+    crumbs: [{ label: 'นำเข้าข้อมูล' }, { label: 'นำเข้า Shopee' }],
   },
   {
     pattern: '/shopee-operations',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'คำสั่งซื้อ Shopee' }],
+    crumbs: [{ label: 'คำสั่งซื้อ' }, { label: 'คำสั่งซื้อ Shopee' }],
   },
   {
     pattern: '/tiktok-shop-operations',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'คำสั่งซื้อ TikTok Shop' }],
+    crumbs: [{ label: 'คำสั่งซื้อ' }, { label: 'คำสั่งซื้อ TikTok Shop' }],
   },
   {
     pattern: '/marketplace-operations',
-    crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'คำสั่งซื้อ Marketplace' }],
+    crumbs: [{ label: 'คำสั่งซื้อ' }, { label: 'คำสั่งซื้อ Marketplace' }],
   },
   {
     pattern: '/import/tiktok',
-    crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'TikTok Excel' }],
+    crumbs: [{ label: 'นำเข้าข้อมูล' }, { label: 'TikTok Excel' }],
   },
   {
     pattern: '/messages',
@@ -63,22 +62,22 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     pattern: '/marketplace-aliases',
     crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'จับคู่สินค้า Marketplace' }],
   },
-  { pattern: '/settings', crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ตั้งค่าทั่วไป' }] },
+  { pattern: '/settings', crumbs: [{ label: 'ตั้งค่าช่องทาง' }, { label: 'เส้นทางเอกสาร SML' }] },
   {
     pattern: '/settings/catalog',
     crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'รายการสินค้า SML' }],
   },
   {
     pattern: '/settings/channels',
-    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'เส้นทางเอกสาร SML' }],
+    crumbs: [{ label: 'ตั้งค่าช่องทาง' }, { label: 'เส้นทางเอกสาร SML' }],
   },
   {
     pattern: '/settings/shopee-connections',
-    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ร้าน Shopee' }],
+    crumbs: [{ label: 'ตั้งค่าช่องทาง' }, { label: 'ร้าน Shopee' }],
   },
   {
     pattern: '/settings/tiktok-shop',
-    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ร้าน TikTok Shop' }],
+    crumbs: [{ label: 'ตั้งค่าช่องทาง' }, { label: 'ร้าน TikTok Shop' }],
   },
   {
     pattern: '/settings/shopee-stock',
@@ -93,20 +92,12 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'สินค้าและสต๊อก' }, { label: 'ควบคุมสต๊อก Marketplace' }],
   },
   {
-    pattern: '/settings/instance',
-    crumbs: [{ label: 'เชื่อมต่อแพลตฟอร์ม' }, { label: 'ข้อมูลร้านและการเชื่อมต่อ' }],
-  },
-  {
     pattern: '/settings/line-notifications',
-    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'LINE แจ้งเตือน' }],
-  },
-  {
-    pattern: '/settings/line-myshop',
-    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'LINE MyShop' }],
+    crumbs: [{ label: 'ตั้งค่าช่องทาง' }, { label: 'LINE แจ้งเตือน' }],
   },
   {
     pattern: '/settings/line-oa',
-    crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'บัญชี LINE OA' }],
+    crumbs: [{ label: 'ตั้งค่าช่องทาง' }, { label: 'บัญชี LINE OA' }],
   },
   {
     pattern: '/settings/quick-replies',
@@ -117,17 +108,17 @@ const ROUTES: Array<{ pattern: string; crumbs: BreadcrumbDef[] }> = [
     crumbs: [{ label: 'ลูกค้าและ LINE' }, { label: 'ป้ายลูกค้า' }],
   },
   {
-    pattern: '/settings/old-data',
-    crumbs: [{ label: 'ดูแลระบบ' }, { label: 'จัดการข้อมูลเก่า' }],
-  },
-  {
     pattern: '/settings/users',
     crumbs: [{ label: 'ดูแลระบบ' }, { label: 'ผู้ใช้ระบบ' }],
   },
+  {
+    pattern: '/settings/menu-permissions',
+    crumbs: [{ label: 'ดูแลระบบ' }, { label: 'สิทธิ์เมนู' }],
+  },
   { pattern: '/logs', crumbs: [{ label: 'ดูแลระบบ' }, { label: 'ประวัติการทำงาน' }] },
-  { pattern: '/bulk-send-jobs', crumbs: [{ label: 'ออเดอร์และเอกสาร' }, { label: 'งานส่งเข้า SML' }] },
-  { pattern: '/shopee-settlements', crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'รับชำระ Shopee' }] },
-  { pattern: '/tiktok-settlements', crumbs: [{ label: 'นำเข้าและรับชำระ' }, { label: 'รับชำระ TikTok Shop' }] },
+  { pattern: '/bulk-send-jobs', crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'งานส่งเข้า SML' }] },
+  { pattern: '/shopee-settlements', crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'รับชำระ Shopee' }] },
+  { pattern: '/tiktok-settlements', crumbs: [{ label: 'เอกสารและรับชำระ' }, { label: 'รับชำระ TikTok Shop' }] },
 ]
 
 interface CtxValue {

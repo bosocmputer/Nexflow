@@ -1,7 +1,5 @@
 import {
-  Archive,
   Building2,
-  ClipboardCheck,
   Database,
   LayoutDashboard,
   Bell,
@@ -11,7 +9,6 @@ import {
   RotateCcw,
   ScrollText,
   Send,
-  Settings2,
   ShieldCheck,
   ShoppingBag,
   PackageCheck,
@@ -24,7 +21,6 @@ import {
 
 import {
   ENABLE_LAZADA_EXCEL,
-  ENABLE_LINE_MYSHOP,
   ENABLE_MARKETPLACE_STOCK,
   ENABLE_SALES_ORDERS,
   ENABLE_SHOPEE_EXCEL,
@@ -90,38 +86,41 @@ const VIEWER_DEFAULT_MENU_KEYS = new Set([
   'catalog',
 ])
 
-// Ordered as an online platform operations console: overview, orders,
-// import/payment repair, product data, customer channels, connections, audit.
-// Sidebar and command palette consume this same source so new pages do not
-// silently disappear from quick navigation.
+// Daily work first. Sidebar, command palette, and permission settings share
+// this source so a page cannot silently disappear from one navigation surface.
 export const NAV_GROUPS: NavGroup[] = [
   {
-    label: 'ภาพรวมแพลตฟอร์ม',
+    label: 'ภาพรวม',
     items: [
       { menuKey: 'dashboard', to: '/dashboard', label: 'ยอดขายตามแพลตฟอร์ม', icon: LayoutDashboard, hint: 'ยอดเอกสารขาย Shopee, Lazada, TikTok และ NextStep Marketplace' },
+    ],
+  },
+  {
+    label: 'คำสั่งซื้อ',
+    items: [
+      { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'คิวงานแบบเรียลไทม์จาก TikTok Webhook พร้อมซิงก์สำรอง', enabled: ENABLE_TIKTOK_SHOP_API },
+      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations?status_group=cancelled', label: 'เอกสารยกเลิก TikTok Shop', icon: RotateCcw, hint: 'ออเดอร์ TikTok ที่ยกเลิกและสถานะใบขายเดิมใน SML', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'nextstep_marketplace', to: '/nextstep-marketplace', label: 'NextStep Marketplace', icon: Store, hasBadge: 'nextstep_marketplace', hint: 'ออเดอร์ MQT จาก SML marketplace' },
     ],
   },
   {
-    label: 'ออเดอร์และเอกสาร',
+    label: 'เอกสารและรับชำระ',
     items: [
-      { menuKey: 'shopee_operations', to: '/shopee-operations', label: 'คำสั่งซื้อ Shopee', icon: RadioTower, hasBadge: 'shopee_realtime', hint: 'คิวงานประจำวันจาก Shopee Push/Sync', enabled: ENABLE_SHOPEE_REALTIME_OPS },
-      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations', label: 'คำสั่งซื้อ TikTok Shop', icon: ListOrdered, hint: 'คิวงานแบบเรียลไทม์จาก TikTok Webhook พร้อมซิงก์สำรอง', enabled: ENABLE_TIKTOK_SHOP_API },
-      { menuKey: 'shopee_operations', to: '/shopee-operations?status_group=cancelled', label: 'เอกสารยกเลิก/รับคืน Shopee', icon: RotateCcw, hint: 'Order ที่ยกเลิกและเอกสาร SML หลังยกเลิก', enabled: ENABLE_SHOPEE_REALTIME_OPS },
-      { menuKey: 'tiktok_shop_operations', to: '/tiktok-shop-operations?status_group=cancelled', label: 'เอกสารยกเลิก TikTok Shop', icon: RotateCcw, hint: 'ออเดอร์ TikTok ที่ยกเลิกและสถานะใบขายเดิมใน SML', enabled: ENABLE_TIKTOK_SHOP_API },
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
       { menuKey: 'bulk_send_jobs', to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },
+      { menuKey: 'shopee_settlements', to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },
+      { menuKey: 'tiktok_settlements', to: '/tiktok-settlements', label: 'รับชำระ TikTok Shop', icon: ReceiptText, hint: 'Statement และรับชำระหนี้ที่ตรวจแล้ว', enabled: ENABLE_TIKTOK_SHOP_FINANCE && ENABLE_SALES_ORDERS },
     ],
   },
   {
-    label: 'นำเข้าและรับชำระ',
+    label: 'นำเข้าข้อมูล',
     items: [
       { menuKey: 'import_shopee', to: '/import/shopee', label: 'นำเข้า Shopee', icon: Upload, hint: 'นำเข้าจาก Shopee Excel สำหรับงานย้อนหลังหรือรายการตกหล่น', enabled: ENABLE_SHOPEE_EXCEL },
       { menuKey: 'import_lazada', to: '/import/lazada', label: 'นำเข้า Lazada', icon: Upload, hint: 'นำเข้าจาก Lazada Excel', enabled: ENABLE_LAZADA_EXCEL && ENABLE_SALES_ORDERS },
       { menuKey: 'import_tiktok', to: '/import/tiktok', label: 'นำเข้า TikTok', icon: Upload, hint: 'นำเข้าจาก TikTok Excel/CSV', enabled: ENABLE_TIKTOK_EXCEL && ENABLE_SALES_ORDERS },
-      { menuKey: 'shopee_settlements', to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },
-      { menuKey: 'tiktok_settlements', to: '/tiktok-settlements', label: 'รับชำระ TikTok Shop', icon: ReceiptText, hint: 'Statement และรับชำระหนี้ที่ตรวจแล้ว', enabled: ENABLE_TIKTOK_SHOP_FINANCE && ENABLE_SALES_ORDERS },
     ],
   },
   {
@@ -135,20 +134,12 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'ลูกค้าและ LINE',
+    label: 'ตั้งค่าช่องทาง',
     items: [
-      { menuKey: 'line_notifications', to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จาก Shopee, TikTok Shop และ NextStep Marketplace', adminOnly: true },
-      { menuKey: 'line_myshop', to: '/settings/line-myshop', label: 'LINE MyShop', icon: ShoppingBag, hint: 'บัญชี OA Plus และ webhook orders', enabled: ENABLE_LINE_MYSHOP, adminOnly: true },
-    ],
-  },
-  {
-    label: 'เชื่อมต่อแพลตฟอร์ม',
-    items: [
-      { menuKey: 'setup', to: '/setup', label: 'สถานะพร้อมใช้งาน', icon: ClipboardCheck, hint: 'ตรวจความพร้อมร้าน' },
-      { menuKey: 'channel_defaults', to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'Document Routing' },
+      { menuKey: 'channel_defaults', to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'กำหนดเอกสาร SML แยกตามช่องทาง', adminOnly: true },
       { menuKey: 'shopee_connections', to: '/settings/shopee-connections', label: 'ร้าน Shopee', icon: Store, hint: 'เชื่อมต่อและจัดการร้าน Shopee', adminOnly: true, enabled: ENABLE_SHOPEE_EXCEL },
       { menuKey: 'tiktok_shop_connections', to: '/settings/tiktok-shop', label: 'ร้าน TikTok Shop', icon: Store, hint: 'เชื่อมต่อร้านผ่าน TikTok Shop Open API', adminOnly: true, enabled: ENABLE_TIKTOK_SHOP_API },
-      { menuKey: 'instance_settings', to: '/settings/instance', label: 'ข้อมูลร้านและการเชื่อมต่อ', icon: Settings2, hint: 'ข้อมูลร้านและสถานะบริการ', adminOnly: true },
+      { menuKey: 'line_notifications', to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จาก Shopee, TikTok Shop และ NextStep Marketplace', adminOnly: true },
     ],
   },
   {
@@ -157,10 +148,27 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'settings_users', to: '/settings/users', label: 'ผู้ใช้ระบบ', icon: UsersRound, hint: 'Roles and access', adminOnly: true },
       { menuKey: 'settings_menu_permissions', to: '/settings/menu-permissions', label: 'สิทธิ์เมนู', icon: ShieldCheck, hint: 'กำหนดเมนูที่ผู้ใช้เห็น', adminOnly: true },
       { menuKey: 'logs', to: '/logs', label: 'ประวัติการทำงาน', icon: ScrollText, hint: 'ใครทำอะไรและผลลัพธ์' },
-      { menuKey: 'old_data', to: '/settings/old-data', label: 'จัดการข้อมูลเก่า', icon: Archive, hint: 'เก็บบิล / ลบถาวร' },
     ],
   },
 ]
+
+// Cancellation shortcuts reuse their source permission; show each scope only
+// once in the editor. Admin-only pages cannot be granted to staff/viewers.
+export function permissionNavGroups(role: User['role']): NavGroup[] {
+  const seen = new Set<string>()
+  return NAV_GROUPS
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.enabled === false || (item.minPhase && PHASE < item.minPhase)) return false
+        if (item.adminOnly && role !== 'admin') return false
+        if (seen.has(item.menuKey)) return false
+        seen.add(item.menuKey)
+        return true
+      }),
+    }))
+    .filter((group) => group.items.length > 0)
+}
 
 export function isNavItemVisible(item: NavItem, userOrRole?: User | string | null): boolean {
   const role = typeof userOrRole === 'string' ? userOrRole : userOrRole?.role
