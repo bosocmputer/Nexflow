@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { UnitSelect } from '@/components/common/UnitSelect'
 import client from '@/api/client'
 import type { CatalogMatch } from '@/types'
@@ -122,11 +123,16 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
   const [previewing, setPreviewing] = useState(false)
   const [preview, setPreview] = useState<ChannelDefaultPreview | null>(null)
   const [dirty, setDirty] = useState(false)
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
 
   const markDirty = () => {
     setDirty(true)
     setPreview(null)
   }
+
+  useEffect(() => {
+    if (!open) setDiscardConfirmOpen(false)
+  }, [open])
 
   useEffect(() => {
     if (!open || !row) return
@@ -162,6 +168,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     setExpenseCode(row.expense_code || '')
     setPreview(null)
     setDirty(false)
+    setDiscardConfirmOpen(false)
   }, [open, row])
 
   // Fetch doc formats from SML when destination changes; auto-fill prefix + running format from selected format
@@ -447,12 +454,23 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
     setShippingPickerOpen(false)
   }
 
+  const closeWithoutPrompt = () => {
+    setDiscardConfirmOpen(false)
+    setShippingPickerOpen(false)
+    onOpenChange(false)
+  }
+
   const requestOpenChange = (nextOpen: boolean) => {
-	if (!nextOpen && dirty && !window.confirm('มีการตั้งค่าที่ยังไม่ได้บันทึก ต้องการปิดโดยทิ้งการเปลี่ยนแปลงหรือไม่')) {
-		return
-	}
-	if (!nextOpen) setShippingPickerOpen(false)
-	onOpenChange(nextOpen)
+    if (nextOpen) {
+      onOpenChange(true)
+      return
+    }
+    if (saving || discardConfirmOpen) return
+    if (dirty) {
+      setDiscardConfirmOpen(true)
+      return
+    }
+    closeWithoutPrompt()
   }
 
   return (
@@ -1028,7 +1046,7 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
               </p>
             )}
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+              <Button variant="outline" onClick={() => requestOpenChange(false)} disabled={saving}>
                 ยกเลิก
               </Button>
               <Button onClick={handleSave} disabled={!canSave} title={saveDisabledReason || undefined}>
@@ -1051,6 +1069,17 @@ export function EditDialog({ open, onOpenChange, row, onSaved }: Props) {
           onClose={() => setShippingPickerOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        onOpenChange={setDiscardConfirmOpen}
+        title="ทิ้งการตั้งค่าที่ยังไม่บันทึก?"
+        description="การเปลี่ยนแปลงในฟอร์มนี้ยังไม่ได้บันทึก หากปิดตอนนี้ข้อมูลที่แก้จะหาย"
+        confirmLabel="ทิ้งการเปลี่ยนแปลง"
+        cancelLabel="กลับไปแก้ไข"
+        variant="destructive"
+        onConfirm={closeWithoutPrompt}
+      />
     </>
   )
 }

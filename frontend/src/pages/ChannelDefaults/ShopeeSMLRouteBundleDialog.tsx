@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, PackageSearch, RefreshCw } from 'lucide-reac
 import { toast } from 'sonner'
 
 import client from '@/api/client'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { UnitSelect } from '@/components/common/UnitSelect'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -174,6 +175,7 @@ function MarketplaceSMLRouteBundleDialog({ open, onOpenChange, onSaved, kind }: 
   const [cancelFormatsLoading, setCancelFormatsLoading] = useState(false)
   const [formatError, setFormatError] = useState('')
   const [dirty, setDirty] = useState(false)
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [preview, setPreview] = useState<BundlePreview | null>(null)
   const [saving, setSaving] = useState(false)
@@ -184,6 +186,10 @@ function MarketplaceSMLRouteBundleDialog({ open, onOpenChange, onSaved, kind }: 
     setDirty(true)
     setPreview(null)
   }, [])
+
+  useEffect(() => {
+    if (!open) setDiscardConfirmOpen(false)
+  }, [open])
 
   const loadBundle = useCallback(async () => {
     setLoading(true)
@@ -421,10 +427,23 @@ function MarketplaceSMLRouteBundleDialog({ open, onOpenChange, onSaved, kind }: 
     }))
   }
 
+  const closeWithoutPrompt = () => {
+    setDiscardConfirmOpen(false)
+    setShippingPickerOpen(false)
+    onOpenChange(false)
+  }
+
   const requestOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && dirty && !window.confirm('มีการตั้งค่าที่ยังไม่ได้บันทึก ต้องการปิดโดยทิ้งการเปลี่ยนแปลงหรือไม่')) return
-    if (!nextOpen) setShippingPickerOpen(false)
-    onOpenChange(nextOpen)
+    if (nextOpen) {
+      onOpenChange(true)
+      return
+    }
+    if (saving || discardConfirmOpen) return
+    if (dirty) {
+      setDiscardConfirmOpen(true)
+      return
+    }
+    closeWithoutPrompt()
   }
 
   return (
@@ -696,6 +715,17 @@ function MarketplaceSMLRouteBundleDialog({ open, onOpenChange, onSaved, kind }: 
           onClose={() => setShippingPickerOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        onOpenChange={setDiscardConfirmOpen}
+        title="ทิ้งการตั้งค่าที่ยังไม่บันทึก?"
+        description="การเปลี่ยนแปลงในฟอร์มนี้ยังไม่ได้บันทึก หากปิดตอนนี้ข้อมูลที่แก้จะหาย"
+        confirmLabel="ทิ้งการเปลี่ยนแปลง"
+        cancelLabel="กลับไปแก้ไข"
+        variant="destructive"
+        onConfirm={closeWithoutPrompt}
+      />
     </>
   )
 }
