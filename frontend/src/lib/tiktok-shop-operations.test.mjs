@@ -29,6 +29,7 @@ const {
   tiktokCompactDocumentState,
   tiktokOrderDetailPath,
   tiktokOrderDetailKey,
+  openTikTokOrderDetailQuery,
   tiktokRowActions,
   tiktokReviewedBillDisabledReason,
   shouldOpenTikTokDetailFromQuery,
@@ -237,6 +238,25 @@ test('removes the TikTok drawer deep link without changing an intentional list f
   assert.equal(next.has('detail'), false)
   assert.equal(next.has('order'), false)
   assert.equal(next.get('order_id'), '586199999999999999')
+})
+
+test('opening then closing TikTok details keeps the order search entered by the user', () => {
+  const opened = openTikTokOrderDetailQuery(new URLSearchParams({
+    order_id: '586313800340309351',
+    status_group: 'to_ship',
+  }), {
+    shopID: '7494619203789490654',
+    orderID: '586313800340309351',
+  })
+
+  assert.equal(opened.get('shop_id'), '7494619203789490654')
+  assert.equal(opened.get('order'), '586313800340309351')
+  assert.equal(opened.get('order_id'), '586313800340309351')
+
+  const closed = clearTikTokOrderDetailQuery(opened)
+  assert.equal(closed.has('order'), false)
+  assert.equal(closed.get('order_id'), '586313800340309351')
+  assert.equal(closed.get('status_group'), 'to_ship')
 })
 
 test('uses the same safe row-create guard as Shopee while leaving preview as the authority', () => {

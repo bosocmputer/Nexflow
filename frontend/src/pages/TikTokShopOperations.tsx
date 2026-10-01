@@ -58,6 +58,7 @@ import {
   clearTikTokOrderDetailQuery,
   formatTikTokMoney,
   normalizeTikTokStatusGroup,
+  openTikTokOrderDetailQuery,
   tiktokCancellationState,
   tiktokCompactDocumentState,
   tiktokOrderDetailKey,
@@ -706,8 +707,12 @@ export default function TikTokShopOperations() {
     setDetailTrackingError('')
     setDetailOrder(row)
     // Keep the queue behind the drawer exactly as it was. `order` is the
-    // timeline deep link; `order_id` is only a deliberate list search.
-    setQuery({ shop_id: row.shop_id, order: row.order_id, order_id: null, detail: null, page: null })
+    // timeline deep link; `order_id` is an intentional list search and must
+    // survive opening and closing the drawer.
+    setParams((current) => openTikTokOrderDetailQuery(current, {
+      shopID: row.shop_id,
+      orderID: row.order_id,
+    }), { replace: true })
   }
   const setDetailOpen = (open: boolean) => {
     if (open) return

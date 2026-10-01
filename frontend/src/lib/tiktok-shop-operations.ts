@@ -369,6 +369,18 @@ export function tiktokOrderDetailPath(input: { shopID: string; orderID: string }
   return `/tiktok-shop-operations?${query.toString()}`
 }
 
+export function openTikTokOrderDetailQuery(
+  current: URLSearchParams,
+  input: { shopID: string; orderID: string },
+): URLSearchParams {
+  const next = new URLSearchParams(current)
+  next.set('shop_id', input.shopID)
+  next.set('order', input.orderID)
+  next.delete('detail')
+  next.delete('page')
+  return next
+}
+
 export function clearTikTokOrderDetailQuery(current: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(current)
   next.delete('detail')
