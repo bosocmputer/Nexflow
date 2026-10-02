@@ -17,6 +17,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
 import client from '@/api/client'
+import {
+  salesTrendDataForMode,
+  type DashboardSalesTrendMode,
+  type DashboardSalesTrendPoint,
+} from '@/lib/dashboard-sales-trend'
 import { ENABLE_MARKETPLACE_OPERATIONS, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_SHOP_API } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
 import type { DashboardStats, NextStepMarketplaceState, PlatformKey, PlatformSalesStat } from '@/types'
@@ -654,9 +659,11 @@ function SalesTrendCard({
   error: boolean
 }) {
   const [visiblePlatforms, setVisiblePlatforms] = useState<Record<SalesTrendPlatformKey, boolean>>(DEFAULT_VISIBLE_TREND_PLATFORMS)
-  const data = useMemo(() => salesTrendData(stats), [stats])
+  const [trendMode, setTrendMode] = useState<DashboardSalesTrendMode>('daily')
+  const dailyData = useMemo(() => salesTrendData(stats), [stats])
+  const data = useMemo(() => salesTrendDataForMode(dailyData, trendMode), [dailyData, trendMode])
   const shareBreakdown = useMemo(() => platformShareBreakdown(stats), [stats])
-  const hasSales = salesTrendHasValue(data)
+  const hasSales = salesTrendHasValue(dailyData)
   const hasVisibleSeries = SALES_TREND_PLATFORMS.some((platform) => visiblePlatforms[platform.key])
   const meta = stats?.platform_sales_meta
   const togglePlatform = useCallback((key: SalesTrendPlatformKey) => {
@@ -669,16 +676,19 @@ function SalesTrendCard({
   return (
     <Card className="rounded-lg border-border/70 shadow-sm">
       <CardHeader className="pb-3">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-            <BarChart3 className="h-4 w-4 text-accent-strong" />
-            ยอดขายรายวันเทียบช่วงก่อนหน้า
-          </CardTitle>
-          {meta?.previous_from_date && meta.previous_to_date && (
-            <div className="text-xs text-muted-foreground">
-              เทียบ {formatShortDate(meta.previous_from_date)} - {formatShortDate(meta.previous_to_date)}
-            </div>
-          )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+              <BarChart3 className="h-4 w-4 text-accent-strong" />
+              {trendMode === 'daily' ? 'ยอดขายรายวันเทียบช่วงก่อนหน้า' : 'ยอดขายสะสมเทียบช่วงก่อนหน้า'}
+            </CardTitle>
+            {meta?.previous_from_date && meta.previous_to_date && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                เทียบ {formatShortDate(meta.previous_from_date)} - {formatShortDate(meta.previous_to_date)}
+              </div>
+            )}
+          </div>
+          <ChartModeToggle mode={trendMode} loading={loading} onChange={setTrendMode} />
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -706,7 +716,7 @@ function SalesTrendCard({
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="date" tickFormatter={formatTrendDate} tickLine={false} axisLine={false} minTickGap={18} />
                 <YAxis tickFormatter={(v) => formatCurrency(Number(v), true)} tickLine={false} axisLine={false} width={96} />
-                <Tooltip content={<SalesTrendTooltip visiblePlatforms={visiblePlatforms} />} />
+                <Tooltip content={<SalesTrendTooltip visiblePlatforms={visiblePlatforms} mode={trendMode} />} />
                 {SALES_TREND_PLATFORMS.filter((platform) => visiblePlatforms[platform.key]).map((platform) => (
                   <Fragment key={platform.key}>
                     <Line
@@ -744,6 +754,46 @@ function SalesTrendCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function ChartModeToggle({
+  mode,
+  loading,
+  onChange,
+}: {
+  mode: DashboardSalesTrendMode
+  loading: boolean
+  onChange: (mode: DashboardSalesTrendMode) => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="รูปแบบกราฟยอดขาย"
+      className="inline-flex w-fit shrink-0 items-center rounded-md border border-border bg-muted/35 p-0.5"
+    >
+      {(['daily', 'cumulative'] as const).map((value) => {
+        const active = mode === value
+        return (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={active}
+            disabled={loading}
+            onClick={() => onChange(value)}
+            className={cn(
+              'inline-flex h-7 items-center rounded px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+              active
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+              loading && 'cursor-not-allowed opacity-60',
+            )}
+          >
+            {value === 'daily' ? 'รายวัน' : 'ยอดสะสม'}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -845,31 +895,18 @@ function ChartEmptyState({ title, description }: { title: string; description: s
   )
 }
 
-type SalesTrendPoint = {
-  date: string
-  previous_date: string
-  shopee_amount: number
-  previous_shopee_amount: number
-  lazada_amount: number
-  previous_lazada_amount: number
-  tiktok_amount: number
-  previous_tiktok_amount: number
-  nextstep_amount: number
-  previous_nextstep_amount: number
-  current_total: number
-  previous_total: number
-}
-
 function SalesTrendTooltip({
   active,
   payload,
   label,
   visiblePlatforms,
+  mode,
 }: {
   active?: boolean
-  payload?: Array<{ payload?: SalesTrendPoint }>
+  payload?: Array<{ payload?: DashboardSalesTrendPoint }>
   label?: string
   visiblePlatforms: Record<SalesTrendPlatformKey, boolean>
+  mode: DashboardSalesTrendMode
 }) {
   if (!active || !payload?.length) return null
   const point = payload[0]?.payload
@@ -890,8 +927,8 @@ function SalesTrendTooltip({
   return (
     <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs shadow-md">
       <div className="mb-1 font-medium text-popover-foreground">
-        {formatShortDate(String(label ?? ''))}
-        {point.previous_date ? ` เทียบกับ ${formatShortDate(point.previous_date)}` : ''}
+        {mode === 'cumulative' ? 'ยอดสะสมถึง ' : ''}{formatShortDate(String(label ?? ''))}
+        {point.previous_date ? ` เทียบถึง ${formatShortDate(point.previous_date)}` : ''}
       </div>
       <div className="space-y-1">
         {rows.map((item) => (
@@ -921,14 +958,14 @@ function SalesTrendTooltip({
   )
 }
 
-function salesTrendData(stats: DashboardStats | null): SalesTrendPoint[] {
+function salesTrendData(stats: DashboardStats | null): DashboardSalesTrendPoint[] {
   const previousNextStepByDate = new Map<string, number>()
 
   for (const point of stats?.nextstep_marketplace?.previous_trend ?? []) {
     previousNextStepByDate.set(point.date, Number(point.total_amount || 0))
   }
 
-  const byDate = new Map<string, SalesTrendPoint>()
+  const byDate = new Map<string, DashboardSalesTrendPoint>()
   for (const point of platformTrendData(stats)) {
     const current = emptySalesTrendPoint(point.date)
     current.shopee_amount = Number(point.shopee_amount || 0)
@@ -955,7 +992,7 @@ function salesTrendData(stats: DashboardStats | null): SalesTrendPoint[] {
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date))
 }
 
-function emptySalesTrendPoint(date: string): SalesTrendPoint {
+function emptySalesTrendPoint(date: string): DashboardSalesTrendPoint {
   return {
     date,
     previous_date: '',
@@ -972,7 +1009,7 @@ function emptySalesTrendPoint(date: string): SalesTrendPoint {
   }
 }
 
-function salesTrendCurrentTotal(point: SalesTrendPoint): number {
+function salesTrendCurrentTotal(point: DashboardSalesTrendPoint): number {
   return (
     Number(point.shopee_amount || 0) +
     Number(point.lazada_amount || 0) +
@@ -981,7 +1018,7 @@ function salesTrendCurrentTotal(point: SalesTrendPoint): number {
   )
 }
 
-function salesTrendHasValue(data: SalesTrendPoint[]): boolean {
+function salesTrendHasValue(data: DashboardSalesTrendPoint[]): boolean {
   return data.some((point) => (
     SALES_TREND_PLATFORMS.some((platform) => (
       Math.abs(Number(point[platform.currentKey] || 0)) > 0 ||

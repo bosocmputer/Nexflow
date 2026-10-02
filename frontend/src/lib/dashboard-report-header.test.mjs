@@ -36,3 +36,10 @@ test('dashboard report header removes repeated system wording and exposes source
   assert.match(overview, /PopoverTrigger/)
   assert.equal((overview.match(/<DashboardDateFilter/g) ?? []).length, 1)
 })
+
+test('sales trend chart offers predictable daily and cumulative views', () => {
+  assert.match(dashboardSource, /aria-label="รูปแบบกราฟยอดขาย"/)
+  assert.match(dashboardSource, /'รายวัน'/)
+  assert.match(dashboardSource, /'ยอดสะสม'/)
+  assert.match(dashboardSource, /salesTrendDataForMode/)
+})
