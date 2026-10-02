@@ -291,6 +291,7 @@ export default function MarketplaceOperations() {
             ))}
           </div>
         }
+        scopeControls={null}
         actions={
           <>
             <MarketplaceOperationsHelp channel="Marketplace" signalLabel="Webhook" />

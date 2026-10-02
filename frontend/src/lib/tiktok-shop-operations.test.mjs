@@ -35,6 +35,8 @@ const {
   shouldOpenTikTokDetailFromQuery,
   tiktokShadowMappingValidation,
   tiktokSyncState,
+  tiktokSyncStateForSelection,
+  latestTikTokSyncSuccessAt,
 } = await vite.ssrLoadModule('/src/lib/tiktok-shop-operations.ts')
 
 test.after(async () => {
@@ -51,6 +53,25 @@ test('translates known TikTok lifecycle states and preserves unknown states safe
   assert.equal(tiktokOrderStatusLabel('AWAITING_SHIPMENT'), 'รอจัดส่ง')
   assert.equal(tiktokOrderStatusLabel('COMPLETED'), 'สำเร็จ')
   assert.equal(tiktokOrderStatusLabel('FUTURE_STATE'), 'FUTURE_STATE')
+})
+
+test('summarizes all-shop TikTok sync health without borrowing the first shop identity', () => {
+  const settings = [
+    { shop_id: 'shop-disabled', enabled: false, last_success_at: '2026-10-02T09:00:00Z' },
+    { shop_id: 'shop-active', enabled: true, last_success_at: '2026-10-02T10:00:00Z' },
+  ]
+
+  assert.equal(tiktokSyncStateForSelection(true, settings, 'all'), 'active')
+  assert.equal(tiktokSyncStateForSelection(true, settings, 'shop-disabled'), 'shop_disabled')
+  assert.equal(tiktokSyncStateForSelection(true, settings, 'missing'), 'shop_disabled')
+  assert.equal(latestTikTokSyncSuccessAt(settings), '2026-10-02T10:00:00Z')
+})
+
+test('all-shop TikTok sync health surfaces an error from any connected shop', () => {
+  assert.equal(tiktokSyncStateForSelection(true, [
+    { shop_id: 'shop-active', enabled: true },
+    { shop_id: 'shop-error', enabled: true, last_error_code: 'upstream_timeout' },
+  ], 'all'), 'error')
 })
 
 test('sync state remains fail-closed when either worker or shop is disabled', () => {

@@ -1447,9 +1447,9 @@ export default function ShopeeOperations() {
             </>
           )}
           health={<OperationsHealthLine readiness={readiness} />}
-          actions={<>
+          scopeControls={<>
             <Select value={shopID} onValueChange={(v) => setParam('shop_id', v)}>
-                <SelectTrigger className="h-8 min-w-[160px] bg-background">
+                <SelectTrigger className="h-8 w-full bg-background sm:w-[220px]">
                   <SelectValue placeholder="ร้าน Shopee" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1459,11 +1459,10 @@ export default function ShopeeOperations() {
                   ))}
                 </SelectContent>
               </Select>
-              <MarketplaceOperationsHelp channel="Shopee" signalLabel="Push" />
               <div className="flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[250px]">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
+                  <span className="whitespace-nowrap text-xs font-medium">{statusGroup === 'cancelled' ? 'Auto SML ใบขาย' : 'ส่ง SML อัตโนมัติ'}</span>
                 </div>
                 {shopID === ALL ? (
                   <span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">เลือกร้านก่อนจัดการ</span>
@@ -1495,6 +1494,9 @@ export default function ShopeeOperations() {
                   </div>
                 )}
               </div>
+          </>}
+          actions={<>
+              <MarketplaceOperationsHelp channel="Shopee" signalLabel="Push" />
               <Button variant="outline" size="sm" className="h-8 gap-2 bg-background" onClick={() => { setDiagnosticsOpen((v) => !v); if (!diagnosticsOpen) void loadDiagnostics() }}>
                 <Eye className="h-4 w-4" />
                 ตรวจระบบ

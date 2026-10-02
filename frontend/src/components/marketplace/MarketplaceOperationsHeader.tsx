@@ -14,6 +14,7 @@ interface MarketplaceOperationsHeaderProps {
   routeTo?: string
   description: ReactNode
   health: ReactNode
+  scopeControls: ReactNode
   actions: ReactNode
   children?: ReactNode
 }
@@ -30,13 +31,14 @@ export function MarketplaceOperationsHeader({
   routeTo,
   description,
   health,
+  scopeControls,
   actions,
   children,
 }: MarketplaceOperationsHeaderProps) {
   return (
-    <section className="rounded-lg border border-border bg-card px-3 py-2" aria-labelledby={titleID}>
-      <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-        <div className="min-w-0 space-y-1">
+    <section className="rounded-lg border border-border bg-card px-4 py-3" aria-labelledby={titleID}>
+      <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start lg:gap-4">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h1 id={titleID} className="text-lg font-semibold tracking-normal">{title}</h1>
             <Badge className={cn('h-6 px-2 text-[11px] text-white', modeClassName)}>{modeLabel}</Badge>
@@ -57,10 +59,28 @@ export function MarketplaceOperationsHeader({
               </span>
             )}
           </div>
-          <p className="max-w-3xl text-xs leading-5 text-muted-foreground">{description}</p>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{description}</p>
+        </div>
+        <div className="min-w-0 lg:max-w-xl lg:justify-self-end lg:pt-0.5">
           {health}
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:shrink-0">{actions}</div>
+      </div>
+      <div
+        data-slot="marketplace-operations-toolbar"
+        className="mt-3 flex flex-col gap-2 border-t border-border pt-3 lg:flex-row lg:items-center lg:justify-between"
+      >
+        <div
+          data-slot="marketplace-operations-scope"
+          className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
+        >
+          {scopeControls}
+        </div>
+        <div
+          data-slot="marketplace-operations-actions"
+          className="flex flex-wrap items-center gap-2 lg:shrink-0 lg:justify-end"
+        >
+          {actions}
+        </div>
       </div>
       {children && <div className="mt-2">{children}</div>}
     </section>

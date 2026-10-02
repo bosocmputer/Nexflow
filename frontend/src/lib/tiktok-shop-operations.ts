@@ -104,6 +104,39 @@ export function tiktokSyncState(workerEnabled: boolean, shopEnabled: boolean, er
   return 'active'
 }
 
+export interface TikTokSyncSettingSummary {
+  shop_id: string
+  enabled: boolean
+  last_error_code?: string
+  last_success_at?: string
+}
+
+export function tiktokSyncStateForSelection(
+  workerEnabled: boolean,
+  settings: TikTokSyncSettingSummary[],
+  selectedShopID: string,
+): TikTokSyncState {
+  if (selectedShopID === 'all') {
+    return tiktokSyncState(
+      workerEnabled,
+      settings.some((setting) => setting.enabled),
+      settings.find((setting) => setting.last_error_code?.trim())?.last_error_code,
+    )
+  }
+  const selected = settings.find((setting) => setting.shop_id === selectedShopID)
+  return selected
+    ? tiktokSyncState(workerEnabled, selected.enabled, selected.last_error_code)
+    : 'shop_disabled'
+}
+
+export function latestTikTokSyncSuccessAt(settings: TikTokSyncSettingSummary[]): string | undefined {
+  return settings.reduce<string | undefined>((latest, setting) => {
+    if (!setting.last_success_at || Number.isNaN(Date.parse(setting.last_success_at))) return latest
+    if (!latest || Date.parse(setting.last_success_at) > Date.parse(latest)) return setting.last_success_at
+    return latest
+  }, undefined)
+}
+
 export interface TikTokOperationsHeaderMetaInput {
   webhookEnabled: boolean
 }

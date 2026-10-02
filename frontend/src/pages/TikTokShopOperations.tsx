@@ -70,7 +70,9 @@ import {
   tiktokRowActions,
   shouldOpenTikTokDetailFromQuery,
   tiktokStatusGroupCount,
-  tiktokSyncState,
+  tiktokSyncStateForSelection,
+  latestTikTokSyncSuccessAt,
+  type TikTokSyncState,
   type TikTokStatusCounts,
   type TikTokStatusGroup,
 } from '@/lib/tiktok-shop-operations'
@@ -545,9 +547,10 @@ export default function TikTokShopOperations() {
 
   const selectedSetting = useMemo(() => {
     const settings = sync?.data ?? []
-    return shopID !== ALL ? settings.find((item) => item.shop_id === shopID) : settings[0]
+    return shopID !== ALL ? settings.find((item) => item.shop_id === shopID) : undefined
   }, [shopID, sync?.data])
-  const syncState = selectedSetting ? tiktokSyncState(Boolean(sync?.worker_enabled), selectedSetting.enabled, selectedSetting.last_error_code) : 'shop_disabled'
+  const syncSettings = sync?.data ?? []
+  const syncState = tiktokSyncStateForSelection(Boolean(sync?.worker_enabled), syncSettings, shopID)
   const selectedAutoSMLSetting = useMemo(
     () => shopID === ALL ? undefined : autoSML?.settings.find((setting) => setting.shop_id === shopID),
     [autoSML?.settings, shopID],
@@ -914,12 +917,14 @@ export default function TikTokShopOperations() {
         health={<TikTokOperationsHealthLine
           state={syncState}
           setting={selectedSetting}
+          settings={syncSettings}
+          allShops={shopID === ALL}
           diagnostics={diagnostics}
           webhookLabel={headerMeta.webhookLabel}
         />}
-        actions={<>
+        scopeControls={<>
             <Select value={shopID} onValueChange={(value) => setQuery({ shop_id: value, page: null })}>
-              <SelectTrigger className="h-8 min-w-[160px] bg-background">
+              <SelectTrigger className="h-8 w-full bg-background sm:w-[220px]">
                 <SelectValue placeholder="ร้าน TikTok Shop" />
               </SelectTrigger>
               <SelectContent>
@@ -929,16 +934,19 @@ export default function TikTokShopOperations() {
                 ))}
               </SelectContent>
             </Select>
-            <MarketplaceOperationsHelp channel="TikTok Shop" signalLabel="Webhook" />
             <TikTokAutoSMLControl
               setting={selectedAutoSMLSetting}
               shopID={shopID}
+              label={cancellationQueue ? 'Auto SML ใบขาย' : 'ส่ง SML อัตโนมัติ'}
               globalEnabled={Boolean(autoSML?.global_enabled)}
               isAdmin={userRole === 'admin'}
               saving={autoSMLSaving}
               onRequestChange={requestAutomationUpdate}
               onConfigure={openAutoSMLSettings}
             />
+          </>}
+        actions={<>
+            <MarketplaceOperationsHelp channel="TikTok Shop" signalLabel="Webhook" />
             <Button
               type="button"
               size="sm"
@@ -983,16 +991,6 @@ export default function TikTokShopOperations() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>โหลดข้อมูลไม่สำเร็จ</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {cancellationQueue && (
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertTitle>คิวยกเลิก TikTok แยกจากงานคืนสินค้า/คืนเงิน</AlertTitle>
-          <AlertDescription>
-            รายการที่ไม่มีใบขาย SML ไม่ต้องออกเอกสารยกเลิก ส่วนรายการที่เคยส่ง SML จะถูกพักไว้เพื่อตรวจทานก่อนสร้างเอกสารยกเลิก
-          </AlertDescription>
         </Alert>
       )}
 
@@ -1315,28 +1313,38 @@ export default function TikTokShopOperations() {
 function TikTokOperationsHealthLine({
   state,
   setting,
+  settings,
+  allShops,
   diagnostics,
   webhookLabel,
 }: {
-  state: ReturnType<typeof tiktokSyncState>
+  state: TikTokSyncState
   setting?: TikTokOrderSyncSetting
+  settings: TikTokOrderSyncSetting[]
+  allShops: boolean
   diagnostics: TikTokDiagnostics | null
   webhookLabel: string
 }) {
   const Icon = state === 'active' ? CheckCircle2 : Clock3
+  const latestSuccessAt = latestTikTokSyncSuccessAt(settings)
+  const syncError = setting?.last_error_message || settings.find((item) => item.last_error_message)?.last_error_message
   return (
-    <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-1 text-xs', state === 'active' ? 'text-accentStrong' : state === 'error' ? 'text-destructive' : 'text-warning')}>
+    <div role="status" className={cn('flex flex-wrap items-center justify-start gap-x-2 gap-y-1 text-xs lg:justify-end', state === 'active' ? 'text-accentStrong' : state === 'error' ? 'text-destructive' : 'text-warning')}>
       <span className="inline-flex items-center gap-1 font-medium">
         <Icon className="h-3.5 w-3.5" />
         {syncStateLabel(state)}
       </span>
-      {setting && (
+      {allShops ? (
+        <span className="text-muted-foreground">
+          {settings.length.toLocaleString()} ร้านเชื่อมต่อ · ล่าสุด {formatDateTime(latestSuccessAt)}
+        </span>
+      ) : setting ? (
         <span className="text-muted-foreground">
           {setting.shop_name || setting.shop_id} · ซิงก์สำรองทุก {formatInterval(setting.interval_seconds)} · ล่าสุด {formatDateTime(setting.last_success_at)}
         </span>
-      )}
+      ) : null}
       <span className="text-muted-foreground">· {webhookLabel}</span>
-      {setting?.last_error_message && <span className="text-destructive">{setting.last_error_message}</span>}
+      {syncError && <span className="text-destructive">{syncError}</span>}
       {diagnostics && (
         <span className={diagnostics.overall === 'ready_for_controlled_enablement' ? 'text-accentStrong' : 'text-warning'}>
           · {diagnostics.overall === 'ready_for_controlled_enablement' ? 'พื้นฐานพร้อมสำหรับ canary' : `ต้องตรวจ ${diagnostics.issues.length} จุด`}
@@ -1349,6 +1357,7 @@ function TikTokOperationsHealthLine({
 function TikTokAutoSMLControl({
   setting,
   shopID,
+  label,
   globalEnabled,
   isAdmin,
   saving,
@@ -1357,6 +1366,7 @@ function TikTokAutoSMLControl({
 }: {
   setting?: TikTokAutoSMLSetting
   shopID: string
+  label: string
   globalEnabled: boolean
   isAdmin: boolean
   saving: boolean
@@ -1368,7 +1378,7 @@ function TikTokAutoSMLControl({
     <div className="flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 sm:w-auto sm:min-w-[250px]">
       <div className="flex min-w-0 items-center gap-1.5">
         <Zap className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="whitespace-nowrap text-xs font-medium">ส่ง SML อัตโนมัติ</span>
+        <span className="whitespace-nowrap text-xs font-medium">{label}</span>
       </div>
       {shopID === ALL ? (
         <span className="ml-auto whitespace-nowrap text-[11px] text-muted-foreground">เลือกร้านก่อนจัดการ</span>
@@ -1807,7 +1817,7 @@ function formatInterval(seconds: number) {
   return seconds % 60 === 0 ? `${seconds / 60} นาที` : `${seconds} วินาที`
 }
 
-function syncStateLabel(state: ReturnType<typeof tiktokSyncState>) {
+function syncStateLabel(state: TikTokSyncState) {
   return state === 'active'
     ? 'ซิงก์พร้อมใช้งาน'
     : state === 'error'
