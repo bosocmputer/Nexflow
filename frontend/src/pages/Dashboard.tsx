@@ -267,7 +267,7 @@ function PlatformSalesOverview({
     <section className="space-y-3" aria-label="ยอดขายตามแพลตฟอร์ม">
       <Card data-slot="dashboard-report-header" className="overflow-hidden border-border/70 shadow-sm">
         <CardContent className="p-0">
-          <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-3 px-4 py-2 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
               <h1 className="text-lg font-semibold tracking-normal text-foreground">ยอดขาย Nexflow</h1>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -278,7 +278,7 @@ function PlatformSalesOverview({
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      className="inline-flex min-h-7 items-center gap-1 rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      className="inline-flex min-h-6 items-center gap-1 rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       aria-label="ดูที่มาของยอดขาย"
                     >
                       <Info className="h-3.5 w-3.5" />
@@ -322,11 +322,11 @@ function PlatformSalesOverview({
 
           <div
             data-slot="dashboard-metric-strip"
-            className="grid gap-3 border-t border-border/70 px-4 py-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(440px,1fr)] lg:items-center lg:gap-5"
+            className="grid gap-3 border-t border-border/70 px-4 py-2 lg:grid-cols-[minmax(0,1.3fr)_minmax(440px,1fr)] lg:items-center lg:gap-5"
           >
             <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground">ยอดขายรวม</div>
-              <div className="mt-0.5 text-3xl font-semibold leading-tight tracking-normal text-foreground">
+              <div className="mt-0.5 text-2xl font-semibold leading-tight tracking-normal text-foreground">
                 {loading ? '—' : formatCurrency(total)}
               </div>
               <ComparisonLine
