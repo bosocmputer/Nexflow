@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -94,6 +95,7 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 			"tiktok_shop":          h.sampleMessageForSource("tiktok_shop"),
 			"nextstep_marketplace": h.sampleMessageForSource("nextstep_marketplace"),
 		},
+		"event_catalog": models.LineNotificationEventCatalog(),
 		"readiness": gin.H{
 			"sender_count":                      len(senders),
 			"enabled_sender_count":              enabledSenders,
@@ -110,6 +112,19 @@ func (h *LineNotificationHandler) Overview(c *gin.Context) {
 			"delivery_worker_interval": "15s",
 		},
 	})
+}
+
+// Samples builds bounded, synthetic Flex payloads only when an admin opens the
+// preview dialog. The normal settings page stays lightweight and this endpoint
+// never enqueues or sends a LINE message.
+func (h *LineNotificationHandler) Samples(c *gin.Context) {
+	eventSamples := make(map[string]models.LineNotificationSample)
+	for _, event := range models.LineNotificationEventCatalog() {
+		if sample, ok := linenotify.BuildLineNotificationSample(event.Key, h.publicBaseURL()); ok {
+			eventSamples[event.Key] = sample
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": eventSamples})
 }
 
 // Status returns only the counts needed by the instance overview. It never
@@ -236,7 +251,7 @@ func (h *LineNotificationHandler) CreateRecipient(c *gin.Context) {
 		h.writeRecipientError(c, err, "เพิ่มผู้รับแจ้งเตือนไม่สำเร็จ")
 		return
 	}
-	h.audit(c, "line_notification_recipient_created", row.ID, gin.H{"name": row.Name, "destination_type": row.DestinationType})
+	h.audit(c, "line_notification_recipient_created", row.ID, gin.H{"name": row.Name, "destination_type": row.DestinationType, "event_keys": row.EventKeys})
 	c.JSON(http.StatusCreated, row)
 }
 
@@ -256,7 +271,7 @@ func (h *LineNotificationHandler) UpdateRecipient(c *gin.Context) {
 		h.writeRecipientError(c, err, "แก้ไขผู้รับแจ้งเตือนไม่สำเร็จ")
 		return
 	}
-	h.audit(c, "line_notification_recipient_updated", row.ID, gin.H{"name": row.Name, "enabled": row.Enabled})
+	h.audit(c, "line_notification_recipient_updated", row.ID, gin.H{"name": row.Name, "enabled": row.Enabled, "event_keys": row.EventKeys})
 	c.JSON(http.StatusOK, row)
 }
 
@@ -273,13 +288,21 @@ func (h *LineNotificationHandler) DeleteRecipient(c *gin.Context) {
 func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	var in struct {
-		SampleSource string `json:"sample_source"`
+		SampleSource   string `json:"sample_source"`
+		SampleEventKey string `json:"sample_event_key"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil && !errors.Is(err, io.EOF) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบข้อมูลทดสอบไม่ถูกต้อง"})
 		return
 	}
 	sampleSource := normalizeLineNotificationSampleSource(in.SampleSource)
+	sampleEventKey := strings.TrimSpace(in.SampleEventKey)
+	if sampleEventKey != "" {
+		if _, err := models.NormalizeLineNotificationEventKeys([]string{sampleEventKey}); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "ไม่พบประเภทข้อความทดสอบที่เลือก"})
+			return
+		}
+	}
 	recipient, err := h.repo.GetRecipient(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "โหลดผู้รับแจ้งเตือนไม่สำเร็จ"})
@@ -298,6 +321,18 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 	if err == nil {
 		message := h.sampleMessageForSource(sampleSource)
 		altText, contents := h.sampleFlexForSource(sampleSource)
+		if sampleEventKey != "" {
+			sample, ok := linenotify.BuildLineNotificationSample(sampleEventKey, h.publicBaseURL())
+			if !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "ไม่พบประเภทข้อความทดสอบที่เลือก"})
+				return
+			}
+			message, altText = sample.MessageText, sample.AltText
+			if err := json.Unmarshal(sample.FlexPayload, &contents); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้าง Flex ตัวอย่างไม่สำเร็จ"})
+				return
+			}
+		}
 		if contents != nil {
 			err = svc.PushFlex(recipient.DestinationID, altText, contents)
 		}
@@ -311,7 +346,7 @@ func (h *LineNotificationHandler) TestRecipient(c *gin.Context) {
 		return
 	}
 	_ = h.repo.MarkRecipientTest(c.Request.Context(), id, "sent", "")
-	h.audit(c, "line_notification_recipient_tested", id, gin.H{"name": recipient.Name})
+	h.audit(c, "line_notification_recipient_tested", id, gin.H{"name": recipient.Name, "event_key": sampleEventKey})
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "ส่งข้อความทดสอบแล้ว"})
 }
 
@@ -335,6 +370,7 @@ func (h *LineNotificationHandler) AddCandidateRecipient(c *gin.Context) {
 		"recipient_id":     row.ID,
 		"name":             row.Name,
 		"destination_type": row.DestinationType,
+		"event_keys":       row.EventKeys,
 	})
 	c.JSON(http.StatusCreated, row)
 }

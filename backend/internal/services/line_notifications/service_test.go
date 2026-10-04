@@ -334,6 +334,7 @@ func TestEnqueueShopeeSMLCancellationCreatedStoresImmutableFlexPayload(t *testin
 
 	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
 		WithArgs(
+			models.LineNotificationEventShopeeSMLCancellationCreated,
 			"shopee_realtime", "info", "สร้างเอกสารรับคืนสินค้า/ลดหนี้สำเร็จ",
 			"260827ECCFMCSC · CN26080002",
 			"https://nexflow-aoy.nextstep-soft.com/shopee-operations?order=260827ECCFMCSC",
@@ -723,6 +724,7 @@ func TestEnqueueNextStepMarketplaceNewOrderStoresFlexWhenLegacyFlagOff(t *testin
 
 	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
 		WithArgs(
+			models.LineNotificationEventNextStepOrderNew,
 			"nextstep_marketplace", "info", "มีออเดอร์ NextStep Marketplace ใหม่", sqlmock.AnyArg(),
 			"https://nexflow.nextstep-soft.com/nextstep-marketplace?from_date=2026-07-09&search=MQT20260709-QFG22&to_date=2026-07-09",
 			"nextstep_order", "MQT20260709-QFG22", "nextstep:new_order:MQT20260709-QFG22",

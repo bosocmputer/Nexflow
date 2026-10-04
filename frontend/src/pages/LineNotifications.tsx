@@ -39,6 +39,19 @@ import { DataTable } from '@/components/common/DataTable'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PageHeader } from '@/components/common/PageHeader'
 import {
+  eventGroupLabel,
+  eventLabelForKey,
+  eventSourceForKey,
+  FlexMessagePreview,
+  RecipientEventPreferences,
+  recipientSourceSummary,
+  sourceBadgeClass,
+  sourceLabel,
+  type LineEventDefinition,
+  type LineEventSample,
+  type LineNotificationSource,
+} from '@/components/line-notifications/LineNotificationPreferences'
+import {
   lineQuotaErrorLabel,
   presentLineQuota,
   type LineOAQuota,
@@ -61,6 +74,7 @@ interface LineRecipient {
   destination_type: 'user' | 'group' | 'room'
   destination_id: string
   enabled: boolean
+  event_keys: string[]
   last_test_at?: string
   last_test_status: string
   last_test_error: string
@@ -73,9 +87,10 @@ interface LineDelivery {
   id: string
   recipient: string
   line_oa_name?: string
+  event_key: string
   title: string
   entity_id: string
-  status: 'queued' | 'sending' | 'sent' | 'failed'
+  status: 'queued' | 'sending' | 'sent' | 'failed' | 'suppressed'
   attempts: number
   last_error: string
   sent_at?: string
@@ -103,6 +118,7 @@ interface Overview {
   deliveries: LineDelivery[]
   sample_text: string
   sample_texts?: Partial<Record<LineSampleSource, string>>
+  event_catalog: LineEventDefinition[]
   readiness: {
     sender_count: number
     enabled_sender_count: number
@@ -114,7 +130,7 @@ interface Overview {
   }
 }
 
-type LineSampleSource = 'shopee' | 'tiktok_shop' | 'nextstep_marketplace'
+type LineSampleSource = LineNotificationSource
 
 const destinationLabels: Record<LineRecipient['destination_type'], string> = {
   user: 'User ID',
@@ -127,6 +143,7 @@ const statusTone: Record<string, string> = {
   sending: 'bg-info/15 text-info',
   queued: 'bg-warning/15 text-warning',
   failed: 'bg-destructive/15 text-destructive',
+  suppressed: 'bg-muted text-muted-foreground',
 }
 
 export default function LineNotifications() {
@@ -144,6 +161,9 @@ export default function LineNotifications() {
   const [candidateToAdd, setCandidateToAdd] = useState<LineCandidate | null>(null)
   const [candidateToHide, setCandidateToHide] = useState<LineCandidate | null>(null)
   const [sampleSource, setSampleSource] = useState<LineSampleSource>('shopee')
+  const [sampleEventKey, setSampleEventKey] = useState('shopee.order.new')
+  const [eventSamples, setEventSamples] = useState<Record<string, LineEventSample>>({})
+  const [eventSamplesLoading, setEventSamplesLoading] = useState(false)
   const [supportDialog, setSupportDialog] = useState<'sample' | 'history' | null>(null)
   const supportTriggerRef = useRef<HTMLButtonElement | null>(null)
 
@@ -244,7 +264,25 @@ export default function LineNotifications() {
   const ready = !!readiness?.enabled_sender_count && !!readiness.enabled_recipient_count
   const enabledRecipients = data?.recipients.filter((r) => r.enabled).length ?? 0
   const sampleText = data?.sample_texts?.[sampleSource] || data?.sample_text || 'กำลังโหลดตัวอย่างข้อความ'
+  const eventCatalog = data?.event_catalog ?? []
+  const selectedEvent = eventCatalog.find((event) => event.key === sampleEventKey) ?? eventCatalog[0]
+  const selectedSample = selectedEvent ? eventSamples[selectedEvent.key] : undefined
   const quotaCooldownActive = Object.values(quotaCooldowns).some((until) => until > Date.now())
+
+  const openSampleDialog = async (trigger: HTMLButtonElement) => {
+    supportTriggerRef.current = trigger
+    setSupportDialog('sample')
+    if (Object.keys(eventSamples).length > 0 || eventSamplesLoading) return
+    setEventSamplesLoading(true)
+    try {
+      const response = await client.get<{ data: Record<string, LineEventSample> }>('/api/settings/line-notifications/samples')
+      setEventSamples(response.data.data ?? {})
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error ?? 'โหลดตัวอย่าง Flex Message ไม่สำเร็จ')
+    } finally {
+      setEventSamplesLoading(false)
+    }
+  }
 
   const senderNameById = useMemo(() => {
     const map = new Map<string, string>()
@@ -280,6 +318,7 @@ export default function LineNotifications() {
     try {
       await client.post(`/api/settings/line-notifications/recipients/${testRecipient.id}/test`, {
         sample_source: sampleSource,
+        sample_event_key: selectedEvent?.key || '',
       })
       toast.success('ส่งข้อความทดสอบแล้ว', { id })
       setTestRecipient(null)
@@ -318,10 +357,10 @@ export default function LineNotifications() {
     <div className="min-w-0 space-y-5">
       <PageHeader
         title="LINE แจ้งเตือน"
-        description="ตั้งค่า LINE OA สำหรับส่งแจ้งเตือนออเดอร์ใหม่จาก Shopee, TikTok Shop และ NextStep Marketplace ให้ผู้รับทัก OA แล้วเลือกเพิ่มจากรายการล่าสุดได้เลย"
+        description="กำหนดให้ผู้รับแต่ละคนเลือกเฉพาะออเดอร์ การยกเลิก หรือผลส่ง SML ที่เกี่ยวข้อง พร้อมดู Flex ตัวอย่างก่อนส่งทดสอบจริง"
         actions={
           <>
-            <Button variant="outline" size="icon" aria-label="ดูตัวอย่างข้อความสำรอง" title="ตัวอย่างข้อความสำรอง" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('sample') }}>
+            <Button variant="outline" size="icon" aria-label="ดูตัวอย่าง Flex Message" title="ตัวอย่าง Flex Message" aria-haspopup="dialog" onClick={(event) => { void openSampleDialog(event.currentTarget) }}>
               <MessageSquareText className="h-4 w-4" aria-hidden />
             </Button>
             <Button variant="outline" size="icon" aria-label="ดูประวัติการส่งล่าสุด" title="ประวัติการส่งล่าสุด" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('history') }}>
@@ -354,10 +393,10 @@ export default function LineNotifications() {
             </div>
             <div>
               <h2 className="text-base font-semibold text-foreground">
-                {ready ? 'พร้อมส่ง LINE เมื่อมีออเดอร์ใหม่' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
+                {ready ? 'พร้อมส่ง LINE ตามประเภทที่ผู้รับเลือก' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                เพิ่ม LINE OA, copy Webhook URL ไปเปิด Use webhook ใน LINE Developers, ให้ผู้รับทัก OA แล้วเพิ่มเป็นผู้รับแจ้งเตือนสำหรับ Shopee, TikTok Shop และ NextStep Marketplace
+                เพิ่ม LINE OA, เปิด Webhook แล้วให้ผู้รับทัก OA จากนั้นเลือกประเภทออเดอร์ การยกเลิก และผลส่ง SML ที่แต่ละคนต้องการรับ
               </p>
             </div>
           </div>
@@ -549,7 +588,7 @@ export default function LineNotifications() {
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-base font-semibold">ผู้รับแจ้งเตือน</h2>
-                <p className="text-sm text-muted-foreground">เพิ่มผู้รับจากรายการคนที่ทัก LINE OA ล่าสุด ระบบจะจับปลายทางให้อัตโนมัติ</p>
+                <p className="text-sm text-muted-foreground">ผู้รับแต่ละคนเลือกประเภทแจ้งเตือนได้อิสระ การปิดประเภทจะระงับคิวเดิมที่ยังไม่เริ่มส่งทันที</p>
               </div>
             </div>
             <DataTable<LineRecipient>
@@ -576,6 +615,22 @@ export default function LineNotifications() {
                   ),
                 },
                 {
+                  key: 'subscriptions',
+                  header: 'รับแจ้งเตือน',
+                  cell: (r) => (
+                    <div className="min-w-[220px]">
+                      <div className="flex flex-wrap gap-1">
+                        {recipientSourceSummary(r.event_keys ?? [], eventCatalog).slice(0, 3).map((item) => (
+                          <Badge key={item.source} variant="outline" className={sourceBadgeClass(item.source)}>
+                            {sourceLabel(item.source)} {item.count}
+                          </Badge>
+                        ))}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">{r.event_keys?.length ?? 0} ประเภท</div>
+                    </div>
+                  ),
+                },
+                {
                   key: 'status',
                   header: 'สถานะ',
                   cell: (r) => (
@@ -597,7 +652,7 @@ export default function LineNotifications() {
                   className: 'text-right',
                   cell: (r) => (
                     <div className="flex justify-end gap-1">
-                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" disabled={!r.enabled} onClick={() => setTestRecipient(r)} title={r.enabled ? 'ส่งข้อความทดสอบไปยังปลายทางนี้' : 'เปิดผู้รับก่อนส่งข้อความทดสอบ'}>
+                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" disabled={!r.enabled || (r.event_keys?.length ?? 0) === 0} onClick={() => { setSampleEventKey(r.event_keys?.[0] || 'shopee.order.new'); setTestRecipient(r) }} title={r.enabled ? 'ส่ง Flex ทดสอบประเภทแรกที่ผู้รับนี้เลือกไว้' : 'เปิดผู้รับก่อนส่งข้อความทดสอบ'}>
                         <Send className="h-3 w-3" />
                         ทดสอบ
                       </Button>
@@ -618,30 +673,49 @@ export default function LineNotifications() {
       </section>
 
       <Dialog open={supportDialog !== null} onOpenChange={(open) => !open && setSupportDialog(null)}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl" onCloseAutoFocus={(event) => { event.preventDefault(); supportTriggerRef.current?.focus() }}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-4xl" onCloseAutoFocus={(event) => { event.preventDefault(); supportTriggerRef.current?.focus() }}>
           <DialogHeader>
-            <DialogTitle>{supportDialog === 'sample' ? 'ตัวอย่างข้อความสำรอง' : 'ประวัติการส่งล่าสุด'}</DialogTitle>
-            <DialogDescription>{supportDialog === 'sample' ? 'ดูตัวอย่างข้อความเมื่อส่ง Flex ไม่สำเร็จ การเปิดหน้าต่างนี้ไม่ส่งข้อความ LINE' : 'ผลการส่งล่าสุดที่โหลดไว้ กดรีเฟรชในหน้าหลักเพื่ออัปเดตข้อมูล'}</DialogDescription>
+            <DialogTitle>{supportDialog === 'sample' ? 'ตัวอย่าง Flex Message' : 'ประวัติการส่งล่าสุด'}</DialogTitle>
+            <DialogDescription>{supportDialog === 'sample' ? 'เลือกประเภทเพื่อดูหน้าตา Flex และข้อความ fallback ก่อนส่งทดสอบจริง' : 'ผลการส่งล่าสุดที่โหลดไว้ กดรีเฟรชในหน้าหลักเพื่ออัปเดตข้อมูล'}</DialogDescription>
           </DialogHeader>
           {supportDialog === 'sample' ? <div className="min-w-0">
-            <div className="mt-2 flex rounded-md border border-border bg-muted/30 p-1">
-              {(['shopee', 'tiktok_shop', 'nextstep_marketplace'] as LineSampleSource[]).map((source) => (
-                <Button
-                  key={source}
-                  type="button"
-                  variant={sampleSource === source ? 'secondary' : 'ghost'}
-                  size="sm"
-                  className="h-8 flex-1 text-xs"
-                  onClick={() => setSampleSource(source)}
-                >
-                  {sampleSourceLabel(source)}
-                </Button>
-              ))}
+            <p className="mt-1 text-sm text-muted-foreground">ตัวอย่างจาก Flex payload จริงที่ระบบใช้ส่ง โดยใช้ข้อมูลจำลองและไม่มีข้อมูลผู้ซื้อ การเปิดหน้าต่างนี้ไม่ส่งข้อความ LINE</p>
+            <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="max-h-[56dvh] space-y-1 overflow-y-auto pr-1">
+                {eventCatalog.map((event) => (
+                  <button
+                    key={event.key}
+                    type="button"
+                    onClick={() => {
+                      setSampleEventKey(event.key)
+                      setSampleSource(event.source)
+                    }}
+                    className={cn(
+                      'w-full rounded-md border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      selectedEvent?.key === event.key ? 'border-primary bg-primary/5' : 'border-transparent hover:bg-muted/60',
+                    )}
+                  >
+                    <span className="block text-sm font-medium">{event.label}</span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">{eventGroupLabel(event.group)}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="min-w-0 space-y-3">
+                {eventSamplesLoading ? (
+                  <div className="flex min-h-[260px] items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground"><RefreshCw className="h-4 w-4 animate-spin motion-reduce:animate-none" />กำลังสร้างตัวอย่าง Flex</div>
+                ) : selectedEvent && selectedSample ? (
+                  <FlexMessagePreview event={selectedEvent} sample={selectedSample} />
+                ) : (
+                  <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">ยังไม่มีตัวอย่างสำหรับประเภทนี้</div>
+                )}
+                <details className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-medium">ดูข้อความ fallback</summary>
+                  <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">
+                    {selectedSample?.message_text || sampleText}
+                  </pre>
+                </details>
+              </div>
             </div>
-            <p className="mt-2 text-sm text-muted-foreground">ปุ่มทดสอบจะส่ง Flex ของ {sampleSourceLabel(sampleSource)} ก่อน ข้อความด้านล่างใช้เป็น fallback เมื่อ LINE Flex ส่งไม่สำเร็จ และไม่ใส่ข้อมูลลูกค้า</p>
-            <pre className="mt-3 whitespace-pre-wrap break-words rounded-md border border-border bg-muted/50 p-3 text-xs leading-5 text-foreground">
-              {sampleText}
-            </pre>
           </div> : <div className="min-w-0 break-words">
             <div className="mt-3 space-y-2">
               {(data?.deliveries ?? []).length === 0 ? (
@@ -653,7 +727,13 @@ export default function LineNotifications() {
                       <div className="min-w-0 text-sm font-medium">{d.recipient || 'ผู้รับ'}</div>
                       <Badge className={statusTone[d.status] ?? 'bg-muted text-muted-foreground'}>{deliveryStatusLabel(d.status)}</Badge>
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">{d.entity_id || d.title}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                      <Badge variant="outline" className={sourceBadgeClass(eventSourceForKey(d.event_key, eventCatalog))}>
+                        {sourceLabel(eventSourceForKey(d.event_key, eventCatalog))}
+                      </Badge>
+                      <span>{eventLabelForKey(d.event_key, eventCatalog) || d.title}</span>
+                    </div>
+                    {d.entity_id && <div className="mt-1 text-[11px] text-muted-foreground">อ้างอิง {d.entity_id}</div>}
                     {d.last_error && <div className="mt-1 text-xs text-destructive">{d.last_error}</div>}
                     <div className="mt-2 text-[11px] text-muted-foreground">{formatDate(d.sent_at || d.created_at)}</div>
                   </div>
@@ -678,6 +758,7 @@ export default function LineNotifications() {
         recipient={recipientDialog}
         candidate={null}
         senders={data?.senders ?? []}
+        eventCatalog={eventCatalog}
         onOpenChange={(open) => !open && setRecipientDialog(null)}
         onSaved={load}
       />
@@ -686,6 +767,7 @@ export default function LineNotifications() {
         recipient={null}
         candidate={candidateToAdd}
         senders={data?.senders ?? []}
+        eventCatalog={eventCatalog}
         onOpenChange={(open) => !open && setCandidateToAdd(null)}
         onSaved={load}
       />
@@ -693,7 +775,7 @@ export default function LineNotifications() {
         open={!!testRecipient}
         onOpenChange={(open) => !open && setTestRecipient(null)}
         title="ส่ง Flex ทดสอบ"
-        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่าง ${sampleSourceLabel(sampleSource)} ไปที่ ${testRecipient.name} เพื่อยืนยันว่าปลายทาง LINE ใช้งานได้ ไม่ใช่ event ออเดอร์จริง` : ''}
+        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่าง “${selectedEvent?.label || sampleSourceLabel(sampleSource)}” ไปที่ ${testRecipient.name} เพื่อยืนยันว่าปลายทาง LINE ใช้งานได้ ไม่ใช่ event จริง` : ''}
         confirmLabel="ส่งทดสอบ"
         onConfirm={runRecipientTest}
       />
@@ -909,7 +991,7 @@ function SenderDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'แก้ไข LINE OA sender' : 'เพิ่ม LINE OA sender'}</DialogTitle>
           <DialogDescription>
-            ใช้สำหรับส่ง Push แจ้งเตือนออเดอร์ใหม่ หลังบันทึกแล้วระบบจะแสดง Webhook URL ให้คัดลอกไป Verify และเปิด Use webhook ใน LINE Developers
+            ใช้สำหรับส่ง Push แจ้งเตือนการทำงาน Marketplace หลังบันทึกแล้วระบบจะแสดง Webhook URL ให้คัดลอกไป Verify และเปิด Use webhook ใน LINE Developers
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -963,6 +1045,7 @@ function RecipientDialog({
   recipient,
   candidate,
   senders,
+  eventCatalog,
   onOpenChange,
   onSaved,
 }: {
@@ -970,6 +1053,7 @@ function RecipientDialog({
   recipient: LineRecipient | null
   candidate?: LineCandidate | null
   senders: LineSender[]
+  eventCatalog: LineEventDefinition[]
   onOpenChange: (open: boolean) => void
   onSaved: () => void
 }) {
@@ -980,6 +1064,7 @@ function RecipientDialog({
   const [destinationType, setDestinationType] = useState<LineRecipient['destination_type']>('user')
   const [destinationID, setDestinationID] = useState('')
   const [enabled, setEnabled] = useState(true)
+  const [eventKeys, setEventKeys] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -990,6 +1075,7 @@ function RecipientDialog({
       setDestinationType(candidate.destination_type)
       setDestinationID(candidate.destination_id)
       setEnabled(true)
+      setEventKeys(eventCatalog.filter((event) => event.default_enabled).map((event) => event.key))
       return
     }
     setLineOAID(recipient?.line_oa_id || senders[0]?.id || '')
@@ -997,11 +1083,16 @@ function RecipientDialog({
     setDestinationType(recipient?.destination_type ?? 'user')
     setDestinationID(recipient?.destination_id ?? '')
     setEnabled(recipient?.enabled ?? true)
-  }, [open, recipient, candidate, senders])
+    setEventKeys(recipient?.event_keys ?? eventCatalog.filter((event) => event.default_enabled).map((event) => event.key))
+  }, [open, recipient, candidate, senders, eventCatalog])
 
   const submit = async () => {
     if (!lineOAID || !name.trim() || !destinationID.trim()) {
       toast.error('ข้อมูลผู้รับไม่ครบ กรุณาเพิ่มจากรายการคนที่ทัก LINE OA ล่าสุดอีกครั้ง')
+      return
+    }
+    if (enabled && eventKeys.length === 0) {
+      toast.error('กรุณาเลือกอย่างน้อย 1 ประเภท หรือปิดรับแจ้งเตือนสำหรับผู้รับนี้')
       return
     }
     setSaving(true)
@@ -1012,11 +1103,13 @@ function RecipientDialog({
         destination_type: destinationType,
         destination_id: destinationID.trim(),
         enabled,
+        event_keys: eventKeys,
       }
       if (isCandidateMode && candidate) {
         await client.post(`/api/settings/line-notifications/candidates/${candidate.id}/add-recipient`, {
           name: name.trim(),
           enabled,
+          event_keys: eventKeys,
         })
       } else if (isEdit && recipient) {
         await client.put(`/api/settings/line-notifications/recipients/${recipient.id}`, body)
@@ -1035,7 +1128,7 @@ function RecipientDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'แก้ไขผู้รับแจ้งเตือน' : 'เพิ่มผู้รับจาก LINE OA ล่าสุด'}</DialogTitle>
           <DialogDescription>
@@ -1059,10 +1152,11 @@ function RecipientDialog({
           <label className="flex items-center justify-between rounded-md border border-border bg-muted/35 px-3 py-2">
             <span>
               <span className="block text-sm font-medium">เปิดรับแจ้งเตือน</span>
-              <span className="block text-xs text-muted-foreground">ปิดไว้ได้ถ้าคนนี้ยังไม่ต้องรับออเดอร์ใหม่</span>
+              <span className="block text-xs text-muted-foreground">ปิดเพื่อหยุดทุกประเภท คิวที่ยังไม่เริ่มส่งจะถูกระงับ</span>
             </span>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
           </label>
+          <RecipientEventPreferences catalog={eventCatalog} eventKeys={eventKeys} enabled={enabled} onChange={setEventKeys} />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button>
@@ -1094,6 +1188,8 @@ function deliveryStatusLabel(status: string) {
       return 'รอส่ง'
     case 'failed':
       return 'ล้มเหลว'
+    case 'suppressed':
+      return 'ระงับแล้ว'
     default:
       return status || '-'
   }

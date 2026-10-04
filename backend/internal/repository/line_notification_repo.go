@@ -30,6 +30,11 @@ func NewLineNotificationRepo(db *sql.DB) *LineNotificationRepo {
 const lineNotificationRecipientCols = `
   r.id::text, r.line_oa_id::text, COALESCE(oa.name, '') AS line_oa_name,
   r.name, r.destination_type, r.destination_id, r.enabled,
+  COALESCE((
+    SELECT array_agg(s.event_key ORDER BY s.event_key)
+      FROM line_notification_recipient_subscriptions s
+     WHERE s.recipient_id = r.id AND s.enabled = TRUE
+  ), ARRAY[]::text[]) AS event_keys,
   r.last_test_at, r.last_test_status, r.last_test_error,
   r.last_sent_at, r.last_error, r.created_at, r.updated_at
 `
@@ -39,7 +44,7 @@ func scanLineNotificationRecipient(s interface{ Scan(...any) error }) (models.Li
 	var lastTestAt, lastSentAt sql.NullTime
 	if err := s.Scan(
 		&out.ID, &out.LineOAID, &out.LineOAName, &out.Name, &out.DestinationType,
-		&out.DestinationID, &out.Enabled, &lastTestAt, &out.LastTestStatus,
+		&out.DestinationID, &out.Enabled, pq.Array(&out.EventKeys), &lastTestAt, &out.LastTestStatus,
 		&out.LastTestError, &lastSentAt, &out.LastError, &out.CreatedAt, &out.UpdatedAt,
 	); err != nil {
 		return out, err
@@ -151,8 +156,21 @@ func (r *LineNotificationRepo) CreateRecipient(ctx context.Context, in models.Li
 	if err := ValidateLineNotificationDestination(in.DestinationType, in.DestinationID); err != nil {
 		return nil, err
 	}
+	eventKeys := models.DefaultLineNotificationEventKeys()
+	if in.EventKeys != nil {
+		var err error
+		eventKeys, err = models.NormalizeLineNotificationEventKeys(*in.EventKeys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin create line notification recipient: %w", err)
+	}
+	defer tx.Rollback()
 	var id string
-	if err := r.db.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO line_notification_recipients
 		  (line_oa_id, name, destination_type, destination_id, enabled)
 		VALUES ($1::uuid, $2, $3, $4, $5)
@@ -164,6 +182,12 @@ func (r *LineNotificationRepo) CreateRecipient(ctx context.Context, in models.Li
 			return nil, ErrLineNotificationRecipientExists
 		}
 		return nil, fmt.Errorf("create line notification recipient: %w", err)
+	}
+	if err := syncLineNotificationSubscriptions(ctx, tx, id, eventKeys); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit create line notification recipient: %w", err)
 	}
 	return r.GetRecipient(ctx, id)
 }
@@ -185,7 +209,19 @@ func (r *LineNotificationRepo) UpdateRecipient(ctx context.Context, id string, i
 	if err := ValidateLineNotificationDestination(in.DestinationType, in.DestinationID); err != nil {
 		return nil, err
 	}
-	_, err = r.db.ExecContext(ctx, `
+	var eventKeys []string
+	if in.EventKeys != nil {
+		eventKeys, err = models.NormalizeLineNotificationEventKeys(*in.EventKeys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin update line notification recipient: %w", err)
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `
 		UPDATE line_notification_recipients
 		   SET line_oa_id = $1::uuid,
 		       name = $2,
@@ -204,7 +240,53 @@ func (r *LineNotificationRepo) UpdateRecipient(ctx context.Context, id string, i
 		}
 		return nil, fmt.Errorf("update line notification recipient: %w", err)
 	}
+	if in.EventKeys != nil {
+		if err := syncLineNotificationSubscriptions(ctx, tx, id, eventKeys); err != nil {
+			return nil, err
+		}
+	}
+	if !enabled || in.EventKeys != nil {
+		selected := eventKeys
+		if in.EventKeys == nil {
+			selected = current.EventKeys
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE line_notification_deliveries
+			   SET status = 'suppressed',
+			       last_error = 'ผู้รับปิดการแจ้งเตือนประเภทนี้ก่อนเริ่มส่ง',
+			       updated_at = NOW()
+			 WHERE recipient_id = $1::uuid
+			   AND status IN ('queued','failed')
+			   AND ($2 = FALSE OR NOT (event_key = ANY($3::text[])))`,
+			strings.TrimSpace(id), enabled, pq.Array(selected),
+		); err != nil {
+			return nil, fmt.Errorf("suppress disabled line notification deliveries: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit update line notification recipient: %w", err)
+	}
 	return r.GetRecipient(ctx, id)
+}
+
+type lineNotificationSubscriptionExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func syncLineNotificationSubscriptions(ctx context.Context, execer lineNotificationSubscriptionExecer, recipientID string, enabledKeys []string) error {
+	allKeys := models.AllLineNotificationEventKeys()
+	if _, err := execer.ExecContext(ctx, `
+		INSERT INTO line_notification_recipient_subscriptions
+		  (recipient_id, event_key, enabled, updated_at)
+		SELECT $1::uuid, event_key, event_key = ANY($3::text[]), NOW()
+		  FROM unnest($2::text[]) AS e(event_key)
+		ON CONFLICT (recipient_id, event_key)
+		DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()`,
+		strings.TrimSpace(recipientID), pq.Array(allKeys), pq.Array(enabledKeys),
+	); err != nil {
+		return fmt.Errorf("save line notification subscriptions: %w", err)
+	}
+	return nil
 }
 
 const lineNotificationCandidateCols = `
@@ -356,6 +438,7 @@ func (r *LineNotificationRepo) AddCandidateAsRecipient(ctx context.Context, id s
 		DestinationType: candidate.DestinationType,
 		DestinationID:   candidate.DestinationID,
 		Enabled:         &enabled,
+		EventKeys:       in.EventKeys,
 	})
 }
 
@@ -398,21 +481,23 @@ func (r *LineNotificationRepo) MarkRecipientTest(ctx context.Context, id, status
 
 func (r *LineNotificationRepo) Enqueue(ctx context.Context, in models.LineNotificationMessageInput) (int, error) {
 	in = normalizeLineNotificationMessageInput(in)
-	if in.Title == "" || in.DedupeKey == "" || in.MessageText == "" {
-		return 0, fmt.Errorf("line notification title, dedupe_key, and message_text are required")
+	if in.EventKey == "" || in.Title == "" || in.DedupeKey == "" || in.MessageText == "" {
+		return 0, fmt.Errorf("line notification event_key, title, dedupe_key, and message_text are required")
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		INSERT INTO line_notification_deliveries
-		  (recipient_id, line_oa_id, source, severity, title, body, action_url,
+		  (recipient_id, line_oa_id, event_key, source, severity, title, body, action_url,
 		   entity_type, entity_id, dedupe_key, message_text, alt_text, flex_payload, payload_version)
-		SELECT r.id, r.line_oa_id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12
+		SELECT r.id, r.line_oa_id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13
 		  FROM line_notification_recipients r
 		  JOIN line_oa_accounts oa ON oa.id = r.line_oa_id
+		  JOIN line_notification_recipient_subscriptions sub
+		    ON sub.recipient_id = r.id AND sub.event_key = $1 AND sub.enabled = TRUE
 		 WHERE r.enabled = TRUE
 		   AND oa.enabled = TRUE
 		 ON CONFLICT (recipient_id, dedupe_key) DO NOTHING
 		 RETURNING id`,
-		in.Source, in.Severity, in.Title, in.Body, in.ActionURL,
+		in.EventKey, in.Source, in.Severity, in.Title, in.Body, in.ActionURL,
 		in.EntityType, in.EntityID, in.DedupeKey, in.MessageText,
 		in.AltText, string(in.FlexPayload), in.PayloadVersion,
 	)
@@ -444,6 +529,8 @@ func (r *LineNotificationRepo) LeaseDeliveries(ctx context.Context, limit, maxAt
 			  FROM line_notification_deliveries d
 			  JOIN line_notification_recipients r ON r.id = d.recipient_id
 			  JOIN line_oa_accounts oa ON oa.id = d.line_oa_id
+			  JOIN line_notification_recipient_subscriptions sub
+			    ON sub.recipient_id = d.recipient_id AND sub.event_key = d.event_key AND sub.enabled = TRUE
 			 WHERE d.status IN ('queued','failed')
 			   AND d.attempts < $1
 			   AND d.next_run_at <= NOW()
@@ -462,7 +549,7 @@ func (r *LineNotificationRepo) LeaseDeliveries(ctx context.Context, limit, maxAt
 		   AND r.id = d.recipient_id
 		   AND oa.id = d.line_oa_id
 		 RETURNING d.id::text, d.recipient_id::text, r.name, d.line_oa_id::text, oa.name,
-		           d.source, d.severity, d.title, d.body, d.action_url, d.entity_type,
+		           d.event_key, d.source, d.severity, d.title, d.body, d.action_url, d.entity_type,
 		           d.entity_id, d.dedupe_key, d.message_text, d.alt_text, d.flex_payload, d.payload_version,
 		           d.status, d.attempts,
 		           d.last_error, d.next_run_at, d.sent_at, d.created_at, d.updated_at,
@@ -479,7 +566,7 @@ func (r *LineNotificationRepo) LeaseDeliveries(ctx context.Context, limit, maxAt
 		var sentAt sql.NullTime
 		if err := rows.Scan(
 			&job.ID, &job.RecipientID, &job.Recipient, &job.LineOAID, &job.LineOAName,
-			&job.Source, &job.Severity, &job.Title, &job.Body, &job.ActionURL,
+			&job.EventKey, &job.Source, &job.Severity, &job.Title, &job.Body, &job.ActionURL,
 			&job.EntityType, &job.EntityID, &job.DedupeKey, &job.MessageText,
 			&job.AltText, &job.FlexPayload, &job.PayloadVersion,
 			&job.Status, &job.Attempts, &job.LastError, &job.NextRunAt, &sentAt,
@@ -557,7 +644,7 @@ func (r *LineNotificationRepo) RecentDeliveries(ctx context.Context, limit int) 
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT d.id::text, d.recipient_id::text, COALESCE(r.name, ''), d.line_oa_id::text,
-		       COALESCE(oa.name, ''), d.source, d.severity, d.title, d.body, d.action_url,
+		       COALESCE(oa.name, ''), d.event_key, d.source, d.severity, d.title, d.body, d.action_url,
 		       d.entity_type, d.entity_id, d.dedupe_key, d.message_text,
 		       d.alt_text, d.flex_payload, d.payload_version, d.status,
 		       d.attempts, d.last_error, d.next_run_at, d.sent_at, d.created_at, d.updated_at
@@ -576,7 +663,7 @@ func (r *LineNotificationRepo) RecentDeliveries(ctx context.Context, limit int) 
 		var sentAt sql.NullTime
 		if err := rows.Scan(
 			&row.ID, &row.RecipientID, &row.Recipient, &row.LineOAID, &row.LineOAName,
-			&row.Source, &row.Severity, &row.Title, &row.Body, &row.ActionURL,
+			&row.EventKey, &row.Source, &row.Severity, &row.Title, &row.Body, &row.ActionURL,
 			&row.EntityType, &row.EntityID, &row.DedupeKey, &row.MessageText,
 			&row.AltText, &row.FlexPayload, &row.PayloadVersion,
 			&row.Status, &row.Attempts, &row.LastError, &row.NextRunAt, &sentAt,
@@ -593,6 +680,7 @@ func (r *LineNotificationRepo) RecentDeliveries(ctx context.Context, limit int) 
 }
 
 func normalizeLineNotificationMessageInput(in models.LineNotificationMessageInput) models.LineNotificationMessageInput {
+	in.EventKey = strings.TrimSpace(in.EventKey)
 	in.Source = strings.TrimSpace(in.Source)
 	if in.Source == "" {
 		in.Source = "shopee_realtime"

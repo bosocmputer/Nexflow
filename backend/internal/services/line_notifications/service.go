@@ -84,6 +84,7 @@ func (s *Service) EnqueueShopeeNewOrder(ctx context.Context, snap *models.Shopee
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:       models.LineNotificationEventShopeeOrderNew,
 		Source:         "shopee_realtime",
 		Severity:       "info",
 		Title:          "มีออเดอร์ Shopee ใหม่",
@@ -126,6 +127,7 @@ func (s *Service) EnqueueTikTokShopNewOrder(ctx context.Context, in models.TikTo
 	}
 	actionURL := TikTokShopOrderActionURL(s.publicBaseURL, in.ShopID, in.OrderID)
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:       models.LineNotificationEventTikTokOrderNew,
 		Source:         "tiktok_shop",
 		Severity:       "info",
 		Title:          "มีออเดอร์ TikTok Shop ใหม่",
@@ -165,7 +167,8 @@ func (s *Service) EnqueueTikTokShopOrderCancelled(ctx context.Context, in models
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
-		Source: "tiktok_shop", Severity: "warning", Title: "คำสั่งซื้อ TikTok Shop ถูกยกเลิก",
+		EventKey: models.LineNotificationEventTikTokOrderCancelled,
+		Source:   "tiktok_shop", Severity: "warning", Title: "คำสั่งซื้อ TikTok Shop ถูกยกเลิก",
 		Body:       marketplaceCancellationBody(in.ShopName, in.OrderID, in.SMLDocNo),
 		ActionURL:  TikTokShopOrderActionURL(s.publicBaseURL, in.ShopID, in.OrderID),
 		EntityType: "tiktok_shop_order", EntityID: strings.TrimSpace(in.ShopID) + ":" + strings.TrimSpace(in.OrderID),
@@ -183,6 +186,17 @@ func (s *Service) EnqueueTikTokShopAutoSMLReview(ctx context.Context, in models.
 
 func (s *Service) EnqueueTikTokShopAutoSMLFailure(ctx context.Context, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
 	return s.enqueueTikTokShopAutoSML(ctx, "failure", in, dedupeKey)
+}
+
+func tikTokAutoSMLEventKey(kind string) string {
+	switch kind {
+	case "success":
+		return models.LineNotificationEventTikTokSMLSuccess
+	case "review":
+		return models.LineNotificationEventTikTokSMLReview
+	default:
+		return models.LineNotificationEventTikTokSMLFailed
+	}
 }
 
 func (s *Service) enqueueTikTokShopAutoSML(ctx context.Context, kind string, in models.TikTokAutoSMLNotification, dedupeKey string) (int, error) {
@@ -220,7 +234,8 @@ func (s *Service) enqueueTikTokShopAutoSML(ctx context.Context, kind string, in 
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
-		Source: "tiktok_shop", Severity: severity, Title: title,
+		EventKey: tikTokAutoSMLEventKey(kind),
+		Source:   "tiktok_shop", Severity: severity, Title: title,
 		Body:      strings.Join(filterNonEmpty([]string{strings.TrimSpace(in.ShopName), "Order ID " + strings.TrimSpace(in.OrderID), strings.TrimSpace(in.SMLDocNo), strings.TrimSpace(in.ErrorMessage)}), " · "),
 		ActionURL: actionURL, EntityType: "tiktok_shop_order", EntityID: strings.TrimSpace(in.ShopID) + ":" + strings.TrimSpace(in.OrderID),
 		DedupeKey: dedupeKey, MessageText: message, AltText: altText,
@@ -238,6 +253,7 @@ func (s *Service) EnqueueShopeeCancelledAfterSML(ctx context.Context, snap *mode
 	}
 	message := BuildShopeeCancelledAfterSMLLineText(snap, s.publicBaseURL)
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:    models.LineNotificationEventShopeeOrderCancelled,
 		Source:      "shopee_realtime",
 		Severity:    "error",
 		Title:       "Shopee ยกเลิกหลังส่ง SML",
@@ -275,7 +291,8 @@ func (s *Service) EnqueueShopeeOrderCancelled(ctx context.Context, snap *models.
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
-		Source: "shopee_realtime", Severity: "warning", Title: "คำสั่งซื้อ Shopee ถูกยกเลิก",
+		EventKey: models.LineNotificationEventShopeeOrderCancelled,
+		Source:   "shopee_realtime", Severity: "warning", Title: "คำสั่งซื้อ Shopee ถูกยกเลิก",
 		Body:       marketplaceCancellationBody(snap.ShopLabel, snap.OrderSN, snap.SMLDocNo),
 		ActionURL:  ShopeeOrderActionURL(s.publicBaseURL, snap.OrderSN),
 		EntityType: "shopee_order", EntityID: fmt.Sprintf("%d:%s", snap.ShopID, strings.TrimSpace(snap.OrderSN)),
@@ -321,6 +338,7 @@ func (s *Service) EnqueueShopeeSMLCancellationCreated(
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:       models.LineNotificationEventShopeeSMLCancellationCreated,
 		Source:         "shopee_realtime",
 		Severity:       "info",
 		Title:          title,
@@ -346,6 +364,17 @@ func (s *Service) EnqueueShopeeAutoSMLReview(ctx context.Context, in models.Shop
 
 func (s *Service) EnqueueShopeeAutoSMLFailure(ctx context.Context, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
 	return s.enqueueShopeeAutoSML(ctx, "failure", in, dedupeKey)
+}
+
+func shopeeAutoSMLEventKey(kind string) string {
+	switch kind {
+	case "success":
+		return models.LineNotificationEventShopeeSMLSuccess
+	case "review":
+		return models.LineNotificationEventShopeeSMLReview
+	default:
+		return models.LineNotificationEventShopeeSMLFailed
+	}
 }
 
 func (s *Service) enqueueShopeeAutoSML(ctx context.Context, kind string, in models.ShopeeAutoSMLNotification, dedupeKey string) (int, error) {
@@ -374,7 +403,8 @@ func (s *Service) enqueueShopeeAutoSML(ctx context.Context, kind string, in mode
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
-		Source: "shopee_realtime", Severity: severity, Title: title,
+		EventKey: shopeeAutoSMLEventKey(kind),
+		Source:   "shopee_realtime", Severity: severity, Title: title,
 		Body:      strings.Join(filterNonEmpty([]string{strings.TrimSpace(in.ShopLabel), "Order SN " + strings.TrimSpace(in.OrderSN), strings.TrimSpace(in.ErrorMessage)}), " · "),
 		ActionURL: actionURL, EntityType: "shopee_order", EntityID: fmt.Sprintf("%d:%s", in.ShopID, strings.TrimSpace(in.OrderSN)),
 		DedupeKey: strings.TrimSpace(dedupeKey), MessageText: message, AltText: altText,
@@ -566,6 +596,7 @@ func (s *Service) EnqueueShopeeSettlementReady(ctx context.Context, run models.S
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:       models.LineNotificationEventShopeeSettlementReady,
 		Source:         "shopee_settlement",
 		Severity:       settlementSeverity(run),
 		Title:          "Shopee settlement พร้อมตรวจยอด",
@@ -607,6 +638,7 @@ func (s *Service) EnqueueNextStepMarketplaceNewOrder(ctx context.Context, order 
 		}
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:       models.LineNotificationEventNextStepOrderNew,
 		Source:         "nextstep_marketplace",
 		Severity:       "info",
 		Title:          "มีออเดอร์ NextStep Marketplace ใหม่",

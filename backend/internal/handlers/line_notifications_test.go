@@ -136,6 +136,31 @@ func TestLineNotificationTikTokShopSampleMessage(t *testing.T) {
 	}
 }
 
+func TestLineNotificationSamplesAreBoundedAndReadOnly(t *testing.T) {
+	h := &LineNotificationHandler{cfg: &config.Config{PublicBaseURL: "https://nexflow-aoy.nextstep-soft.com"}}
+	router := gin.New()
+	router.GET("/api/settings/line-notifications/samples", h.Samples)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/settings/line-notifications/samples", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data map[string]models.LineNotificationSample `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != len(models.LineNotificationEventCatalog()) {
+		t.Fatalf("samples=%d catalog=%d", len(response.Data), len(models.LineNotificationEventCatalog()))
+	}
+	for key, sample := range response.Data {
+		if key != sample.EventKey || !json.Valid(sample.FlexPayload) {
+			t.Fatalf("invalid sample %q: %#v", key, sample)
+		}
+	}
+}
+
 func TestLineNotificationDestinationFromWebhookSource(t *testing.T) {
 	tests := []struct {
 		name     string

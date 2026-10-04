@@ -74,6 +74,7 @@ func TestEnqueueTikTokShopNewOrderUsesDurableRecipientDedupe(t *testing.T) {
 
 	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
 		WithArgs(
+			models.LineNotificationEventTikTokOrderNew,
 			"tiktok_shop", "info", "มีออเดอร์ TikTok Shop ใหม่", sqlmock.AnyArg(),
 			"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order=586030483469993439&shop_id=7494619203789490654",
 			"tiktok_shop_order", "7494619203789490654:586030483469993439",
@@ -148,6 +149,7 @@ func TestEnqueueTikTokShopOrderCancelledUsesDurableRecipientDedupe(t *testing.T)
 
 	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
 		WithArgs(
+			models.LineNotificationEventTikTokOrderCancelled,
 			"tiktok_shop", "warning", "คำสั่งซื้อ TikTok Shop ถูกยกเลิก", sqlmock.AnyArg(),
 			"https://nexflow-aoy.nextstep-soft.com/tiktok-shop-operations?order=586291320330093597&shop_id=7494619203789490654",
 			"tiktok_shop_order", "7494619203789490654:586291320330093597",
@@ -222,6 +224,7 @@ func TestEnqueueTikTokShopAutoSMLSuccessUsesDurableRecipientDedupe(t *testing.T)
 
 	mock.ExpectQuery("INSERT INTO line_notification_deliveries").
 		WithArgs(
+			models.LineNotificationEventTikTokSMLSuccess,
 			"tiktok_shop", "info", "สร้างบิล SML จาก TikTok Shop สำเร็จ", sqlmock.AnyArg(),
 			"https://nexflow-aoy.nextstep-soft.com/sale-invoices/bill-123",
 			"tiktok_shop_order", "7494619203789490654:586180035911386153",

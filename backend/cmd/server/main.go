@@ -528,6 +528,7 @@ func main() {
 		lineNotificationGroup.Use(middleware.RequireRole("admin"))
 		{
 			lineNotificationGroup.GET("", lineNotificationH.Overview)
+			lineNotificationGroup.GET("/samples", lineNotificationH.Samples)
 			lineNotificationGroup.GET("/status", lineNotificationH.Status)
 			lineNotificationGroup.GET("/quota", lineNotificationH.Quota)
 			lineNotificationGroup.POST("/senders", lineNotificationH.CreateSender)

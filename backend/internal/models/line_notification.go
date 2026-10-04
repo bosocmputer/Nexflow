@@ -2,8 +2,104 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
+
+const (
+	LineNotificationEventShopeeOrderNew               = "shopee.order.new"
+	LineNotificationEventTikTokOrderNew               = "tiktok.order.new"
+	LineNotificationEventNextStepOrderNew             = "nextstep.order.new"
+	LineNotificationEventShopeeOrderCancelled         = "shopee.order.cancelled"
+	LineNotificationEventTikTokOrderCancelled         = "tiktok.order.cancelled"
+	LineNotificationEventShopeeSMLSuccess             = "shopee.sml.auto_success"
+	LineNotificationEventTikTokSMLSuccess             = "tiktok.sml.auto_success"
+	LineNotificationEventShopeeSMLReview              = "shopee.sml.needs_review"
+	LineNotificationEventTikTokSMLReview              = "tiktok.sml.needs_review"
+	LineNotificationEventShopeeSMLFailed              = "shopee.sml.failed"
+	LineNotificationEventTikTokSMLFailed              = "tiktok.sml.failed"
+	LineNotificationEventShopeeSMLCancellationCreated = "shopee.sml.cancellation_created"
+	LineNotificationEventShopeeSettlementReady        = "shopee.settlement.ready"
+)
+
+type LineNotificationEventDefinition struct {
+	Key            string `json:"key"`
+	Source         string `json:"source"`
+	Group          string `json:"group"`
+	Label          string `json:"label"`
+	Description    string `json:"description"`
+	DefaultEnabled bool   `json:"default_enabled"`
+	SupportsFlex   bool   `json:"supports_flex"`
+}
+
+type LineNotificationSample struct {
+	EventKey    string          `json:"event_key"`
+	AltText     string          `json:"alt_text"`
+	MessageText string          `json:"message_text"`
+	FlexPayload json.RawMessage `json:"flex_payload"`
+}
+
+var lineNotificationEventCatalog = []LineNotificationEventDefinition{
+	{Key: LineNotificationEventShopeeOrderNew, Source: "shopee", Group: "orders", Label: "ออเดอร์ Shopee ใหม่", Description: "แจ้งเมื่อ Nexflow รับคำสั่งซื้อใหม่จาก Shopee", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventTikTokOrderNew, Source: "tiktok_shop", Group: "orders", Label: "ออเดอร์ TikTok ใหม่", Description: "แจ้งเมื่อ Nexflow รับคำสั่งซื้อใหม่จาก TikTok Shop", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventNextStepOrderNew, Source: "nextstep_marketplace", Group: "orders", Label: "ออเดอร์ NextStep ใหม่", Description: "แจ้งเมื่อ Nexflow พบคำสั่งซื้อใหม่จาก NextStep Marketplace", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventShopeeOrderCancelled, Source: "shopee", Group: "cancellations", Label: "Shopee ยกเลิกออเดอร์", Description: "เตือนเมื่อ Shopee ยืนยันว่าออเดอร์ถูกยกเลิก", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventTikTokOrderCancelled, Source: "tiktok_shop", Group: "cancellations", Label: "TikTok ยกเลิกออเดอร์", Description: "เตือนเมื่อ TikTok Shop ยืนยันว่าออเดอร์ถูกยกเลิก", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventShopeeSMLSuccess, Source: "shopee", Group: "sml", Label: "Shopee ส่ง SML สำเร็จ", Description: "แจ้งผลเมื่อ Auto SML สร้างเอกสารสำเร็จ", SupportsFlex: true},
+	{Key: LineNotificationEventTikTokSMLSuccess, Source: "tiktok_shop", Group: "sml", Label: "TikTok ส่ง SML สำเร็จ", Description: "แจ้งผลเมื่อ Auto SML สร้างเอกสารสำเร็จ", SupportsFlex: true},
+	{Key: LineNotificationEventShopeeSMLReview, Source: "shopee", Group: "sml", Label: "Shopee ต้องตรวจ SML", Description: "เตือนเมื่อข้อมูลยังไม่พร้อมและต้องให้ผู้ใช้ตรวจ", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventTikTokSMLReview, Source: "tiktok_shop", Group: "sml", Label: "TikTok ต้องตรวจ SML", Description: "เตือนเมื่อข้อมูลยังไม่พร้อมและต้องให้ผู้ใช้ตรวจ", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventShopeeSMLFailed, Source: "shopee", Group: "sml", Label: "Shopee ส่ง SML ไม่สำเร็จ", Description: "แจ้งข้อผิดพลาดปลายทางที่ต้องดำเนินการ", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventTikTokSMLFailed, Source: "tiktok_shop", Group: "sml", Label: "TikTok ส่ง SML ไม่สำเร็จ", Description: "แจ้งข้อผิดพลาดปลายทางที่ต้องดำเนินการ", DefaultEnabled: true, SupportsFlex: true},
+	{Key: LineNotificationEventShopeeSMLCancellationCreated, Source: "shopee", Group: "cancellations", Label: "สร้างเอกสารหลังยกเลิก Shopee", Description: "แจ้งเมื่อสร้างเอกสารยกเลิกหรือรับคืนใน SML สำเร็จ", SupportsFlex: true},
+	{Key: LineNotificationEventShopeeSettlementReady, Source: "shopee", Group: "settlements", Label: "รับชำระ Shopee พร้อมตรวจ", Description: "แจ้งเมื่อรอบรับชำระ Shopee พร้อมให้ตรวจยอด", SupportsFlex: true},
+}
+
+func LineNotificationEventCatalog() []LineNotificationEventDefinition {
+	out := make([]LineNotificationEventDefinition, len(lineNotificationEventCatalog))
+	copy(out, lineNotificationEventCatalog)
+	return out
+}
+
+func AllLineNotificationEventKeys() []string {
+	out := make([]string, 0, len(lineNotificationEventCatalog))
+	for _, event := range lineNotificationEventCatalog {
+		out = append(out, event.Key)
+	}
+	return out
+}
+
+func DefaultLineNotificationEventKeys() []string {
+	out := make([]string, 0, len(lineNotificationEventCatalog))
+	for _, event := range lineNotificationEventCatalog {
+		if event.DefaultEnabled {
+			out = append(out, event.Key)
+		}
+	}
+	return out
+}
+
+func NormalizeLineNotificationEventKeys(keys []string) ([]string, error) {
+	allowed := make(map[string]struct{}, len(lineNotificationEventCatalog))
+	for _, event := range lineNotificationEventCatalog {
+		allowed[event.Key] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, value := range keys {
+		key := strings.TrimSpace(value)
+		if _, ok := allowed[key]; !ok {
+			return nil, fmt.Errorf("unsupported LINE notification event %q", key)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out, nil
+}
 
 type LineNotificationRecipient struct {
 	ID              string     `json:"id"`
@@ -13,6 +109,7 @@ type LineNotificationRecipient struct {
 	DestinationType string     `json:"destination_type"`
 	DestinationID   string     `json:"destination_id"`
 	Enabled         bool       `json:"enabled"`
+	EventKeys       []string   `json:"event_keys"`
 	LastTestAt      *time.Time `json:"last_test_at,omitempty"`
 	LastTestStatus  string     `json:"last_test_status"`
 	LastTestError   string     `json:"last_test_error"`
@@ -23,11 +120,12 @@ type LineNotificationRecipient struct {
 }
 
 type LineNotificationRecipientUpsert struct {
-	LineOAID        string `json:"line_oa_id" binding:"required"`
-	Name            string `json:"name" binding:"required"`
-	DestinationType string `json:"destination_type"`
-	DestinationID   string `json:"destination_id" binding:"required"`
-	Enabled         *bool  `json:"enabled"`
+	LineOAID        string    `json:"line_oa_id" binding:"required"`
+	Name            string    `json:"name" binding:"required"`
+	DestinationType string    `json:"destination_type"`
+	DestinationID   string    `json:"destination_id" binding:"required"`
+	Enabled         *bool     `json:"enabled"`
+	EventKeys       *[]string `json:"event_keys"`
 }
 
 type LineNotificationContactCandidate struct {
@@ -57,8 +155,9 @@ type LineNotificationContactCandidateUpsert struct {
 }
 
 type LineNotificationCandidateAddRecipientInput struct {
-	Name    string `json:"name"`
-	Enabled *bool  `json:"enabled"`
+	Name      string    `json:"name"`
+	Enabled   *bool     `json:"enabled"`
+	EventKeys *[]string `json:"event_keys"`
 }
 
 type LineNotificationDelivery struct {
@@ -67,6 +166,7 @@ type LineNotificationDelivery struct {
 	Recipient      string          `json:"recipient,omitempty"`
 	LineOAID       string          `json:"line_oa_id"`
 	LineOAName     string          `json:"line_oa_name,omitempty"`
+	EventKey       string          `json:"event_key"`
 	Source         string          `json:"source"`
 	Severity       string          `json:"severity"`
 	Title          string          `json:"title"`
@@ -89,6 +189,7 @@ type LineNotificationDelivery struct {
 }
 
 type LineNotificationMessageInput struct {
+	EventKey       string
 	Source         string
 	Severity       string
 	Title          string

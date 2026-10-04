@@ -139,7 +139,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { menuKey: 'channel_defaults', to: '/settings/channels', label: 'เส้นทางเอกสาร SML', icon: Building2, hint: 'กำหนดเอกสาร SML แยกตามช่องทาง', adminOnly: true },
       { menuKey: 'shopee_connections', to: '/settings/shopee-connections', label: 'ร้าน Shopee', icon: Store, hint: 'เชื่อมต่อและจัดการร้าน Shopee', adminOnly: true, enabled: ENABLE_SHOPEE_EXCEL },
       { menuKey: 'tiktok_shop_connections', to: '/settings/tiktok-shop', label: 'ร้าน TikTok Shop', icon: Store, hint: 'เชื่อมต่อร้านผ่าน TikTok Shop Open API', adminOnly: true, enabled: ENABLE_TIKTOK_SHOP_API },
-      { menuKey: 'line_notifications', to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'แจ้งออเดอร์ใหม่จาก Shopee, TikTok Shop และ NextStep Marketplace', adminOnly: true },
+      { menuKey: 'line_notifications', to: '/settings/line-notifications', label: 'LINE แจ้งเตือน', icon: Bell, hint: 'เลือกผู้รับและประเภทแจ้งเตือน Marketplace', adminOnly: true },
     ],
   },
   {

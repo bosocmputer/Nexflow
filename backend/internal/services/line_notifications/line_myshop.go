@@ -22,6 +22,7 @@ func (s *Service) EnqueueLineMyShopOrder(ctx context.Context, snap *models.LineM
 		dedupeKey = fmt.Sprintf("line_myshop:order:%s:%s", strings.TrimSpace(snap.ConnectionID), orderNo)
 	}
 	return s.repo.Enqueue(ctx, models.LineNotificationMessageInput{
+		EventKey:    "line_myshop.order.new",
 		Source:      models.LineMyShopSource,
 		Severity:    lineMyShopNotificationSeverity(snap),
 		Title:       "มีออเดอร์ LINE MyShop ใหม่",
