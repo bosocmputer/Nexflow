@@ -34,3 +34,25 @@ test('LINE delivery history exposes event identity and suppressed work', () => {
   assert.match(source, /suppressed/)
   assert.match(source, /ระงับแล้ว/)
 })
+
+test('LINE settings prioritizes recipients and separates connection setup', () => {
+  assert.match(page, /useState<'recipients' \| 'connection'>\('recipients'\)/)
+  assert.match(page, /<TabsTrigger value="recipients"[\s\S]*?ผู้รับแจ้งเตือน\s*<\/TabsTrigger>/)
+  assert.match(page, /<TabsTrigger value="connection"[\s\S]*?การเชื่อมต่อ LINE OA\s*<\/TabsTrigger>/)
+  assert.match(page, /เพิ่มผู้รับ/)
+  assert.match(page, /<RecipientSheet/)
+  assert.match(page, /<CandidatePickerSheet/)
+})
+
+test('LINE quota is lazy and connection onboarding disappears after readiness', () => {
+  assert.doesNotMatch(page, /void load\(\)\s*\n\s*void loadQuota\(\)/)
+  assert.match(page, /activeSection === 'connection'/)
+  assert.match(page, /quotaRequestedRef/)
+  assert.match(page, /!ready &&/)
+})
+
+test('recipient test flow lets the operator choose one subscribed Flex event', () => {
+  assert.match(page, /function RecipientTestDialog/)
+  assert.match(page, /เลือกประเภท Flex ที่ต้องการส่งทดสอบ/)
+  assert.match(page, /recipient\?\.event_keys\.includes\(event\.key\)/)
+})

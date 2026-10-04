@@ -14,8 +14,10 @@ import {
   Plus,
   RefreshCw,
   Send,
+  Settings2,
   Trash2,
   UserPlus,
+  Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -32,7 +34,23 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DataTable } from '@/components/common/DataTable'
@@ -150,10 +168,12 @@ export default function LineNotifications() {
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
   const [quotaByOA, setQuotaByOA] = useState<Record<string, LineOAQuota>>({})
-  const [quotaLoading, setQuotaLoading] = useState(true)
+  const [quotaLoading, setQuotaLoading] = useState(false)
   const [quotaRefreshing, setQuotaRefreshing] = useState<Set<string>>(new Set())
   const [quotaLoadError, setQuotaLoadError] = useState(false)
   const [quotaCooldowns, setQuotaCooldowns] = useState<Record<string, number>>({})
+  const [activeSection, setActiveSection] = useState<'recipients' | 'connection'>('recipients')
+  const [candidateSheetOpen, setCandidateSheetOpen] = useState(false)
   const [senderDialog, setSenderDialog] = useState<LineSender | 'new' | null>(null)
   const [recipientDialog, setRecipientDialog] = useState<LineRecipient | null>(null)
   const [deleteRecipient, setDeleteRecipient] = useState<LineRecipient | null>(null)
@@ -166,6 +186,7 @@ export default function LineNotifications() {
   const [eventSamplesLoading, setEventSamplesLoading] = useState(false)
   const [supportDialog, setSupportDialog] = useState<'sample' | 'history' | null>(null)
   const supportTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const quotaRequestedRef = useRef(false)
 
   const load = async () => {
     setLoading(true)
@@ -252,12 +273,23 @@ export default function LineNotifications() {
 
   useEffect(() => {
     void load()
-    void loadQuota()
   }, [])
 
   const refreshPage = () => {
     void load()
-    void loadQuota({ refresh: true })
+    if (activeSection === 'connection') {
+      quotaRequestedRef.current = true
+      void loadQuota({ refresh: true })
+    }
+  }
+
+  const handleSectionChange = (value: string) => {
+    const next = value === 'connection' ? 'connection' : 'recipients'
+    setActiveSection(next)
+    if (next === 'connection' && !quotaRequestedRef.current) {
+      quotaRequestedRef.current = true
+      void loadQuota()
+    }
   }
 
   const readiness = data?.readiness
@@ -353,6 +385,13 @@ export default function LineNotifications() {
     }
   }
 
+  const openRecipientTest = (recipient: LineRecipient) => {
+    const eventKey = recipient.event_keys?.[0] || 'shopee.order.new'
+    setSampleEventKey(eventKey)
+    setSampleSource(eventSourceForKey(eventKey, eventCatalog))
+    setTestRecipient(recipient)
+  }
+
   return (
     <div className="min-w-0 space-y-5">
       <PageHeader
@@ -360,317 +399,152 @@ export default function LineNotifications() {
         description="กำหนดให้ผู้รับแต่ละคนเลือกเฉพาะออเดอร์ การยกเลิก หรือผลส่ง SML ที่เกี่ยวข้อง พร้อมดู Flex ตัวอย่างก่อนส่งทดสอบจริง"
         actions={
           <>
-            <Button variant="outline" size="icon" aria-label="ดูตัวอย่าง Flex Message" title="ตัวอย่าง Flex Message" aria-haspopup="dialog" onClick={(event) => { void openSampleDialog(event.currentTarget) }}>
+            <Button variant="outline" size="sm" className="gap-1.5" aria-label="ดูตัวอย่าง Flex Message" aria-haspopup="dialog" onClick={(event) => { void openSampleDialog(event.currentTarget) }}>
               <MessageSquareText className="h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">ตัวอย่าง Flex</span>
             </Button>
-            <Button variant="outline" size="icon" aria-label="ดูประวัติการส่งล่าสุด" title="ประวัติการส่งล่าสุด" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('history') }}>
+            <Button variant="outline" size="sm" className="gap-1.5" aria-label="ดูประวัติการส่งล่าสุด" aria-haspopup="dialog" onClick={(event) => { supportTriggerRef.current = event.currentTarget; setSupportDialog('history') }}>
               <History className="h-4 w-4" aria-hidden />
+              <span className="hidden sm:inline">ประวัติการส่ง</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               className="gap-1.5"
               onClick={refreshPage}
-              disabled={loading || quotaLoading || quotaRefreshing.size > 0 || quotaCooldownActive}
-              title={quotaCooldownActive ? 'กรุณารอ 10 วินาทีก่อนดึงโควตาจาก LINE อีกครั้ง' : 'รีเฟรชข้อมูลและดึงโควตาล่าสุดจาก LINE'}
+              disabled={loading || (activeSection === 'connection' && (quotaLoading || quotaRefreshing.size > 0 || quotaCooldownActive))}
+              title={activeSection === 'connection'
+                ? (quotaCooldownActive ? 'กรุณารอ 10 วินาทีก่อนดึงโควตาจาก LINE อีกครั้ง' : 'รีเฟรชการเชื่อมต่อและดึงโควตาล่าสุดจาก LINE')
+                : 'รีเฟรชผู้รับและประวัติการส่ง'}
             >
               <RefreshCw className="h-3.5 w-3.5" />
               รีเฟรช
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setSenderDialog('new')}>
-              <Plus className="h-3.5 w-3.5" />
-              เพิ่ม LINE OA
             </Button>
           </>
         }
       />
 
-      <section className="rounded-lg border border-border/80 bg-card/95 p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="rounded-md border border-border bg-muted p-2">
-              {ready ? <CheckCircle2 className="h-5 w-5 text-success" /> : <AlertTriangle className="h-5 w-5 text-warning" />}
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground">
-                {ready ? 'พร้อมส่ง LINE ตามประเภทที่ผู้รับเลือก' : 'ยังตั้งค่า LINE แจ้งเตือนไม่ครบ'}
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                เพิ่ม LINE OA, เปิด Webhook แล้วให้ผู้รับทัก OA จากนั้นเลือกประเภทออเดอร์ การยกเลิก และผลส่ง SML ที่แต่ละคนต้องการรับ
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
-            <ReadinessChip label="LINE OA" value={`${readiness?.enabled_sender_count ?? 0}/${readiness?.sender_count ?? 0}`} ok={!!readiness?.enabled_sender_count} />
-            <ReadinessChip label="ผู้รับ" value={`${enabledRecipients}`} ok={enabledRecipients > 0} />
-            <ReadinessChip label="TikTok Shop" value={readiness?.tiktok_shop_notifications_enabled ? 'เปิด' : 'ปิด'} ok={!!readiness?.tiktok_shop_notifications_enabled} />
-            <ReadinessChip label="ล่าสุด" value={data?.deliveries[0]?.status ? deliveryStatusLabel(data.deliveries[0].status) : 'ยังไม่มี'} ok={data?.deliveries[0]?.status === 'sent'} />
-          </div>
+      <section className="flex flex-col gap-2 border-y border-border py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between" role="status" aria-live="polite">
+        <div className="flex min-w-0 items-center gap-2 font-medium">
+          {ready ? <CheckCircle2 className="h-4 w-4 shrink-0 text-success" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />}
+          <span>{ready ? 'พร้อมส่ง LINE ตามประเภทที่ผู้รับเลือก' : 'ยังตั้งค่าการแจ้งเตือนไม่ครบ'}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>LINE OA <strong className="font-semibold text-foreground">{readiness?.enabled_sender_count ?? 0}/{readiness?.sender_count ?? 0}</strong></span>
+          <span>ผู้รับเปิด <strong className="font-semibold text-foreground">{enabledRecipients}</strong></span>
+          <span>TikTok <strong className="font-semibold text-foreground">{readiness?.tiktok_shop_notifications_enabled ? 'เปิด' : 'ปิด'}</strong></span>
+          <span>ล่าสุด <strong className="font-semibold text-foreground">{data?.deliveries[0]?.status ? deliveryStatusLabel(data.deliveries[0].status) : 'ยังไม่มี'}</strong></span>
         </div>
       </section>
 
-      <section className="min-w-0">
-        <div className="min-w-0 space-y-5">
-          <div className="rounded-lg border border-border/80 bg-card/95 p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <div>
-                <h2 className="text-base font-semibold">LINE OA sender</h2>
-                <p className="text-sm text-muted-foreground">เพิ่ม OA แล้วนำ Webhook URL ไปใส่ใน LINE Developers ของ OA นั้น โควตาด้านล่างเป็นค่าประมาณจาก LINE และรวมข้อความที่ส่งผ่าน OA Manager</p>
-              </div>
-            </div>
-            <div className="mb-3 grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
-              {[
-                'เพิ่ม LINE OA',
-                'คัดลอก Webhook URL',
-                'เปิด Use webhook ใน LINE Developers',
-                'ให้ผู้รับทัก LINE OA',
-              ].map((step, index) => (
-                <div key={step} className="rounded-md border border-border bg-muted/35 px-3 py-2">
-                  <span className="mr-2 font-mono text-xs text-muted-foreground">{index + 1}</span>
-                  <span className="font-medium">{step}</span>
-                </div>
-              ))}
-            </div>
-            <DataTable<LineSender>
-              data={data?.senders ?? []}
-              loading={loading}
-              dense
-              empty={<EmptyState icon={Bell} title="ยังไม่มี LINE OA" description="เพิ่ม Channel secret และ access token ก่อนกำหนดผู้รับแจ้งเตือน" />}
-              columns={[
-                {
-                  key: 'name',
-                  header: 'ชื่อ',
-                  cell: (s) => (
-                    <div className="min-w-[160px]">
-                      <div className="font-medium">{s.name}</div>
-                      <div className="font-mono text-[11px] text-muted-foreground">{s.bot_user_id ? `bot ${shortId(s.bot_user_id)}` : 'ยังไม่ได้ทดสอบ token'}</div>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'quota',
-                  header: 'โควตาข้อความ',
-                  cell: (s) => (
-                    <div className="min-w-[240px] max-w-[320px]">
-                      <LineQuotaSummary
-                        quota={quotaByOA[s.id]}
-                        loading={quotaLoading && !quotaByOA[s.id]}
-                        refreshing={quotaRefreshing.has(s.id)}
-                        cooldown={!!quotaCooldowns[s.id] && quotaCooldowns[s.id] > Date.now()}
-                        initialLoadFailed={quotaLoadError}
-                        onRefresh={() => void loadQuota({ refresh: true, oaID: s.id })}
-                      />
-                    </div>
-                  ),
-                },
-                {
-                  key: 'webhook',
-                  header: 'Webhook URL',
-                  cell: (s) => (
-                    <div className="flex max-w-[360px] items-center gap-2">
-                      <code className="min-w-0 flex-1 truncate rounded-md bg-muted/50 px-2 py-1 font-mono text-[11px] text-foreground">
-                        {webhookURL(s.id)}
-                      </code>
-                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => copyWebhookURL(s)} title="คัดลอก Webhook URL">
-                        <Copy className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'status',
-                  header: 'สถานะ',
-                  cell: (s) => (
-                    <div className="flex flex-wrap gap-1">
-                      {s.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}
-                      {s.bot_user_id ? <Badge className="bg-info/15 text-info">token ใช้ได้</Badge> : <Badge className="bg-warning/15 text-warning">รอทดสอบ</Badge>}
-                    </div>
-                  ),
-                },
-                {
-                  key: 'updated',
-                  header: 'แก้ไขล่าสุด',
-                  cell: (s) => <span className="text-xs text-muted-foreground">{formatDate(s.updated_at)}</span>,
-                },
-                {
-                  key: 'actions',
-                  header: '',
-                  headerClassName: 'text-right',
-                  className: 'text-right',
-                  cell: (s) => (
-                    <div className="flex justify-end gap-1">
-                      <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => handleTestSender(s)}>
-                        ทดสอบ OA
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setSenderDialog(s)}>
-                        <Edit3 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          </div>
+      <Tabs value={activeSection} onValueChange={handleSectionChange} className="min-w-0">
+        <TabsList className="h-9 w-full justify-start overflow-x-auto rounded-none border-b bg-transparent p-0">
+          <TabsTrigger value="recipients" className="h-9 gap-2 rounded-none border-b-2 border-transparent px-3 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none">
+            <Users className="h-4 w-4" />
+            ผู้รับแจ้งเตือน
+          </TabsTrigger>
+          <TabsTrigger value="connection" className="h-9 gap-2 rounded-none border-b-2 border-transparent px-3 shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none">
+            <Settings2 className="h-4 w-4" />
+            การเชื่อมต่อ LINE OA
+          </TabsTrigger>
+        </TabsList>
 
-          <div className="rounded-lg border border-border/80 bg-card/95 p-4">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <TabsContent value="recipients" className="mt-4 min-w-0">
+          <section className="min-w-0 space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h2 className="text-base font-semibold">ผู้ที่ทัก LINE OA ล่าสุด</h2>
-                <p className="text-sm text-muted-foreground">หลังตั้ง Webhook แล้ว ให้ผู้รับส่งข้อความหา OA จากนั้นกดเพิ่มเป็นผู้รับแจ้งเตือน</p>
+                <h2 className="text-base font-semibold">ผู้รับแจ้งเตือน ({data?.recipients.length ?? 0})</h2>
+                <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">เลือกให้แต่ละคนรับเฉพาะงานที่เกี่ยวข้อง การปิดประเภทจะระงับคิวที่ยังไม่เริ่มส่ง</p>
               </div>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={load}>
-                <RefreshCw className="h-3.5 w-3.5" />
-                รีเฟรช
+              <Button className="gap-1.5 self-start" onClick={() => setCandidateSheetOpen(true)} disabled={(data?.senders.length ?? 0) === 0} title={(data?.senders.length ?? 0) === 0 ? 'เพิ่มและเชื่อมต่อ LINE OA ก่อน' : 'เลือกจากผู้ที่ทัก LINE OA ล่าสุด'}>
+                <UserPlus className="h-4 w-4" />
+                เพิ่มผู้รับ
               </Button>
             </div>
-            <DataTable<LineCandidate>
-              data={data?.candidates ?? []}
-              loading={loading}
-              dense
-              empty={<EmptyState icon={MessageCircle} title="ยังไม่มีคนทัก LINE OA" description="ให้ผู้รับส่งข้อความหา OA หลังเปิด Webhook แล้วกดรีเฟรช รายการจะขึ้นที่นี่" />}
-              columns={[
-                {
-                  key: 'contact',
-                  header: 'ปลายทาง',
-                  cell: (c) => (
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{candidateName(c)}</div>
-                      <div className="truncate text-xs text-muted-foreground">{c.line_oa_name || senderNameById.get(c.line_oa_id) || 'LINE OA'}</div>
-                      {c.last_message_preview && <div className="mt-1 max-w-[360px] truncate text-xs text-muted-foreground">ล่าสุด: {c.last_message_preview}</div>}
-                    </div>
-                  ),
-                },
-                {
-                  key: 'destination',
-                  header: 'ประเภท',
-                  cell: (c) => (
-                    <Badge variant="secondary">{destinationLabels[c.destination_type]}</Badge>
-                  ),
-                },
-                {
-                  key: 'seen',
-                  header: 'ทักล่าสุด',
-                  cell: (c) => <span className="text-xs text-muted-foreground">{formatDate(c.last_seen_at)}</span>,
-                },
-                {
-                  key: 'status',
-                  header: 'สถานะ',
-                  cell: (c) => c.is_recipient ? <Badge className="bg-success/15 text-success">เพิ่มแล้ว</Badge> : <Badge className="bg-warning/15 text-warning">ยังไม่ได้เพิ่ม</Badge>,
-                },
-                {
-                  key: 'actions',
-                  header: '',
-                  headerClassName: 'text-right',
-                  className: 'text-right',
-                  cell: (c) => (
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 gap-1 px-2 text-xs"
-                        disabled={c.is_recipient}
-                        onClick={() => setCandidateToAdd(c)}
-                      >
-                        <UserPlus className="h-3 w-3" />
-                        เพิ่มเป็นผู้รับ
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => setCandidateToHide(c)} title="ซ่อนรายการนี้">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          </div>
 
-          <div className="rounded-lg border border-border/80 bg-card/95 p-4">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-base font-semibold">ผู้รับแจ้งเตือน</h2>
-                <p className="text-sm text-muted-foreground">ผู้รับแต่ละคนเลือกประเภทแจ้งเตือนได้อิสระ การปิดประเภทจะระงับคิวเดิมที่ยังไม่เริ่มส่งทันที</p>
-              </div>
+            <div className="hidden md:block">
+              <DataTable<LineRecipient>
+                data={data?.recipients ?? []}
+                loading={loading}
+                dense
+                empty={<EmptyState icon={Users} title="ยังไม่มีผู้รับแจ้งเตือน" description="ให้ผู้รับทัก LINE OA แล้วกดเพิ่มผู้รับ" />}
+                columns={[
+                  {
+                    key: 'name', header: 'ผู้รับ', cell: (r) => <div><div className="font-medium">{r.name}</div><div className="text-xs text-muted-foreground">{r.line_oa_name || senderNameById.get(r.line_oa_id) || 'LINE OA'} · {destinationLabels[r.destination_type]}</div></div>,
+                  },
+                  {
+                    key: 'subscriptions', header: 'รับแจ้งเตือน', cell: (r) => <RecipientSourceSummary recipient={r} catalog={eventCatalog} />,
+                  },
+                  {
+                    key: 'status', header: 'สถานะ / ส่งล่าสุด', cell: (r) => <div><div className="flex flex-wrap gap-1">{r.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}{r.last_error && <Badge className="bg-destructive/15 text-destructive">มีข้อผิดพลาด</Badge>}</div><div className="mt-1 text-xs text-muted-foreground">{r.last_sent_at ? formatDate(r.last_sent_at) : 'ยังไม่มีประวัติส่ง'}</div></div>,
+                  },
+                  {
+                    key: 'actions', header: '', headerClassName: 'text-right', className: 'text-right', cell: (r) => <RecipientActions recipient={r} onTest={openRecipientTest} onEdit={setRecipientDialog} onDelete={setDeleteRecipient} />,
+                  },
+                ]}
+              />
             </div>
-            <DataTable<LineRecipient>
-              data={data?.recipients ?? []}
-              loading={loading}
-              dense
-              empty="ยังไม่มีผู้รับแจ้งเตือน"
-              columns={[
-                {
-                  key: 'name',
-                  header: 'ผู้รับ',
-                  cell: (r) => (
-                    <div>
-                      <div className="font-medium">{r.name}</div>
-                      <div className="text-xs text-muted-foreground">{r.line_oa_name || senderNameById.get(r.line_oa_id) || 'LINE OA'}</div>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'destination',
-                  header: 'ประเภท',
-                  cell: (r) => (
-                    <Badge variant="secondary">{destinationLabels[r.destination_type]}</Badge>
-                  ),
-                },
-                {
-                  key: 'subscriptions',
-                  header: 'รับแจ้งเตือน',
-                  cell: (r) => (
-                    <div className="min-w-[220px]">
-                      <div className="flex flex-wrap gap-1">
-                        {recipientSourceSummary(r.event_keys ?? [], eventCatalog).slice(0, 3).map((item) => (
-                          <Badge key={item.source} variant="outline" className={sourceBadgeClass(item.source)}>
-                            {sourceLabel(item.source)} {item.count}
-                          </Badge>
-                        ))}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">{r.event_keys?.length ?? 0} ประเภท</div>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'status',
-                  header: 'สถานะ',
-                  cell: (r) => (
-                    <div className="flex flex-wrap gap-1">
-                      {r.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}
-                      {r.last_error && <Badge className="bg-destructive/15 text-destructive">มี error</Badge>}
-                    </div>
-                  ),
-                },
-                {
-                  key: 'last',
-                  header: 'ส่งล่าสุด',
-                  cell: (r) => <span className="text-xs text-muted-foreground">{r.last_sent_at ? formatDate(r.last_sent_at) : 'ยังไม่มี'}</span>,
-                },
-                {
-                  key: 'actions',
-                  header: '',
-                  headerClassName: 'text-right',
-                  className: 'text-right',
-                  cell: (r) => (
-                    <div className="flex justify-end gap-1">
-                      <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" disabled={!r.enabled || (r.event_keys?.length ?? 0) === 0} onClick={() => { setSampleEventKey(r.event_keys?.[0] || 'shopee.order.new'); setTestRecipient(r) }} title={r.enabled ? 'ส่ง Flex ทดสอบประเภทแรกที่ผู้รับนี้เลือกไว้' : 'เปิดผู้รับก่อนส่งข้อความทดสอบ'}>
-                        <Send className="h-3 w-3" />
-                        ทดสอบ
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setRecipientDialog(r)}>
-                        <Edit3 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => setDeleteRecipient(r)}>
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          </div>
-        </div>
 
-      </section>
+            <div className="space-y-2 md:hidden">
+              {loading ? <div className="rounded-lg border p-4 text-sm text-muted-foreground">กำลังโหลดผู้รับแจ้งเตือน</div> : (data?.recipients ?? []).length === 0 ? <EmptyState icon={Users} title="ยังไม่มีผู้รับแจ้งเตือน" description="ให้ผู้รับทัก LINE OA แล้วกดเพิ่มผู้รับ" /> : data!.recipients.map((recipient) => (
+                <article key={recipient.id} className="space-y-3 rounded-lg border border-border bg-card p-3">
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate font-medium">{recipient.name}</div><div className="mt-0.5 truncate text-xs text-muted-foreground">{recipient.line_oa_name || senderNameById.get(recipient.line_oa_id) || 'LINE OA'} · {destinationLabels[recipient.destination_type]}</div></div>{recipient.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}</div>
+                  <RecipientSourceSummary recipient={recipient} catalog={eventCatalog} />
+                  <div className="flex items-center justify-between gap-2 border-t pt-2"><span className="text-xs text-muted-foreground">ล่าสุด {recipient.last_sent_at ? formatDate(recipient.last_sent_at) : 'ยังไม่มี'}</span><RecipientActions recipient={recipient} onTest={openRecipientTest} onEdit={setRecipientDialog} onDelete={setDeleteRecipient} /></div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="connection" className="mt-4 min-w-0">
+          <section className="min-w-0 space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-base font-semibold">การเชื่อมต่อ LINE OA</h2>
+                <p className="mt-0.5 max-w-3xl text-sm text-muted-foreground">จัดการ token, Webhook และโควตาข้อความ ส่วนนี้ใช้เมื่อตั้งค่าหรือแก้ปัญหาการเชื่อมต่อ</p>
+              </div>
+              <Button variant="outline" className="gap-1.5 self-start" onClick={() => setSenderDialog('new')}><Plus className="h-4 w-4" />เพิ่ม LINE OA</Button>
+            </div>
+
+            {!ready && (
+              <div className="grid gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                {['เพิ่ม LINE OA', 'คัดลอก Webhook URL', 'เปิด Use webhook ใน LINE Developers', 'ให้ผู้รับทัก LINE OA'].map((step, index) => <div key={step} className="flex items-center gap-2"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-warning/15 text-xs font-semibold text-warning">{index + 1}</span><span>{step}</span></div>)}
+              </div>
+            )}
+
+            <div className="hidden md:block">
+              <DataTable<LineSender>
+                data={data?.senders ?? []}
+                loading={loading}
+                dense
+                empty={<EmptyState icon={Bell} title="ยังไม่มี LINE OA" description="เพิ่ม Channel secret และ access token ก่อนกำหนดผู้รับแจ้งเตือน" />}
+                columns={[
+                  { key: 'name', header: 'LINE OA', cell: (s) => <div className="min-w-[170px]"><div className="font-medium">{s.name}</div><div className="mt-1 flex flex-wrap gap-1">{s.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}{s.bot_user_id ? <Badge className="bg-info/15 text-info">token ใช้ได้</Badge> : <Badge className="bg-warning/15 text-warning">รอทดสอบ</Badge>}</div></div> },
+                  { key: 'quota', header: 'โควตาข้อความ', cell: (s) => <div className="min-w-[230px] max-w-[320px]"><LineQuotaSummary quota={quotaByOA[s.id]} loading={quotaLoading && !quotaByOA[s.id]} refreshing={quotaRefreshing.has(s.id)} cooldown={!!quotaCooldowns[s.id] && quotaCooldowns[s.id] > Date.now()} initialLoadFailed={quotaLoadError} onRefresh={() => void loadQuota({ refresh: true, oaID: s.id })} /></div> },
+                  { key: 'details', header: 'Webhook และข้อมูลเทคนิค', cell: (s) => <details className="min-w-[260px]"><summary className="cursor-pointer text-xs font-medium text-primary">แสดงรายละเอียด</summary><div className="mt-2 space-y-2"><div className="font-mono text-[11px] text-muted-foreground">{s.bot_user_id ? `bot ${shortId(s.bot_user_id)}` : 'ยังไม่มี Bot ID'}</div><div className="flex max-w-[360px] items-center gap-1"><code className="min-w-0 flex-1 truncate rounded-md bg-muted/50 px-2 py-1 font-mono text-[11px]">{webhookURL(s.id)}</code><Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => copyWebhookURL(s)} aria-label={`คัดลอก Webhook URL ของ ${s.name}`}><Copy className="h-3.5 w-3.5" /></Button></div></div></details> },
+                  { key: 'updated', header: 'แก้ไขล่าสุด', cell: (s) => <span className="whitespace-nowrap text-xs text-muted-foreground">{formatDate(s.updated_at)}</span> },
+                  { key: 'actions', header: '', headerClassName: 'text-right', className: 'text-right', cell: (s) => <div className="flex justify-end gap-1"><Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => handleTestSender(s)}>ทดสอบ OA</Button><Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => setSenderDialog(s)} aria-label={`แก้ไข ${s.name}`}><Edit3 className="h-3.5 w-3.5" /></Button></div> },
+                ]}
+              />
+            </div>
+
+            <div className="space-y-2 md:hidden">
+              {loading ? <div className="rounded-lg border p-4 text-sm text-muted-foreground">กำลังโหลดการเชื่อมต่อ LINE OA</div> : (data?.senders ?? []).length === 0 ? <EmptyState icon={Bell} title="ยังไม่มี LINE OA" description="เพิ่ม Channel secret และ access token ก่อนกำหนดผู้รับแจ้งเตือน" /> : data!.senders.map((sender) => (
+                <article key={sender.id} className="space-y-3 rounded-lg border border-border bg-card p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0"><div className="truncate font-medium">{sender.name}</div><div className="mt-1 flex flex-wrap gap-1">{sender.enabled ? <Badge className="bg-success/15 text-success">เปิด</Badge> : <Badge variant="secondary">ปิด</Badge>}{sender.bot_user_id ? <Badge className="bg-info/15 text-info">token ใช้ได้</Badge> : <Badge className="bg-warning/15 text-warning">รอทดสอบ</Badge>}</div></div>
+                    <Button variant="ghost" size="sm" className="h-8 shrink-0 px-2" onClick={() => setSenderDialog(sender)} aria-label={`แก้ไข ${sender.name}`}><Edit3 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                  <LineQuotaSummary quota={quotaByOA[sender.id]} loading={quotaLoading && !quotaByOA[sender.id]} refreshing={quotaRefreshing.has(sender.id)} cooldown={!!quotaCooldowns[sender.id] && quotaCooldowns[sender.id] > Date.now()} initialLoadFailed={quotaLoadError} onRefresh={() => void loadQuota({ refresh: true, oaID: sender.id })} />
+                  <details className="rounded-md border border-border/70 px-3 py-2"><summary className="cursor-pointer text-xs font-medium text-primary">Webhook และข้อมูลเทคนิค</summary><div className="mt-2 space-y-2"><div className="font-mono text-[11px] text-muted-foreground">{sender.bot_user_id ? `bot ${shortId(sender.bot_user_id)}` : 'ยังไม่มี Bot ID'}</div><div className="flex min-w-0 items-center gap-1"><code className="min-w-0 flex-1 truncate rounded-md bg-muted/50 px-2 py-1 font-mono text-[11px]">{webhookURL(sender.id)}</code><Button variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={() => copyWebhookURL(sender)} aria-label={`คัดลอก Webhook URL ของ ${sender.name}`}><Copy className="h-3.5 w-3.5" /></Button></div></div></details>
+                  <div className="flex items-center justify-between gap-2 border-t pt-2"><span className="text-xs text-muted-foreground">แก้ไข {formatDate(sender.updated_at)}</span><Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => handleTestSender(sender)}>ทดสอบ OA</Button></div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={supportDialog !== null} onOpenChange={(open) => !open && setSupportDialog(null)}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-4xl" onCloseAutoFocus={(event) => { event.preventDefault(); supportTriggerRef.current?.focus() }}>
@@ -750,10 +624,24 @@ export default function LineNotifications() {
         onOpenChange={(open) => !open && setSenderDialog(null)}
         onSaved={() => {
           void load()
-          void loadQuota()
+          quotaRequestedRef.current = true
+          void loadQuota({ refresh: true })
         }}
       />
-      <RecipientDialog
+      <CandidatePickerSheet
+        open={candidateSheetOpen}
+        candidates={data?.candidates ?? []}
+        loading={loading}
+        senderNameById={senderNameById}
+        onOpenChange={setCandidateSheetOpen}
+        onRefresh={load}
+        onSelect={(candidate) => {
+          setCandidateSheetOpen(false)
+          setCandidateToAdd(candidate)
+        }}
+        onHide={setCandidateToHide}
+      />
+      <RecipientSheet
         open={!!recipientDialog}
         recipient={recipientDialog}
         candidate={null}
@@ -762,7 +650,7 @@ export default function LineNotifications() {
         onOpenChange={(open) => !open && setRecipientDialog(null)}
         onSaved={load}
       />
-      <RecipientDialog
+      <RecipientSheet
         open={!!candidateToAdd}
         recipient={null}
         candidate={candidateToAdd}
@@ -771,12 +659,15 @@ export default function LineNotifications() {
         onOpenChange={(open) => !open && setCandidateToAdd(null)}
         onSaved={load}
       />
-      <ConfirmDialog
-        open={!!testRecipient}
+      <RecipientTestDialog
+        recipient={testRecipient}
+        catalog={eventCatalog}
+        eventKey={sampleEventKey}
+        onEventKeyChange={(eventKey) => {
+          setSampleEventKey(eventKey)
+          setSampleSource(eventSourceForKey(eventKey, eventCatalog))
+        }}
         onOpenChange={(open) => !open && setTestRecipient(null)}
-        title="ส่ง Flex ทดสอบ"
-        description={testRecipient ? `ระบบจะส่ง Flex ตัวอย่าง “${selectedEvent?.label || sampleSourceLabel(sampleSource)}” ไปที่ ${testRecipient.name} เพื่อยืนยันว่าปลายทาง LINE ใช้งานได้ ไม่ใช่ event จริง` : ''}
-        confirmLabel="ส่งทดสอบ"
         onConfirm={runRecipientTest}
       />
       <ConfirmDialog
@@ -900,12 +791,136 @@ function LineQuotaSummary({
   )
 }
 
-function ReadinessChip({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+function RecipientSourceSummary({ recipient, catalog }: { recipient: LineRecipient; catalog: LineEventDefinition[] }) {
   return (
-    <div className="rounded-md border border-border bg-background/70 px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={ok ? 'text-sm font-semibold text-foreground' : 'text-sm font-semibold text-warning'}>{value}</div>
+    <div className="min-w-0">
+      <div className="flex flex-wrap gap-1">
+        {recipientSourceSummary(recipient.event_keys ?? [], catalog).map((item) => (
+          <Badge key={item.source} variant="outline" className={sourceBadgeClass(item.source)}>{sourceLabel(item.source)} {item.count}</Badge>
+        ))}
+      </div>
+      <div className="mt-1 text-xs text-muted-foreground">{recipient.event_keys?.length ?? 0} ประเภท</div>
     </div>
+  )
+}
+
+function RecipientActions({
+  recipient,
+  onTest,
+  onEdit,
+  onDelete,
+}: {
+  recipient: LineRecipient
+  onTest: (recipient: LineRecipient) => void
+  onEdit: (recipient: LineRecipient) => void
+  onDelete: (recipient: LineRecipient) => void
+}) {
+  const canTest = recipient.enabled && (recipient.event_keys?.length ?? 0) > 0
+  return (
+    <div className="flex shrink-0 justify-end gap-1">
+      <Button variant="outline" size="sm" className="h-8 gap-1 px-2 text-xs" disabled={!canTest} onClick={() => onTest(recipient)} title={canTest ? 'เลือกประเภทแล้วส่ง Flex ทดสอบ' : 'เปิดผู้รับและเลือกประเภทแจ้งเตือนก่อน'}><Send className="h-3.5 w-3.5" />ทดสอบ</Button>
+      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => onEdit(recipient)} aria-label={`จัดการผู้รับ ${recipient.name}`}><Edit3 className="h-3.5 w-3.5" /></Button>
+      <Button variant="ghost" size="sm" className="h-8 px-2 text-destructive hover:text-destructive" onClick={() => onDelete(recipient)} aria-label={`ลบผู้รับ ${recipient.name}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+    </div>
+  )
+}
+
+function CandidatePickerSheet({
+  open,
+  candidates,
+  loading,
+  senderNameById,
+  onOpenChange,
+  onRefresh,
+  onSelect,
+  onHide,
+}: {
+  open: boolean
+  candidates: LineCandidate[]
+  loading: boolean
+  senderNameById: Map<string, string>
+  onOpenChange: (open: boolean) => void
+  onRefresh: () => void
+  onSelect: (candidate: LineCandidate) => void
+  onHide: (candidate: LineCandidate) => void
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
+        <SheetHeader className="border-b px-4 py-4 pr-12 text-left">
+          <SheetTitle>เพิ่มผู้รับแจ้งเตือน</SheetTitle>
+          <SheetDescription>ให้ผู้รับทัก LINE OA ก่อน แล้วเลือกจากรายการล่าสุด ระบบจะใช้ปลายทางจาก Webhook โดยไม่ต้องกรอก ID เอง</SheetDescription>
+        </SheetHeader>
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+          <span className="text-sm text-muted-foreground">พบ {candidates.length} รายการ</span>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={onRefresh} disabled={loading}><RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin motion-reduce:animate-none')} />รีเฟรช</Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">กำลังโหลดผู้ที่ทัก LINE OA</div>
+          ) : candidates.length === 0 ? (
+            <EmptyState icon={MessageCircle} title="ยังไม่มีคนทัก LINE OA" description="ให้ผู้รับส่งข้อความหา OA แล้วกดรีเฟรช รายการจะปรากฏที่นี่" />
+          ) : (
+            <div className="divide-y rounded-lg border border-border">
+              {candidates.map((candidate) => (
+                <div key={candidate.id} className="flex items-start gap-3 p-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{candidateName(candidate)}</span>{candidate.is_recipient && <Badge className="bg-success/15 text-success">เพิ่มแล้ว</Badge>}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{candidate.line_oa_name || senderNameById.get(candidate.line_oa_id) || 'LINE OA'} · {destinationLabels[candidate.destination_type]} · ทักล่าสุด {formatDate(candidate.last_seen_at)}</div>
+                    {candidate.last_message_preview && <div className="mt-1 truncate text-xs text-muted-foreground">ข้อความล่าสุด: {candidate.last_message_preview}</div>}
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button variant="outline" size="sm" className="h-8 gap-1 px-2 text-xs" disabled={candidate.is_recipient} onClick={() => onSelect(candidate)}><UserPlus className="h-3.5 w-3.5" />เลือก</Button>
+                    <Button variant="ghost" size="sm" className="h-8 px-2 text-muted-foreground" onClick={() => onHide(candidate)} aria-label={`ซ่อน ${candidateName(candidate)}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function RecipientTestDialog({
+  recipient,
+  catalog,
+  eventKey,
+  onEventKeyChange,
+  onOpenChange,
+  onConfirm,
+}: {
+  recipient: LineRecipient | null
+  catalog: LineEventDefinition[]
+  eventKey: string
+  onEventKeyChange: (eventKey: string) => void
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}) {
+  const availableEvents = catalog.filter((event) => recipient?.event_keys.includes(event.key))
+  const selected = availableEvents.find((event) => event.key === eventKey)
+  return (
+    <Dialog open={!!recipient} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>ส่ง Flex ทดสอบ</DialogTitle>
+          <DialogDescription>{recipient ? `ส่งข้อความจำลองไปที่ ${recipient.name} เพื่อทดสอบการรับ LINE โดยไม่สร้าง event งานจริง` : ''}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="line-test-event">เลือกประเภท Flex ที่ต้องการส่งทดสอบ</Label>
+          <Select value={eventKey} onValueChange={onEventKeyChange}>
+            <SelectTrigger id="line-test-event"><SelectValue placeholder="เลือกประเภทแจ้งเตือน" /></SelectTrigger>
+            <SelectContent>{availableEvents.map((event) => <SelectItem key={event.key} value={event.key}>{event.label}</SelectItem>)}</SelectContent>
+          </Select>
+          {selected && <p className="text-xs text-muted-foreground">{selected.description}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>ยกเลิก</Button>
+          <Button onClick={onConfirm} disabled={!selected}>ส่ง Flex ทดสอบ</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -989,9 +1004,9 @@ function SenderDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'แก้ไข LINE OA sender' : 'เพิ่ม LINE OA sender'}</DialogTitle>
+          <DialogTitle>{isEdit ? 'แก้ไขการเชื่อมต่อ LINE OA' : 'เพิ่มการเชื่อมต่อ LINE OA'}</DialogTitle>
           <DialogDescription>
-            ใช้สำหรับส่ง Push แจ้งเตือนการทำงาน Marketplace หลังบันทึกแล้วระบบจะแสดง Webhook URL ให้คัดลอกไป Verify และเปิด Use webhook ใน LINE Developers
+            ใช้สำหรับส่งแจ้งเตือน Marketplace หลังบันทึกแล้วระบบจะแสดง Webhook URL สำหรับตั้งค่าใน LINE Developers
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -1025,7 +1040,7 @@ function SenderDialog({
           </div>
           <label className="flex items-center justify-between rounded-md border border-border bg-muted/35 px-3 py-2">
             <span>
-              <span className="block text-sm font-medium">เปิดใช้งาน sender นี้</span>
+              <span className="block text-sm font-medium">เปิดใช้ LINE OA นี้</span>
               <span className="block text-xs text-muted-foreground">ปิดไว้ได้ถ้าต้องการหยุดส่งจาก OA นี้ชั่วคราว</span>
             </span>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
@@ -1040,7 +1055,7 @@ function SenderDialog({
   )
 }
 
-function RecipientDialog({
+function RecipientSheet({
   open,
   recipient,
   candidate,
@@ -1127,17 +1142,17 @@ function RecipientDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88dvh] overflow-y-auto sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'แก้ไขผู้รับแจ้งเตือน' : 'เพิ่มผู้รับจาก LINE OA ล่าสุด'}</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl">
+        <SheetHeader className="border-b px-4 py-4 pr-12 text-left sm:px-6">
+          <SheetTitle>{isEdit ? 'จัดการผู้รับแจ้งเตือน' : 'เพิ่มผู้รับแจ้งเตือน'}</SheetTitle>
+          <SheetDescription>
             {isCandidateMode
               ? 'ตรวจชื่อผู้รับแล้วกดบันทึก ระบบจะใช้ปลายทางที่จับได้จาก Webhook ให้อัตโนมัติ'
-              : 'แก้ชื่อหรือสถานะการรับแจ้งเตือน ปลายทาง LINE ถูกจับจาก Webhook แล้ว'}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
+              : 'แก้ชื่อ สถานะ และประเภทแจ้งเตือน โดยไม่เปลี่ยนปลายทาง LINE ที่ตรวจพบแล้ว'}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="rounded-md border border-border bg-muted/35 px-3 py-2">
             <div className="text-xs text-muted-foreground">LINE OA</div>
             <div className="mt-1 text-sm font-medium">
@@ -1158,12 +1173,12 @@ function RecipientDialog({
           </label>
           <RecipientEventPreferences catalog={eventCatalog} eventKeys={eventKeys} enabled={enabled} onChange={setEventKeys} />
         </div>
-        <DialogFooter>
+        <SheetFooter className="border-t bg-background px-4 py-3 sm:px-6">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button>
-          <Button onClick={submit} disabled={saving}>{saving ? 'กำลังบันทึก' : 'บันทึก'}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <Button onClick={submit} disabled={saving}>{saving ? 'กำลังบันทึก' : 'บันทึกการแจ้งเตือน'}</Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -1192,16 +1207,5 @@ function deliveryStatusLabel(status: string) {
       return 'ระงับแล้ว'
     default:
       return status || '-'
-  }
-}
-
-function sampleSourceLabel(source: LineSampleSource) {
-  switch (source) {
-    case 'tiktok_shop':
-      return 'TikTok Shop'
-    case 'nextstep_marketplace':
-      return 'NextStep Marketplace'
-    default:
-      return 'Shopee'
   }
 }
