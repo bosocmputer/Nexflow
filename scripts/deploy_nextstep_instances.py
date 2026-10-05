@@ -933,6 +933,8 @@ def deploy_tiktok_gateway() -> None:
 def connect_target_to_gateway(target: Target) -> None:
     script = f"""
 set -euo pipefail
+backend_id=$(cd {shlex.quote(target.remote)} && docker compose ps -q backend)
+test -n "$backend_id"
 mode=$(sed -n 's/^SHOPEE_OPEN_API_MODE=//p' {shlex.quote(target.remote)}/.env | tail -n 1)
 if ! docker network inspect {shlex.quote(GATEWAY_NETWORK)} >/dev/null 2>&1; then
   if [ "$mode" = "gateway" ]; then
@@ -941,10 +943,10 @@ if ! docker network inspect {shlex.quote(GATEWAY_NETWORK)} >/dev/null 2>&1; then
   fi
   exit 0
 fi
-if ! docker inspect {shlex.quote(target.backend_container)} --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{GATEWAY_NETWORK}"'; then
-  docker network connect {shlex.quote(GATEWAY_NETWORK)} {shlex.quote(target.backend_container)}
+if ! docker inspect "$backend_id" --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{GATEWAY_NETWORK}"'; then
+  docker network connect {shlex.quote(GATEWAY_NETWORK)} "$backend_id"
 fi
-docker exec {shlex.quote(target.backend_container)} sh -lc \
+docker exec "$backend_id" sh -lc \
   'wget -qO- http://{GATEWAY_CONTAINER}:8091/health' | grep -q '"status":"ok"'
 """
     sudo(script, label=f"connect {target.name} backend to Shopee gateway network", timeout=30)
@@ -953,6 +955,8 @@ docker exec {shlex.quote(target.backend_container)} sh -lc \
 def connect_target_to_tiktok_gateway(target: Target) -> None:
     script = f"""
 set -euo pipefail
+backend_id=$(cd {shlex.quote(target.remote)} && docker compose ps -q backend)
+test -n "$backend_id"
 enabled=$(sed -n 's/^TIKTOK_SHOP_OPEN_API_ENABLED=//p' {shlex.quote(target.remote)}/.env | tail -n 1)
 if [ "$enabled" != "true" ]; then
   exit 0
@@ -961,10 +965,10 @@ if ! docker network inspect {shlex.quote(TIKTOK_GATEWAY_NETWORK)} >/dev/null 2>&
   echo 'TikTok Shop gateway network is missing for an enabled tenant' >&2
   exit 1
 fi
-if ! docker inspect {shlex.quote(target.backend_container)} --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{TIKTOK_GATEWAY_NETWORK}"'; then
-  docker network connect {shlex.quote(TIKTOK_GATEWAY_NETWORK)} {shlex.quote(target.backend_container)}
+if ! docker inspect "$backend_id" --format '{{{{json .NetworkSettings.Networks}}}}' | grep -q '"{TIKTOK_GATEWAY_NETWORK}"'; then
+  docker network connect {shlex.quote(TIKTOK_GATEWAY_NETWORK)} "$backend_id"
 fi
-docker exec {shlex.quote(target.backend_container)} sh -lc \
+docker exec "$backend_id" sh -lc \
   'wget -qO- http://{TIKTOK_GATEWAY_CONTAINER}:8092/health' | grep -q '"status":"ok"'
 """
     sudo(script, label=f"connect {target.name} backend to TikTok Shop gateway network", timeout=30)
@@ -1077,13 +1081,13 @@ def deploy_target(target: Target) -> None:
     )
     if '"status":"ok"' not in health:
         sudo(
-            f"docker logs {shlex.quote(target.backend_container)} --tail=120",
+            f"cd {shlex.quote(target.remote)} && docker compose logs --tail=120 backend",
             label=f"backend logs {target.name}",
             timeout=30,
         )
         fail(f"{target.name} backend health check failed")
     sudo(
-        f"docker exec {shlex.quote(target.backend_container)} "
+        f"cd {shlex.quote(target.remote)} && docker compose exec -T backend "
         "sh -lc 'psql \"$DATABASE_URL\" -Atc \"SELECT 1\"'",
         label=f"fresh database authentication {target.name}",
         timeout=30,
@@ -1095,7 +1099,7 @@ def deploy_target(target: Target) -> None:
         timeout=30,
     )
     sudo(
-        f"docker logs {shlex.quote(target.backend_container)} --since=2m 2>&1 "
+        f"cd {shlex.quote(target.remote)} && docker compose logs --since=2m backend 2>&1 "
         "| grep -iE 'fatal|panic|error|5xx' | tail -30 || true",
         label=f"recent backend error scan {target.name}",
         timeout=30,
