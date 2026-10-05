@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Boxes, Check, CheckCircle2, CircleOff, Info, Loader2, PackagePlus, Pencil, RefreshCw, Settings2, Trash2 } from 'lucide-react'
+import { AlertTriangle, Boxes, Check, CheckCircle2, ChevronsUpDown, CircleOff, Info, Loader2, PackagePlus, Pencil, RefreshCw, Settings2, Trash2 } from 'lucide-react'
 
 import client from '@/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -11,6 +11,7 @@ import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -374,7 +375,11 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
     setGroupKey(''); setMode('quota'); setSharedAcknowledged(false); setMembers([]); setReviewingCreate(false)
     initializedForOpen.current = true
   }, [open, candidates, groups])
-  const changeGroup = (value: string) => { setGroupKey(value); setMembers(draftMembers(value)) }
+  const changeGroup = (value: string) => {
+    setGroupKey(value)
+    setMembers(draftMembers(value))
+    setSharedAcknowledged(false)
+  }
   const toggleMember = (index: number, enabled: boolean) => {
     setMembers((current) => {
       const next = current.map((member, currentIndex) => ({ ...member, enabled: currentIndex === index ? enabled : member.enabled }))
@@ -413,10 +418,12 @@ function CreatePoolDialog({ open, candidates, saving, onOpenChange, onCreate }: 
         </DialogHeader>
         {groups.length === 0 ? <Alert><Info className="h-4 w-4" /><AlertTitle>ยังไม่มีสินค้าที่พร้อม</AlertTitle><AlertDescription>ไปที่ “จับคู่สินค้า Marketplace” และตรวจหน่วย/การแปลงของ Shopee หรือ TikTok ให้พร้อมก่อน</AlertDescription></Alert> : <div className="space-y-4">
           <SMLGroupAutocomplete groups={groups} value={groupKey} onChange={changeGroup} />
-          <div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>
-          {mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}
-          <div className="space-y-2"><Label>SKU ในกลุ่ม</Label><p className="text-xs text-muted-foreground">เลือกเฉพาะ SKU ที่ต้องการควบคุม เมื่อเลือกหรือเอาออก ระบบจะกระจายโควตาของ SKU ที่เลือกใหม่ให้รวม 100%.</p>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => toggleMember(index, checked === true)} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div>
-          <Alert><Info className="h-4 w-4" /><AlertTitle>สรุปก่อนสร้างแบบร่าง</AlertTitle><AlertDescription>{summary}<br />ขั้นต่อไปยังเป็น Dry-run เท่านั้น ระบบจะยังไม่เขียนสต๊อกไป Marketplace</AlertDescription></Alert>
+          {groupKey ? <>
+            <div className="space-y-1"><Label>นโยบายสต๊อก</Label><Select value={mode} onValueChange={(value) => setMode(value as Mode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="quota">แบ่งโควตา</SelectItem><SelectItem value="shared">ใช้สต๊อกร่วม</SelectItem></SelectContent></Select></div>
+            {mode === 'shared' && <label className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"><Checkbox checked={sharedAcknowledged} onCheckedChange={(checked) => setSharedAcknowledged(checked === true)} /><span><b>ฉันเข้าใจความเสี่ยง</b><br />หลายช่องทางอาจขายพร้อมกันได้ แม้ Nexflow จะคำนวณจากยอด SML ก้อนเดียว</span></label>}
+            <div className="space-y-2"><Label>SKU ในกลุ่ม</Label><p className="text-xs text-muted-foreground">ระบบเลือก SKU ที่จับคู่กับสินค้านี้ไว้ให้แล้ว เอาเครื่องหมายถูกออกจาก SKU ที่ไม่ต้องการควบคุม เมื่อเปลี่ยนรายการ ระบบจะกระจายโควตาของ SKU ที่เลือกใหม่ให้รวม 100%.</p>{members.map((member, index) => <div className="grid gap-2 rounded-md border p-3 sm:grid-cols-[auto_1fr_110px] sm:items-center" key={`${member.source}|${member.account_key}|${member.external_product_id}|${member.external_sku_id}`}><Checkbox checked={member.enabled} onCheckedChange={(checked) => toggleMember(index, checked === true)} /><div className="min-w-0"><p className="text-sm font-medium">{sourceLabel[member.source]} · {member.product_name}</p><p className="truncate text-xs text-muted-foreground">{member.variant_name || member.external_sku_id}</p></div>{mode === 'quota' ? <Input aria-label={`โควตา ${member.product_name}`} type="number" min="0" max="100" value={member.allocation_pct} onChange={(event) => setMembers((current) => current.map((value, i) => i === index ? { ...value, allocation_pct: Number(event.target.value) } : value))} /> : <span className="text-sm text-muted-foreground">ยอดร่วม</span>}</div>)}{mode === 'quota' && <p className={cn('text-xs', total > 100 ? 'text-destructive' : 'text-muted-foreground')}>รวมโควตา {total.toFixed(2)}% {total > 100 ? '— ต้องไม่เกิน 100%' : ''}</p>}</div>
+            <Alert><Info className="h-4 w-4" /><AlertTitle>สรุปก่อนสร้างแบบร่าง</AlertTitle><AlertDescription>{summary}<br />ขั้นต่อไปยังเป็น Dry-run เท่านั้น ระบบจะยังไม่เขียนสต๊อกไป Marketplace</AlertDescription></Alert>
+          </> : <Alert><Info className="h-4 w-4" /><AlertTitle>เลือกสินค้าที่จับคู่แล้ว 1 รายการ</AlertTitle><AlertDescription>จากนั้นระบบจะแสดง SKU Marketplace ที่พร้อมเพิ่มในกลุ่มด้านล่าง</AlertDescription></Alert>}
         </div>}
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>ยกเลิก</Button><Button onClick={submit} disabled={!canCreate}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}ตรวจสอบก่อนสร้าง</Button></DialogFooter>
       </>}
@@ -527,25 +534,41 @@ function EditPoolDialog({ open, pool, candidates, saving, onOpenChange, onSave }
 }
 
 function SMLGroupAutocomplete({ groups, value, onChange }: { groups: CandidateGroup[]; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const visibleGroups = groups.filter((group) => !normalizedQuery || group.searchableText.includes(normalizedQuery))
   const selected = groups.find((group) => group.key === value)
+  const selectGroup = (key: string) => { onChange(key); setQuery(''); setOpen(false) }
 
-  return <div className="space-y-1">
-    <Label htmlFor="marketplace-stock-group-autocomplete">สินค้า SML ที่จะควบคุม</Label>
-    <Command shouldFilter={false} className="h-auto rounded-md border">
-      <CommandInput id="marketplace-stock-group-autocomplete" value={query} onValueChange={setQuery} placeholder="ค้นหาด้วยรหัส SML, ชื่อสินค้า หรือชื่อ Marketplace…" />
-      <CommandList className="max-h-64 overscroll-contain">
-        {visibleGroups.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">ไม่พบสินค้า ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p> : <CommandGroup>
-          {visibleGroups.map((group) => <CommandItem key={group.key} value={group.key} onSelect={() => { onChange(group.key); setQuery('') }}>
-            <Check className={cn('mt-0.5 h-4 w-4 shrink-0', value === group.key ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />
-            <span className="min-w-0"><span className="block truncate">{selectedGroupLabel([group], group.key)}</span><span className="block text-xs text-muted-foreground">{group.members.length} SKU ที่พร้อมควบคุม</span></span>
-          </CommandItem>)}
-        </CommandGroup>}
-      </CommandList>
-    </Command>
-    <p className="text-xs text-muted-foreground">{selected ? `เลือกแล้ว: ${selectedGroupLabel([selected], selected.key)}` : 'เลือกสินค้า SML 1 รายการ ระบบจะแสดง SKU ที่จับคู่ได้ด้านล่าง'}</p>
+  return <div className="space-y-2">
+    <div className="space-y-0.5">
+      <Label htmlFor="marketplace-stock-group-trigger">เลือกสินค้าที่จับคู่แล้ว</Label>
+      <p id="marketplace-stock-group-help" className="text-xs text-muted-foreground">แสดงเฉพาะสินค้า SML ที่มี SKU Marketplace จับคู่และพร้อมควบคุมแล้ว</p>
+    </div>
+    <Popover modal open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button id="marketplace-stock-group-trigger" type="button" variant="outline" role="combobox" aria-expanded={open} aria-describedby="marketplace-stock-group-help" className="w-full justify-between font-normal">
+          {selected ? <span className="flex min-w-0 items-center gap-2 text-left"><span className="font-mono text-xs text-muted-foreground">{selected.smlItem}</span><span className="truncate">{selected.smlItemName || 'ยังไม่พบชื่อสินค้า SML'}</span><span className="shrink-0 text-muted-foreground">· {selected.smlUnit}</span></span> : <span className="text-muted-foreground">ค้นหารหัสหรือชื่อสินค้า SML</span>}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" aria-hidden="true" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(34rem,calc(100vw-2rem))] p-0">
+        <Command shouldFilter={false}>
+          <CommandInput id="marketplace-stock-group-autocomplete" value={query} onValueChange={setQuery} placeholder="ค้นหารหัส SML, ชื่อสินค้า หรือชื่อ Marketplace…" />
+          <CommandList className="max-h-[min(20rem,var(--radix-popover-content-available-height,20rem))] overscroll-contain">
+            {visibleGroups.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">ไม่พบสินค้า ลองค้นหาด้วยรหัส SML หรือชื่อสินค้า</p> : <CommandGroup>
+              {visibleGroups.map((group) => <CommandItem key={group.key} value={group.key} onSelect={() => selectGroup(group.key)}>
+                <Check className={cn('mt-0.5 h-4 w-4 shrink-0', value === group.key ? 'opacity-100' : 'opacity-0')} aria-hidden="true" />
+                <span className="min-w-0"><span className="flex min-w-0 items-center gap-1.5"><span className="font-mono text-xs text-muted-foreground">{group.smlItem}</span><span className="truncate">{group.smlItemName || 'ยังไม่พบชื่อสินค้า SML'}</span><span className="shrink-0 text-xs text-muted-foreground">· {group.smlUnit}</span></span><span className="block text-xs text-muted-foreground">{group.members.length} SKU Marketplace พร้อมเพิ่มในกลุ่ม</span></span>
+              </CommandItem>)}
+            </CommandGroup>}
+          </CommandList>
+          <p className="border-t bg-muted/30 px-3 py-2 text-xs text-muted-foreground">{visibleGroups.length.toLocaleString('th-TH')} สินค้าที่พร้อมตั้งค่าจาก {groups.length.toLocaleString('th-TH')} รายการ</p>
+        </Command>
+      </PopoverContent>
+    </Popover>
+    <p className="text-xs text-muted-foreground">{selected ? `เลือกแล้ว: ${selectedGroupLabel([selected], selected.key)}` : <>ยังไม่พบสินค้าที่ต้องการ? <a href="/marketplace-aliases" target="_blank" rel="noreferrer" className="font-medium text-primary underline-offset-4 hover:underline">จับคู่สินค้า Marketplace ก่อน</a></>}</p>
   </div>
 }
 
