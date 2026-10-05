@@ -5,13 +5,20 @@ import (
 )
 
 type User struct {
-	ID              string               `json:"id" db:"id"`
-	Email           string               `json:"email" db:"email"`
-	Name            string               `json:"name" db:"name"`
-	Role            string               `json:"role" db:"role"`
-	PasswordHash    string               `json:"-" db:"password_hash"`
-	CreatedAt       time.Time            `json:"created_at" db:"created_at"`
-	MenuPermissions []UserMenuPermission `json:"menu_permissions,omitempty"`
+	ID                     string                 `json:"id" db:"id"`
+	Email                  string                 `json:"email" db:"email"`
+	Name                   string                 `json:"name" db:"name"`
+	Role                   string                 `json:"role" db:"role"`
+	PasswordHash           string                 `json:"-" db:"password_hash"`
+	CreatedAt              time.Time              `json:"created_at" db:"created_at"`
+	MenuPermissions        []UserMenuPermission   `json:"menu_permissions,omitempty"`
+	NavigationCapabilities NavigationCapabilities `json:"navigation_capabilities"`
+}
+
+// NavigationCapabilities are tenant-wide, read-only facts used to remove
+// inactive workflow lanes from navigation. They never grant API permissions.
+type NavigationCapabilities struct {
+	SalesOrdersConfigured bool `json:"sales_orders_configured"`
 }
 
 type UserMenuPermission struct {

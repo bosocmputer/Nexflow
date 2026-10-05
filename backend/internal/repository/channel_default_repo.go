@@ -93,6 +93,31 @@ func (r *ChannelDefaultRepo) ListAll() ([]*models.ChannelDefault, error) {
 	return out, rows.Err()
 }
 
+// HasConfiguredSalesOrderRoute reports whether this tenant currently routes at
+// least one normal sales channel to SML's sales-order document. Cancellation
+// and settlement routes are intentionally excluded: neither should expose the
+// daily SO work queue. The endpoint is the source of truth because it is the
+// server-side dispatch input, not a format-code convention.
+func (r *ChannelDefaultRepo) HasConfiguredSalesOrderRoute(ctx context.Context) (bool, error) {
+	var configured bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM channel_defaults
+			WHERE bill_type = 'sale'
+			  AND channel IN ('shopee', 'shopee_realtime', 'shopee_email', 'lazada', 'tiktok', 'tiktok_shop', 'line_myshop', 'manual')
+			  AND (
+				lower(endpoint) LIKE '%saleorder%'
+				OR lower(endpoint) LIKE '%sale-orders%'
+			  )
+		)
+	`).Scan(&configured)
+	if err != nil {
+		return false, fmt.Errorf("HasConfiguredSalesOrderRoute: %w", err)
+	}
+	return configured, nil
+}
+
 func (r *ChannelDefaultRepo) Get(channel, billType string) (*models.ChannelDefault, error) {
 	row := r.db.QueryRow(
 		`SELECT `+channelDefaultCols+` FROM channel_defaults

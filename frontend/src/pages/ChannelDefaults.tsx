@@ -23,6 +23,8 @@ import { PageHeader } from '@/components/common/PageHeader'
 import client from '@/api/client'
 import { ENABLE_LAZADA_EXCEL, ENABLE_SALES_ORDERS, ENABLE_SHOPEE_EXCEL, ENABLE_SHOPEE_REALTIME_OPS, ENABLE_TIKTOK_EXCEL, ENABLE_TIKTOK_SHOP_API, ENABLE_TIKTOK_SHOP_FINANCE } from '@/lib/featureFlags'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/useAuth'
+import type { User } from '@/types'
 
 import { EditDialog } from './ChannelDefaults/EditDialog'
 import {
@@ -240,6 +242,7 @@ function HelpBanner() {
 }
 
 export default function ChannelDefaults() {
+  const { setUser } = useAuth()
   const [rows, setRows] = useState<ChannelDefaultRow[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<ChannelDefaultRow | null>(null)
@@ -337,6 +340,26 @@ export default function ChannelDefaults() {
     `${r.endpoint ?? ''} ${r.doc_format_code ?? ''}`.toLowerCase().includes('saleinvoice')
   ))
   const settlementRoute = tableRows.find((r) => r.channel === 'shopee_settlement' && r.bill_type === 'ar_receipt')
+  const hasSalesOrderRoute = tableRows.some((r) => (
+    r.bill_type === 'sale' &&
+    ['shopee', 'shopee_realtime', 'shopee_email', 'lazada', 'tiktok', 'tiktok_shop', 'line_myshop', 'manual'].includes(r.channel) &&
+    /saleorder|sale-orders/i.test(r.endpoint ?? '')
+  ))
+
+  const refreshNavigationCapabilities = async () => {
+    try {
+      const response = await client.get<User>('/api/auth/me')
+      setUser(response.data)
+    } catch {
+      // The saved route remains correct. Layout retries this lightweight user
+      // refresh on the next authenticated shell load.
+    }
+  }
+
+  const handleRouteSaved = async () => {
+    await load()
+    await refreshNavigationCapabilities()
+  }
 
   const configSummary = (r: ChannelDefaultRow) => {
     if ((r.channel === 'shopee_settlement' || r.channel === 'tiktok_settlement') && r.bill_type === 'ar_receipt') {
@@ -396,7 +419,9 @@ export default function ChannelDefaults() {
                   {unsetRoutes.length > 0 ? 'ยังมีเส้นทางที่ต้องตั้งค่าก่อนใช้งานจริง' : 'เส้นทางเอกสารพร้อมใช้งาน'}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  งานขายหลักควรชี้ไปขายสินค้าและบริการ / SI ก่อนเริ่ม import หรือส่งเข้า SML
+                  {hasSalesOrderRoute
+                    ? 'มีช่องทางที่ใช้ใบสั่งขาย (SO) เมนูใบสั่งขายจะแสดงสำหรับติดตามงานของช่องทางนั้น'
+                    : 'ร้านนี้ใช้ขายสินค้าและบริการสำหรับทุกช่องทางขาย จึงไม่แสดงเมนูใบสั่งขาย (SO) ในงานประจำวัน'}
                 </p>
               </div>
             </div>
@@ -582,17 +607,17 @@ export default function ChannelDefaults() {
         open={editOpen}
         onOpenChange={setEditOpen}
         row={editing}
-        onSaved={load}
+        onSaved={handleRouteSaved}
       />
       <ShopeeSMLRouteBundleDialog
         open={shopeeBundleOpen}
         onOpenChange={setShopeeBundleOpen}
-        onSaved={load}
+        onSaved={handleRouteSaved}
       />
       <TikTokSMLRouteBundleDialog
         open={tiktokBundleOpen}
         onOpenChange={setTikTokBundleOpen}
-        onSaved={load}
+        onSaved={handleRouteSaved}
       />
     </div>
   )

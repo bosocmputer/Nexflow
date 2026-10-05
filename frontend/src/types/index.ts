@@ -6,6 +6,11 @@ export interface User {
   role: 'admin' | 'staff' | 'viewer'
   created_at: string
   menu_permissions?: UserMenuPermission[]
+  navigation_capabilities?: NavigationCapabilities
+}
+
+export interface NavigationCapabilities {
+  sales_orders_configured: boolean
 }
 
 export interface UserMenuPermission {

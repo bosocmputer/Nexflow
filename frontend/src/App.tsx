@@ -55,6 +55,15 @@ function RequireMenu({ menuKey, children }: { menuKey: string; children: React.R
   return <NoMenuAccess />
 }
 
+// The list is a daily-work surface. Keep historical SO detail links readable,
+// but do not offer an empty SO queue when this tenant routes all sales to SI.
+function RequireConfiguredSalesOrderRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore((s) => s.user)
+  const configured = user?.navigation_capabilities?.sales_orders_configured
+  if (configured === false) return <Navigate to="/sale-invoices" replace />
+  return <>{children}</>
+}
+
 function IndexRedirect() {
   const user = useAuthStore((s) => s.user)
   return <Navigate to={firstVisibleNavPath(user)} replace />
@@ -115,7 +124,7 @@ export default function App() {
           <Route path="dashboard" element={<RequireMenu menuKey="dashboard"><Dashboard /></RequireMenu>} />
           <Route path="nextstep-marketplace" element={<RequireMenu menuKey="nextstep_marketplace"><NextStepMarketplace /></RequireMenu>} />
           <Route path="bills" element={<Navigate to="/dashboard" replace />} />
-          <Route path="sales-orders" element={ENABLE_SALES_ORDERS ? <RequireMenu menuKey="sales_orders"><Bills mode="sales-order" /></RequireMenu> : <Navigate to="/dashboard" replace />} />
+          <Route path="sales-orders" element={ENABLE_SALES_ORDERS ? <RequireConfiguredSalesOrderRoute><RequireMenu menuKey="sales_orders"><Bills mode="sales-order" /></RequireMenu></RequireConfiguredSalesOrderRoute> : <Navigate to="/dashboard" replace />} />
           <Route path="sale-invoices" element={ENABLE_SALES_ORDERS ? <RequireMenu menuKey="sale_invoices"><Bills mode="sale-invoice" /></RequireMenu> : <Navigate to="/dashboard" replace />} />
           <Route path="bills/:id" element={<Navigate to="/dashboard" replace />} />
           <Route path="sales-orders/:id" element={ENABLE_SALES_ORDERS ? <RequireMenu menuKey="sales_orders"><BillDetail /></RequireMenu> : <Navigate to="/dashboard" replace />} />

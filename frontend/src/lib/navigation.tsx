@@ -29,7 +29,7 @@ import {
   ENABLE_TIKTOK_SHOP_API,
   ENABLE_TIKTOK_SHOP_STOCK, ENABLE_TIKTOK_SHOP_FINANCE,
 } from '@/lib/featureFlags'
-import type { User, UserMenuPermission } from '@/types'
+import type { NavigationCapabilities, User, UserMenuPermission } from '@/types'
 
 const PHASE = Number(import.meta.env.VITE_PHASE ?? 99)
 
@@ -53,6 +53,7 @@ export interface NavItem {
   minPhase?: number
   enabled?: boolean
   adminOnly?: boolean
+  requiresCapability?: keyof NavigationCapabilities
 }
 
 export interface NavGroup {
@@ -109,7 +110,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'เอกสารและรับชำระ',
     items: [
       { menuKey: 'sale_invoices', to: '/sale-invoices', label: 'ขายสินค้าและบริการ', icon: ShoppingBag, hasBadge: 'saleinvoice', hint: 'คิวบิลขายหลัก ส่งเข้า SML', enabled: ENABLE_SALES_ORDERS },
-      { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS },
+      { menuKey: 'sales_orders', to: '/sales-orders', label: 'ใบสั่งขาย (SO)', icon: ShoppingBag, hasBadge: 'saleorder', hint: 'คิวใบสั่งขายที่ยังเปิดใช้งาน', enabled: ENABLE_SALES_ORDERS, requiresCapability: 'sales_orders_configured' },
       { menuKey: 'bulk_send_jobs', to: '/bulk-send-jobs', label: 'งานส่งเข้า SML', icon: Send, hint: 'ติดตามงานส่งจำนวนมาก' },
       { menuKey: 'shopee_settlements', to: '/shopee-settlements', label: 'รับชำระ Shopee', icon: ReceiptText, hint: 'รอบถอนเงินและรับชำระ', enabled: ENABLE_SHOPEE_EXCEL && ENABLE_SALES_ORDERS },
       { menuKey: 'tiktok_settlements', to: '/tiktok-settlements', label: 'รับชำระ TikTok Shop', icon: ReceiptText, hint: 'Statement และรับชำระหนี้ที่ตรวจแล้ว', enabled: ENABLE_TIKTOK_SHOP_FINANCE && ENABLE_SALES_ORDERS },
@@ -154,13 +155,17 @@ export const NAV_GROUPS: NavGroup[] = [
 
 // Cancellation shortcuts reuse their source permission; show each scope only
 // once in the editor. Admin-only pages cannot be granted to staff/viewers.
-export function permissionNavGroups(role: User['role']): NavGroup[] {
+export function permissionNavGroups(
+  role: User['role'],
+  capabilities?: NavigationCapabilities,
+): NavGroup[] {
   const seen = new Set<string>()
   return NAV_GROUPS
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => {
         if (item.enabled === false || (item.minPhase && PHASE < item.minPhase)) return false
+        if (item.requiresCapability && !capabilities?.[item.requiresCapability]) return false
         if (item.adminOnly && role !== 'admin') return false
         if (seen.has(item.menuKey)) return false
         seen.add(item.menuKey)
@@ -175,6 +180,7 @@ export function isNavItemVisible(item: NavItem, userOrRole?: User | string | nul
   return (
     item.enabled !== false &&
     (!item.minPhase || PHASE >= item.minPhase) &&
+    (!item.requiresCapability || Boolean(typeof userOrRole !== 'string' && userOrRole?.navigation_capabilities?.[item.requiresCapability])) &&
     (!item.adminOnly || role === 'admin') &&
     canViewMenu(userOrRole, item.menuKey)
   )

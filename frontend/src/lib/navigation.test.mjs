@@ -9,7 +9,7 @@ const vite = await createServer({
   server: { middlewareMode: true },
 })
 
-const { NAV_GROUPS, isNavItemActive, permissionNavGroups } = await vite.ssrLoadModule('/src/lib/navigation.tsx')
+const { NAV_GROUPS, isNavItemActive, permissionNavGroups, visibleNavGroups } = await vite.ssrLoadModule('/src/lib/navigation.tsx')
 
 test.after(async () => {
   await vite.close()
@@ -59,13 +59,27 @@ test('groups daily work before settings and excludes retired pages', () => {
 })
 
 test('permission groups contain unique actionable scopes and no admin-only staff rows', () => {
-  const adminItems = permissionNavGroups('admin').flatMap((group) => group.items)
-  const staffItems = permissionNavGroups('staff').flatMap((group) => group.items)
+  const capabilities = { sales_orders_configured: true }
+  const adminItems = permissionNavGroups('admin', capabilities).flatMap((group) => group.items)
+  const staffItems = permissionNavGroups('staff', capabilities).flatMap((group) => group.items)
   assert.equal(new Set(adminItems.map((item) => item.menuKey)).size, adminItems.length)
   assert.ok(adminItems.filter((item) => item.menuKey === 'shopee_operations').length <= 1)
   assert.ok(adminItems.filter((item) => item.menuKey === 'tiktok_shop_operations').length <= 1)
   assert.equal(staffItems.some((item) => item.adminOnly), false)
   assert.ok(staffItems.some((item) => item.menuKey === 'logs'))
+})
+
+test('hides the SO queue and its permission scope when the tenant has no SO route', () => {
+  const user = {
+    role: 'admin',
+    menu_permissions: [{ menu_key: 'sales_orders', can_view: true }],
+    navigation_capabilities: { sales_orders_configured: false },
+  }
+  const visibleItems = visibleNavGroups(user).flatMap((group) => group.items)
+  const permissionItems = permissionNavGroups('admin', user.navigation_capabilities).flatMap((group) => group.items)
+
+  assert.equal(visibleItems.some((item) => item.menuKey === 'sales_orders'), false)
+  assert.equal(permissionItems.some((item) => item.menuKey === 'sales_orders'), false)
 })
 
 test('adds a TikTok cancellation shortcut that reuses the TikTok operations permission', () => {

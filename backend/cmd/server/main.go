@@ -308,7 +308,8 @@ func main() {
 	})
 
 	// Handlers
-	authH := handlers.NewAuthHandler(userRepo, cfg.JWTExpireHours, logger)
+	authH := handlers.NewAuthHandler(userRepo, cfg.JWTExpireHours, logger).
+		WithNavigationCapabilities(channelDefaultRepo)
 	smlBulkJobRepo := repository.NewSMLBulkJobRepo(db)
 	billH := handlers.NewBillHandler(billRepo, mapperSvc, invoiceClient, saleOrderClient, nil, docNoClient, cfg, lineSvc, auditLogRepo, catalogRepo, channelDefaultRepo, docCounterRepo, smlBulkJobRepo, artifactSvc, warehouseCache, smlReadiness, appSettingsRepo, logger)
 	billH.RecoverInterruptedBulkSendJobs()

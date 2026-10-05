@@ -45,7 +45,8 @@ export default function MenuPermissions() {
     [users],
   )
   const selectedUser = sortedUsers.find((u) => u.id === selectedUserId) ?? sortedUsers[0]
-  const permissions = selectedUser ? permissionsForUser(selectedUser) : []
+  const navigationCapabilities = currentUser?.navigation_capabilities
+  const permissions = selectedUser ? permissionsForUser(selectedUser, navigationCapabilities) : []
   const selectedChanged = selectedUser ? !sameViewPermissions(draft, permissions) : false
   const allVisible = permissions.length > 0 && permissions.every((p) => (draft[p.menu_key] ?? p).can_view)
   const someVisible = permissions.some((p) => (draft[p.menu_key] ?? p).can_view)
@@ -75,8 +76,8 @@ export default function MenuPermissions() {
       setDraft({})
       return
     }
-    setDraft(toPermissionDraft(permissionsForUser(selectedUser)))
-  }, [selectedUser?.id, selectedUser?.role, selectedUser?.menu_permissions])
+    setDraft(toPermissionDraft(permissionsForUser(selectedUser, navigationCapabilities)))
+  }, [selectedUser?.id, selectedUser?.role, selectedUser?.menu_permissions, navigationCapabilities])
 
   const updateMenu = (menuKey: string, checked: boolean) => {
     if (!selectedUser) return
@@ -103,7 +104,7 @@ export default function MenuPermissions() {
     if (!selectedUser) return
     setDraft((current) => {
       const next = { ...current }
-      for (const p of permissionsForUser(selectedUser)) {
+      for (const p of permissionsForUser(selectedUser, navigationCapabilities)) {
         next[p.menu_key] = withView(current[p.menu_key] ?? p, selectedUser, p.menu_key, checked)
       }
       return next
@@ -114,7 +115,7 @@ export default function MenuPermissions() {
     if (!selectedUser) return
     setSaving(true)
     try {
-      const nextPermissions = permissionsForUser(selectedUser).map((base) => draft[base.menu_key] ?? base)
+      const nextPermissions = permissionsForUser(selectedUser, navigationCapabilities).map((base) => draft[base.menu_key] ?? base)
       const res = await client.put<{ data: UserMenuPermission[] }>(
         `/api/settings/users/${selectedUser.id}/menu-permissions`,
         { permissions: nextPermissions },
@@ -225,6 +226,7 @@ export default function MenuPermissions() {
             {selectedUser ? (
               <PermissionTable
                 user={selectedUser}
+                navigationCapabilities={navigationCapabilities}
                 draft={draft}
                 onMenuChange={updateMenu}
                 onGroupChange={updateGroup}
@@ -243,16 +245,18 @@ export default function MenuPermissions() {
 
 function PermissionTable({
   user,
+  navigationCapabilities,
   draft,
   onMenuChange,
   onGroupChange,
 }: {
   user: User
+  navigationCapabilities?: User['navigation_capabilities']
   draft: PermissionDraft
   onMenuChange: (menuKey: string, checked: boolean) => void
   onGroupChange: (group: NavGroup, checked: boolean) => void
 }) {
-  const groups = permissionNavGroups(user.role)
+  const groups = permissionNavGroups(user.role, navigationCapabilities)
   return (
     <div className="overflow-hidden rounded-lg border">
       <div className="max-h-[calc(100vh-330px)] overflow-auto">
@@ -359,8 +363,8 @@ function PermissionRow({
   )
 }
 
-function permissionsForUser(user: User): UserMenuPermission[] {
-  return permissionNavGroups(user.role).flatMap((group) => group.items.map((item) => (
+function permissionsForUser(user: User, navigationCapabilities?: User['navigation_capabilities']): UserMenuPermission[] {
+  return permissionNavGroups(user.role, navigationCapabilities).flatMap((group) => group.items.map((item) => (
     permissionForMenu(user, item.menuKey) ?? emptyPermission(item.menuKey)
   )))
 }
